@@ -13,7 +13,7 @@ interface Props {
 
 // 全35人分のページをビルド時に静的生成する（サーバーレス関数不要になる）
 export function generateStaticParams() {
-  return getAllPersons().map((p) => ({ slug: encodeURIComponent(p.name) }));
+  return getAllPersons().map((p) => ({ slug: p.name }));
 }
 
 // 24時間ごとに再検証（楽天APIキャッシュと一致）
