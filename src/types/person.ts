@@ -7,14 +7,3 @@ export interface Person {
   group: string;
   genre: Genre;
 }
-
-export interface MockProduct {
-  id: string;
-  title: string;
-  price: number;
-  reviewCount: number;
-  reviewAverage: number;
-  imageColor: string;
-  itemUrl: string;
-  category: ProductCategory;
-}

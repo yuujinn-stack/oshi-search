@@ -17,9 +17,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="bg-gray-50">
         <Header />
         <main>{children}</main>
-        <footer className="bg-white border-t border-gray-200 mt-16 py-8 text-center text-sm text-gray-500">
-          <p className="font-bold text-primary mb-1">推しサーチ</p>
+        <footer className="bg-white border-t border-gray-200 mt-16 py-8 text-center text-sm text-gray-500 space-y-1">
+          <p className="font-bold text-primary">推しサーチ</p>
           <p>© 2026 推しサーチ. All rights reserved.</p>
+          <p className="text-xs text-gray-400">
+            本サイトはアフィリエイト広告（楽天市場・楽天ブックス）を掲載しています。
+          </p>
         </footer>
       </body>
     </html>

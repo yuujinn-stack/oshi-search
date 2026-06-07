@@ -1,18 +1,15 @@
+import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getPersonByName, getPersonsByGroup, getAllPersons } from '@/lib/persons';
-import { getMockProducts } from '@/lib/mockData';
-import ProductCard from '@/components/ProductCard';
+import { getPersonByName, getPersonsByGroup } from '@/lib/persons';
+import ProductSection from '@/components/ProductSection';
+import ProductSkeleton from '@/components/ProductSkeleton';
 import PersonCard from '@/components/PersonCard';
-import { ProductCategory } from '@/types/person';
+import type { ProductCategory } from '@/types/rakuten';
 
 interface Props {
   params: Promise<{ slug: string }>;
-}
-
-export async function generateStaticParams() {
-  return getAllPersons().map((p) => ({ slug: encodeURIComponent(p.name) }));
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -20,9 +17,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const name = decodeURIComponent(slug);
   const person = getPersonByName(name);
   if (!person) return {};
+
+  const groupText = person.group ? `（${person.group}）` : '';
+  const groupSuffix = person.group ? `${person.group}の最新情報やメンバー関連商品` : '関連商品';
   return {
-    title: `${person.name}の写真集・グッズ・出演作品まとめ`,
-    description: `${person.name}${person.group ? `（${person.group}）` : ''}の写真集・雑誌・Blu-ray・グッズ・視聴先を一覧で確認できます。`,
+    title: `${person.name}の写真集・グッズ・Blu-ray まとめ`,
+    description: `${person.name}${groupText}の写真集・雑誌・Blu-ray・グッズを楽天でまとめて探せます。${groupSuffix}もチェック。`,
   };
 }
 
@@ -53,7 +53,6 @@ export default async function PersonPage({ params }: Props) {
       {/* Hero */}
       <div className="bg-gradient-to-br from-primary to-indigo-800 py-12 px-4">
         <div className="max-w-4xl mx-auto">
-          {/* Breadcrumb */}
           <nav className="text-indigo-300 text-sm mb-6 flex items-center gap-1 flex-wrap">
             <Link href="/" className="hover:text-white transition-colors">ホーム</Link>
             <span>/</span>
@@ -88,30 +87,24 @@ export default async function PersonPage({ params }: Props) {
         </div>
       </div>
 
-      {/* Content */}
+      {/* 商品セクション */}
       <div className="max-w-4xl mx-auto px-4 py-10 space-y-10">
 
-        {/* Product sections */}
-        {CATEGORIES.map((category) => {
-          const products = getMockProducts(person.name, category);
-          return (
-            <section key={category}>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base font-bold text-slate-800">{category}</h2>
-                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-medium">
-                  仮データ
-                </span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                {products.map((product) => (
-                  <ProductCard key={product.id} product={product} />
-                ))}
-              </div>
-            </section>
-          );
-        })}
+        {CATEGORIES.map((category) => (
+          <section key={category}>
+            <h2 className="text-base font-bold text-slate-800 mb-4">{category}</h2>
+            {/* Suspense で Skeleton → 実データへのストリーミング */}
+            <Suspense fallback={<ProductSkeleton />}>
+              <ProductSection
+                personName={person.name}
+                group={person.group}
+                category={category}
+              />
+            </Suspense>
+          </section>
+        ))}
 
-        {/* VOD section */}
+        {/* VOD */}
         <section>
           <h2 className="text-base font-bold text-slate-800 mb-4">VOD視聴先</h2>
           <div className="bg-amber-50 border-2 border-amber-200 border-dashed rounded-2xl p-8 text-center">
@@ -121,7 +114,7 @@ export default async function PersonPage({ params }: Props) {
           </div>
         </section>
 
-        {/* Related members */}
+        {/* 関連メンバー */}
         {related.length > 0 && (
           <section>
             <div className="flex items-center justify-between mb-4">
