@@ -49,7 +49,7 @@ async function fetchBooks(kw: string, category: ProductCategory): Promise<Rakute
       affiliateId: AFFILIATE_ID,
       keyword: kw,
       hits: '6',
-      sort: '-reviewCount',
+      sort: 'reviewCount',
       outOfStockFlag: '1',
     }),
     { next: { revalidate: REVALIDATE }, headers: AUTH_HEADERS }
@@ -72,17 +72,20 @@ async function fetchBooks(kw: string, category: ProductCategory): Promise<Rakute
 }
 
 // 楽天ブックスDVD/Blu-ray検索
-async function fetchDvd(kw: string): Promise<RakutenItem[]> {
+// DVD APIはkeyword非対応: グループあり→artistName、ソロ→title で検索
+async function fetchDvd(name: string, group: string): Promise<RakutenItem[]> {
+  const searchKey = group ? 'artistName' : 'title';
+  const searchVal = group || name;
   const res = await fetch(
     booksUrl('BooksDVD/Search/20130522', {
       applicationId: APP_ID,
       accessKey: ACCESS_KEY,
       affiliateId: AFFILIATE_ID,
-      keyword: kw,
+      [searchKey]: searchVal,
       hits: '6',
-      sort: '-reviewCount',
+      sort: 'reviewCount',
       outOfStockFlag: '1',
-    }),
+    } as Record<string, string>),
     { next: { revalidate: REVALIDATE }, headers: AUTH_HEADERS }
   );
   if (!res.ok) throw new Error(`DVD API error: ${res.status}`);
@@ -90,7 +93,7 @@ async function fetchDvd(kw: string): Promise<RakutenItem[]> {
   if (data.error || !data.Items?.length) return [];
 
   return data.Items.map(({ Item }, i) => ({
-    id: `dvd-${kw}-${i}`,
+    id: `dvd-${searchVal}-${i}`,
     title: Item.title,
     price: Item.itemPrice,
     reviewCount: Item.reviewCount ?? 0,
@@ -150,7 +153,7 @@ export async function getProductsByCategory(
         products = await fetchBooks(kw, category);
         break;
       case 'Blu-ray・DVD':
-        products = await fetchDvd(kw);
+        products = await fetchDvd(name, group);
         break;
       case 'グッズ':
         products = await fetchIchiba(kw);
