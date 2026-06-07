@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getPersonByName, getPersonsByGroup } from '@/lib/persons';
+import { getPersonByName, getPersonsByGroup, getAllPersons } from '@/lib/persons';
 import { getProductsByCategory } from '@/lib/rakuten';
 import ProductCard from '@/components/ProductCard';
 import PersonCard from '@/components/PersonCard';
@@ -10,6 +10,14 @@ import type { ProductCategory, ApiResult } from '@/types/rakuten';
 interface Props {
   params: Promise<{ slug: string }>;
 }
+
+// 全35人分のページをビルド時に静的生成する（サーバーレス関数不要になる）
+export function generateStaticParams() {
+  return getAllPersons().map((p) => ({ slug: encodeURIComponent(p.name) }));
+}
+
+// 24時間ごとに再検証（楽天APIキャッシュと一致）
+export const revalidate = 86400;
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
