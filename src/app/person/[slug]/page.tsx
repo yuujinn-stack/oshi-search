@@ -1,12 +1,11 @@
-import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getPersonByName, getPersonsByGroup } from '@/lib/persons';
-import ProductSection from '@/components/ProductSection';
-import ProductSkeleton from '@/components/ProductSkeleton';
+import { getProductsByCategory } from '@/lib/rakuten';
+import ProductCard from '@/components/ProductCard';
 import PersonCard from '@/components/PersonCard';
-import type { ProductCategory } from '@/types/rakuten';
+import type { ProductCategory, ApiResult } from '@/types/rakuten';
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -36,6 +35,23 @@ const GENRE_BADGE: Record<string, string> = {
 
 const CATEGORIES: ProductCategory[] = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ'];
 
+function ProductGrid({ result }: { result: ApiResult }) {
+  if (result.status === 'error' || result.status === 'empty') {
+    return (
+      <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
+        {result.status === 'error' ? '現在商品情報を取得できません' : '該当商品が見つかりませんでした'}
+      </div>
+    );
+  }
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+      {result.products.map((product) => (
+        <ProductCard key={product.id} product={product} />
+      ))}
+    </div>
+  );
+}
+
 export default async function PersonPage({ params }: Props) {
   const { slug } = await params;
   const name = decodeURIComponent(slug);
@@ -47,6 +63,17 @@ export default async function PersonPage({ params }: Props) {
         .filter((p) => p.name !== person.name)
         .slice(0, 4)
     : [];
+
+  // 全カテゴリを並列取得（allSettled でどれかが失敗しても他に影響しない）
+  const settled = await Promise.allSettled(
+    CATEGORIES.map((cat) => getProductsByCategory(person.name, person.group, cat))
+  );
+  const results: Record<ProductCategory, ApiResult> = Object.fromEntries(
+    CATEGORIES.map((cat, i) => {
+      const r = settled[i];
+      return [cat, r.status === 'fulfilled' ? r.value : { status: 'error' as const }];
+    })
+  ) as Record<ProductCategory, ApiResult>;
 
   return (
     <div>
@@ -79,7 +106,7 @@ export default async function PersonPage({ params }: Props) {
               ) : (
                 <p className="text-indigo-300 mt-1 text-sm">ソロ活動</p>
               )}
-              <span className={`inline-block mt-2 text-xs px-3 py-1 rounded-full font-bold ${GENRE_BADGE[person.genre]}`}>
+              <span className={`inline-block mt-2 text-xs px-3 py-1 rounded-full font-bold ${GENRE_BADGE[person.genre] ?? 'bg-gray-100 text-gray-600'}`}>
                 {person.genre}
               </span>
             </div>
@@ -89,18 +116,10 @@ export default async function PersonPage({ params }: Props) {
 
       {/* 商品セクション */}
       <div className="max-w-4xl mx-auto px-4 py-10 space-y-10">
-
         {CATEGORIES.map((category) => (
           <section key={category}>
             <h2 className="text-base font-bold text-slate-800 mb-4">{category}</h2>
-            {/* Suspense で Skeleton → 実データへのストリーミング */}
-            <Suspense fallback={<ProductSkeleton />}>
-              <ProductSection
-                personName={person.name}
-                group={person.group}
-                category={category}
-              />
-            </Suspense>
+            <ProductGrid result={results[category]} />
           </section>
         ))}
 
