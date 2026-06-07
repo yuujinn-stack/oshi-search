@@ -150,7 +150,9 @@ export async function getProductsByCategory(
     switch (category) {
       case '写真集':
       case '本・雑誌':
-        products = await fetchBooks(kw, category);
+        products = (await fetchBooks(kw, category)).filter((p) =>
+          p.title.includes(name)
+        );
         break;
       case 'Blu-ray・DVD':
         products = await fetchDvd(name, group);
