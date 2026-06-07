@@ -8,30 +8,34 @@ interface Props {
   category: ProductCategory;
 }
 
+const ErrorMessage = () => (
+  <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
+    現在商品情報を取得できません
+  </div>
+);
+
 export default async function ProductSection({ personName, group, category }: Props) {
-  const result = await getProductsByCategory(personName, group, category);
+  try {
+    const result = await getProductsByCategory(personName, group, category);
 
-  if (result.status === 'error') {
+    if (result.status === 'error') return <ErrorMessage />;
+
+    if (result.status === 'empty') {
+      return (
+        <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
+          該当商品が見つかりませんでした
+        </div>
+      );
+    }
+
     return (
-      <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
-        現在商品情報を取得できません
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+        {result.products.map((product) => (
+          <ProductCard key={product.id} product={product} />
+        ))}
       </div>
     );
+  } catch {
+    return <ErrorMessage />;
   }
-
-  if (result.status === 'empty') {
-    return (
-      <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
-        該当商品が見つかりませんでした
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-      {result.products.map((product) => (
-        <ProductCard key={product.id} product={product} />
-      ))}
-    </div>
-  );
 }

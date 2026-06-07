@@ -60,13 +60,13 @@ async function fetchBooks(kw: string, category: ProductCategory): Promise<Rakute
 
   return data.Items.map(({ Item }, i) => ({
     id: `books-${kw}-${i}`,
-    title: Item.title,
-    price: Item.itemPrice,
+    title: Item.title ?? '',
+    price: Item.itemPrice ?? 0,
     reviewCount: Item.reviewCount ?? 0,
     reviewAverage: Item.reviewAverage ?? 0,
     imageUrl: Item.largeImageUrl ?? '',
-    itemUrl: Item.itemUrl,
-    affiliateUrl: affiliateLink(Item.affiliateUrl, Item.itemUrl),
+    itemUrl: Item.itemUrl ?? '',
+    affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
     category,
   }));
 }
@@ -94,13 +94,13 @@ async function fetchDvd(name: string, group: string): Promise<RakutenItem[]> {
 
   return data.Items.map(({ Item }, i) => ({
     id: `dvd-${searchVal}-${i}`,
-    title: Item.title,
-    price: Item.itemPrice,
+    title: Item.title ?? '',
+    price: Item.itemPrice ?? 0,
     reviewCount: Item.reviewCount ?? 0,
     reviewAverage: Item.reviewAverage ?? 0,
     imageUrl: Item.largeImageUrl ?? '',
-    itemUrl: Item.itemUrl,
-    affiliateUrl: affiliateLink(Item.affiliateUrl, Item.itemUrl),
+    itemUrl: Item.itemUrl ?? '',
+    affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
     category: 'Blu-ray・DVD',
   }));
 }
@@ -124,14 +124,14 @@ async function fetchIchiba(kw: string): Promise<RakutenItem[]> {
 
   return data.Items.map(({ Item }, i) => ({
     id: `ichiba-${kw}-${i}`,
-    title: Item.itemName,
-    price: Item.itemPrice,
+    title: Item.itemName ?? '',
+    price: Item.itemPrice ?? 0,
     reviewCount: Item.reviewCount ?? 0,
     reviewAverage: Item.reviewAverage ?? 0,
     imageUrl: Item.mediumImageUrls?.[0]?.imageUrl ?? '',
-    itemUrl: Item.itemUrl,
-    affiliateUrl: affiliateLink(Item.affiliateUrl, Item.itemUrl),
-    shopName: Item.shopName,
+    itemUrl: Item.itemUrl ?? '',
+    affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
+    shopName: Item.shopName ?? '',
     category: 'グッズ',
   }));
 }
