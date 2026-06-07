@@ -38,17 +38,17 @@ export default function ProductCard({ product }: { product: RakutenItem }) {
         </a>
 
         {/* レビュー */}
-        {product.reviewCount > 0 && (
+        {Number(product.reviewCount) > 0 && (
           <div className="flex items-center gap-1 text-xs text-gray-500">
             <span className="text-amber-400">★</span>
-            <span className="font-medium">{product.reviewAverage.toFixed(1)}</span>
-            <span>({product.reviewCount.toLocaleString()}件)</span>
+            <span className="font-medium">{Number(product.reviewAverage).toFixed(1)}</span>
+            <span>({Number(product.reviewCount).toLocaleString()}件)</span>
           </div>
         )}
 
         {/* 価格 */}
         <p className="text-primary font-bold text-sm">
-          ¥{product.price.toLocaleString()}
+          ¥{Number(product.price).toLocaleString()}
           <span className="text-xs font-normal text-gray-400 ml-1">（税込）</span>
         </p>
 
