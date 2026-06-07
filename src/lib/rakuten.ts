@@ -26,13 +26,13 @@ function booksUrl(endpoint: string, params: Record<string, string>): string {
   return `${BASE_BOOKS}/${endpoint}?${new URLSearchParams(params)}`;
 }
 
-// キーワード自動生成
-function keyword(name: string, group: string, category: ProductCategory): string {
+// 検索キーワード生成（常に人物名を含む）
+function keyword(name: string, category: ProductCategory): string {
   switch (category) {
-    case '写真集':      return `${name} 写真集`;
-    case '本・雑誌':    return `${name} 雑誌`;
-    case 'Blu-ray・DVD': return group ? `${group} Blu-ray` : `${name} Blu-ray`;
-    case 'グッズ':      return group ? `${group} グッズ` : `${name} グッズ`;
+    case '写真集':   return `${name} 写真集`;
+    case '本・雑誌': return `${name} 雑誌`;
+    case 'グッズ':   return `${name} グッズ`;
+    default:         return name;
   }
 }
 
@@ -41,59 +41,61 @@ function affiliateLink(affiliate: string, item: string): string {
 }
 
 // 楽天ブックス書籍検索（写真集・本・雑誌）
-async function fetchBooks(kw: string, category: ProductCategory): Promise<RakutenItem[]> {
+// 多めに取得→タイトルに人物名が含まれるものだけ表示（最大6件）
+async function fetchBooks(kw: string, name: string, category: ProductCategory): Promise<RakutenItem[]> {
   const res = await fetch(
     booksUrl('BooksBook/Search/20170404', {
       applicationId: APP_ID,
       accessKey: ACCESS_KEY,
       affiliateId: AFFILIATE_ID,
       keyword: kw,
-      hits: '6',
-      sort: 'reviewCount',
+      hits: '20', // 多めに取得してフィルタ後に6件確保
+      sort: 'standard', // 関連性順（reviewCountより正確に該当作品が上位に来る）
       outOfStockFlag: '1',
     }),
     { next: { revalidate: REVALIDATE }, headers: AUTH_HEADERS }
   );
-  if (!res.ok) throw new Error(`Books API error: ${res.status}`);
+  if (!res.ok) return []; // APIエラーは空配列として扱う（throwしない）
   const data: RakutenBooksResponse = await res.json();
   if (data.error || !data.Items?.length) return [];
 
-  return data.Items.map(({ Item }, i) => ({
-    id: `books-${kw}-${i}`,
-    title: Item.title ?? '',
-    price: Number(Item.itemPrice ?? 0),
-    reviewCount: Number(Item.reviewCount ?? 0),
-    reviewAverage: Number(Item.reviewAverage ?? 0),
-    imageUrl: Item.largeImageUrl ?? '',
-    itemUrl: Item.itemUrl ?? '',
-    affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
-    category,
-  }));
+  return data.Items
+    .map(({ Item }, i) => ({
+      id: `books-${kw}-${i}`,
+      title: Item.title ?? '',
+      price: Number(Item.itemPrice ?? 0),
+      reviewCount: Number(Item.reviewCount ?? 0),
+      reviewAverage: Number(Item.reviewAverage ?? 0),
+      imageUrl: Item.largeImageUrl ?? '',
+      itemUrl: Item.itemUrl ?? '',
+      affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
+      category,
+    }))
+    .filter((p) => p.title.includes(name)) // タイトルに人物名が含まれるものだけ
+    .slice(0, 6); // 最大6件表示
 }
 
 // 楽天ブックスDVD/Blu-ray検索
-// DVD APIはkeyword非対応: グループあり→artistName、ソロ→title で検索
-async function fetchDvd(name: string, group: string): Promise<RakutenItem[]> {
-  const searchKey = group ? 'artistName' : 'title';
-  const searchVal = group || name;
+// titleパラメータで人物名を指定→その人物が関わるDVDのみ取得
+async function fetchDvd(name: string): Promise<RakutenItem[]> {
   const res = await fetch(
     booksUrl('BooksDVD/Search/20130522', {
       applicationId: APP_ID,
       accessKey: ACCESS_KEY,
       affiliateId: AFFILIATE_ID,
-      [searchKey]: searchVal,
+      title: name, // 人物名でタイトル検索（グループ名は使わない）
       hits: '6',
       sort: 'reviewCount',
       outOfStockFlag: '1',
     } as Record<string, string>),
     { next: { revalidate: REVALIDATE }, headers: AUTH_HEADERS }
   );
-  if (!res.ok) throw new Error(`DVD API error: ${res.status}`);
+  if (!res.ok) return []; // APIエラーは空配列として扱う
   const data: RakutenDvdResponse = await res.json();
   if (data.error || !data.Items?.length) return [];
 
   return data.Items.map(({ Item }, i) => ({
-    id: `dvd-${searchVal}-${i}`,
+    id: `dvd-${name}-${i}`,
     title: Item.title ?? '',
     price: Number(Item.itemPrice ?? 0),
     reviewCount: Number(Item.reviewCount ?? 0),
@@ -106,6 +108,7 @@ async function fetchDvd(name: string, group: string): Promise<RakutenItem[]> {
 }
 
 // 楽天市場商品検索（グッズ）
+// キーワードは常に人物名を含む（'${name} グッズ'）
 async function fetchIchiba(kw: string): Promise<RakutenItem[]> {
   const res = await fetch(
     ichibaUrl('IchibaItem/Search/20260401', {
@@ -118,7 +121,7 @@ async function fetchIchiba(kw: string): Promise<RakutenItem[]> {
     }),
     { next: { revalidate: REVALIDATE }, headers: AUTH_HEADERS }
   );
-  if (!res.ok) throw new Error(`Ichiba API error: ${res.status}`);
+  if (!res.ok) return []; // APIエラーは空配列として扱う
   const data: RakutenIchibaResponse = await res.json();
   if (data.error || !data.Items?.length) return [];
 
@@ -138,26 +141,28 @@ async function fetchIchiba(kw: string): Promise<RakutenItem[]> {
 
 export async function getProductsByCategory(
   name: string,
-  group: string,
+  _group: string,
   category: ProductCategory
 ): Promise<ApiResult> {
   if (!APP_ID || !ACCESS_KEY) return { status: 'empty' };
 
-  const kw = keyword(name, group, category);
+  // 全カテゴリで必ず人物名をキーワードに含める
+  const kw = keyword(name, category);
 
   try {
     let products: RakutenItem[];
     switch (category) {
       case '写真集':
       case '本・雑誌':
-        products = (await fetchBooks(kw, category)).filter((p) =>
-          p.title.includes(name)
-        );
+        // nameフィルタとsliceはfetchBooks内で実施
+        products = await fetchBooks(kw, name, category);
         break;
       case 'Blu-ray・DVD':
-        products = await fetchDvd(name, group);
+        // groupではなくnameでtitle検索
+        products = await fetchDvd(name);
         break;
       case 'グッズ':
+        // kw = '${name} グッズ'（グループ名は使わない）
         products = await fetchIchiba(kw);
         break;
     }
