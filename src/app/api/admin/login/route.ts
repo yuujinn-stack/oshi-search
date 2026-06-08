@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// セッショントークンを生成（パスワード + シークレットからの決定論的な値）
-// Edge ランタイム対応（Buffer 不使用）
+// Unicode 対応の base64 エンコード（proxy.ts と必ず同じロジックにすること）
 export function computeSessionToken(password: string): string {
   const secret = process.env.ADMIN_SESSION_SECRET ?? 'oshi-admin-secret';
-  return btoa(`${password}:${secret}`).replace(/=/g, '');
+  const combined = `${password}:${secret}`;
+  const bytes = new TextEncoder().encode(combined);
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/=/g, '');
 }
 
 export async function POST(req: NextRequest) {
