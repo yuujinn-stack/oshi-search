@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 // セッショントークンの計算（login/route.ts と同じロジック）
-// Edge ランタイム対応（Buffer 不使用、btoa 使用）
 function computeSessionToken(password: string): string {
   const secret = process.env.ADMIN_SESSION_SECRET ?? 'oshi-admin-secret';
   return btoa(`${password}:${secret}`).replace(/=/g, '');
 }
 
-// /admin 以下の認証保護 + API レート制限
-export function middleware(req: NextRequest) {
+// /admin 以下の認証保護
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // /admin/** への全リクエストを認証チェック
@@ -18,7 +17,6 @@ export function middleware(req: NextRequest) {
 
     const adminPassword = process.env.ADMIN_PASSWORD;
     if (!adminPassword) {
-      // ADMIN_PASSWORD 未設定なら管理画面を無効化
       return new NextResponse('ADMIN_PASSWORD が設定されていません', { status: 503 });
     }
 
@@ -55,6 +53,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // /admin と /api/admin のみにmiddlewareを適用（パフォーマンス最適化）
   matcher: ['/admin/:path*', '/api/admin/:path*'],
 };

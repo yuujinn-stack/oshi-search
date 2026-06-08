@@ -59,7 +59,7 @@ export default async function AdminProductCheckPage() {
               </p>
             )}
           </div>
-          <BatchButton />
+          <BatchButton personNames={persons.map((p) => p.name)} />
         </div>
       </div>
 
