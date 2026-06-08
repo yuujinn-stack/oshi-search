@@ -1,0 +1,18 @@
+{
+  "あの": {
+    "strictMode": true,
+    "customKeywords": ["あのちゃん"],
+    "excludeKeywords": ["中古", "レンタル落ち"],
+    "checkStatus": "needs_fix"
+  },
+  "オードリー": {
+    "customKeywords": ["若林正恭", "春日俊彰"],
+    "excludeKeywords": ["中古", "レンタル落ち"],
+    "checkStatus": "unchecked"
+  },
+  "バナナマン": {
+    "customKeywords": ["設楽統", "日村勇紀"],
+    "excludeKeywords": ["中古", "レンタル落ち"],
+    "checkStatus": "unchecked"
+  }
+}

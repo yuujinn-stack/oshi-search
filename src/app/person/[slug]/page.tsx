@@ -1,11 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getPersonByName, getPersonsByGroup } from '@/lib/persons';
+import { getPersonWithConfig, getPersonsByGroup } from '@/lib/persons';
 import { getProductsByCategory } from '@/lib/rakuten';
+import { getAllVerdicts, applyVerdicts } from '@/lib/judgment-store';
 import ProductCard from '@/components/ProductCard';
 import PersonCard from '@/components/PersonCard';
-import type { ProductCategory, ApiResult } from '@/types/rakuten';
+import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -17,7 +18,7 @@ export const revalidate = 86400;
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const name = decodeURIComponent(slug);
-  const person = getPersonByName(name);
+  const person = getPersonWithConfig(name);
   if (!person) return {};
 
   const groupText = person.group ? `（${person.group}）` : '';
@@ -58,7 +59,7 @@ function ProductGrid({ result }: { result: ApiResult }) {
 export default async function PersonPage({ params }: Props) {
   const { slug } = await params;
   const name = decodeURIComponent(slug);
-  const person = getPersonByName(name);
+  const person = getPersonWithConfig(name);
   if (!person) notFound();
 
   const related = person.group
@@ -67,14 +68,36 @@ export default async function PersonPage({ params }: Props) {
         .slice(0, 4)
     : [];
 
-  // 全カテゴリを並列取得（allSettled でどれかが失敗しても他に影響しない）
-  const settled = await Promise.allSettled(
-    CATEGORIES.map((cat) => getProductsByCategory(person.name, person.group, cat))
-  );
+  // 商品取得とAI判定結果を並列で取得
+  const [verdictsResult, ...productSettled] = await Promise.allSettled([
+    getAllVerdicts(person.name),
+    ...CATEGORIES.map((cat) =>
+      getProductsByCategory(person.name, person.group, cat, person.config)
+    ),
+  ]);
+
+  const verdicts = verdictsResult.status === 'fulfilled' ? verdictsResult.value : {};
+  const strictMode = person.config.strictMode ?? false;
+  const MAX_DISPLAY = 6;
+
+  // verdict + スコアでフィルタリングして表示商品を決定
   const results: Record<ProductCategory, ApiResult> = Object.fromEntries(
     CATEGORIES.map((cat, i) => {
-      const r = settled[i];
-      return [cat, r.status === 'fulfilled' ? r.value : { status: 'error' as const }];
+      const settled = productSettled[i];
+      if (settled?.status !== 'fulfilled') return [cat, { status: 'error' as const }];
+
+      const apiResult = settled.value;
+      if (apiResult.status !== 'ok') return [cat, apiResult];
+
+      const filtered: RakutenItem[] = applyVerdicts(apiResult.products, verdicts, strictMode)
+        .slice(0, MAX_DISPLAY);
+
+      return [
+        cat,
+        filtered.length > 0
+          ? { status: 'ok' as const, products: filtered }
+          : { status: 'empty' as const },
+      ];
     })
   ) as Record<ProductCategory, ApiResult>;
 

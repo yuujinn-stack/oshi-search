@@ -71,6 +71,7 @@ export interface RakutenItem {
   affiliateUrl: string;
   shopName?: string;
   category: ProductCategory;
+  relevanceScore: number;  // ルールベーススコア（表示判定・管理画面で利用）
 }
 
 export interface ProductCardProps {
