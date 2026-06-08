@@ -4,18 +4,14 @@ import { useState } from 'react';
 import type { RakutenItem } from '@/types/rakuten';
 import type { JudgmentRecord, Verdict } from '@/lib/judgment-store';
 
-interface ProductWithVerdict extends RakutenItem {
-  judgment?: JudgmentRecord;
-}
-
-interface CategoryData {
+interface ProductData {
   status: string;
   products: RakutenItem[];
 }
 
-interface PersonData {
-  person: { name: string; group: string; config: { strictMode?: boolean; customKeywords?: string[] } };
-  categories: Record<string, CategoryData>;
+interface AdminData {
+  person: { name: string; group: string; config: { strictMode?: boolean } };
+  categories: Record<string, ProductData>;
   verdicts: Record<string, JudgmentRecord>;
 }
 
@@ -24,20 +20,24 @@ const VERDICT_BADGE: Record<Verdict, string> = {
   maybe: 'bg-yellow-100 text-yellow-700',
   unrelated: 'bg-red-100 text-red-700',
 };
-
 const VERDICT_LABEL: Record<Verdict, string> = {
   relevant: '関連あり',
   maybe: '要確認',
   unrelated: '無関係',
 };
+const SOURCE_ICON: Record<string, string> = {
+  auto: '⚙️',
+  ai: '🤖',
+  manual: '👤',
+};
 
 const CATEGORIES = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ'] as const;
 
 export default function PersonProducts({ personName }: { personName: string }) {
-  const [data, setData] = useState<PersonData | null>(null);
+  const [data, setData] = useState<AdminData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [judging, setJudging] = useState(false);
   const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState<'maybe' | 'all'>('maybe');
   const [message, setMessage] = useState('');
 
   async function load() {
@@ -53,26 +53,8 @@ export default function PersonProducts({ personName }: { personName: string }) {
   }
 
   async function handleOpen() {
-    if (!open) await load();
+    if (!open && !data) await load();
     setOpen((v) => !v);
-  }
-
-  async function handleRejudge() {
-    setJudging(true);
-    setMessage('');
-    const res = await fetch('/api/admin/rejudge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ personName, onlyBorderline: true }),
-    });
-    const result = await res.json().catch(() => ({}));
-    if (res.ok) {
-      setMessage(`AI判定完了: ${(result as { judged?: number }).judged ?? 0}件を判定`);
-      await load(); // 最新データで再描画
-    } else {
-      setMessage((result as { error?: string }).error ?? 'AI判定に失敗しました');
-    }
-    setJudging(false);
   }
 
   async function handleVerdict(productId: string, verdict: Verdict, score: number) {
@@ -81,9 +63,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ personName, productId, verdict, score }),
     });
-    if (res.ok) {
-      await load();
-    }
+    if (res.ok) await load();
   }
 
   async function handleDeleteVerdict(productId: string) {
@@ -98,135 +78,158 @@ export default function PersonProducts({ personName }: { personName: string }) {
   const strictMode = data?.person.config.strictMode ?? false;
   const threshold = strictMode ? 50 : 20;
 
-  function getScoreColor(score: number) {
-    if (score >= threshold) return 'text-green-600';
-    if (score >= 0) return 'text-yellow-600';
-    return 'text-red-600';
-  }
+  // フィルタ適用
+  const filteredProducts = (data: AdminData) =>
+    CATEGORIES.flatMap((cat) => {
+      const catData = data.categories[cat];
+      if (!catData || catData.status !== 'ok') return [];
+      return catData.products
+        .map((p) => ({ ...p, catLabel: cat, judgment: data.verdicts[p.id] }))
+        .filter((p) => {
+          if (filter === 'maybe') return p.judgment?.verdict === 'maybe' || !p.judgment;
+          return true;
+        });
+    });
+
+  const maybeCount = data
+    ? Object.values(data.verdicts).filter((v) => v.verdict === 'maybe').length
+    : 0;
+
+  const unclassifiedCount = data
+    ? CATEGORIES.flatMap((cat) => data.categories[cat]?.products ?? []).filter(
+        (p) => !data.verdicts[p.id]
+      ).length
+    : 0;
 
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden">
+      {/* ヘッダー行 */}
       <button
         onClick={handleOpen}
-        className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+        className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
       >
-        <span className="font-medium text-slate-700 text-sm">{personName}</span>
-        <span className="text-gray-400 text-xs">{open ? '▲ 閉じる' : '▼ 商品を確認する'}</span>
+        <span className="text-sm font-medium text-slate-700">{personName}</span>
+        <div className="flex items-center gap-2">
+          {data && maybeCount > 0 && (
+            <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-medium">
+              要確認 {maybeCount}件
+            </span>
+          )}
+          {data && unclassifiedCount > 0 && (
+            <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+              未判定 {unclassifiedCount}件
+            </span>
+          )}
+          <span className="text-gray-400 text-xs ml-1">{open ? '▲' : '▼'}</span>
+        </div>
       </button>
 
+      {/* 展開パネル */}
       {open && (
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-4 bg-white">
           {/* アクションバー */}
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={load}
               disabled={loading}
               className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-slate-600 transition-colors disabled:opacity-50"
             >
-              {loading ? '取得中...' : '再取得'}
+              {loading ? '更新中...' : '再読み込み'}
             </button>
-            <button
-              onClick={handleRejudge}
-              disabled={judging || loading}
-              className="text-xs px-3 py-1.5 rounded-lg bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-medium transition-colors disabled:opacity-50"
-            >
-              {judging ? 'AI判定中...' : '🤖 曖昧な商品をAI判定'}
-            </button>
-            {strictMode && (
-              <span className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full">
-                strictMode（閾値{threshold}点）
-              </span>
-            )}
-            {message && <span className="text-xs text-indigo-600">{message}</span>}
+            <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs ml-auto">
+              <button
+                onClick={() => setFilter('maybe')}
+                className={`px-3 py-1.5 ${filter === 'maybe' ? 'bg-yellow-50 text-yellow-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+              >
+                要確認のみ
+              </button>
+              <button
+                onClick={() => setFilter('all')}
+                className={`px-3 py-1.5 border-l border-gray-200 ${filter === 'all' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+              >
+                全商品
+              </button>
+            </div>
+            {message && <span className="text-xs text-red-500">{message}</span>}
           </div>
 
-          {/* カテゴリ別商品リスト */}
-          {data && CATEGORIES.map((cat) => {
-            const catData = data.categories[cat];
-            if (!catData || catData.status !== 'ok' || catData.products.length === 0) {
+          {/* 商品リスト */}
+          {data && (() => {
+            const products = filteredProducts(data);
+            if (products.length === 0) {
               return (
-                <div key={cat}>
-                  <h3 className="text-xs font-bold text-gray-500 uppercase mb-1">{cat}</h3>
-                  <p className="text-xs text-gray-400 pl-2">
-                    {catData?.status === 'error' ? 'API エラー' : '商品なし'}
-                  </p>
-                </div>
+                <p className="text-sm text-gray-400 text-center py-4">
+                  {filter === 'maybe' ? '要確認の商品はありません ✓' : 'バッチ処理を実行してください'}
+                </p>
               );
             }
-
-            const products: ProductWithVerdict[] = catData.products.map((p) => ({
-              ...p,
-              judgment: data.verdicts[p.id],
-            }));
-
             return (
-              <div key={cat}>
-                <h3 className="text-xs font-bold text-gray-500 mb-2">{cat}（{products.length}件）</h3>
-                <div className="space-y-2">
-                  {products.map((p) => {
-                    const isDisplayed = p.judgment
-                      ? p.judgment.verdict !== 'unrelated'
-                      : p.relevanceScore >= threshold;
-                    return (
-                      <div
-                        key={p.id}
-                        className={`flex items-start gap-3 p-2 rounded-lg text-xs border ${isDisplayed ? 'bg-white border-gray-100' : 'bg-gray-50 border-gray-200 opacity-60'}`}
-                      >
-                        {/* サムネイル */}
-                        {p.imageUrl && (
-                          <img src={p.imageUrl} alt="" className="w-10 h-12 object-cover rounded flex-shrink-0" />
-                        )}
-                        {/* 商品情報 */}
-                        <div className="flex-1 min-w-0">
-                          <p className="line-clamp-2 text-slate-700 font-medium">{p.title}</p>
-                          <div className="flex items-center gap-2 mt-1 flex-wrap">
-                            {/* スコア */}
-                            <span className={`font-mono ${getScoreColor(p.relevanceScore)}`}>
-                              スコア: {p.relevanceScore}
+              <div className="space-y-2">
+                {products.map((p) => {
+                  const isShown = p.judgment?.verdict === 'relevant';
+                  const isHidden = p.judgment?.verdict === 'unrelated';
+                  return (
+                    <div
+                      key={p.id}
+                      className={`flex items-start gap-3 p-2.5 rounded-lg text-xs border ${
+                        isShown ? 'border-green-100 bg-green-50/50' :
+                        isHidden ? 'border-red-100 bg-red-50/30 opacity-60' :
+                        'border-yellow-100 bg-yellow-50/50'
+                      }`}
+                    >
+                      {/* サムネイル */}
+                      {p.imageUrl && (
+                        <img src={p.imageUrl} alt="" className="w-9 h-11 object-cover rounded flex-shrink-0" />
+                      )}
+                      {/* 商品情報 */}
+                      <div className="flex-1 min-w-0">
+                        <p className="line-clamp-2 text-slate-700 font-medium leading-tight">{p.title}</p>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                          <span className="text-gray-400">{p.catLabel}</span>
+                          <span className={`font-mono ${p.relevanceScore >= threshold ? 'text-green-600' : p.relevanceScore < 0 ? 'text-red-500' : 'text-yellow-600'}`}>
+                            {p.relevanceScore}点
+                          </span>
+                          {p.judgment ? (
+                            <span className={`px-1.5 py-0.5 rounded ${VERDICT_BADGE[p.judgment.verdict]}`}>
+                              {SOURCE_ICON[p.judgment.source]} {VERDICT_LABEL[p.judgment.verdict]}
+                              {p.judgment.reason ? ` — ${p.judgment.reason}` : ''}
                             </span>
-                            {/* AI/手動判定バッジ */}
-                            {p.judgment && (
-                              <span className={`px-1.5 py-0.5 rounded text-xs ${VERDICT_BADGE[p.judgment.verdict]}`}>
-                                {p.judgment.source === 'ai' ? '🤖' : '👤'} {VERDICT_LABEL[p.judgment.verdict]}
-                                {p.judgment.reason ? ` (${p.judgment.reason})` : ''}
-                              </span>
-                            )}
-                            {/* 表示状態 */}
-                            <span className={`px-1.5 py-0.5 rounded ${isDisplayed ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'}`}>
-                              {isDisplayed ? '表示中' : '非表示'}
-                            </span>
-                          </div>
-                        </div>
-                        {/* 手動判定ボタン */}
-                        <div className="flex flex-col gap-1 flex-shrink-0">
-                          <button
-                            onClick={() => handleVerdict(p.id, 'relevant', p.relevanceScore)}
-                            className="text-xs px-2 py-0.5 rounded bg-green-100 hover:bg-green-200 text-green-700"
-                          >
-                            関連あり
-                          </button>
-                          <button
-                            onClick={() => handleVerdict(p.id, 'unrelated', p.relevanceScore)}
-                            className="text-xs px-2 py-0.5 rounded bg-red-100 hover:bg-red-200 text-red-700"
-                          >
-                            無関係
-                          </button>
-                          {p.judgment && (
-                            <button
-                              onClick={() => handleDeleteVerdict(p.id)}
-                              className="text-xs px-2 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-500"
-                            >
-                              リセット
-                            </button>
+                          ) : (
+                            <span className="text-gray-400 italic">未判定</span>
                           )}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+                      {/* 判定ボタン */}
+                      <div className="flex flex-col gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => handleVerdict(p.id, 'relevant', p.relevanceScore)}
+                          disabled={p.judgment?.verdict === 'relevant'}
+                          className="text-xs px-2 py-1 rounded bg-green-100 hover:bg-green-200 text-green-700 disabled:opacity-40"
+                        >
+                          表示
+                        </button>
+                        <button
+                          onClick={() => handleVerdict(p.id, 'unrelated', p.relevanceScore)}
+                          disabled={p.judgment?.verdict === 'unrelated'}
+                          className="text-xs px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 disabled:opacity-40"
+                        >
+                          非表示
+                        </button>
+                        {p.judgment && (
+                          <button
+                            onClick={() => handleDeleteVerdict(p.id)}
+                            className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-500"
+                          >
+                            リセット
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             );
-          })}
+          })()}
         </div>
       )}
     </div>

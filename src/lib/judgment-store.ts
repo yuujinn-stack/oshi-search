@@ -8,7 +8,7 @@ export type Verdict = 'relevant' | 'maybe' | 'unrelated';
 export interface JudgmentRecord {
   verdict: Verdict;
   score: number;
-  source: 'ai' | 'manual';
+  source: 'auto' | 'ai' | 'manual'; // auto=ルール自動判定、ai=OpenAI判定、manual=管理者判定
   reason?: string;
   timestamp: number;
 }
@@ -43,7 +43,7 @@ export async function saveVerdict(
   productId: string,
   verdict: Verdict,
   score: number,
-  source: 'ai' | 'manual',
+  source: 'auto' | 'ai' | 'manual',
   reason?: string,
 ): Promise<void> {
   const redis = getRedis();

@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getPersonWithConfig, getPersonsByGroup } from '@/lib/persons';
-import { getProductsByCategory } from '@/lib/rakuten';
-import { getAllVerdicts, applyVerdicts } from '@/lib/judgment-store';
+import { getAllStoredProducts } from '@/lib/product-store';
+import { getAllVerdicts } from '@/lib/judgment-store';
 import ProductCard from '@/components/ProductCard';
 import PersonCard from '@/components/PersonCard';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
@@ -12,8 +12,9 @@ interface Props {
   params: Promise<{ slug: string }>;
 }
 
-// 24時間ごとに再検証（初回リクエスト時にレンダリングしてキャッシュ）
-export const revalidate = 86400;
+// Redis から読み取るだけなので ISR キャッシュは短くしてもよいが、
+// 商品判定の変動頻度に合わせて 1 時間に設定
+export const revalidate = 3600;
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
@@ -38,12 +39,27 @@ const GENRE_BADGE: Record<string, string> = {
 };
 
 const CATEGORIES: ProductCategory[] = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ'];
+const MAX_DISPLAY = 6;
 
 function ProductGrid({ result }: { result: ApiResult }) {
-  if (result.status === 'error' || result.status === 'empty') {
+  if (result.status === 'error') {
     return (
       <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
-        {result.status === 'error' ? '現在商品情報を取得できません' : '該当商品が見つかりませんでした'}
+        現在商品情報を取得できません
+      </div>
+    );
+  }
+  if (result.status === 'no_data') {
+    return (
+      <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
+        商品情報を準備中です。しばらくお待ちください。
+      </div>
+    );
+  }
+  if (result.status === 'empty') {
+    return (
+      <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
+        該当商品が見つかりませんでした
       </div>
     );
   }
@@ -68,34 +84,30 @@ export default async function PersonPage({ params }: Props) {
         .slice(0, 4)
     : [];
 
-  // 商品取得とAI判定結果を並列で取得
-  const [verdictsResult, ...productSettled] = await Promise.allSettled([
+  // Redis から保存済み商品と判定結果を並列取得
+  // ユーザーページでは楽天 API / OpenAI API を一切呼ばない
+  const [storedData, verdicts] = await Promise.all([
+    getAllStoredProducts(person.name),
     getAllVerdicts(person.name),
-    ...CATEGORIES.map((cat) =>
-      getProductsByCategory(person.name, person.group, cat, person.config)
-    ),
   ]);
 
-  const verdicts = verdictsResult.status === 'fulfilled' ? verdictsResult.value : {};
-  const strictMode = person.config.strictMode ?? false;
-  const MAX_DISPLAY = 6;
-
-  // verdict + スコアでフィルタリングして表示商品を決定
+  // カテゴリごとに「relevant」判定済み商品のみを抽出して表示
   const results: Record<ProductCategory, ApiResult> = Object.fromEntries(
-    CATEGORIES.map((cat, i) => {
-      const settled = productSettled[i];
-      if (settled?.status !== 'fulfilled') return [cat, { status: 'error' as const }];
+    CATEGORIES.map((cat) => {
+      const catData = storedData[cat];
 
-      const apiResult = settled.value;
-      if (apiResult.status !== 'ok') return [cat, apiResult];
+      // バッチ未実行（Redis にデータなし）
+      if (!catData) return [cat, { status: 'no_data' as const }];
 
-      const filtered: RakutenItem[] = applyVerdicts(apiResult.products, verdicts, strictMode)
+      // 「relevant」の商品のみ表示（maybe / unrelated / 未判定 は非表示）
+      const displayed: RakutenItem[] = catData.products
+        .filter((p) => verdicts[p.id]?.verdict === 'relevant')
         .slice(0, MAX_DISPLAY);
 
       return [
         cat,
-        filtered.length > 0
-          ? { status: 'ok' as const, products: filtered }
+        displayed.length > 0
+          ? { status: 'ok' as const, products: displayed }
           : { status: 'empty' as const },
       ];
     })

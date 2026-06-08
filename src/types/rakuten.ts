@@ -71,7 +71,7 @@ export interface RakutenItem {
   affiliateUrl: string;
   shopName?: string;
   category: ProductCategory;
-  relevanceScore: number;  // ルールベーススコア（表示判定・管理画面で利用）
+  relevanceScore: number;
 }
 
 export interface ProductCardProps {
@@ -80,5 +80,6 @@ export interface ProductCardProps {
 
 export type ApiResult =
   | { status: 'ok'; products: RakutenItem[] }
-  | { status: 'empty' }
+  | { status: 'empty' }     // バッチ済みだが関連商品なし
+  | { status: 'no_data' }   // バッチ未実行（初回セットアップ中）
   | { status: 'error' };
