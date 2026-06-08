@@ -1,68 +1,34 @@
-import fs from 'fs';
-import path from 'path';
 import type { Person, PersonConfig, PersonWithConfig, Genre } from '@/types/person';
+import personsRaw from '../../data/persons_master.json';
+import personsConfigRaw from '../../data/persons_config.json';
 
-function parseCSV(content: string): Person[] {
-  const lines = content.trim().split('\n');
-  const persons: Person[] = [];
+// JSON を型付き配列に変換（fs.readFileSync を使わないのでサーバーレス環境でも安全）
+const ALL_PERSONS: Person[] = (personsRaw as Array<{ name: string; group: string; genre: string }>).map(
+  (p) => ({ name: p.name, group: p.group, genre: p.genre as Genre })
+);
 
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const parts = line.split(',');
-    const name = parts[0]?.trim();
-    const group = parts[1]?.trim() ?? '';
-    const genre = parts[2]?.trim();
-    if (!name || !genre) continue;
-    persons.push({ name, group, genre: genre as Genre });
-  }
+const PERSONS_CONFIG: Record<string, PersonConfig> = personsConfigRaw as Record<string, PersonConfig>;
 
-  return persons;
-}
-
-// --- CSVキャッシュ ---
-let personCache: Person[] | null = null;
-
+// --- 人物一覧 ---
 export function getAllPersons(): Person[] {
-  if (personCache) return personCache;
-  const csvPath = path.join(process.cwd(), 'data', 'persons_master.csv');
-  const content = fs.readFileSync(csvPath, 'utf-8');
-  personCache = parseCSV(content);
-  return personCache;
-}
-
-// --- 補助設定キャッシュ（persons_config.json）---
-let configCache: Record<string, PersonConfig> | null = null;
-
-function getPersonsConfig(): Record<string, PersonConfig> {
-  if (configCache) return configCache;
-  const configPath = path.join(process.cwd(), 'data', 'persons_config.json');
-  try {
-    const content = fs.readFileSync(configPath, 'utf-8');
-    configCache = JSON.parse(content) as Record<string, PersonConfig>;
-  } catch {
-    configCache = {};
-  }
-  return configCache;
+  return ALL_PERSONS;
 }
 
 // --- PersonWithConfig ヘルパー ---
 export function getPersonWithConfig(name: string): PersonWithConfig | undefined {
   const person = getPersonByName(name);
   if (!person) return undefined;
-  const config = getPersonsConfig()[name] ?? {};
-  return { ...person, config };
+  return { ...person, config: PERSONS_CONFIG[name] ?? {} };
 }
 
 export function getAllPersonsWithConfig(): PersonWithConfig[] {
-  const config = getPersonsConfig();
-  return getAllPersons().map((p) => ({ ...p, config: config[p.name] ?? {} }));
+  return ALL_PERSONS.map((p) => ({ ...p, config: PERSONS_CONFIG[p.name] ?? {} }));
 }
 
 // --- 既存の検索ユーティリティ ---
 export function searchPersons(query: string): Person[] {
   const q = query.toLowerCase();
-  return getAllPersons().filter(
+  return ALL_PERSONS.filter(
     (p) =>
       p.name.toLowerCase().includes(q) ||
       p.group.toLowerCase().includes(q) ||
@@ -71,19 +37,19 @@ export function searchPersons(query: string): Person[] {
 }
 
 export function getPersonByName(name: string): Person | undefined {
-  return getAllPersons().find((p) => p.name === name);
+  return ALL_PERSONS.find((p) => p.name === name);
 }
 
 export function getPersonsByGroup(group: string): Person[] {
-  return getAllPersons().filter((p) => p.group === group);
+  return ALL_PERSONS.filter((p) => p.group === group);
 }
 
 export function getPersonsByGenre(genre: string): Person[] {
-  return getAllPersons().filter((p) => p.genre === genre);
+  return ALL_PERSONS.filter((p) => p.genre === genre);
 }
 
 export function getAllGroups(): string[] {
-  return [...new Set(getAllPersons().map((p) => p.group).filter(Boolean))];
+  return [...new Set(ALL_PERSONS.map((p) => p.group).filter(Boolean))];
 }
 
 export const ALL_GENRES: Genre[] = ['坂道', '芸人', 'テレビ', 'アーティスト', '俳優'];
