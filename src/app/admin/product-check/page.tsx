@@ -17,8 +17,30 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default async function AdminProductCheckPage() {
-  const persons = getAllPersonsWithConfig();
-  const batchMeta = await getBatchMeta();
+  // エラーを画面に表示して本番クラッシュの原因を特定する（診断用）
+  let persons: Awaited<ReturnType<typeof getAllPersonsWithConfig>>;
+  let batchMeta: Awaited<ReturnType<typeof getBatchMeta>>;
+  try {
+    persons = getAllPersonsWithConfig();
+  } catch (err) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-16 text-center">
+        <p className="text-red-600 font-bold text-lg mb-2">getAllPersonsWithConfig エラー</p>
+        <pre className="text-left bg-red-50 p-4 rounded text-xs overflow-auto">{String(err)}</pre>
+      </div>
+    );
+  }
+  try {
+    batchMeta = await getBatchMeta();
+  } catch (err) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-16 text-center">
+        <p className="text-red-600 font-bold text-lg mb-2">getBatchMeta エラー</p>
+        <pre className="text-left bg-red-50 p-4 rounded text-xs overflow-auto">{String(err)}</pre>
+        <p className="text-sm text-gray-500 mt-4">Vercel 環境変数: UPSTASH_REDIS_REST_URL={process.env.UPSTASH_REDIS_REST_URL ? '設定あり' : '未設定'}</p>
+      </div>
+    );
+  }
 
   const sorted = [...persons].sort((a, b) => {
     const order: Record<string, number> = { needs_fix: 0, unchecked: 1, ok: 2 };
