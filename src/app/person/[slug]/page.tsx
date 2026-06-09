@@ -99,8 +99,14 @@ export default async function PersonPage({ params }: Props) {
       // バッチ未実行（Redis にデータなし）
       if (!catData) return [cat, { status: 'no_data' as const }];
 
+      // products が配列でない場合（データ破損・形式不一致）も安全に処理
+      if (!Array.isArray(catData.products)) {
+        console.error('[PersonPage] unexpected catData.products format', { name: person.name, cat, type: typeof catData.products });
+      }
+      const rawProducts = Array.isArray(catData.products) ? catData.products : [];
+
       // 「relevant」の商品のみ表示（maybe / unrelated / 未判定 は非表示）
-      const displayed: RakutenItem[] = catData.products
+      const displayed: RakutenItem[] = rawProducts
         .filter((p) => verdicts[p.id]?.verdict === 'relevant')
         .slice(0, MAX_DISPLAY);
 
