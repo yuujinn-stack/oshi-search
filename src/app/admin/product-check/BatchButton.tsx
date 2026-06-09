@@ -15,6 +15,7 @@ interface Summary {
   totalAiJudged: number;
   errors: Array<{ name: string; error: string }>;
   error?: string;
+  needsRelogin?: boolean;
 }
 
 export default function BatchButton({ personNames }: Props) {
@@ -25,8 +26,7 @@ export default function BatchButton({ personNames }: Props) {
   async function handleRun() {
     if (
       !confirm(
-        `全${personNames.length}人分の商品取得とAI判定を実行します。\n` +
-          '完了まで数分かかります。よろしいですか？',
+        `全${personNames.length}人分の商品取得とAI判定を実行します。\n完了まで数分かかります。よろしいですか？`,
       )
     )
       return;
@@ -54,12 +54,40 @@ export default function BatchButton({ personNames }: Props) {
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-          // Redis 未設定など、全件に影響するエラーは即座に中断
-          if (res.status === 503) {
-            setSummary({ ok: false, elapsed: '', personCount: 0, totalStored: 0, totalAutoClassified: 0, totalAiJudged: 0, errors: [], error: errData.error });
+
+          // 認証エラー → ログアウトして再ログインが必要
+          if (res.status === 401) {
+            setSummary({
+              ok: false,
+              elapsed: '',
+              personCount: 0,
+              totalStored: 0,
+              totalAutoClassified: 0,
+              totalAiJudged: 0,
+              errors: [],
+              error: 'セッションが切れました。一度ログアウトして再ログインしてください。',
+              needsRelogin: true,
+            });
             setRunning(false);
             return;
           }
+
+          // Redis 未設定など全件に影響するエラー → 即中断
+          if (res.status === 503) {
+            setSummary({
+              ok: false,
+              elapsed: '',
+              personCount: 0,
+              totalStored: 0,
+              totalAutoClassified: 0,
+              totalAiJudged: 0,
+              errors: [],
+              error: errData.error,
+            });
+            setRunning(false);
+            return;
+          }
+
           errors.push({ name, error: errData.error ?? `HTTP ${res.status}` });
           continue;
         }
@@ -88,7 +116,10 @@ export default function BatchButton({ personNames }: Props) {
     });
     setRunning(false);
 
-    setTimeout(() => window.location.reload(), 1500);
+    // 何か保存できた場合のみリロード（エラーのみの場合はリロードしない）
+    if (stored > 0) {
+      setTimeout(() => window.location.reload(), 2000);
+    }
   }
 
   return (
@@ -131,7 +162,17 @@ export default function BatchButton({ personNames }: Props) {
               )}
             </>
           ) : (
-            summary.error ?? 'エラーが発生しました'
+            <>
+              {summary.error ?? 'エラーが発生しました'}
+              {summary.needsRelogin && (
+                <>
+                  <br />
+                  <a href="/api/admin/logout" className="underline font-bold">
+                    ログアウトする
+                  </a>
+                </>
+              )}
+            </>
           )}
         </div>
       )}
