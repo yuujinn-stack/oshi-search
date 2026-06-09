@@ -38,7 +38,12 @@ const GENRE_BADGE: Record<string, string> = {
   '俳優': 'bg-green-100 text-green-700',
 };
 
-const CATEGORIES: ProductCategory[] = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ'];
+// 表示セクション定義（「写真集」と「本・雑誌」を統合して表示）
+const DISPLAY_SECTIONS: Array<{ label: string; sources: ProductCategory[] }> = [
+  { label: '本・写真集', sources: ['写真集', '本・雑誌'] },
+  { label: 'Blu-ray・DVD', sources: ['Blu-ray・DVD'] },
+  { label: 'グッズ', sources: ['グッズ'] },
+];
 const MAX_DISPLAY = 6;
 
 function ProductGrid({ result }: { result: ApiResult }) {
@@ -91,33 +96,33 @@ export default async function PersonPage({ params }: Props) {
     getAllVerdicts(person.name),
   ]);
 
-  // カテゴリごとに「relevant」判定済み商品のみを抽出して表示
-  const results: Record<ProductCategory, ApiResult> = Object.fromEntries(
-    CATEGORIES.map((cat) => {
-      const catData = storedData[cat];
+  // 表示セクションごとに「relevant」判定済み商品を統合して抽出
+  const results: Record<string, ApiResult> = Object.fromEntries(
+    DISPLAY_SECTIONS.map(({ label, sources }) => {
+      // いずれのソースカテゴリもデータなし → バッチ未実行
+      const hasAnyData = sources.some((cat) => !!storedData[cat]);
+      if (!hasAnyData) return [label, { status: 'no_data' as const }];
 
-      // バッチ未実行（Redis にデータなし）
-      if (!catData) return [cat, { status: 'no_data' as const }];
+      // 複数ソースの「relevant」商品をまとめて取得
+      const relevant: RakutenItem[] = sources.flatMap((cat) => {
+        const catData = storedData[cat];
+        if (!catData) return [];
+        if (!Array.isArray(catData.products)) {
+          console.error('[PersonPage] unexpected catData.products format', { name: person.name, cat, type: typeof catData.products });
+          return [];
+        }
+        return catData.products.filter((p) => verdicts[p.id]?.verdict === 'relevant');
+      });
 
-      // products が配列でない場合（データ破損・形式不一致）も安全に処理
-      if (!Array.isArray(catData.products)) {
-        console.error('[PersonPage] unexpected catData.products format', { name: person.name, cat, type: typeof catData.products });
-      }
-      const rawProducts = Array.isArray(catData.products) ? catData.products : [];
-
-      // 「relevant」の商品のみ表示（maybe / unrelated / 未判定 は非表示）
-      const displayed: RakutenItem[] = rawProducts
-        .filter((p) => verdicts[p.id]?.verdict === 'relevant')
-        .slice(0, MAX_DISPLAY);
-
+      const displayed = relevant.slice(0, MAX_DISPLAY);
       return [
-        cat,
+        label,
         displayed.length > 0
           ? { status: 'ok' as const, products: displayed }
           : { status: 'empty' as const },
       ];
     })
-  ) as Record<ProductCategory, ApiResult>;
+  );
 
   return (
     <div>
@@ -160,10 +165,10 @@ export default async function PersonPage({ params }: Props) {
 
       {/* 商品セクション */}
       <div className="max-w-4xl mx-auto px-4 py-10 space-y-10">
-        {CATEGORIES.map((category) => (
-          <section key={category}>
-            <h2 className="text-base font-bold text-slate-800 mb-4">{category}</h2>
-            <ProductGrid result={results[category]} />
+        {DISPLAY_SECTIONS.map(({ label }) => (
+          <section key={label}>
+            <h2 className="text-base font-bold text-slate-800 mb-4">{label}</h2>
+            <ProductGrid result={results[label]} />
           </section>
         ))}
 
