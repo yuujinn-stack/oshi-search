@@ -26,14 +26,12 @@ export async function judgeProduct(
   group: string,
 ): Promise<JudgeResult | null> {
   const openai = getClient();
-  if (!openai) return null;
+  if (!openai) {
+    console.log('[ai-judge] SKIP: OPENAI_API_KEY が未設定のため AI 判定をスキップ');
+    return null;
+  }
 
-  try {
-    const res = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // 安価なモデル（関連性判定は高精度モデル不要）
-      messages: [{
-        role: 'user',
-        content: `日本の芸能人・有名人と商品の関連性を判定してください。
+  const prompt = `日本の芸能人・有名人と商品の関連性を判定してください。
 
 人物: ${personName}${group ? `（${group}）` : ''}
 商品名: 「${productTitle}」
@@ -44,8 +42,14 @@ JSON形式のみで回答してください:
 判定基準:
 - relevant: その人物の写真集・著書・出演作・グッズ等、明らかに関連している
 - maybe: グループ関連・共著・関連の可能性がある（要確認）
-- unrelated: 無関係、または別の同名人物の商品`,
-      }],
+- unrelated: 無関係、または別の同名人物の商品`;
+
+  console.log(`[ai-judge] リクエスト: ${personName} | 「${productTitle.slice(0, 50)}」`);
+
+  try {
+    const res = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
       max_tokens: 80,
       temperature: 0,
@@ -58,8 +62,10 @@ JSON形式のみで回答してください:
       ? (parsed.verdict as Verdict)
       : 'maybe';
 
+    console.log(`[ai-judge] 結果: ${verdict} | 理由: ${parsed.reason ?? '(なし)'} | 「${productTitle.slice(0, 40)}」`);
     return { verdict, reason: parsed.reason ?? '' };
-  } catch {
+  } catch (err) {
+    console.error(`[ai-judge] エラー: ${personName} | 「${productTitle.slice(0, 40)}」 |`, err);
     return null;
   }
 }

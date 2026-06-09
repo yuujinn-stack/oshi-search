@@ -48,6 +48,8 @@ export async function processPerson(
   let skipped = 0;
   const borderline: RakutenItem[] = [];
 
+  console.log(`[batch] ===== 開始: ${personName} (strictMode=${strictMode}) =====`);
+
   // カテゴリ毎に楽天API取得 → Redis保存 → 自動判定
   for (const cat of CATEGORIES) {
     const result = await getProductsByCategory(
@@ -55,34 +57,43 @@ export async function processPerson(
     );
     const products = result.status === 'ok' ? result.products : [];
 
+    console.log(`[batch] ${cat}: ${products.length}件取得 (API status=${result.status})`);
+
     // 取得した商品を全件 Redis に保存（管理画面で全商品を確認できるように）
     await storeProducts(person.name, cat, products);
     stored += products.length;
 
     for (const p of products) {
       if (existingVerdicts[p.id]) {
-        skipped++; // 既判定: スキップ（AIを再実行しない）
+        console.log(`[batch]   SKIP(既判定) score=${p.relevanceScore} verdict=${existingVerdicts[p.id].verdict} | ${p.title.slice(0, 40)}`);
+        skipped++;
         continue;
       }
 
       if (isDisplayable(p.relevanceScore, strictMode)) {
         // スコアが閾値以上 → 確実に関連あり → 自動判定
+        console.log(`[batch]   AUTO→relevant  score=${p.relevanceScore} | ${p.title.slice(0, 40)}`);
         await saveVerdict(person.name, p.id, 'relevant', p.relevanceScore, 'auto');
         autoClassified++;
       } else if (p.relevanceScore < 0) {
         // 除外キーワード一致 → 確実に無関係 → 自動判定
+        console.log(`[batch]   AUTO→unrelated score=${p.relevanceScore} | ${p.title.slice(0, 40)}`);
         await saveVerdict(person.name, p.id, 'unrelated', p.relevanceScore, 'auto');
         autoClassified++;
       } else if (isBorderline(p.relevanceScore, strictMode)) {
         // 曖昧な商品 → AI判定候補へ
+        console.log(`[batch]   BORDERLINE    score=${p.relevanceScore} | ${p.title.slice(0, 40)}`);
         borderline.push(p);
       }
     }
   }
 
+  console.log(`[batch] ボーダーライン計: ${borderline.length}件 / AI残り枠: ${remainingAiCalls.count}件 / OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? '設定あり' : '未設定'}`);
+
   // AI判定（バッチ全体の上限に達していなければ実行）
   if (borderline.length > 0 && remainingAiCalls.count > 0 && process.env.OPENAI_API_KEY) {
     const toJudge = borderline.slice(0, remainingAiCalls.count);
+    console.log(`[batch] AI判定開始: ${toJudge.length}件`);
     remainingAiCalls.count -= toJudge.length;
 
     const aiResults = await judgeProducts(
@@ -92,16 +103,23 @@ export async function processPerson(
     );
 
     for (const { id, result } of aiResults) {
-      if (!result) continue;
+      if (!result) {
+        console.log(`[batch]   AI→null (APIエラーか未設定) id=${id}`);
+        continue;
+      }
       const product = toJudge.find((p) => p.id === id);
       if (!product) continue;
+      console.log(`[batch]   AI→${result.verdict} score=${product.relevanceScore} reason="${result.reason}" | ${product.title.slice(0, 40)}`);
       await saveVerdict(
         person.name, id, result.verdict, product.relevanceScore, 'ai', result.reason
       );
       aiJudged++;
     }
+  } else if (borderline.length > 0) {
+    console.log(`[batch] AI判定スキップ: borderline=${borderline.length}件, aiCalls残=${remainingAiCalls.count}, apiKey=${!!process.env.OPENAI_API_KEY}`);
   }
 
+  console.log(`[batch] ===== 完了: ${personName} stored=${stored} auto=${autoClassified} ai=${aiJudged} skip=${skipped} =====`);
   return { personName, stored, autoClassified, aiJudged, skipped };
 }
 
