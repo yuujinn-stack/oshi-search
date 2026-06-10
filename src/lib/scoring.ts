@@ -42,6 +42,19 @@ export function calcScore(input: ScoreInput, ctx: ScoreContext): number {
     if (group && input.artistName.includes(group)) score += 20;
   }
 
+  // 人物名がどのフィールドにも含まれない（グループ名のみ一致）場合は
+  // グループ名の合算（タイトル+著者で最大50点）が閾値を超えないよう 35 に制限する
+  // → AI 判定に回して個人との関連性を確認させる
+  const personNameFound =
+    title.includes(name) ||
+    (nameNorm !== name && title.includes(nameNorm)) ||
+    (input.author ? normalize(input.author).includes(nameNorm) : false) ||
+    (input.artistName ? normalize(input.artistName).includes(nameNorm) : false);
+
+  if (!personNameFound && score > 0) {
+    score = Math.min(score, 35);
+  }
+
   // 除外キーワードが商品名にある場合はスコアを大幅減点
   for (const kw of excludeKeywords) {
     if (title.includes(kw)) {
