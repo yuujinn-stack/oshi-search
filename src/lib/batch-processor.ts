@@ -64,10 +64,16 @@ export async function processPerson(
     stored += products.length;
 
     for (const p of products) {
-      if (existingVerdicts[p.id]) {
-        console.log(`[batch]   SKIP(既判定) score=${p.relevanceScore} verdict=${existingVerdicts[p.id].verdict} | ${p.title.slice(0, 40)}`);
-        skipped++;
-        continue;
+      const existing = existingVerdicts[p.id];
+      if (existing) {
+        // 手動判定・AI判定は保持（コストが高い・管理者の意図的な操作）
+        if (existing.source === 'manual' || existing.source === 'ai') {
+          console.log(`[batch]   SKIP(${existing.source}判定済) verdict=${existing.verdict} | ${p.title.slice(0, 40)}`);
+          skipped++;
+          continue;
+        }
+        // auto判定はスコアリングルール変更に追随するため毎回再計算
+        console.log(`[batch]   RE-EVAL(auto再計算) prev=${existing.verdict} score=${p.relevanceScore} | ${p.title.slice(0, 40)}`);
       }
 
       if (isDisplayable(p.relevanceScore, strictMode)) {
