@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 import { getPersonWithConfig, getPersonsByGroup } from '@/lib/persons';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
-import ProductCard from '@/components/ProductCard';
+import ProductSectionList from '@/components/ProductSectionList';
 import PersonCard from '@/components/PersonCard';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
 
@@ -44,38 +44,6 @@ const DISPLAY_SECTIONS: Array<{ label: string; sources: ProductCategory[] }> = [
   { label: 'Blu-ray・DVD', sources: ['Blu-ray・DVD'] },
   { label: 'グッズ', sources: ['グッズ'] },
 ];
-const MAX_DISPLAY = 6;
-
-function ProductGrid({ result }: { result: ApiResult }) {
-  if (result.status === 'error') {
-    return (
-      <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
-        現在商品情報を取得できません
-      </div>
-    );
-  }
-  if (result.status === 'no_data') {
-    return (
-      <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
-        商品情報を準備中です。しばらくお待ちください。
-      </div>
-    );
-  }
-  if (result.status === 'empty') {
-    return (
-      <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
-        該当商品が見つかりませんでした
-      </div>
-    );
-  }
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-      {result.products.map((product) => (
-        <ProductCard key={product.id} product={product} />
-      ))}
-    </div>
-  );
-}
 
 export default async function PersonPage({ params }: Props) {
   const { slug } = await params;
@@ -103,7 +71,9 @@ export default async function PersonPage({ params }: Props) {
       const hasAnyData = sources.some((cat) => !!storedData[cat]);
       if (!hasAnyData) return [label, { status: 'no_data' as const }];
 
-      // 複数ソースの「relevant」商品をまとめて取得
+      // 表示条件:
+      //   手動採用 → 常に表示
+      //   AI判定  → related かつ score >= 70 のみ表示（高確信度のみ）
       const relevant: RakutenItem[] = sources.flatMap((cat) => {
         const catData = storedData[cat];
         if (!catData) return [];
@@ -111,14 +81,18 @@ export default async function PersonPage({ params }: Props) {
           console.error('[PersonPage] unexpected catData.products format', { name: person.name, cat, type: typeof catData.products });
           return [];
         }
-        return catData.products.filter((p) => verdicts[p.id]?.verdict === 'related');
+        return catData.products.filter((p) => {
+          const v = verdicts[p.id];
+          if (!v || v.verdict !== 'related') return false;
+          if (v.source === 'manual') return true;   // 手動採用は常に表示
+          return v.score >= 70;                      // AI判定は高確信度のみ
+        });
       });
 
-      const displayed = relevant.slice(0, MAX_DISPLAY);
       return [
         label,
-        displayed.length > 0
-          ? { status: 'ok' as const, products: displayed }
+        relevant.length > 0
+          ? { status: 'ok' as const, products: relevant }
           : { status: 'empty' as const },
       ];
     })
@@ -168,7 +142,7 @@ export default async function PersonPage({ params }: Props) {
         {DISPLAY_SECTIONS.map(({ label }) => (
           <section key={label}>
             <h2 className="text-base font-bold text-slate-800 mb-4">{label}</h2>
-            <ProductGrid result={results[label]} />
+            <ProductSectionList result={results[label]} />
           </section>
         ))}
 
