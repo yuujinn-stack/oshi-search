@@ -120,7 +120,8 @@ async function fetchBooksByAuthor(
 }
 
 // ---------------------------------------------------------------
-// Blu-ray・DVD: artistName で人物名指定
+// Blu-ray・DVD: artistName で検索（個人名 → グループ名 → customKeywords）
+//   アイドル等はグループ名でDVD登録されているため group でも検索する
 // ---------------------------------------------------------------
 async function fetchDvd(
   name: string,
@@ -130,42 +131,78 @@ async function fetchDvd(
 ): Promise<RakutenItem[]> {
   const excludeKeywords = config.excludeKeywords ?? [];
 
-  const res = await fetch(
-    booksUrl('BooksDVD/Search/20130522', {
-      applicationId: APP_ID,
-      accessKey: ACCESS_KEY,
-      affiliateId: AFFILIATE_ID,
-      artistName: name,
-      hits: '20',
-      sort: 'reviewCount',
-      outOfStockFlag: '1',
-    } as Record<string, string>),
-    {
-      cache: cacheMode,
-      next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined,
-      headers: AUTH_HEADERS,
+  async function fetchByArtist(artistName: string): Promise<RakutenItem[]> {
+    console.log(`[rakuten] DVD検索: artistName="${artistName}"`);
+    const res = await fetch(
+      booksUrl('BooksDVD/Search/20130522', {
+        applicationId: APP_ID,
+        accessKey: ACCESS_KEY,
+        affiliateId: AFFILIATE_ID,
+        artistName,
+        hits: '20',
+        sort: 'standard',
+        outOfStockFlag: '1',
+      } as Record<string, string>),
+      {
+        cache: cacheMode,
+        next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined,
+        headers: AUTH_HEADERS,
+      }
+    );
+    if (!res.ok) {
+      console.log(`[rakuten] DVD APIエラー: HTTP ${res.status} artistName="${artistName}"`);
+      return [];
     }
-  );
-  if (!res.ok) return [];
-  const data: RakutenDvdResponse = await res.json();
-  if (data.error || !data.Items?.length) return [];
+    const data: RakutenDvdResponse = await res.json();
+    if (data.error) {
+      console.log(`[rakuten] DVD APIエラーレスポンス: ${JSON.stringify(data.error)} artistName="${artistName}"`);
+      return [];
+    }
+    const total = data.count ?? 0;
+    const returned = data.Items?.length ?? 0;
+    console.log(`[rakuten] DVD取得: ${returned}件 (総数=${total}) artistName="${artistName}"`);
+    if (!data.Items?.length) return [];
 
-  return data.Items.map(({ Item }) => ({
-    id: stableId('dv', Item.itemUrl ?? ''),
-    title: Item.title ?? '',
-    artistName: Item.artistName ?? '',
-    price: Number(Item.itemPrice ?? 0),
-    reviewCount: Number(Item.reviewCount ?? 0),
-    reviewAverage: Number(Item.reviewAverage ?? 0),
-    imageUrl: Item.largeImageUrl ?? '',
-    itemUrl: Item.itemUrl ?? '',
-    affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
-    category: 'Blu-ray・DVD' as const,
-    relevanceScore: calcScore(
-      { title: Item.title ?? '', artistName: Item.artistName ?? '' },
-      { name, group, excludeKeywords }
-    ),
-  }));
+    return data.Items.map(({ Item }) => ({
+      id: stableId('dv', Item.itemUrl ?? ''),
+      title: Item.title ?? '',
+      artistName: Item.artistName ?? '',
+      price: Number(Item.itemPrice ?? 0),
+      reviewCount: Number(Item.reviewCount ?? 0),
+      reviewAverage: Number(Item.reviewAverage ?? 0),
+      imageUrl: Item.largeImageUrl ?? '',
+      itemUrl: Item.itemUrl ?? '',
+      affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
+      category: 'Blu-ray・DVD' as const,
+      relevanceScore: calcScore(
+        { title: Item.title ?? '', artistName: Item.artistName ?? '' },
+        { name, group, excludeKeywords }
+      ),
+    }));
+  }
+
+  const all: RakutenItem[] = [];
+
+  // 1. 個人名で検索
+  all.push(...await fetchByArtist(name));
+
+  // 2. グループ名で検索（グループのDVD = 本人出演の可能性が高い）
+  if (group) {
+    all.push(...await fetchByArtist(group));
+  }
+
+  // 3. customKeywords でも検索（別名・愛称等）
+  for (const kw of config.customKeywords ?? []) {
+    all.push(...await fetchByArtist(kw));
+  }
+
+  // 重複除去（IDが同じものは最初のものを優先）
+  const seen = new Set<string>();
+  return all.filter((p) => {
+    if (seen.has(p.id)) return false;
+    seen.add(p.id);
+    return true;
+  });
 }
 
 // ---------------------------------------------------------------
