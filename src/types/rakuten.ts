@@ -12,6 +12,8 @@ export interface RakutenIchibaItem {
   affiliateUrl: string;
   mediumImageUrls: Array<{ imageUrl: string }>;
   shopName: string;
+  catchcopy?: string;
+  itemCaption?: string;
 }
 
 export interface RakutenIchibaResponse {
@@ -72,6 +74,11 @@ export interface RakutenItem {
   shopName?: string;
   category: ProductCategory;
   relevanceScore: number;
+  // AI判定に渡す追加フィールド（取得できた場合のみ）
+  author?: string;       // Books: 著者名
+  artistName?: string;   // DVD: アーティスト名
+  catchcopy?: string;    // Ichiba: キャッチコピー
+  description?: string;  // Ichiba: 商品説明（先頭200文字）
 }
 
 export interface ProductCardProps {

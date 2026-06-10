@@ -3,7 +3,7 @@
 
 import { getRedis } from './redis';
 
-export type Verdict = 'relevant' | 'maybe' | 'unrelated';
+export type Verdict = 'related' | 'uncertain' | 'unrelated';
 
 export interface JudgmentRecord {
   verdict: Verdict;
@@ -59,22 +59,14 @@ export async function deleteVerdict(personName: string, productId: string): Prom
   await redis.hdel(hashKey(personName), productId);
 }
 
-// 判定結果を適用して商品を表示/非表示にフィルタリング
-// - verdict='relevant' → 表示
-// - verdict='maybe' → 表示（管理者確認推奨）
+// 判定結果を適用して商品を表示/非表示にフィルタリング（ユーザーページ用）
+// - verdict='related'   → 表示
+// - verdict='uncertain' → 非表示（管理者確認待ち）
 // - verdict='unrelated' → 非表示
-// - 判定なし → score で判定
-export function applyVerdicts<T extends { id: string; relevanceScore: number }>(
+// - 判定なし           → 非表示（バッチ未実行）
+export function applyVerdicts<T extends { id: string }>(
   products: T[],
   verdicts: Record<string, JudgmentRecord>,
-  strictMode: boolean,
 ): T[] {
-  const threshold = strictMode ? 50 : 20;
-  return products.filter((p) => {
-    const judgment = verdicts[p.id];
-    if (judgment) {
-      return judgment.verdict !== 'unrelated';
-    }
-    return p.relevanceScore >= threshold;
-  });
+  return products.filter((p) => verdicts[p.id]?.verdict === 'related');
 }

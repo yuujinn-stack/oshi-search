@@ -2,6 +2,7 @@ import { getAllPersonsWithConfig } from '@/lib/persons';
 import { getBatchMeta } from '@/lib/product-store';
 import BatchButton from './BatchButton';
 import PersonProducts from './PersonProducts';
+import UncertainQueue from './UncertainQueue';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,11 +87,11 @@ export default async function AdminProductCheckPage() {
       </div>
 
       {/* フロー説明 */}
-      <div className="grid grid-cols-3 gap-3 mb-8 text-center text-xs">
+      <div className="grid grid-cols-3 gap-3 mb-6 text-center text-xs">
         {[
-          { icon: '⚙️', label: 'ルール判定', desc: 'スコア≥閾値 → 自動で「表示」' },
-          { icon: '🤖', label: 'AI判定', desc: '曖昧な商品 → GPT-4o-mini で分類' },
-          { icon: '👤', label: '手動確認', desc: '「要確認」→ このページで判定' },
+          { icon: '🤖', label: 'AI判定', desc: '全商品を GPT-4o-mini で分類' },
+          { icon: '✅', label: 'related → 表示', desc: '本人作品・グッズ等、自動で掲載' },
+          { icon: '👤', label: 'uncertain → 確認', desc: '「AI判定待ち」欄で採用/非表示を選択' },
         ].map((s) => (
           <div key={s.label} className="bg-gray-50 rounded-xl p-3">
             <div className="text-2xl mb-1">{s.icon}</div>
@@ -99,6 +100,9 @@ export default async function AdminProductCheckPage() {
           </div>
         ))}
       </div>
+
+      {/* AI判定待ちキュー */}
+      <UncertainQueue />
 
       {/* 人物リスト */}
       <div className="space-y-3">

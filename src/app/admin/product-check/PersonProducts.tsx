@@ -16,14 +16,14 @@ interface AdminData {
 }
 
 const VERDICT_BADGE: Record<Verdict, string> = {
-  relevant: 'bg-green-100 text-green-700',
-  maybe: 'bg-yellow-100 text-yellow-700',
+  related: 'bg-green-100 text-green-700',
+  uncertain: 'bg-yellow-100 text-yellow-700',
   unrelated: 'bg-red-100 text-red-700',
 };
 const VERDICT_LABEL: Record<Verdict, string> = {
-  relevant: '関連あり',
-  maybe: '要確認',
-  unrelated: '無関係',
+  related: '関連あり',
+  uncertain: 'AI判定待ち',
+  unrelated: '非表示',
 };
 const SOURCE_ICON: Record<string, string> = {
   auto: '⚙️',
@@ -37,7 +37,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
   const [data, setData] = useState<AdminData | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState<'maybe' | 'all'>('maybe');
+  const [filter, setFilter] = useState<'uncertain' | 'all'>('uncertain');
   const [message, setMessage] = useState('');
 
   async function load() {
@@ -75,8 +75,6 @@ export default function PersonProducts({ personName }: { personName: string }) {
     if (res.ok) await load();
   }
 
-  const strictMode = data?.person.config.strictMode ?? false;
-  const threshold = strictMode ? 50 : 20;
 
   // フィルタ適用
   const filteredProducts = (data: AdminData) =>
@@ -86,19 +84,13 @@ export default function PersonProducts({ personName }: { personName: string }) {
       return catData.products
         .map((p) => ({ ...p, catLabel: cat, judgment: data.verdicts[p.id] }))
         .filter((p) => {
-          if (filter === 'maybe') return p.judgment?.verdict === 'maybe' || !p.judgment;
+          if (filter === 'uncertain') return p.judgment?.verdict === 'uncertain';
           return true;
         });
     });
 
-  const maybeCount = data
-    ? Object.values(data.verdicts).filter((v) => v.verdict === 'maybe').length
-    : 0;
-
-  const unclassifiedCount = data
-    ? CATEGORIES.flatMap((cat) => data.categories[cat]?.products ?? []).filter(
-        (p) => !data.verdicts[p.id]
-      ).length
+  const uncertainCount = data
+    ? Object.values(data.verdicts).filter((v) => v.verdict === 'uncertain').length
     : 0;
 
   return (
@@ -110,14 +102,9 @@ export default function PersonProducts({ personName }: { personName: string }) {
       >
         <span className="text-sm font-medium text-slate-700">{personName}</span>
         <div className="flex items-center gap-2">
-          {data && maybeCount > 0 && (
+          {data && uncertainCount > 0 && (
             <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-medium">
-              要確認 {maybeCount}件
-            </span>
-          )}
-          {data && unclassifiedCount > 0 && (
-            <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
-              未判定 {unclassifiedCount}件
+              AI判定待ち {uncertainCount}件
             </span>
           )}
           <span className="text-gray-400 text-xs ml-1">{open ? '▲' : '▼'}</span>
@@ -138,10 +125,10 @@ export default function PersonProducts({ personName }: { personName: string }) {
             </button>
             <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs ml-auto">
               <button
-                onClick={() => setFilter('maybe')}
-                className={`px-3 py-1.5 ${filter === 'maybe' ? 'bg-yellow-50 text-yellow-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                onClick={() => setFilter('uncertain')}
+                className={`px-3 py-1.5 ${filter === 'uncertain' ? 'bg-yellow-50 text-yellow-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
               >
-                要確認のみ
+                AI判定待ちのみ
               </button>
               <button
                 onClick={() => setFilter('all')}
@@ -159,14 +146,14 @@ export default function PersonProducts({ personName }: { personName: string }) {
             if (products.length === 0) {
               return (
                 <p className="text-sm text-gray-400 text-center py-4">
-                  {filter === 'maybe' ? '要確認の商品はありません ✓' : 'バッチ処理を実行してください'}
+                  {filter === 'uncertain' ? 'AI判定待ちの商品はありません ✓' : 'バッチ処理を実行してください'}
                 </p>
               );
             }
             return (
               <div className="space-y-2">
                 {products.map((p) => {
-                  const isShown = p.judgment?.verdict === 'relevant';
+                  const isShown = p.judgment?.verdict === 'related';
                   const isHidden = p.judgment?.verdict === 'unrelated';
                   return (
                     <div
@@ -186,8 +173,8 @@ export default function PersonProducts({ personName }: { personName: string }) {
                         <p className="line-clamp-2 text-slate-700 font-medium leading-tight">{p.title}</p>
                         <div className="flex flex-wrap items-center gap-1.5 mt-1">
                           <span className="text-gray-400">{p.catLabel}</span>
-                          <span className={`font-mono ${p.relevanceScore >= threshold ? 'text-green-600' : p.relevanceScore < 0 ? 'text-red-500' : 'text-yellow-600'}`}>
-                            {p.relevanceScore}点
+                          <span className="font-mono text-gray-400">
+                            score {p.relevanceScore}
                           </span>
                           {p.judgment ? (
                             <span className={`px-1.5 py-0.5 rounded ${VERDICT_BADGE[p.judgment.verdict]}`}>
@@ -202,11 +189,11 @@ export default function PersonProducts({ personName }: { personName: string }) {
                       {/* 判定ボタン */}
                       <div className="flex flex-col gap-1 flex-shrink-0">
                         <button
-                          onClick={() => handleVerdict(p.id, 'relevant', p.relevanceScore)}
-                          disabled={p.judgment?.verdict === 'relevant'}
+                          onClick={() => handleVerdict(p.id, 'related', p.relevanceScore)}
+                          disabled={p.judgment?.verdict === 'related'}
                           className="text-xs px-2 py-1 rounded bg-green-100 hover:bg-green-200 text-green-700 disabled:opacity-40"
                         >
-                          表示
+                          採用
                         </button>
                         <button
                           onClick={() => handleVerdict(p.id, 'unrelated', p.relevanceScore)}

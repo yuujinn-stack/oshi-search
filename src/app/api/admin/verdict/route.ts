@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'personName, productId, verdict が必要です' }, { status: 400 });
   }
 
-  const validVerdicts: Verdict[] = ['relevant', 'maybe', 'unrelated'];
+  const validVerdicts: Verdict[] = ['related', 'uncertain', 'unrelated'];
   if (!validVerdicts.includes(verdict as Verdict)) {
     return NextResponse.json({ error: '無効な verdict です' }, { status: 400 });
   }

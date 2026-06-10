@@ -11,7 +11,6 @@ interface Summary {
   elapsed: string;
   personCount: number;
   totalStored: number;
-  totalAutoClassified: number;
   totalAiJudged: number;
   errors: Array<{ name: string; error: string }>;
   error?: string;
@@ -36,7 +35,6 @@ export default function BatchButton({ personNames }: Props) {
     setProgress({ current: 0, total: personNames.length, currentName: '' });
 
     let stored = 0;
-    let autoClassified = 0;
     let aiJudged = 0;
     const errors: Array<{ name: string; error: string }> = [];
     const startedAt = Date.now();
@@ -62,8 +60,7 @@ export default function BatchButton({ personNames }: Props) {
               elapsed: '',
               personCount: 0,
               totalStored: 0,
-              totalAutoClassified: 0,
-              totalAiJudged: 0,
+                            totalAiJudged: 0,
               errors: [],
               error: 'セッションが切れました。一度ログアウトして再ログインしてください。',
               needsRelogin: true,
@@ -79,8 +76,7 @@ export default function BatchButton({ personNames }: Props) {
               elapsed: '',
               personCount: 0,
               totalStored: 0,
-              totalAutoClassified: 0,
-              totalAiJudged: 0,
+                            totalAiJudged: 0,
               errors: [],
               error: errData.error,
             });
@@ -95,7 +91,6 @@ export default function BatchButton({ personNames }: Props) {
         const data = await res.json();
         if (data.person) {
           stored += data.person.stored ?? 0;
-          autoClassified += data.person.autoClassified ?? 0;
           aiJudged += data.person.aiJudged ?? 0;
           if (data.person.error) errors.push({ name, error: data.person.error });
         }
@@ -110,7 +105,6 @@ export default function BatchButton({ personNames }: Props) {
       elapsed: `${elapsed}秒`,
       personCount: personNames.length,
       totalStored: stored,
-      totalAutoClassified: autoClassified,
       totalAiJudged: aiJudged,
       errors,
     });
@@ -153,7 +147,7 @@ export default function BatchButton({ personNames }: Props) {
               <br />
               {summary.personCount}人 / 商品{summary.totalStored}件取得
               <br />
-              自動判定 {summary.totalAutoClassified}件 / AI判定 {summary.totalAiJudged}件
+              AI判定 {summary.totalAiJudged}件
               {summary.errors.length > 0 && (
                 <>
                   <br />

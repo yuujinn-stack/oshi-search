@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { processAllPersons, processPerson } from '@/lib/batch-processor';
 import { getRedis } from '@/lib/redis';
 
@@ -29,24 +30,26 @@ export async function POST(req: NextRequest) {
   try {
     if (body.personName) {
       // 1人だけ処理（クライアントが1人ずつ呼ぶ方式）
-      const remainingAiCalls = { count: 10 };
-      const result = await processPerson(body.personName, remainingAiCalls);
+      const result = await processPerson(body.personName);
+      revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
       return NextResponse.json({ ok: true, person: result });
     }
 
     // 後方互換: body なしの場合は全員処理（Cron から直接呼ぶ場合など）
     const summary = await processAllPersons();
+    // 全人物の ISR キャッシュをクリア
+    for (const p of summary.persons) {
+      revalidatePath(`/person/${encodeURIComponent(p.personName)}`);
+    }
     const elapsed = ((summary.finishedAt - summary.startedAt) / 1000).toFixed(1);
     const errors = summary.persons.filter((p) => p.error);
     const totalStored = summary.persons.reduce((s, r) => s + r.stored, 0);
-    const totalAuto = summary.persons.reduce((s, r) => s + r.autoClassified, 0);
 
     return NextResponse.json({
       ok: true,
       elapsed: `${elapsed}秒`,
       personCount: summary.persons.length,
       totalStored,
-      totalAutoClassified: totalAuto,
       totalAiJudged: summary.totalAiCalls,
       errors: errors.map((e) => ({ name: e.personName, error: e.error })),
     });

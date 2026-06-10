@@ -12,9 +12,9 @@ interface Props {
   params: Promise<{ slug: string }>;
 }
 
-// Redis から読み取るだけなので ISR キャッシュは短くしてもよいが、
-// 商品判定の変動頻度に合わせて 1 時間に設定
-export const revalidate = 3600;
+// バッチ実行後すぐに判定結果を反映するため毎リクエスト SSR
+// ISR だとバッチ更新が最大 1 時間反映されない
+export const dynamic = 'force-dynamic';
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
@@ -111,7 +111,7 @@ export default async function PersonPage({ params }: Props) {
           console.error('[PersonPage] unexpected catData.products format', { name: person.name, cat, type: typeof catData.products });
           return [];
         }
-        return catData.products.filter((p) => verdicts[p.id]?.verdict === 'relevant');
+        return catData.products.filter((p) => verdicts[p.id]?.verdict === 'related');
       });
 
       const displayed = relevant.slice(0, MAX_DISPLAY);

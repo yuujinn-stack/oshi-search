@@ -83,6 +83,7 @@ async function fetchBooksByAuthor(
     return data.Items.map(({ Item }) => ({
       id: stableId('bk', Item.itemUrl ?? ''),
       title: Item.title ?? '',
+      author: Item.author ?? '',
       price: Number(Item.itemPrice ?? 0),
       reviewCount: Number(Item.reviewCount ?? 0),
       reviewAverage: Number(Item.reviewAverage ?? 0),
@@ -152,6 +153,7 @@ async function fetchDvd(
   return data.Items.map(({ Item }) => ({
     id: stableId('dv', Item.itemUrl ?? ''),
     title: Item.title ?? '',
+    artistName: Item.artistName ?? '',
     price: Number(Item.itemPrice ?? 0),
     reviewCount: Number(Item.reviewCount ?? 0),
     reviewAverage: Number(Item.reviewAverage ?? 0),
@@ -201,13 +203,15 @@ async function fetchIchiba(
     return data.Items.map(({ Item }) => ({
       id: stableId('ic', Item.itemUrl ?? ''),
       title: Item.itemName ?? '',
+      shopName: Item.shopName ?? '',
+      catchcopy: Item.catchcopy ?? '',
+      description: (Item.itemCaption ?? '').replace(/<[^>]+>/g, '').slice(0, 200),
       price: Number(Item.itemPrice ?? 0),
       reviewCount: Number(Item.reviewCount ?? 0),
       reviewAverage: Number(Item.reviewAverage ?? 0),
       imageUrl: Item.mediumImageUrls?.[0]?.imageUrl ?? '',
       itemUrl: Item.itemUrl ?? '',
       affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
-      shopName: Item.shopName ?? '',
       category: 'グッズ' as const,
       relevanceScore: calcScore(
         { title: Item.itemName ?? '' },
