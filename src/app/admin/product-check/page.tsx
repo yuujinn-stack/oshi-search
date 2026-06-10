@@ -3,6 +3,7 @@ import { getBatchMeta } from '@/lib/product-store';
 import BatchButton from './BatchButton';
 import PersonProducts from './PersonProducts';
 import UncertainQueue from './UncertainQueue';
+import PersonAiJudgeButton from './PersonAiJudgeButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -124,9 +125,12 @@ export default async function AdminProductCheckPage() {
                     +{p.config.customKeywords.join(', ')}
                   </span>
                 )}
-                <span className={`text-xs px-2 py-0.5 rounded-full ml-auto flex-shrink-0 ${STATUS_BADGE[status]}`}>
-                  {STATUS_LABEL[status]}
-                </span>
+                <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                  <PersonAiJudgeButton personName={p.name} />
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_BADGE[status]}`}>
+                    {STATUS_LABEL[status]}
+                  </span>
+                </div>
               </div>
               <PersonProducts personName={p.name} />
             </div>
