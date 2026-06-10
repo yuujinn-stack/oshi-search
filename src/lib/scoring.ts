@@ -67,15 +67,16 @@ export function calcScore(input: ScoreInput, ctx: ScoreContext): number {
 }
 
 // 表示するかどうかを判定
-// 通常: 40点以上（人物名がタイトルか著者に含まれる必要がある）
-// strictMode: 60点以上（短い名前・同名商品が多い人物向け）
-// グループ名のみ一致（+30）では閾値に届かない設計
+// 通常: 50点以上（タイトルに人物名を含む商品のみ自動表示）
+//   著者フィールドのみの一致（+40）はボーダーラインへ落としてAI判定させる
+// strictMode: 70点以上（短い名前・同名商品が多い人物向け）
+// グループ名のみ一致（最大35点に制限済み）は絶対に閾値に届かない設計
 export function isDisplayable(score: number, strictMode: boolean): boolean {
-  return strictMode ? score >= 60 : score >= 40;
+  return strictMode ? score >= 70 : score >= 50;
 }
 
 // AIで判定すべき曖昧な商品かどうか（ルールで確実に判定できない範囲）
 export function isBorderline(score: number, strictMode: boolean): boolean {
-  const threshold = strictMode ? 60 : 40;
+  const threshold = strictMode ? 70 : 50;
   return score >= 0 && score < threshold;
 }
