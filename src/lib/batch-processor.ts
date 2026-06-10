@@ -48,7 +48,10 @@ export async function processPerson(
   let skipped = 0;
   const borderline: RakutenItem[] = [];
 
-  console.log(`[batch] ===== 開始: ${personName} (strictMode=${strictMode}) =====`);
+  const apiKeyStatus = process.env.OPENAI_API_KEY
+    ? `設定あり(${process.env.OPENAI_API_KEY.length}文字)`
+    : '★未設定★';
+  console.log(`[batch] ===== 開始: ${personName} (strictMode=${strictMode}, OPENAI_API_KEY=${apiKeyStatus}) =====`);
 
   // カテゴリ毎に楽天API取得 → Redis保存 → 自動判定
   for (const cat of CATEGORIES) {
@@ -94,12 +97,18 @@ export async function processPerson(
     }
   }
 
-  console.log(`[batch] ボーダーライン計: ${borderline.length}件 / AI残り枠: ${remainingAiCalls.count}件 / OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? '設定あり' : '未設定'}`);
+  // AI判定 - 条件を個別にログして原因を特定しやすくする
+  console.log(`[batch] --- AI判定チェック: borderline=${borderline.length}件 / 残枠=${remainingAiCalls.count}件 / OPENAI_API_KEY=${apiKeyStatus} ---`);
 
-  // AI判定（バッチ全体の上限に達していなければ実行）
-  if (borderline.length > 0 && remainingAiCalls.count > 0 && process.env.OPENAI_API_KEY) {
+  if (borderline.length === 0) {
+    console.log(`[batch] AI判定なし: borderline商品0件（全商品がルールで判定済み or 取得0件）`);
+  } else if (remainingAiCalls.count <= 0) {
+    console.log(`[batch] AI判定スキップ: AI呼び出し枠が0件`);
+  } else if (!process.env.OPENAI_API_KEY) {
+    console.log(`[batch] ★AI判定スキップ: OPENAI_API_KEY が未設定★ Vercelダッシュボードで環境変数を確認してください`);
+  } else {
     const toJudge = borderline.slice(0, remainingAiCalls.count);
-    console.log(`[batch] AI判定開始: ${toJudge.length}件`);
+    console.log(`[batch] AI判定開始: ${toJudge.length}件を送信`);
     remainingAiCalls.count -= toJudge.length;
 
     const aiResults = await judgeProducts(
@@ -110,7 +119,7 @@ export async function processPerson(
 
     for (const { id, result } of aiResults) {
       if (!result) {
-        console.log(`[batch]   AI→null (APIエラーか未設定) id=${id}`);
+        console.log(`[batch]   AI→null (APIエラー) id=${id}`);
         continue;
       }
       const product = toJudge.find((p) => p.id === id);
@@ -121,8 +130,6 @@ export async function processPerson(
       );
       aiJudged++;
     }
-  } else if (borderline.length > 0) {
-    console.log(`[batch] AI判定スキップ: borderline=${borderline.length}件, aiCalls残=${remainingAiCalls.count}, apiKey=${!!process.env.OPENAI_API_KEY}`);
   }
 
   console.log(`[batch] ===== 完了: ${personName} stored=${stored} auto=${autoClassified} ai=${aiJudged} skip=${skipped} =====`);
