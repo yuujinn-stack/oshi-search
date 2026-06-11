@@ -43,6 +43,17 @@ function stableId(prefix: string, itemUrl: string): string {
   return `${prefix}-${itemUrl.replace(/\W/g, '').slice(-16)}`;
 }
 
+// 問題商品追跡キーワード（Vercelログで取得漏れ商品を全ステップ追跡する）
+const TRACK_TITLE_TERMS = ['感情の隙間', '1st写真集', '2nd写真集', '3rd写真集'];
+
+function logTrackedItem(foundBySearch: string, id: string, title: string, itemUrl: string): void {
+  const matched = TRACK_TITLE_TERMS.filter((t) => title.includes(t));
+  if (matched.length === 0) return;
+  console.log(`[rakuten:TRACK] 📌 発見: search="${foundBySearch}" | id=${id}`);
+  console.log(`[rakuten:TRACK]   title="${title}"`);
+  console.log(`[rakuten:TRACK]   url=${itemUrl}`);
+}
+
 // Books API 汎用ページ取得（author / title / keyword パラメータに対応）
 async function fetchBooksPages(
   paramKey: 'author' | 'title' | 'keyword',
@@ -83,22 +94,28 @@ async function fetchBooksPages(
     const total = data.count ?? 0;
     console.log(`[rakuten] Books(${paramKey})取得: ${returned}件 (総数=${total}) ${paramKey}="${paramValue}" page=${page}`);
 
-    results.push(...data.Items.map(({ Item }) => ({
-      id: stableId('bk', Item.itemUrl ?? ''),
-      title: Item.title ?? '',
-      author: Item.author ?? '',
-      price: Number(Item.itemPrice ?? 0),
-      reviewCount: Number(Item.reviewCount ?? 0),
-      reviewAverage: Number(Item.reviewAverage ?? 0),
-      imageUrl: Item.largeImageUrl ?? '',
-      itemUrl: Item.itemUrl ?? '',
-      affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
-      category,
-      relevanceScore: calcScore(
-        { title: Item.title ?? '', author: Item.author ?? '' },
-        { name, group, excludeKeywords }
-      ),
-    })));
+    for (const { Item } of data.Items) {
+      const id = stableId('bk', Item.itemUrl ?? '');
+      const title = Item.title ?? '';
+      const itemUrl = Item.itemUrl ?? '';
+      logTrackedItem(`${paramKey}:${paramValue}`, id, title, itemUrl);
+      results.push({
+        id,
+        title,
+        author: Item.author ?? '',
+        price: Number(Item.itemPrice ?? 0),
+        reviewCount: Number(Item.reviewCount ?? 0),
+        reviewAverage: Number(Item.reviewAverage ?? 0),
+        imageUrl: Item.largeImageUrl ?? '',
+        itemUrl,
+        affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', itemUrl),
+        category,
+        relevanceScore: calcScore(
+          { title, author: Item.author ?? '' },
+          { name, group, excludeKeywords }
+        ),
+      });
+    }
 
     if (returned < 30) break;
   }
@@ -137,7 +154,17 @@ async function fetchBooksAuthor(
 
   // 2. keyword 補完検索: 著者名の書き方が「グループ名 個人名」等でも捕捉
   //    英題写真集（タイトルに日本語名がない場合）・別名義作品・カレンダーもカバー
-  const keywordSupplements = [`${name} 写真集`, `${name} カレンダー`];
+  //    「乃木坂46 筒井あやめ 写真集」のようにグループ+名前+カテゴリで検索することで
+  //    著者がグループ名名義でも取得可能にする
+  const keywordSupplements = [
+    `${name} 写真集`,         // 筒井あやめ 写真集
+    `${name} 1st写真集`,      // 筒井あやめ 1st写真集（デビュー写真集の定型キーワード）
+    `${name} カレンダー`,     // 筒井あやめ カレンダー
+  ];
+  if (group) {
+    keywordSupplements.push(`${group} ${name} 写真集`);    // 乃木坂46 筒井あやめ 写真集
+    keywordSupplements.push(`${group} ${name} 1st写真集`); // 乃木坂46 筒井あやめ 1st写真集
+  }
   if (config.realName && config.realName !== name) {
     keywordSupplements.push(`${config.realName} 写真集`);
   }
@@ -273,6 +300,98 @@ async function fetchDvd(
 }
 
 // ---------------------------------------------------------------
+// CD: artistName でアーティスト名（個人名・グループ名）を検索
+//   グループCD＝本人出演の可能性が高いため group でも検索
+//   hits=30, 個人は最大2ページ / グループは最大3ページ
+// ---------------------------------------------------------------
+async function fetchCd(
+  name: string,
+  group: string,
+  config: PersonConfig,
+  cacheMode: RequestCache = 'default',
+): Promise<RakutenItem[]> {
+  const excludeKeywords = config.excludeKeywords ?? [];
+
+  async function fetchByArtist(artistName: string, maxPages = 2): Promise<RakutenItem[]> {
+    const items: RakutenItem[] = [];
+    for (let page = 1; page <= maxPages; page++) {
+      console.log(`[rakuten] CD検索: artistName="${artistName}" page=${page}`);
+      const res = await fetch(
+        booksUrl('BooksCD/Search/20130522', {
+          applicationId: APP_ID,
+          accessKey: ACCESS_KEY,
+          affiliateId: AFFILIATE_ID,
+          artistName,
+          hits: '30',
+          sort: 'standard',
+          outOfStockFlag: '1',
+          page: String(page),
+        } as Record<string, string>),
+        { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
+      );
+      if (!res.ok) {
+        console.log(`[rakuten] CD APIエラー: HTTP ${res.status} artistName="${artistName}" page=${page}`);
+        break;
+      }
+      const data: RakutenDvdResponse = await res.json();
+      if (data.error) {
+        console.log(`[rakuten] CD APIエラー: ${JSON.stringify(data.error)} artistName="${artistName}"`);
+        break;
+      }
+      if (!data.Items?.length) break;
+
+      const returned = data.Items.length;
+      const total = data.count ?? 0;
+      console.log(`[rakuten] CD取得: ${returned}件 (総数=${total}) artistName="${artistName}" page=${page}`);
+
+      items.push(...data.Items.map(({ Item }) => ({
+        id: stableId('cd', Item.itemUrl ?? ''),
+        title: Item.title ?? '',
+        artistName: Item.artistName ?? '',
+        price: Number(Item.itemPrice ?? 0),
+        reviewCount: Number(Item.reviewCount ?? 0),
+        reviewAverage: Number(Item.reviewAverage ?? 0),
+        imageUrl: Item.largeImageUrl ?? '',
+        itemUrl: Item.itemUrl ?? '',
+        affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
+        category: 'CD' as const,
+        relevanceScore: calcScore(
+          { title: Item.title ?? '', artistName: Item.artistName ?? '' },
+          { name, group, excludeKeywords }
+        ),
+      })));
+
+      if (returned < 30) break;
+    }
+    return items;
+  }
+
+  const all: RakutenItem[] = [];
+
+  // 1. 個人名で検索（ソロ活動CD）
+  all.push(...await fetchByArtist(name));
+
+  // 2. グループ名で検索（グループCD = 本人出演の可能性が高い）
+  if (group) {
+    all.push(...await fetchByArtist(group, 3));
+  }
+
+  // 3. aliases/customKeywords でも検索
+  for (const kw of [...(config.aliases ?? []), ...(config.customKeywords ?? [])]) {
+    if (kw !== name && kw !== group) {
+      all.push(...await fetchByArtist(kw));
+    }
+  }
+
+  const seen = new Set<string>();
+  return all.filter((p) => {
+    if (seen.has(p.id)) return false;
+    seen.add(p.id);
+    return true;
+  });
+}
+
+// ---------------------------------------------------------------
 // グッズ: keyword に '${name} グッズ' 等を指定
 //   グループ名/aliases/customKeywords でも検索、hits=30、最大2ページ
 // ---------------------------------------------------------------
@@ -384,6 +503,9 @@ export async function getProductsByCategory(
         break;
       case 'グッズ':
         products = await fetchIchiba(name, group, config, cacheMode);
+        break;
+      case 'CD':
+        products = await fetchCd(name, group, config, cacheMode);
         break;
     }
     // スコアで降順ソートして返す（フィルタリングは呼び出し元で行う）

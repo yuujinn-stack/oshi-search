@@ -6,11 +6,22 @@ import { getAllPersonsWithConfig } from './persons';
 import { getProductsByCategory } from './rakuten';
 import { storeProducts, saveBatchMeta, CATEGORIES } from './product-store';
 import { getAllVerdicts, saveVerdict } from './judgment-store';
-import { judgeProducts } from './ai-judge';
+import { judgeProducts, shouldAutoApprove } from './ai-judge';
 import type { RakutenItem } from '@/types/rakuten';
 
 // 1人あたりの AI 呼び出し上限（Vercel の 300s タイムアウト対策）
 const MAX_AI_PER_PERSON = 150;
+
+// 問題商品追跡キーワード（Vercelログで各ステップを追跡する）
+const TRACK_TITLE_TERMS = ['感情の隙間', '1st写真集', '2nd写真集', '3rd写真集'];
+
+function isTracked(title: string): boolean {
+  return TRACK_TITLE_TERMS.some((t) => title.includes(t));
+}
+
+function trackLog(msg: string): void {
+  console.log(`[batch:TRACK] ${msg}`);
+}
 
 export interface PersonBatchResult {
   personName: string;
@@ -30,8 +41,10 @@ export interface BatchSummary {
 }
 
 // 人物1人分のバッチ処理
+// forceRejudge=true の場合: ai判定済み商品も再判定（manual は常に保持）
 export async function processPerson(
   personName: string,
+  forceRejudge = false,
 ): Promise<PersonBatchResult> {
   const all = getAllPersonsWithConfig();
   const person = all.find((p) => p.name === personName);
@@ -64,14 +77,38 @@ export async function processPerson(
 
     console.log(`[batch] ${cat}: ${products.length}件取得 (API status=${result.status})`);
 
+    // 追跡対象商品がAPI取得されたかログ（ステップ1・2）
+    for (const p of products) {
+      if (isTracked(p.title)) {
+        trackLog(`✅ ステップ1: 楽天API取得 | cat=${cat}`);
+        trackLog(`   title="${p.title}"`);
+        trackLog(`   id=${p.id} | url=${p.itemUrl}`);
+        trackLog(`   → ステップ2: Redis(storeProducts)へ保存開始`);
+      }
+    }
+
     await storeProducts(person.name, cat, products);
     stored += products.length;
 
+    // storeProducts 完了後ログ（ステップ2）
+    for (const p of products) {
+      if (isTracked(p.title)) {
+        trackLog(`✅ ステップ2: Redis保存完了 | cat=${cat} | id=${p.id}`);
+      }
+    }
+
     let catExcluded = 0, catSkipped = 0, catNew = 0;
     for (const p of products) {
+      const tracked = isTracked(p.title);
+
       // 除外キーワード一致 → 即 unrelated（AI 不要な明確なケース）
       if (excludeKeywords.some((kw) => p.title.includes(kw))) {
         console.log(`[batch]   除外KW一致: id=${p.id} | "${p.title.slice(0, 60)}"`);
+        if (tracked) {
+          trackLog(`❌ ステップ3: 除外KWにより unrelated 保存`);
+          trackLog(`   title="${p.title}"`);
+          trackLog(`   id=${p.id} | 公開表示: ❌ 表示対象外（除外KW）`);
+        }
         await saveVerdict(person.name, p.id, 'unrelated', 0, 'auto', '除外キーワード一致');
         excluded++;
         catExcluded++;
@@ -79,14 +116,53 @@ export async function processPerson(
       }
 
       const existing = existingVerdicts[p.id];
-      if (existing && (existing.source === 'manual' || existing.source === 'ai')) {
-        // 手動・AI 判定済みは保持（再判定コストを避ける）
+      // manual は常に保持。ai判定済みは forceRejudge=false のときのみスキップ
+      if (existing?.source === 'manual') {
+        if (tracked) {
+          const displayable = existing.verdict === 'related' && existing.score >= 70;
+          trackLog(`⏭ ステップ3: manual判定済みのためスキップ`);
+          trackLog(`   title="${p.title}"`);
+          trackLog(`   id=${p.id} | verdict=${existing.verdict} | score=${existing.score}`);
+          trackLog(`   公開表示: ${displayable ? '✅ 表示対象（related & score>=70）' : `❌ 表示対象外（verdict=${existing.verdict}, score=${existing.score}）`}`);
+        }
+        skipped++;
+        catSkipped++;
+        continue;
+      }
+      if (!forceRejudge && existing?.source === 'ai') {
+        if (tracked) {
+          const displayable = existing.verdict === 'related' && existing.score >= 70;
+          trackLog(`⏭ ステップ3: ai判定済みのためスキップ（再判定するには forceRejudge=true）`);
+          trackLog(`   title="${p.title}"`);
+          trackLog(`   id=${p.id} | verdict=${existing.verdict} | score=${existing.score}`);
+          trackLog(`   公開表示: ${displayable ? '✅ 表示対象（related & score>=70）' : `❌ 表示対象外（verdict=${existing.verdict}, score=${existing.score}）`}`);
+          if (existing.reason) trackLog(`   AI理由: "${existing.reason}"`);
+        }
         skipped++;
         catSkipped++;
         continue;
       }
 
-      // 未判定 or auto判定 → AI 判定キューへ
+      // 事前自動承認チェック: 人物名+写真集がタイトルに含まれる場合は AI 呼び出し不要で related 確定
+      if (shouldAutoApprove(p, person)) {
+        if (tracked) {
+          trackLog(`✅ ステップ3: 事前自動承認（名前+写真集がタイトルに一致）`);
+          trackLog(`   title="${p.title}"`);
+          trackLog(`   id=${p.id} | → related/95 で保存`);
+        }
+        console.log(`[batch]   自動承認: id=${p.id} | "${p.title.slice(0, 60)}"`);
+        await saveVerdict(person.name, p.id, 'related', 95, 'ai', 'タイトルに人物名+写真集が含まれるため自動承認');
+        aiJudged++;
+        catNew++;
+        continue;
+      }
+
+      // 未判定 or auto判定 or forceRejudge時のai判定 → AI 判定キューへ
+      if (tracked) {
+        trackLog(`🎯 ステップ3→4: AI判定キューへ追加`);
+        trackLog(`   title="${p.title}"`);
+        trackLog(`   id=${p.id} | 既存verdict=${existing?.source ?? 'なし'}${forceRejudge ? ' (forceRejudge)' : ''}`);
+      }
       console.log(`[batch]   AI対象: id=${p.id} existing=${existing?.source ?? 'なし'} | "${p.title.slice(0, 60)}"`);
       toJudge.push(p);
       catNew++;
@@ -116,11 +192,24 @@ export async function processPerson(
       if (!result) {
         const product = batch.find((p) => p.id === id);
         console.log(`[batch]   AI→null (APIエラー) id=${id} | "${product?.title.slice(0, 40) ?? '不明'}"`);
+        if (product && isTracked(product.title)) {
+          trackLog(`❌ ステップ5: AI→null (APIエラー)`);
+          trackLog(`   title="${product.title}"`);
+          trackLog(`   id=${id} | 公開表示: ❌ AI判定失敗のため非表示`);
+        }
         continue;
       }
       const product = batch.find((p) => p.id === id);
       if (!product) continue;
       console.log(`[batch]   AI→${result.verdict} score=${result.score} reason="${result.reason}" | "${product.title.slice(0, 40)}"`);
+      if (isTracked(product.title)) {
+        const displayable = result.verdict === 'related' && result.score >= 70;
+        trackLog(`🤖 ステップ5: AI判定完了 → Redis保存`);
+        trackLog(`   title="${product.title}"`);
+        trackLog(`   id=${id} | verdict=${result.verdict} | score=${result.score}`);
+        trackLog(`   reason="${result.reason}"`);
+        trackLog(`   公開表示: ${displayable ? '✅ 表示対象（related & score>=70）' : `❌ 表示対象外（verdict=${result.verdict}, score=${result.score}）`}`);
+      }
       await saveVerdict(
         person.name, id, result.verdict, result.score, 'ai', result.reason
       );

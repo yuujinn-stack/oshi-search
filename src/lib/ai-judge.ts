@@ -33,6 +33,32 @@ function buildPersonText(person: PersonWithConfig): string {
   return parts.join('\n');
 }
 
+// タイトルに人物名＋写真集、またはアーティスト名が自分のグループと一致するCDの場合は
+// AI 呼び出しなしで related 確定（OpenAI コスト削減 + 判定精度向上）
+export function shouldAutoApprove(product: RakutenItem, person: PersonWithConfig): boolean {
+  const title = product.title;
+  const candidateNames = [
+    person.name,
+    person.config.realName ?? '',
+    ...(person.config.aliases ?? []),
+  ].filter(Boolean);
+  const nameInTitle = candidateNames.some((n) => n && title.includes(n));
+
+  // ケース1: タイトルに人物名＋写真集 → related
+  if (nameInTitle && title.includes('写真集')) return true;
+
+  // ケース2: CDカテゴリ でアーティストが自分のグループ → related
+  // 例: artistName="乃木坂46" & person.group="乃木坂46"
+  if (
+    product.category === 'CD' &&
+    person.group &&
+    product.artistName &&
+    product.artistName.includes(person.group)
+  ) return true;
+
+  return false;
+}
+
 function buildProductText(product: RakutenItem): string {
   const parts: string[] = [];
   parts.push(`商品名: ${product.title}`);
@@ -57,27 +83,45 @@ export async function judgeProduct(
   const personText = buildPersonText(person);
   const productText = buildProductText(product);
 
-  const prompt = `あなたは芸能人関連商品の判定AIです。
+  const prompt = `あなたは芸能人関連商品の関連性を判定するAIです。
 
-人物情報:
+対象人物:
 ${personText}
 
-商品情報:
+対象商品:
 ${productText}
 
-以下の基準で判定してください。
+【判定基準】
 
-【related】
-本人出演作品 本人掲載雑誌 本人写真集 本人グッズ 本人監修商品 本人関連書籍
+■ related（確実に関連あり）— 以下のいずれかに該当する場合
+- 商品タイトルに人物の芸名・本名・旧芸名のいずれかが含まれ、かつ「写真集」「ムック」が含まれる（score: 90以上）
+- 商品タイトルにグループ名と人物名の両方が含まれる書籍・DVD・Blu-ray・CD（score: 85以上）
+- 著者・出演者・アーティスト欄に人物名が記載されている（score: 80以上）
+- 商品名・説明に人物名が明確に含まれ、本人出演・掲載が確認できる（score: 75以上）
+- 本人掲載雑誌・本人出演DVD・本人関連グッズ
+- アーティスト欄またはタイトルに人物の所属グループ名が含まれるCD・シングル・アルバム（score: 80）
+  ※ グループのCDにはメンバー全員が関与しているため、所属が確認できれば related とする
+- タイトルに人物名が含まれるCD・シングル・アルバム（score: 90以上）
 
-【uncertain】
-関連している可能性はあるが確信できない
-例: 名前のみ一致 / 説明文不足 / 別人の可能性あり / 判定材料不足
+■ uncertain（判断困難）
+- 名前が一致するが別人の可能性がある
+- 説明が不足して判断できない
+- グループ関連だが本人が特定できない
 
-【unrelated】
-関連性が確認できない 別人 一般商品 偶然一致
+■ unrelated（無関係）
+- 完全に別人・別グループの商品
+- 名前の偶然一致（同名の一般人など）
+- 人物と無関係な一般商品
 
-以下のJSONのみ返してください。
+【重要ルール】
+商品タイトルに人物の芸名が明確に含まれる写真集・書籍は、別人を示す根拠がない限り必ず related と判定すること。
+
+【判定例】
+人物: 筒井あやめ（グループ: 乃木坂46）
+商品名: 乃木坂46 筒井あやめ1st写真集 感情の隙間
+→ { "label": "related", "score": 95, "reason": "本人の1st写真集" }
+
+以下のJSONのみ返してください（他のテキスト不要）:
 { "label":"related|uncertain|unrelated", "score":0-100, "reason":"50文字以内" }`;
 
   console.log(`[ai-judge] リクエスト: ${person.name} | 「${product.title.slice(0, 50)}」`);

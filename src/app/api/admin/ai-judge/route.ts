@@ -16,13 +16,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const body = await req.json().catch(() => ({})) as { personName?: string };
+  const body = await req.json().catch(() => ({})) as { personName?: string; forceRejudge?: boolean };
 
   if (!body.personName) {
     return NextResponse.json({ error: 'personName が必要です' }, { status: 400 });
   }
 
-  const result = await processPerson(body.personName);
+  const result = await processPerson(body.personName, body.forceRejudge ?? false);
   revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
   return NextResponse.json({ ok: true, person: result });
 }

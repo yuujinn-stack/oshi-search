@@ -38,9 +38,10 @@ const GENRE_BADGE: Record<string, string> = {
   '俳優': 'bg-green-100 text-green-700',
 };
 
-// 表示セクション定義（「写真集」と「本・雑誌」を統合して表示）
+// 表示セクション定義
 const DISPLAY_SECTIONS: Array<{ label: string; sources: ProductCategory[] }> = [
   { label: '本・写真集', sources: ['写真集', '本・雑誌'] },
+  { label: 'CD', sources: ['CD'] },
   { label: 'Blu-ray・DVD', sources: ['Blu-ray・DVD'] },
   { label: 'グッズ', sources: ['グッズ'] },
 ];

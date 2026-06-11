@@ -64,6 +64,40 @@ async function searchBooks(paramType: 'author' | 'title' | 'keyword', value: str
   }
 }
 
+async function searchCd(artistName: string, hits = 10): Promise<SearchResult> {
+  const label = `CD artistName: "${artistName}"`;
+  try {
+    const res = await fetch(
+      booksUrl('BooksCD/Search/20130522', {
+        applicationId: APP_ID,
+        accessKey: ACCESS_KEY,
+        affiliateId: AFFILIATE_ID,
+        artistName,
+        hits: String(hits),
+        sort: 'standard',
+        outOfStockFlag: '1',
+      } as Record<string, string>),
+      { cache: 'no-store', headers: AUTH_HEADERS }
+    );
+    if (!res.ok) {
+      return { keyword: artistName, paramType: label, api: 'BooksCD', count: 0, items: [], error: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    if (data.error) {
+      return { keyword: artistName, paramType: label, api: 'BooksCD', count: 0, items: [], error: JSON.stringify(data.error) };
+    }
+    const items = (data.Items ?? []).map(({ Item }: { Item: Record<string, string | number> }) => ({
+      title: String(Item.title ?? ''),
+      artistName: String(Item.artistName ?? ''),
+      itemUrl: String(Item.itemUrl ?? ''),
+      price: Number(Item.itemPrice ?? 0),
+    }));
+    return { keyword: artistName, paramType: label, api: 'BooksCD', count: data.count ?? items.length, items };
+  } catch (err) {
+    return { keyword: artistName, paramType: label, api: 'BooksCD', count: 0, items: [], error: String(err) };
+  }
+}
+
 async function searchDvd(artistName: string, hits = 10): Promise<SearchResult> {
   const label = `artistName: "${artistName}"`;
   try {
@@ -173,6 +207,12 @@ export async function GET(req: NextRequest) {
   // グループ名での author 検索（グループ名が著者として登録されている場合）
   if (group) {
     searches.push(await searchBooks('author', group, 10));
+  }
+
+  // ===== CD =====
+  searches.push(await searchCd(name));
+  if (group) {
+    searches.push(await searchCd(group));
   }
 
   // ===== DVD =====

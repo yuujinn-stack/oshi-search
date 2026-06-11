@@ -5,7 +5,7 @@ import { getRedis } from './redis';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
 
-export const CATEGORIES: ProductCategory[] = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ'];
+export const CATEGORIES: ProductCategory[] = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD'];
 
 export interface StoredCategoryData {
   products: RakutenItem[];
