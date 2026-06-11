@@ -54,7 +54,7 @@ const SOURCE_ICON: Record<string, string> = {
   manual: '👤',
 };
 
-const CATEGORIES = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD'] as const;
+const CATEGORIES = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD', '中古'] as const;
 
 export default function PersonProducts({ personName }: { personName: string }) {
   const [data, setData] = useState<AdminData | null>(null);

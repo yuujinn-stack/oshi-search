@@ -498,6 +498,111 @@ async function fetchIchiba(
 }
 
 // ---------------------------------------------------------------
+// 中古商品: 楽天市場から「中古」キーワードで検索
+//   中古品は【中古】がタイトルに含まれる市場商品として流通している
+//   写真集・CD・DVD・グッズの中古をまとめて1カテゴリで取得し、
+//   表示時にタイトルキーワードで各セクションに分類する
+// ---------------------------------------------------------------
+async function fetchUsed(
+  name: string,
+  group: string,
+  config: PersonConfig,
+  cacheMode: RequestCache = 'default',
+): Promise<RakutenItem[]> {
+  const excludeKeywords = config.excludeKeywords ?? [];
+
+  const kwSet = new Set<string>();
+  // 写真集系
+  kwSet.add(`${name} 写真集 中古`);
+  if (group) {
+    kwSet.add(`${group} ${name} 写真集 中古`);
+    kwSet.add(`${group} 写真集 中古`);
+    // CD系
+    kwSet.add(`${group} CD 中古`);
+    kwSet.add(`${group} シングル 中古`);
+    kwSet.add(`${group} アルバム 中古`);
+    // DVD系
+    kwSet.add(`${group} DVD 中古`);
+    kwSet.add(`${group} Blu-ray 中古`);
+  }
+  kwSet.add(`${name} CD 中古`);
+  for (const alias of config.aliases ?? []) {
+    kwSet.add(`${alias} 写真集 中古`);
+    kwSet.add(`${alias} 中古`);
+  }
+  for (const ckw of config.customKeywords ?? []) {
+    kwSet.add(`${ckw} 中古`);
+  }
+
+  async function fetchKw(keyword: string): Promise<RakutenItem[]> {
+    const items: RakutenItem[] = [];
+    for (let page = 1; page <= 2; page++) {
+      console.log(`[rakuten] 中古検索: keyword="${keyword}" page=${page}`);
+      const res = await fetch(
+        ichibaUrl('IchibaItem/Search/20260401', {
+          applicationId: APP_ID,
+          accessKey: ACCESS_KEY,
+          affiliateId: AFFILIATE_ID,
+          keyword,
+          hits: '30',
+          sort: '-reviewCount',
+          page: String(page),
+        }),
+        { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
+      );
+      if (!res.ok) {
+        console.log(`[rakuten] 中古 APIエラー: HTTP ${res.status} keyword="${keyword}" page=${page}`);
+        break;
+      }
+      const data: RakutenIchibaResponse = await res.json();
+      if (data.error) {
+        console.log(`[rakuten] 中古 APIエラー: ${JSON.stringify(data.error)} keyword="${keyword}"`);
+        break;
+      }
+      if (!data.Items?.length) break;
+
+      const returned = data.Items.length;
+      const total = data.count ?? 0;
+      console.log(`[rakuten] 中古取得: ${returned}件 (総数=${total}) keyword="${keyword}" page=${page}`);
+
+      items.push(...data.Items.map(({ Item }) => ({
+        id: stableId('ic', Item.itemUrl ?? ''),
+        title: Item.itemName ?? '',
+        shopName: Item.shopName ?? '',
+        catchcopy: Item.catchcopy ?? '',
+        description: (Item.itemCaption ?? '').replace(/<[^>]+>/g, '').slice(0, 200),
+        price: Number(Item.itemPrice ?? 0),
+        reviewCount: Number(Item.reviewCount ?? 0),
+        reviewAverage: Number(Item.reviewAverage ?? 0),
+        imageUrl: Item.mediumImageUrls?.[0]?.imageUrl ?? '',
+        itemUrl: Item.itemUrl ?? '',
+        affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
+        category: '中古' as const,
+        isUsed: true,
+        relevanceScore: calcScore(
+          { title: Item.itemName ?? '' },
+          { name, group, excludeKeywords }
+        ),
+      })));
+
+      if (returned < 30) break;
+    }
+    return items;
+  }
+
+  const all: RakutenItem[] = [];
+  for (const keyword of kwSet) {
+    all.push(...await fetchKw(keyword));
+  }
+
+  // 中古であることを確認（タイトルに「中古」を含むもののみ保持）してデdup
+  const seen = new Set<string>();
+  return all
+    .filter((p) => p.title.includes('中古'))
+    .filter((p) => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
+}
+
+// ---------------------------------------------------------------
 // 公開API: カテゴリ別商品取得
 // cacheMode='no-store' は管理画面専用（常に最新を取得）
 // ---------------------------------------------------------------
@@ -529,6 +634,9 @@ export async function getProductsByCategory(
         break;
       case 'CD':
         products = await fetchCd(name, group, config, cacheMode);
+        break;
+      case '中古':
+        products = await fetchUsed(name, group, config, cacheMode);
         break;
     }
     // スコアで降順ソートして返す（フィルタリングは呼び出し元で行う）

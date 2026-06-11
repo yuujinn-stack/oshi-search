@@ -74,6 +74,7 @@ export interface RakutenItem {
   shopName?: string;
   category: ProductCategory;
   relevanceScore: number;
+  isUsed?: boolean;      // 中古商品フラグ（category==='中古' または title に【中古】含む）
   // AI判定に渡す追加フィールド（取得できた場合のみ）
   author?: string;       // Books: 著者名
   artistName?: string;   // DVD: アーティスト名

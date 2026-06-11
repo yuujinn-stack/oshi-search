@@ -39,11 +39,16 @@ const GENRE_BADGE: Record<string, string> = {
 };
 
 // 表示セクション定義
-const DISPLAY_SECTIONS: Array<{ label: string; sources: ProductCategory[] }> = [
-  { label: '本・写真集', sources: ['写真集', '本・雑誌'] },
-  { label: 'CD', sources: ['CD'] },
-  { label: 'Blu-ray・DVD', sources: ['Blu-ray・DVD'] },
-  { label: 'グッズ', sources: ['グッズ'] },
+// usedKeywords: 中古カテゴリの商品をこのセクションに分類するタイトルキーワード
+const DISPLAY_SECTIONS: Array<{
+  label: string;
+  sources: ProductCategory[];
+  usedKeywords: string[];
+}> = [
+  { label: '本・写真集', sources: ['写真集', '本・雑誌'], usedKeywords: ['写真集', 'フォトブック', 'ムック'] },
+  { label: 'CD', sources: ['CD'], usedKeywords: ['CD', 'シングル', 'アルバム', 'ALBUM', 'SINGLE', 'ベストアルバム'] },
+  { label: 'Blu-ray・DVD', sources: ['Blu-ray・DVD'], usedKeywords: ['DVD', 'Blu-ray', 'ブルーレイ', 'ライブ', 'コンサート', 'ツアー'] },
+  { label: 'グッズ', sources: ['グッズ'], usedKeywords: ['グッズ', 'カレンダー', 'ポスター', 'ぬいぐるみ', 'トレカ'] },
 ];
 
 export default async function PersonPage({ params }: Props) {
@@ -65,44 +70,54 @@ export default async function PersonPage({ params }: Props) {
     getAllVerdicts(person.name),
   ]);
 
+  // 中古カテゴリの関連済み商品を取得（全セクションで共有）
+  const usedCatData = storedData['中古'];
+  const usedProducts: RakutenItem[] = [];
+  const usedSeen = new Set<string>();
+  if (usedCatData && Array.isArray(usedCatData.products)) {
+    for (const p of usedCatData.products) {
+      const v = verdicts[p.id];
+      if (!v || v.verdict !== 'related') continue;
+      if (v.source !== 'manual' && v.score < 70) continue;
+      usedSeen.add(p.id);
+      usedProducts.push(p);
+    }
+  }
+
   // 表示セクションごとに「relevant」判定済み商品を統合して抽出
-  const results: Record<string, ApiResult> = Object.fromEntries(
-    DISPLAY_SECTIONS.map(({ label, sources }) => {
-      // いずれのソースカテゴリもデータなし → バッチ未実行
-      const hasAnyData = sources.some((cat) => !!storedData[cat]);
-      if (!hasAnyData) return [label, { status: 'no_data' as const }];
-
-      // 表示条件:
-      //   手動採用 → 常に表示
-      //   AI判定  → related かつ score >= 70 のみ表示（高確信度のみ）
-      // 複数カテゴリで同一商品が重複保存される場合があるため ID でデdup
-      const relevant: RakutenItem[] = [];
-      const seen = new Set<string>();
-      for (const cat of sources) {
-        const catData = storedData[cat];
-        if (!catData) continue;
-        if (!Array.isArray(catData.products)) {
-          console.error('[PersonPage] unexpected catData.products format', { name: person.name, cat, type: typeof catData.products });
-          continue;
-        }
-        for (const p of catData.products) {
-          if (seen.has(p.id)) continue;
-          const v = verdicts[p.id];
-          if (!v || v.verdict !== 'related') continue;
-          if (v.source !== 'manual' && v.score < 70) continue;
-          seen.add(p.id);
-          relevant.push(p);
-        }
+  const sectionResults = DISPLAY_SECTIONS.map(({ label, sources, usedKeywords }) => {
+    // 新品商品: 各ソースカテゴリから判定済み商品を取得
+    const hasAnyData = sources.some((cat) => !!storedData[cat]);
+    const newProducts: RakutenItem[] = [];
+    const newSeen = new Set<string>();
+    for (const cat of sources) {
+      const catData = storedData[cat];
+      if (!catData || !Array.isArray(catData.products)) continue;
+      for (const p of catData.products) {
+        if (newSeen.has(p.id)) continue;
+        const v = verdicts[p.id];
+        if (!v || v.verdict !== 'related') continue;
+        if (v.source !== 'manual' && v.score < 70) continue;
+        newSeen.add(p.id);
+        newProducts.push(p);
       }
+    }
 
-      return [
-        label,
-        relevant.length > 0
-          ? { status: 'ok' as const, products: relevant }
-          : { status: 'empty' as const },
-      ];
-    })
-  );
+    // 中古商品: 中古カテゴリからこのセクションに該当するものを抽出
+    const sectionUsed = usedProducts.filter((p) => {
+      if (newSeen.has(p.id)) return false; // 新品と重複するものは除外
+      const title = p.title.replace(/^【中古】\s*/, '');
+      return usedKeywords.some((kw) => title.includes(kw));
+    });
+
+    const newResult: ApiResult = !hasAnyData
+      ? { status: 'no_data' as const }
+      : newProducts.length > 0
+      ? { status: 'ok' as const, products: newProducts }
+      : { status: 'empty' as const };
+
+    return { label, newResult, usedProducts: sectionUsed };
+  });
 
   return (
     <div>
@@ -145,10 +160,32 @@ export default async function PersonPage({ params }: Props) {
 
       {/* 商品セクション */}
       <div className="max-w-4xl mx-auto px-4 py-10 space-y-10">
-        {DISPLAY_SECTIONS.map(({ label }) => (
+        {sectionResults.map(({ label, newResult, usedProducts: sectionUsed }) => (
           <section key={label}>
             <h2 className="text-base font-bold text-slate-800 mb-4">{label}</h2>
-            <ProductSectionList result={results[label]} />
+
+            {/* 新品 */}
+            {(newResult.status === 'ok' || sectionUsed.length === 0) && (
+              <ProductSectionList result={newResult} />
+            )}
+            {newResult.status === 'ok' && sectionUsed.length > 0 && (
+              <p className="text-xs text-gray-400 mt-1 mb-4">
+                新品 {newResult.products.length}件
+              </p>
+            )}
+
+            {/* 中古 */}
+            {sectionUsed.length > 0 && (
+              <div className={newResult.status === 'ok' ? 'mt-6' : ''}>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                    中古
+                  </span>
+                  <span className="text-xs text-gray-400">{sectionUsed.length}件</span>
+                </div>
+                <ProductSectionList result={{ status: 'ok', products: sectionUsed }} />
+              </div>
+            )}
           </section>
         ))}
 

@@ -39,8 +39,10 @@ function buildPersonText(person: PersonWithConfig): string {
 
 // タイトルに人物名＋写真集、またはアーティスト名が自分のグループと一致するCDの場合は
 // AI 呼び出しなしで related 確定（OpenAI コスト削減 + 判定精度向上）
+// 中古商品（【中古】プレフィックス）も同じルールを適用する
 export function shouldAutoApprove(product: RakutenItem, person: PersonWithConfig): boolean {
-  const title = product.title;
+  // 【中古】プレフィックスを除いた実タイトルで判定
+  const title = product.title.replace(/^【中古】\s*/, '').replace(/^\[中古\]\s*/, '');
   const candidateNames = [
     person.name,
     person.config.realName ?? '',
@@ -48,13 +50,15 @@ export function shouldAutoApprove(product: RakutenItem, person: PersonWithConfig
   ].filter(Boolean);
   const nameInTitle = candidateNames.some((n) => n && title.includes(n));
 
-  // ケース1: タイトルに人物名＋写真集 → related
+  // ケース1: タイトルに人物名＋写真集 → related（新品・中古どちらも）
   if (nameInTitle && title.includes('写真集')) return true;
 
-  // ケース2: CDカテゴリ でアーティストが自分のグループ → related
-  // 例: artistName="乃木坂46" & person.group="乃木坂46"
+  // ケース2: CDカテゴリ または 中古CD でアーティストが自分のグループ → related
+  const isGroupCd =
+    product.category === 'CD' ||
+    (product.isUsed && /CD|シングル|アルバム/.test(title));
   if (
-    product.category === 'CD' &&
+    isGroupCd &&
     person.group &&
     product.artistName &&
     product.artistName.includes(person.group)
@@ -119,6 +123,11 @@ ${productText}
 
 【重要ルール】
 商品タイトルに人物の芸名が明確に含まれる写真集・書籍は、別人を示す根拠がない限り必ず related と判定すること。
+
+【中古商品の取り扱い】
+商品名の先頭に「【中古】」が含まれる場合は、その部分を除いて関連性を判定してください。
+中古品であることは関連性の判断に影響しません。
+例: 「【中古】乃木坂46 筒井あやめ1st写真集 感情の隙間」→ 人物名を含む写真集として related (score: 95) と判定。
 
 【判定例】
 人物: 筒井あやめ（グループ: 乃木坂46）

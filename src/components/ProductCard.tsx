@@ -4,14 +4,19 @@ export default function ProductCard({ product }: { product: RakutenItem }) {
   const href = product.affiliateUrl || product.itemUrl;
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow flex flex-col">
+    <div className={`bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition-shadow flex flex-col ${product.isUsed ? 'border border-amber-200' : 'border border-gray-100'}`}>
       {/* 商品画像（クリックでアフィリエイトリンクへ） */}
       <a
         href={href}
         target="_blank"
         rel="noopener noreferrer sponsored"
-        className="block aspect-[3/4] bg-gray-100 overflow-hidden"
+        className="block aspect-[3/4] bg-gray-100 overflow-hidden relative"
       >
+        {product.isUsed && (
+          <span className="absolute top-1.5 left-1.5 z-10 text-[10px] font-bold bg-amber-500 text-white px-1.5 py-0.5 rounded">
+            中古
+          </span>
+        )}
         {product.imageUrl ? (
           <img
             src={product.imageUrl}
