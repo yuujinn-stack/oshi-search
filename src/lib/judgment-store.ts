@@ -11,6 +11,7 @@ export interface JudgmentRecord {
   source: 'auto' | 'ai' | 'manual'; // auto=ルール自動判定、ai=OpenAI判定、manual=管理者判定
   reason?: string;
   timestamp: number;
+  promptVersion?: string; // AI判定時のプロンプトバージョン（変更時に再判定するため）
 }
 
 // Redis hash key: "verdicts:{personName}" → field: productId → value: JudgmentRecord JSON
@@ -45,10 +46,11 @@ export async function saveVerdict(
   score: number,
   source: 'auto' | 'ai' | 'manual',
   reason?: string,
+  promptVersion?: string,
 ): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
-  const record: JudgmentRecord = { verdict, score, source, reason, timestamp: Date.now() };
+  const record: JudgmentRecord = { verdict, score, source, reason, timestamp: Date.now(), promptVersion };
   await redis.hset(hashKey(personName), { [productId]: JSON.stringify(record) });
 }
 

@@ -146,22 +146,41 @@ async function fetchBooksAuthor(
   if (config.customKeywords?.length) authorKeys.push(...config.customKeywords);
 
   const all: RakutenItem[] = [];
+  const usedKeywords: string[] = [];
 
   // 1. author 検索: 著者名として人物名が登録されている書籍
   for (const authorName of authorKeys) {
+    usedKeywords.push(`author:${authorName}`);
     all.push(...await fetchBooksPages('author', authorName, 3, ctx));
   }
 
-  // 2. keyword 補完検索: 著者名の書き方が「グループ名 個人名」等でも捕捉
-  //    英題写真集（タイトルに日本語名がない場合）・別名義作品・カレンダーもカバー
-  //    「乃木坂46 筒井あやめ 写真集」のようにグループ+名前+カテゴリで検索することで
-  //    著者がグループ名名義でも取得可能にする
+  // 2. title 検索: タイトルに人物名が含まれる写真集・ムック等をカバー
+  //    著者登録が「グループ名 個人名」等の場合でも、タイトルには個人名が入ることが多い
+  //    例: "乃木坂46 筒井あやめ1st写真集 感情の隙間" は title:筒井あやめ でヒット
+  const titleSearchKeys = [name];
+  if (config.realName && config.realName !== name) titleSearchKeys.push(config.realName);
+  for (const alias of config.aliases ?? []) titleSearchKeys.push(alias);
+  for (const key of titleSearchKeys) {
+    usedKeywords.push(`title:${key}`);
+    all.push(...await fetchBooksPages('title', key, 2, ctx));
+  }
+
+  // 3. author: group 検索: 写真集の著者がグループ名義で登録されているケースに対応
+  //    例: author="乃木坂46" として登録されている個人写真集
+  if (group) {
+    usedKeywords.push(`author:${group}`);
+    all.push(...await fetchBooksPages('author', group, 2, ctx));
+  }
+
+  // 4. keyword 補完検索: 著者名の書き方が「グループ名 個人名」等でも捕捉
+  //    検索テストと同等のカバレッジを確保する
   const keywordSupplements = [
     `${name} 写真集`,         // 筒井あやめ 写真集
-    `${name} 1st写真集`,      // 筒井あやめ 1st写真集（デビュー写真集の定型キーワード）
+    `${name} 1st写真集`,      // 筒井あやめ 1st写真集
     `${name} カレンダー`,     // 筒井あやめ カレンダー
   ];
   if (group) {
+    keywordSupplements.push(`${group} ${name}`);           // 乃木坂46 筒井あやめ
     keywordSupplements.push(`${group} ${name} 写真集`);    // 乃木坂46 筒井あやめ 写真集
     keywordSupplements.push(`${group} ${name} 1st写真集`); // 乃木坂46 筒井あやめ 1st写真集
   }
@@ -171,11 +190,15 @@ async function fetchBooksAuthor(
   for (const alias of config.aliases ?? []) keywordSupplements.push(`${alias} 写真集`);
 
   for (const kw of keywordSupplements) {
+    usedKeywords.push(`keyword:${kw}`);
     all.push(...await fetchBooksPages('keyword', kw, 2, ctx));
   }
 
+  const beforeDedup = all.length;
   const seen = new Set<string>();
-  return all.filter((p) => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
+  const deduped = all.filter((p) => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
+  console.log(`[NORMAL_FETCH] category:${category} keywords:${usedKeywords.join(',')} beforeDedupCount:${beforeDedup} afterDedupCount:${deduped.length}`);
+  return deduped;
 }
 
 // ---------------------------------------------------------------

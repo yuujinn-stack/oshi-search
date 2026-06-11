@@ -8,6 +8,10 @@ import type { Verdict } from './judgment-store';
 import type { PersonWithConfig } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
 
+// プロンプトバージョン: このバージョンと異なる ai 判定済み商品は自動再判定される
+// プロンプトを修正したらこの値をインクリメントすること
+export const PROMPT_VERSION = 'v3';
+
 let client: OpenAI | null = null;
 
 function getClient(): OpenAI | null {
@@ -124,7 +128,7 @@ ${productText}
 以下のJSONのみ返してください（他のテキスト不要）:
 { "label":"related|uncertain|unrelated", "score":0-100, "reason":"50文字以内" }`;
 
-  console.log(`[ai-judge] リクエスト: ${person.name} | 「${product.title.slice(0, 50)}」`);
+  console.log(`[AI_INPUT] personName:${person.name} groupName:${person.group ?? ''} productTitle:"${product.title}" category:${product.category} author:${product.author ?? ''} artistName:${product.artistName ?? ''} promptVersion:${PROMPT_VERSION}`);
 
   try {
     const res = await openai.chat.completions.create({
@@ -143,7 +147,7 @@ ${productText}
       : 'uncertain';
     const score = typeof parsed.score === 'number' ? Math.max(0, Math.min(100, parsed.score)) : 50;
 
-    console.log(`[ai-judge] 結果: ${verdict} (${score}) | 理由: ${parsed.reason ?? '(なし)'} | 「${product.title.slice(0, 40)}」`);
+    console.log(`[AI_OUTPUT] label:${verdict} score:${score} reason:"${parsed.reason ?? ''}" title:"${product.title.slice(0, 50)}"`);
     return { verdict, score, reason: parsed.reason ?? '' };
   } catch (err) {
     console.error(`[ai-judge] エラー: ${person.name} | 「${product.title.slice(0, 40)}」 |`, err);

@@ -6,7 +6,7 @@ import { getAllPersonsWithConfig } from './persons';
 import { getProductsByCategory } from './rakuten';
 import { storeProducts, saveBatchMeta, CATEGORIES } from './product-store';
 import { getAllVerdicts, saveVerdict } from './judgment-store';
-import { judgeProducts, shouldAutoApprove } from './ai-judge';
+import { judgeProducts, shouldAutoApprove, PROMPT_VERSION } from './ai-judge';
 import type { RakutenItem } from '@/types/rakuten';
 
 // 1人あたりの AI 呼び出し上限（Vercel の 300s タイムアウト対策）
@@ -115,49 +115,67 @@ export async function processPerson(
         continue;
       }
 
+      // ━━━ 優先度1: 自動承認チェック（スキップ判定より前に実行）━━━
+      // 既存の ai 判定が unrelated でも、条件を満たす商品は即 related で上書きする
+      // 例: 人物名+写真集がタイトルに含まれる、グループCDのアーティスト名が一致する
+      if (shouldAutoApprove(p, person)) {
+        if (tracked) {
+          trackLog(`✅ ステップ3: 自動承認（スキップより優先）`);
+          trackLog(`   title="${p.title}"`);
+          trackLog(`   id=${p.id} | → related/95 で保存`);
+          trackLog(`   公開表示: ✅ 表示対象（related & score=95）`);
+        }
+        console.log(`[batch]   自動承認: id=${p.id} | "${p.title.slice(0, 60)}"`);
+        await saveVerdict(person.name, p.id, 'related', 95, 'ai', '自動承認（人物名+写真集 or グループCD）', PROMPT_VERSION);
+        aiJudged++;
+        catNew++;
+        console.log(`[PUBLIC_FILTER] itemTitle:"${p.title.slice(0, 60)}" category:${cat} label:related score:95 isPublic:true`);
+        continue;
+      }
+
       const existing = existingVerdicts[p.id];
-      // manual は常に保持。ai判定済みは forceRejudge=false のときのみスキップ
+
+      // ━━━ 優先度2: manual 判定は常に保持 ━━━
       if (existing?.source === 'manual') {
         if (tracked) {
           const displayable = existing.verdict === 'related' && existing.score >= 70;
           trackLog(`⏭ ステップ3: manual判定済みのためスキップ`);
           trackLog(`   title="${p.title}"`);
           trackLog(`   id=${p.id} | verdict=${existing.verdict} | score=${existing.score}`);
-          trackLog(`   公開表示: ${displayable ? '✅ 表示対象（related & score>=70）' : `❌ 表示対象外（verdict=${existing.verdict}, score=${existing.score}）`}`);
+          trackLog(`   公開表示: ${displayable ? '✅ 表示対象' : `❌ 非表示（verdict=${existing.verdict}, score=${existing.score}）`}`);
         }
+        const displayable = existing.verdict === 'related' && existing.score >= 70;
+        console.log(`[PUBLIC_FILTER] itemTitle:"${p.title.slice(0, 60)}" category:${cat} label:${existing.verdict} score:${existing.score} manualStatus:manual isPublic:${displayable}`);
         skipped++;
         catSkipped++;
         continue;
       }
-      if (!forceRejudge && existing?.source === 'ai') {
-        if (tracked) {
+
+      // ━━━ 優先度3: ai 判定済みはスキップ（forceRejudge=true またはプロンプト変更時は再判定） ━━━
+      if (existing?.source === 'ai') {
+        const promptOutdated = existing.promptVersion !== PROMPT_VERSION;
+        if (!forceRejudge && !promptOutdated) {
+          if (tracked) {
+            const displayable = existing.verdict === 'related' && existing.score >= 70;
+            trackLog(`⏭ ステップ3: ai判定済みのためスキップ（promptVersion=${existing.promptVersion ?? '旧'}）`);
+            trackLog(`   title="${p.title}"`);
+            trackLog(`   id=${p.id} | verdict=${existing.verdict} | score=${existing.score}`);
+            trackLog(`   公開表示: ${displayable ? '✅ 表示対象' : `❌ 非表示（verdict=${existing.verdict}, score=${existing.score}）`}`);
+            if (existing.reason) trackLog(`   AI理由: "${existing.reason}"`);
+          }
           const displayable = existing.verdict === 'related' && existing.score >= 70;
-          trackLog(`⏭ ステップ3: ai判定済みのためスキップ（再判定するには forceRejudge=true）`);
-          trackLog(`   title="${p.title}"`);
-          trackLog(`   id=${p.id} | verdict=${existing.verdict} | score=${existing.score}`);
-          trackLog(`   公開表示: ${displayable ? '✅ 表示対象（related & score>=70）' : `❌ 表示対象外（verdict=${existing.verdict}, score=${existing.score}）`}`);
-          if (existing.reason) trackLog(`   AI理由: "${existing.reason}"`);
+          console.log(`[PUBLIC_FILTER] itemTitle:"${p.title.slice(0, 60)}" category:${cat} label:${existing.verdict} score:${existing.score} isPublic:${displayable}`);
+          skipped++;
+          catSkipped++;
+          continue;
         }
-        skipped++;
-        catSkipped++;
-        continue;
+        // promptVersion が違うか forceRejudge → 再判定へ
+        if (promptOutdated) {
+          console.log(`[batch]   プロンプト更新再判定: ${existing.promptVersion ?? '旧'} → ${PROMPT_VERSION} | "${p.title.slice(0, 50)}"`);
+        }
       }
 
-      // 事前自動承認チェック: 人物名+写真集がタイトルに含まれる場合は AI 呼び出し不要で related 確定
-      if (shouldAutoApprove(p, person)) {
-        if (tracked) {
-          trackLog(`✅ ステップ3: 事前自動承認（名前+写真集がタイトルに一致）`);
-          trackLog(`   title="${p.title}"`);
-          trackLog(`   id=${p.id} | → related/95 で保存`);
-        }
-        console.log(`[batch]   自動承認: id=${p.id} | "${p.title.slice(0, 60)}"`);
-        await saveVerdict(person.name, p.id, 'related', 95, 'ai', 'タイトルに人物名+写真集が含まれるため自動承認');
-        aiJudged++;
-        catNew++;
-        continue;
-      }
-
-      // 未判定 or auto判定 or forceRejudge時のai判定 → AI 判定キューへ
+      // ━━━ 優先度4: 未判定 / auto 判定 / 再判定対象 → AI キューへ ━━━
       if (tracked) {
         trackLog(`🎯 ステップ3→4: AI判定キューへ追加`);
         trackLog(`   title="${p.title}"`);
@@ -201,17 +219,18 @@ export async function processPerson(
       }
       const product = batch.find((p) => p.id === id);
       if (!product) continue;
+      const displayable = result.verdict === 'related' && result.score >= 70;
       console.log(`[batch]   AI→${result.verdict} score=${result.score} reason="${result.reason}" | "${product.title.slice(0, 40)}"`);
+      console.log(`[PUBLIC_FILTER] itemTitle:"${product.title.slice(0, 60)}" category:${product.category} label:${result.verdict} score:${result.score} isPublic:${displayable} excludeReason:${displayable ? 'none' : `verdict=${result.verdict} score=${result.score}`}`);
       if (isTracked(product.title)) {
-        const displayable = result.verdict === 'related' && result.score >= 70;
         trackLog(`🤖 ステップ5: AI判定完了 → Redis保存`);
         trackLog(`   title="${product.title}"`);
         trackLog(`   id=${id} | verdict=${result.verdict} | score=${result.score}`);
         trackLog(`   reason="${result.reason}"`);
-        trackLog(`   公開表示: ${displayable ? '✅ 表示対象（related & score>=70）' : `❌ 表示対象外（verdict=${result.verdict}, score=${result.score}）`}`);
+        trackLog(`   公開表示: ${displayable ? '✅ 表示対象（related & score>=70）' : `❌ 非表示（verdict=${result.verdict}, score=${result.score}）`}`);
       }
       await saveVerdict(
-        person.name, id, result.verdict, result.score, 'ai', result.reason
+        person.name, id, result.verdict, result.score, 'ai', result.reason, PROMPT_VERSION
       );
       aiJudged++;
     }
