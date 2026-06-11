@@ -43,44 +43,47 @@ function stableId(prefix: string, itemUrl: string): string {
   return `${prefix}-${itemUrl.replace(/\W/g, '').slice(-16)}`;
 }
 
-// ---------------------------------------------------------------
-// 写真集・本・雑誌: author パラメータで人物名を厳密指定
-//   sort:'standard' が最安定（reviewCountは0レビュー作品を除外する）
-//   写真集: page=1 / 本・雑誌: page=2 で重複回避
-// ---------------------------------------------------------------
-async function fetchBooksByAuthor(
-  name: string,
-  group: string,
-  config: PersonConfig,
-  category: ProductCategory,
-  page: string,
-  cacheMode: RequestCache = 'default',
+// Books API 汎用ページ取得（author / title / keyword パラメータに対応）
+async function fetchBooksPages(
+  paramKey: 'author' | 'title' | 'keyword',
+  paramValue: string,
+  maxPages: number,
+  mapCtx: { name: string; group: string; excludeKeywords: string[]; category: ProductCategory; cacheMode: RequestCache },
 ): Promise<RakutenItem[]> {
-  const excludeKeywords = config.excludeKeywords ?? [];
+  const { name, group, excludeKeywords, category, cacheMode } = mapCtx;
+  const results: RakutenItem[] = [];
 
-  async function fetchPage(authorName: string, p: string): Promise<RakutenItem[]> {
+  for (let page = 1; page <= maxPages; page++) {
+    console.log(`[rakuten] Books(${paramKey})検索: ${paramKey}="${paramValue}" page=${page}`);
     const res = await fetch(
       booksUrl('BooksBook/Search/20170404', {
         applicationId: APP_ID,
         accessKey: ACCESS_KEY,
         affiliateId: AFFILIATE_ID,
-        author: authorName,
-        hits: '10',
+        [paramKey]: paramValue,
+        hits: '30',
         sort: 'standard',
         outOfStockFlag: '1',
-        page: p,
+        page: String(page),
       }),
-      {
-        cache: cacheMode,
-        next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined,
-        headers: AUTH_HEADERS,
-      }
+      { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
     );
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.log(`[rakuten] Books(${paramKey})エラー: HTTP ${res.status} ${paramKey}="${paramValue}" page=${page}`);
+      break;
+    }
     const data: RakutenBooksResponse = await res.json();
-    if (data.error || !data.Items?.length) return [];
+    if (data.error) {
+      console.log(`[rakuten] Books(${paramKey})エラー: ${JSON.stringify(data.error)} ${paramKey}="${paramValue}"`);
+      break;
+    }
+    if (!data.Items?.length) break;
 
-    return data.Items.map(({ Item }) => ({
+    const returned = data.Items.length;
+    const total = data.count ?? 0;
+    console.log(`[rakuten] Books(${paramKey})取得: ${returned}件 (総数=${total}) ${paramKey}="${paramValue}" page=${page}`);
+
+    results.push(...data.Items.map(({ Item }) => ({
       id: stableId('bk', Item.itemUrl ?? ''),
       title: Item.title ?? '',
       author: Item.author ?? '',
@@ -95,28 +98,86 @@ async function fetchBooksByAuthor(
         { title: Item.title ?? '', author: Item.author ?? '' },
         { name, group, excludeKeywords }
       ),
-    }));
+    })));
+
+    if (returned < 30) break;
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------
+// 写真集: author / keyword パラメータで人物名（全名義）を検索
+//   hits=30 (max), 1キーワードあたり最大3ページ (90件)
+//   realName/reading/aliases/customKeywords も著者名として検索
+//   さらに keyword: name 写真集 / keyword: name カレンダー で補完
+//   （著者名が「グループ名 個人名」形式等でも捕捉するため）
+// ---------------------------------------------------------------
+async function fetchBooksAuthor(
+  name: string,
+  group: string,
+  config: PersonConfig,
+  category: ProductCategory,
+  cacheMode: RequestCache,
+): Promise<RakutenItem[]> {
+  const excludeKeywords = config.excludeKeywords ?? [];
+  const ctx = { name, group, excludeKeywords, category, cacheMode };
+
+  const authorKeys: string[] = [name];
+  if (config.realName && config.realName !== name) authorKeys.push(config.realName);
+  if (config.reading) authorKeys.push(config.reading);
+  if (config.aliases?.length) authorKeys.push(...config.aliases);
+  if (config.customKeywords?.length) authorKeys.push(...config.customKeywords);
+
+  const all: RakutenItem[] = [];
+
+  // 1. author 検索: 著者名として人物名が登録されている書籍
+  for (const authorName of authorKeys) {
+    all.push(...await fetchBooksPages('author', authorName, 3, ctx));
   }
 
-  // メイン検索
-  const mainResults = await fetchPage(name, page);
+  // 2. keyword 補完検索: 著者名の書き方が「グループ名 個人名」等でも捕捉
+  //    英題写真集（タイトルに日本語名がない場合）・別名義作品・カレンダーもカバー
+  const keywordSupplements = [`${name} 写真集`, `${name} カレンダー`];
+  if (config.realName && config.realName !== name) {
+    keywordSupplements.push(`${config.realName} 写真集`);
+  }
+  for (const alias of config.aliases ?? []) keywordSupplements.push(`${alias} 写真集`);
 
-  // customKeywords による追加検索（補助的、置き換えではない）
-  const extra: RakutenItem[] = [];
-  if (config.customKeywords?.length && page === '1') {
-    for (const kw of config.customKeywords) {
-      const r = await fetchPage(kw, '1');
-      extra.push(...r);
-    }
+  for (const kw of keywordSupplements) {
+    all.push(...await fetchBooksPages('keyword', kw, 2, ctx));
   }
 
-  // 重複を除去（IDが同じものは最初のものを優先）
   const seen = new Set<string>();
-  return [...mainResults, ...extra].filter((p) => {
-    if (seen.has(p.id)) return false;
-    seen.add(p.id);
-    return true;
-  });
+  return all.filter((p) => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
+}
+
+// ---------------------------------------------------------------
+// 本・雑誌: title / keyword パラメータで人物名を含む書籍を検索
+//   著者名でなくタイトルに名前が入っている雑誌・ムック等をカバー
+//   hits=30, 最大2ページ (60件)
+// ---------------------------------------------------------------
+async function fetchBooksTitle(
+  name: string,
+  group: string,
+  config: PersonConfig,
+  category: ProductCategory,
+  cacheMode: RequestCache,
+): Promise<RakutenItem[]> {
+  const excludeKeywords = config.excludeKeywords ?? [];
+  const ctx = { name, group, excludeKeywords, category, cacheMode };
+
+  const titleKeys: string[] = [name];
+  if (config.realName && config.realName !== name) titleKeys.push(config.realName);
+  if (config.aliases?.length) titleKeys.push(...config.aliases);
+
+  const all: RakutenItem[] = [];
+
+  for (const keyword of titleKeys) {
+    all.push(...await fetchBooksPages('title', keyword, 2, ctx));
+  }
+
+  const seen = new Set<string>();
+  return all.filter((p) => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
 }
 
 // ---------------------------------------------------------------
@@ -132,53 +193,57 @@ async function fetchDvd(
   const excludeKeywords = config.excludeKeywords ?? [];
 
   async function fetchByArtist(artistName: string): Promise<RakutenItem[]> {
-    console.log(`[rakuten] DVD検索: artistName="${artistName}"`);
-    const res = await fetch(
-      booksUrl('BooksDVD/Search/20130522', {
-        applicationId: APP_ID,
-        accessKey: ACCESS_KEY,
-        affiliateId: AFFILIATE_ID,
-        artistName,
-        hits: '20',
-        sort: 'standard',
-        outOfStockFlag: '1',
-      } as Record<string, string>),
-      {
-        cache: cacheMode,
-        next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined,
-        headers: AUTH_HEADERS,
+    const items: RakutenItem[] = [];
+    for (let page = 1; page <= 2; page++) {
+      console.log(`[rakuten] DVD検索: artistName="${artistName}" page=${page}`);
+      const res = await fetch(
+        booksUrl('BooksDVD/Search/20130522', {
+          applicationId: APP_ID,
+          accessKey: ACCESS_KEY,
+          affiliateId: AFFILIATE_ID,
+          artistName,
+          hits: '30',
+          sort: 'standard',
+          outOfStockFlag: '1',
+          page: String(page),
+        } as Record<string, string>),
+        { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
+      );
+      if (!res.ok) {
+        console.log(`[rakuten] DVD APIエラー: HTTP ${res.status} artistName="${artistName}" page=${page}`);
+        break;
       }
-    );
-    if (!res.ok) {
-      console.log(`[rakuten] DVD APIエラー: HTTP ${res.status} artistName="${artistName}"`);
-      return [];
-    }
-    const data: RakutenDvdResponse = await res.json();
-    if (data.error) {
-      console.log(`[rakuten] DVD APIエラーレスポンス: ${JSON.stringify(data.error)} artistName="${artistName}"`);
-      return [];
-    }
-    const total = data.count ?? 0;
-    const returned = data.Items?.length ?? 0;
-    console.log(`[rakuten] DVD取得: ${returned}件 (総数=${total}) artistName="${artistName}"`);
-    if (!data.Items?.length) return [];
+      const data: RakutenDvdResponse = await res.json();
+      if (data.error) {
+        console.log(`[rakuten] DVD APIエラー: ${JSON.stringify(data.error)} artistName="${artistName}"`);
+        break;
+      }
+      if (!data.Items?.length) break;
 
-    return data.Items.map(({ Item }) => ({
-      id: stableId('dv', Item.itemUrl ?? ''),
-      title: Item.title ?? '',
-      artistName: Item.artistName ?? '',
-      price: Number(Item.itemPrice ?? 0),
-      reviewCount: Number(Item.reviewCount ?? 0),
-      reviewAverage: Number(Item.reviewAverage ?? 0),
-      imageUrl: Item.largeImageUrl ?? '',
-      itemUrl: Item.itemUrl ?? '',
-      affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
-      category: 'Blu-ray・DVD' as const,
-      relevanceScore: calcScore(
-        { title: Item.title ?? '', artistName: Item.artistName ?? '' },
-        { name, group, excludeKeywords }
-      ),
-    }));
+      const returned = data.Items.length;
+      const total = data.count ?? 0;
+      console.log(`[rakuten] DVD取得: ${returned}件 (総数=${total}) artistName="${artistName}" page=${page}`);
+
+      items.push(...data.Items.map(({ Item }) => ({
+        id: stableId('dv', Item.itemUrl ?? ''),
+        title: Item.title ?? '',
+        artistName: Item.artistName ?? '',
+        price: Number(Item.itemPrice ?? 0),
+        reviewCount: Number(Item.reviewCount ?? 0),
+        reviewAverage: Number(Item.reviewAverage ?? 0),
+        imageUrl: Item.largeImageUrl ?? '',
+        itemUrl: Item.itemUrl ?? '',
+        affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
+        category: 'Blu-ray・DVD' as const,
+        relevanceScore: calcScore(
+          { title: Item.title ?? '', artistName: Item.artistName ?? '' },
+          { name, group, excludeKeywords }
+        ),
+      })));
+
+      if (returned < 30) break;
+    }
+    return items;
   }
 
   const all: RakutenItem[] = [];
@@ -191,9 +256,11 @@ async function fetchDvd(
     all.push(...await fetchByArtist(group));
   }
 
-  // 3. customKeywords でも検索（別名・愛称等）
-  for (const kw of config.customKeywords ?? []) {
-    all.push(...await fetchByArtist(kw));
+  // 3. aliases/customKeywords でも検索（別名・芸名・旧名等）
+  for (const kw of [...(config.aliases ?? []), ...(config.customKeywords ?? [])]) {
+    if (kw !== name && kw !== group) {
+      all.push(...await fetchByArtist(kw));
+    }
   }
 
   // 重複除去（IDが同じものは最初のものを優先）
@@ -206,7 +273,8 @@ async function fetchDvd(
 }
 
 // ---------------------------------------------------------------
-// グッズ: keyword に '${name} グッズ' を指定
+// グッズ: keyword に '${name} グッズ' 等を指定
+//   グループ名/aliases/customKeywords でも検索、hits=30、最大2ページ
 // ---------------------------------------------------------------
 async function fetchIchiba(
   name: string,
@@ -215,65 +283,76 @@ async function fetchIchiba(
   cacheMode: RequestCache = 'default',
 ): Promise<RakutenItem[]> {
   const excludeKeywords = config.excludeKeywords ?? [];
-  const kw = `${name} グッズ`;
+
+  // 検索キーワード一覧（重複除去）
+  const kwSet = new Set<string>();
+  kwSet.add(`${name} グッズ`);
+  if (group) kwSet.add(`${group} グッズ`);
+  for (const alias of config.aliases ?? []) kwSet.add(`${alias} グッズ`);
+  for (const ckw of config.customKeywords ?? []) kwSet.add(`${ckw} グッズ`);
 
   async function fetchKw(keyword: string): Promise<RakutenItem[]> {
-    const res = await fetch(
-      ichibaUrl('IchibaItem/Search/20260401', {
-        applicationId: APP_ID,
-        accessKey: ACCESS_KEY,
-        affiliateId: AFFILIATE_ID,
-        keyword,
-        hits: '20',
-        sort: '-reviewCount',
-      }),
-      {
-        cache: cacheMode,
-        next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined,
-        headers: AUTH_HEADERS,
+    const items: RakutenItem[] = [];
+    for (let page = 1; page <= 2; page++) {
+      console.log(`[rakuten] Ichiba検索: keyword="${keyword}" page=${page}`);
+      const res = await fetch(
+        ichibaUrl('IchibaItem/Search/20260401', {
+          applicationId: APP_ID,
+          accessKey: ACCESS_KEY,
+          affiliateId: AFFILIATE_ID,
+          keyword,
+          hits: '30',
+          sort: '-reviewCount',
+          page: String(page),
+        }),
+        { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
+      );
+      if (!res.ok) {
+        console.log(`[rakuten] Ichiba APIエラー: HTTP ${res.status} keyword="${keyword}" page=${page}`);
+        break;
       }
-    );
-    if (!res.ok) return [];
-    const data: RakutenIchibaResponse = await res.json();
-    if (data.error || !data.Items?.length) return [];
+      const data: RakutenIchibaResponse = await res.json();
+      if (data.error) {
+        console.log(`[rakuten] Ichiba APIエラー: ${JSON.stringify(data.error)} keyword="${keyword}"`);
+        break;
+      }
+      if (!data.Items?.length) break;
 
-    return data.Items.map(({ Item }) => ({
-      id: stableId('ic', Item.itemUrl ?? ''),
-      title: Item.itemName ?? '',
-      shopName: Item.shopName ?? '',
-      catchcopy: Item.catchcopy ?? '',
-      description: (Item.itemCaption ?? '').replace(/<[^>]+>/g, '').slice(0, 200),
-      price: Number(Item.itemPrice ?? 0),
-      reviewCount: Number(Item.reviewCount ?? 0),
-      reviewAverage: Number(Item.reviewAverage ?? 0),
-      imageUrl: Item.mediumImageUrls?.[0]?.imageUrl ?? '',
-      itemUrl: Item.itemUrl ?? '',
-      affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
-      category: 'グッズ' as const,
-      relevanceScore: calcScore(
-        { title: Item.itemName ?? '' },
-        { name, group, excludeKeywords }
-      ),
-    }));
+      const returned = data.Items.length;
+      const total = data.count ?? 0;
+      console.log(`[rakuten] Ichiba取得: ${returned}件 (総数=${total}) keyword="${keyword}" page=${page}`);
+
+      items.push(...data.Items.map(({ Item }) => ({
+        id: stableId('ic', Item.itemUrl ?? ''),
+        title: Item.itemName ?? '',
+        shopName: Item.shopName ?? '',
+        catchcopy: Item.catchcopy ?? '',
+        description: (Item.itemCaption ?? '').replace(/<[^>]+>/g, '').slice(0, 200),
+        price: Number(Item.itemPrice ?? 0),
+        reviewCount: Number(Item.reviewCount ?? 0),
+        reviewAverage: Number(Item.reviewAverage ?? 0),
+        imageUrl: Item.mediumImageUrls?.[0]?.imageUrl ?? '',
+        itemUrl: Item.itemUrl ?? '',
+        affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
+        category: 'グッズ' as const,
+        relevanceScore: calcScore(
+          { title: Item.itemName ?? '' },
+          { name, group, excludeKeywords }
+        ),
+      })));
+
+      if (returned < 30) break;
+    }
+    return items;
   }
 
-  const mainResults = await fetchKw(kw);
-
-  // customKeywords による追加検索（例: 'あのちゃん グッズ'）
-  const extra: RakutenItem[] = [];
-  if (config.customKeywords?.length) {
-    for (const ckw of config.customKeywords) {
-      const r = await fetchKw(`${ckw} グッズ`);
-      extra.push(...r);
-    }
+  const all: RakutenItem[] = [];
+  for (const keyword of kwSet) {
+    all.push(...await fetchKw(keyword));
   }
 
   const seen = new Set<string>();
-  return [...mainResults, ...extra].filter((p) => {
-    if (seen.has(p.id)) return false;
-    seen.add(p.id);
-    return true;
-  });
+  return all.filter((p) => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
 }
 
 // ---------------------------------------------------------------
@@ -293,10 +372,12 @@ export async function getProductsByCategory(
     let products: RakutenItem[];
     switch (category) {
       case '写真集':
-        products = await fetchBooksByAuthor(name, group, config, category, '1', cacheMode);
+        // author 検索: 人物名が著者として登録されている書籍（写真集・単著等）
+        products = await fetchBooksAuthor(name, group, config, category, cacheMode);
         break;
       case '本・雑誌':
-        products = await fetchBooksByAuthor(name, group, config, category, '2', cacheMode);
+        // title 検索: タイトルに人物名が含まれる書籍（雑誌・ムック・共著等）
+        products = await fetchBooksTitle(name, group, config, category, cacheMode);
         break;
       case 'Blu-ray・DVD':
         products = await fetchDvd(name, group, config, cacheMode);

@@ -6,6 +6,7 @@ type Status = 'idle' | 'running' | 'done' | 'error';
 
 interface Result {
   aiJudged: number;
+  aiQueued: number;
   stored: number;
   skipped: number;
   excluded: number;
@@ -39,6 +40,7 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
 
       setResult({
         aiJudged: data.person.aiJudged ?? 0,
+        aiQueued: data.person.aiQueued ?? 0,
         stored: data.person.stored ?? 0,
         skipped: data.person.skipped ?? 0,
         excluded: data.person.excluded ?? 0,
@@ -61,13 +63,25 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
       </button>
 
       {status === 'done' && result && (
-        <span className="text-xs text-green-600 whitespace-nowrap">
-          取得{result.stored} AI{result.aiJudged}件
+        <span className="text-xs whitespace-nowrap space-x-1.5">
+          <span className="text-gray-500">取得{result.stored}</span>
+          <span className="text-gray-400">skip{result.skipped}</span>
+          {result.excluded > 0 && <span className="text-orange-500">除外{result.excluded}</span>}
+          <span className="text-blue-500">AI対象{result.aiQueued}</span>
+          <span className={result.aiJudged < result.aiQueued ? 'text-red-500' : 'text-green-600'}>
+            完了{result.aiJudged}
+          </span>
+          {result.aiJudged === 0 && result.stored > 0 && result.aiQueued === 0 && (
+            <span className="text-amber-600">（全件判定済み）</span>
+          )}
+          {result.aiJudged < result.aiQueued && result.aiQueued > 0 && (
+            <span className="text-red-500">⚠AIエラー</span>
+          )}
         </span>
       )}
       {status === 'error' && (
-        <span className="text-xs text-red-500 max-w-[100px] truncate" title={errorMsg}>
-          失敗
+        <span className="text-xs text-red-500 max-w-[120px] truncate" title={errorMsg}>
+          失敗: {errorMsg.slice(0, 30)}
         </span>
       )}
     </div>

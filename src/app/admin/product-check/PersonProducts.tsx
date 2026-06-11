@@ -15,6 +15,29 @@ interface AdminData {
   verdicts: Record<string, JudgmentRecord>;
 }
 
+interface SearchTestItem {
+  title: string;
+  author?: string;
+  artistName?: string;
+  itemUrl: string;
+  price: number;
+}
+
+interface SearchTestResult {
+  keyword: string;
+  paramType: string;
+  api: string;
+  count: number;
+  items: SearchTestItem[];
+  error?: string;
+}
+
+interface SearchTestData {
+  person: { name: string; group: string };
+  searches: SearchTestResult[];
+  summary: { totalSearches: number; withResults: number; apiErrors: number };
+}
+
 const VERDICT_BADGE: Record<Verdict, string> = {
   related: 'bg-green-100 text-green-700',
   uncertain: 'bg-yellow-100 text-yellow-700',
@@ -39,6 +62,8 @@ export default function PersonProducts({ personName }: { personName: string }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<'uncertain' | 'all'>('uncertain');
   const [message, setMessage] = useState('');
+  const [searchTest, setSearchTest] = useState<SearchTestData | null>(null);
+  const [searchTestLoading, setSearchTestLoading] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -75,6 +100,17 @@ export default function PersonProducts({ personName }: { personName: string }) {
     if (res.ok) await load();
   }
 
+  async function handleSearchTest() {
+    setSearchTestLoading(true);
+    setSearchTest(null);
+    const res = await fetch(`/api/admin/search-test?person=${encodeURIComponent(personName)}`);
+    if (res.ok) {
+      setSearchTest(await res.json());
+    } else {
+      setMessage('検索テスト失敗');
+    }
+    setSearchTestLoading(false);
+  }
 
   // フィルタ適用
   const filteredProducts = (data: AdminData) =>
@@ -123,6 +159,14 @@ export default function PersonProducts({ personName }: { personName: string }) {
             >
               {loading ? '更新中...' : '再読み込み'}
             </button>
+            <button
+              onClick={handleSearchTest}
+              disabled={searchTestLoading}
+              className="text-xs px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 transition-colors disabled:opacity-50"
+              title="楽天APIを複数キーワードで実行して取得漏れを診断（Redis保存なし）"
+            >
+              {searchTestLoading ? '検索中...' : '🔍 検索テスト'}
+            </button>
             <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs ml-auto">
               <button
                 onClick={() => setFilter('uncertain')}
@@ -139,6 +183,57 @@ export default function PersonProducts({ personName }: { personName: string }) {
             </div>
             {message && <span className="text-xs text-red-500">{message}</span>}
           </div>
+
+          {/* 検索テスト結果 */}
+          {searchTest && (
+            <div className="border border-blue-100 rounded-xl bg-blue-50/40 p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-blue-800">
+                  🔍 検索テスト結果（楽天API実行 / Redis保存なし）
+                </p>
+                <div className="text-xs text-blue-600">
+                  {searchTest.summary.totalSearches}種 / ヒット{searchTest.summary.withResults}種
+                  {searchTest.summary.apiErrors > 0 && (
+                    <span className="text-red-500 ml-2">エラー{searchTest.summary.apiErrors}件</span>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-1 max-h-80 overflow-y-auto">
+                {searchTest.searches.map((s, i) => (
+                  <div
+                    key={i}
+                    className={`text-xs px-3 py-2 rounded-lg ${s.count > 0 ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-gray-600">{s.paramType}</span>
+                      <span className={`font-bold ${s.count > 0 ? 'text-green-700' : 'text-gray-400'}`}>
+                        {s.error ? `エラー: ${s.error}` : `${s.count}件`}
+                      </span>
+                    </div>
+                    {s.count > 0 && (
+                      <ul className="mt-1 space-y-0.5 pl-2">
+                        {s.items.slice(0, 5).map((item, j) => (
+                          <li key={j} className="text-gray-700 truncate">
+                            <a href={item.itemUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                              {item.title}
+                            </a>
+                            {item.author && <span className="text-gray-400 ml-1">({item.author})</span>}
+                            {item.artistName && <span className="text-gray-400 ml-1">({item.artistName})</span>}
+                          </li>
+                        ))}
+                        {s.items.length > 5 && (
+                          <li className="text-gray-400">… 他 {s.items.length - 5}件</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-blue-500">
+                ※ここに表示されない商品は楽天API段階で取得されていません。AI判定ボタンで全件保存・判定してください。
+              </p>
+            </div>
+          )}
 
           {/* 商品リスト */}
           {data && (() => {

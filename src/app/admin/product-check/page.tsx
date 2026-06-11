@@ -1,9 +1,18 @@
 import { getAllPersonsWithConfig } from '@/lib/persons';
-import { getBatchMeta } from '@/lib/product-store';
+import { getBatchMeta, getAllStoredProducts } from '@/lib/product-store';
+import { getAllVerdicts } from '@/lib/judgment-store';
 import BatchButton from './BatchButton';
 import PersonProducts from './PersonProducts';
 import UncertainQueue from './UncertainQueue';
 import PersonAiJudgeButton from './PersonAiJudgeButton';
+
+interface PersonStats {
+  total: number;
+  related: number;
+  uncertain: number;
+  unrelated: number;
+  unclassified: number;
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -49,6 +58,32 @@ export default async function AdminProductCheckPage() {
     return (order[a.config.checkStatus ?? 'unchecked'] ?? 1) -
            (order[b.config.checkStatus ?? 'unchecked'] ?? 1);
   });
+
+  // 全人物の判定統計を並列取得（取得漏れ vs AI除外を診断するため）
+  const statsMap: Record<string, PersonStats> = {};
+  try {
+    const statsArr = await Promise.all(
+      persons.map(async (p) => {
+        try {
+          const [storedData, verdicts] = await Promise.all([
+            getAllStoredProducts(p.name),
+            getAllVerdicts(p.name),
+          ]);
+          const total = Object.values(storedData)
+            .reduce((sum, d) => sum + (d?.products.length ?? 0), 0);
+          const counts = { related: 0, uncertain: 0, unrelated: 0 };
+          for (const v of Object.values(verdicts)) {
+            if (v.verdict in counts) counts[v.verdict as keyof typeof counts]++;
+          }
+          const unclassified = Math.max(0, total - Object.keys(verdicts).length);
+          return { name: p.name, total, unclassified, ...counts };
+        } catch {
+          return { name: p.name, total: 0, related: 0, uncertain: 0, unrelated: 0, unclassified: 0 };
+        }
+      })
+    );
+    for (const s of statsArr) statsMap[s.name] = s;
+  } catch { /* 統計取得失敗時は表示なし */ }
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -112,25 +147,43 @@ export default async function AdminProductCheckPage() {
           return (
             <div key={p.name}>
               {/* 人物ヘッダー */}
-              <div className="flex items-center gap-3 px-4 py-2 bg-gray-50 border border-b-0 border-gray-200 rounded-t-xl">
-                <span className="font-medium text-slate-800 text-sm">{p.name}</span>
-                {p.group && <span className="text-xs text-gray-400">{p.group}</span>}
-                {p.config.strictMode && (
-                  <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded-full">
-                    strict
-                  </span>
-                )}
-                {p.config.customKeywords && p.config.customKeywords.length > 0 && (
-                  <span className="text-xs text-indigo-500 truncate max-w-[120px]">
-                    +{p.config.customKeywords.join(', ')}
-                  </span>
-                )}
-                <div className="ml-auto flex items-center gap-2 flex-shrink-0">
-                  <PersonAiJudgeButton personName={p.name} />
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_BADGE[status]}`}>
-                    {STATUS_LABEL[status]}
-                  </span>
+              <div className="px-4 py-2 bg-gray-50 border border-b-0 border-gray-200 rounded-t-xl">
+                <div className="flex items-center gap-3">
+                  <span className="font-medium text-slate-800 text-sm">{p.name}</span>
+                  {p.group && <span className="text-xs text-gray-400">{p.group}</span>}
+                  {p.config.strictMode && (
+                    <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded-full">
+                      strict
+                    </span>
+                  )}
+                  {p.config.customKeywords && p.config.customKeywords.length > 0 && (
+                    <span className="text-xs text-indigo-500 truncate max-w-[120px]">
+                      +{p.config.customKeywords.join(', ')}
+                    </span>
+                  )}
+                  <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                    <PersonAiJudgeButton personName={p.name} />
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_BADGE[status]}`}>
+                      {STATUS_LABEL[status]}
+                    </span>
+                  </div>
                 </div>
+                {/* 取得・判定統計（取得漏れ vs AI除外の診断用） */}
+                {(() => {
+                  const s = statsMap[p.name];
+                  if (!s || s.total === 0) return null;
+                  return (
+                    <div className="flex gap-3 mt-1 text-xs">
+                      <span className="text-gray-500">取得 {s.total}件</span>
+                      <span className="text-green-600">related {s.related}</span>
+                      <span className="text-yellow-600">uncertain {s.uncertain}</span>
+                      <span className="text-red-500">unrelated {s.unrelated}</span>
+                      {s.unclassified > 0 && (
+                        <span className="text-gray-400">未判定 {s.unclassified}</span>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
               <PersonProducts personName={p.name} />
             </div>

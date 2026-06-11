@@ -74,20 +74,25 @@ export default async function PersonPage({ params }: Props) {
       // 表示条件:
       //   手動採用 → 常に表示
       //   AI判定  → related かつ score >= 70 のみ表示（高確信度のみ）
-      const relevant: RakutenItem[] = sources.flatMap((cat) => {
+      // 複数カテゴリで同一商品が重複保存される場合があるため ID でデdup
+      const relevant: RakutenItem[] = [];
+      const seen = new Set<string>();
+      for (const cat of sources) {
         const catData = storedData[cat];
-        if (!catData) return [];
+        if (!catData) continue;
         if (!Array.isArray(catData.products)) {
           console.error('[PersonPage] unexpected catData.products format', { name: person.name, cat, type: typeof catData.products });
-          return [];
+          continue;
         }
-        return catData.products.filter((p) => {
+        for (const p of catData.products) {
+          if (seen.has(p.id)) continue;
           const v = verdicts[p.id];
-          if (!v || v.verdict !== 'related') return false;
-          if (v.source === 'manual') return true;   // 手動採用は常に表示
-          return v.score >= 70;                      // AI判定は高確信度のみ
-        });
-      });
+          if (!v || v.verdict !== 'related') continue;
+          if (v.source !== 'manual' && v.score < 70) continue;
+          seen.add(p.id);
+          relevant.push(p);
+        }
+      }
 
       return [
         label,
