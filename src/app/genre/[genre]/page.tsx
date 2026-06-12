@@ -26,14 +26,29 @@ export default async function GenrePage({ params }: Props) {
   const decodedGenre = decodeURIComponent(genre) as Genre;
   const persons = getPersonsByGenre(decodedGenre);
 
-  if (persons.length === 0) notFound();
-
   // Group by group name
   const grouped = persons.reduce<Record<string, typeof persons>>((acc, p) => {
     const key = p.group || 'ソロ・個人';
     (acc[key] ??= []).push(p);
     return acc;
   }, {});
+
+  // データなし → 準備中ページ
+  if (persons.length === 0) {
+    return (
+      <div className="max-w-6xl mx-auto px-4 py-8">
+        <div className="mb-8">
+          <p className="text-sm text-gray-500 mb-1">ジャンル</p>
+          <h1 className="text-2xl font-black text-slate-800">{decodedGenre}</h1>
+        </div>
+        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-12 text-center">
+          <p className="text-4xl mb-4">🚧</p>
+          <p className="font-bold text-gray-700 text-lg mb-2">このジャンルは準備中です</p>
+          <p className="text-sm text-gray-500">近日中に{decodedGenre}ジャンルの人物を追加予定です。</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
