@@ -1,9 +1,10 @@
 {
   "あの": {
     "strictMode": true,
-    "customKeywords": ["あのちゃん"],
+    "aliases": ["あのちゃん", "ano"],
+    "customKeywords": ["I's", "ゆるめるモ！"],
     "excludeKeywords": ["中古", "レンタル落ち"],
-    "checkStatus": "needs_fix"
+    "checkStatus": "updated"
   },
   "オードリー": {
     "customKeywords": ["若林正恭", "春日俊彰"],
