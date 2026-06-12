@@ -61,6 +61,12 @@ export default function PersonWorks({ personName, group, counts }: Props) {
   const [debugMode, setDebugMode] = useState(false);
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
   const [testingWorkId, setTestingWorkId] = useState<string | null>(null);
+  const [matchedPerson, setMatchedPerson] = useState<{
+    id: number;
+    name: string;
+    matchScore: number;
+    matchDetails: string;
+  } | null>(null);
 
   async function loadWorks() {
     setLoading(true);
@@ -94,8 +100,10 @@ export default function PersonWorks({ personName, group, counts }: Props) {
         autoPublishedCount: number;
         needsReviewCount: number;
         hiddenCount: number;
+        matchedTmdbPerson?: { id: number; name: string; matchScore: number; matchDetails: string };
         error?: string;
       };
+      if (data.matchedTmdbPerson) setMatchedPerson(data.matchedTmdbPerson);
       if (data.error) {
         setMessage(`エラー: ${data.error}`);
       } else {
@@ -269,6 +277,35 @@ export default function PersonWorks({ personName, group, counts }: Props) {
             >
               {message}
             </p>
+          )}
+
+          {/* マッチした TMDb 人物情報 */}
+          {matchedPerson && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs flex-wrap">
+              <span className="text-slate-500">TMDb人物:</span>
+              <span className="font-medium text-slate-700">{matchedPerson.name}</span>
+              <span className="text-slate-400">id={matchedPerson.id}</span>
+              <span
+                className={`px-1.5 py-0.5 rounded font-mono ${
+                  matchedPerson.matchScore >= 60
+                    ? 'bg-green-100 text-green-700'
+                    : matchedPerson.matchScore >= 30
+                      ? 'bg-yellow-100 text-yellow-700'
+                      : 'bg-red-100 text-red-600'
+                }`}
+                title={matchedPerson.matchDetails}
+              >
+                マッチ度{matchedPerson.matchScore}
+              </span>
+              {matchedPerson.matchScore < 40 && (
+                <span className="text-orange-500">⚠️ 人物不一致の可能性あり・tmdbPersonIdで固定推奨</span>
+              )}
+              {debugMode && (
+                <span className="text-slate-400 text-[10px] w-full mt-0.5 font-mono">
+                  {matchedPerson.matchDetails}
+                </span>
+              )}
+            </div>
           )}
 
           {/* テスト結果 */}

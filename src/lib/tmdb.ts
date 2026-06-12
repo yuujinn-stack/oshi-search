@@ -1,11 +1,16 @@
 // TMDb API クライアント
 // 管理画面からの処理時のみ呼び出す（一般ユーザーのページアクセス時は使用しない）
 
+import type { PersonWithConfig } from '@/types/person';
+
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const POSTER_BASE = 'https://image.tmdb.org/t/p/w500';
 
 // 1人あたりの最大取得件数（APIコスト・AI判定コスト抑制）
 const MAX_CREDITS_PER_PERSON = 60;
+
+// 人物マッチングの最低スコア閾値（これ未満はマッチなしと扱う）
+const MIN_PERSON_MATCH_SCORE = 15;
 
 function getApiKey(): string {
   return process.env.TMDB_API_KEY ?? '';
@@ -18,6 +23,14 @@ interface TmdbPersonSearchResult {
   name: string;
   known_for_department: string;
   popularity: number;
+  known_for?: Array<{
+    id: number;
+    title?: string;
+    name?: string;
+    media_type: string;
+    original_language?: string;
+    genre_ids?: number[];
+  }>;
 }
 
 interface TmdbPersonSearchResponse {
@@ -56,36 +69,250 @@ export interface TmdbWorkCandidate {
   voteCount?: number;
 }
 
-// 人物名で TMDb 検索して person_id を返す
-export async function searchTmdbPerson(name: string): Promise<number | null> {
+export interface TmdbPersonMatch {
+  id: number;
+  name: string;
+  matchScore: number;
+  matchDetails: string;
+}
+
+// --- 人物マッチングスコア計算 ---
+
+// ジャンルごとの期待 known_for_department
+const GENRE_EXPECTED_DEPT: Record<string, string> = {
+  坂道: 'Acting',
+  芸人: 'Acting',
+  テレビ: 'Acting',
+  俳優: 'Acting',
+  アーティスト: 'Music',
+};
+
+// アニメジャンルID (TMDb: genre 16 = Animation)
+const ANIMATION_GENRE_ID = 16;
+
+function computePersonMatchScore(
+  candidate: TmdbPersonSearchResult,
+  person: PersonWithConfig,
+  searchQuery: string,
+): { score: number; details: string } {
+  let score = 0;
+  const details: string[] = [];
+
+  // 1. 名前一致スコア (0 〜 40)
+  const ourNames = [
+    person.name,
+    person.config.realName,
+    ...(person.config.aliases ?? []),
+    ...(person.config.tmdbSearchKeywords ?? []),
+  ].filter((n): n is string => !!n);
+
+  const tmdbName = candidate.name;
+  const tmdbNameLower = tmdbName.toLowerCase();
+
+  if (ourNames.some((n) => n === tmdbName || n.toLowerCase() === tmdbNameLower)) {
+    score += 40;
+    details.push('名前完全一致+40');
+  } else if (
+    searchQuery === tmdbName ||
+    searchQuery.toLowerCase() === tmdbNameLower
+  ) {
+    score += 35;
+    details.push('検索キーワード完全一致+35');
+  } else if (
+    ourNames.some(
+      (n) =>
+        tmdbNameLower.includes(n.toLowerCase()) ||
+        n.toLowerCase().includes(tmdbNameLower),
+    )
+  ) {
+    score += 20;
+    details.push('名前部分一致+20');
+  }
+
+  // 2. known_for_department スコア (-20 〜 +30)
+  const dept = candidate.known_for_department;
+  const expectedDept =
+    person.config.expectedDepartment ?? GENRE_EXPECTED_DEPT[person.genre ?? ''];
+
+  if (expectedDept) {
+    if (dept === expectedDept) {
+      score += 30;
+      details.push(`部門一致(${dept})+30`);
+    } else if (dept === 'Animation') {
+      // 声優系は坂道・芸人・俳優にとって強いネガティブシグナル
+      score -= 20;
+      details.push('Animation部門(声優系)-20');
+    } else {
+      // 期待部門と違うが許容範囲（Acting期待でMusicなど）
+      if (dept === 'Acting' || dept === 'Directing' || dept === 'Sound') {
+        score += 5;
+        details.push(`${dept}(許容範囲)+5`);
+      } else {
+        score -= 5;
+        details.push(`${dept}(期待外れ)-5`);
+      }
+    }
+  } else {
+    // expectedDept 不明: Acting と Animation で簡易判定
+    if (dept === 'Acting') {
+      score += 15;
+      details.push('Acting+15');
+    } else if (dept === 'Animation') {
+      score -= 10;
+      details.push('Animation-10');
+    }
+  }
+
+  // 3. known_for 作品分析 (-25 〜 +20)
+  if (candidate.known_for?.length) {
+    const total = candidate.known_for.length;
+    const jaCount = candidate.known_for.filter(
+      (w) => w.original_language === 'ja',
+    ).length;
+    const animeCount = candidate.known_for.filter((w) =>
+      w.genre_ids?.includes(ANIMATION_GENRE_ID),
+    ).length;
+
+    // 日本語作品比率ボーナス（日本人タレントの特定に有効）
+    const jaRatio = jaCount / total;
+    const jaBonus = Math.round(jaRatio * 20);
+    if (jaBonus > 0) {
+      score += jaBonus;
+      details.push(`日本作品${jaCount}/${total}+${jaBonus}`);
+    } else {
+      const nonJapenalty = Math.round((1 - jaRatio) * 8);
+      score -= nonJapenalty;
+      details.push(`非日本作品${total - jaCount}/${total}-${nonJapenalty}`);
+    }
+
+    // アニメ作品比率ペナルティ（アーティストは半減）
+    const animeRatio = animeCount / total;
+    if (animeRatio > 0.3) {
+      const maxPenalty = person.genre === 'アーティスト' ? 12 : 25;
+      const animePenalty = Math.round(animeRatio * maxPenalty);
+      score -= animePenalty;
+      details.push(`アニメ多${animeCount}/${total}-${animePenalty}`);
+    }
+  } else {
+    // known_for なし: まだデータが少ない新人等の可能性あり（ニュートラル）
+    details.push('known_forなし(ニュートラル)');
+  }
+
+  // 4. 人気度ボーナス (0 〜 10) タイブレーカー
+  const popBonus = Math.min(Math.round(candidate.popularity / 5), 10);
+  if (popBonus > 0) {
+    score += popBonus;
+    details.push(`人気度${candidate.popularity.toFixed(1)}+${popBonus}`);
+  }
+
+  return { score, details: details.join(', ') };
+}
+
+// --- 検索ヘルパー ---
+
+async function searchTmdbPersonCandidates(
+  query: string,
+): Promise<TmdbPersonSearchResult[]> {
+  const apiKey = getApiKey();
+  if (!apiKey) return [];
+  try {
+    const res = await fetch(
+      `${TMDB_BASE}/search/person?api_key=${apiKey}&query=${encodeURIComponent(query)}&language=ja-JP`,
+      { cache: 'no-store' },
+    );
+    if (!res.ok) {
+      console.log(`[tmdb] 人物検索エラー HTTP ${res.status}: "${query}"`);
+      return [];
+    }
+    const data = (await res.json()) as TmdbPersonSearchResponse;
+    return data.results ?? [];
+  } catch (err) {
+    console.error(`[tmdb] 人物検索例外: "${query}"`, err);
+    return [];
+  }
+}
+
+// --- 公開関数 ---
+
+// 人物マッチングスコアで最適な TMDb 人物を特定する
+// tmdbPersonId が設定されている場合はそれを直接返す
+export async function findBestTmdbPerson(
+  person: PersonWithConfig,
+): Promise<TmdbPersonMatch | null> {
   const apiKey = getApiKey();
   if (!apiKey) {
     console.log('[tmdb] TMDB_API_KEY 未設定');
     return null;
   }
-  try {
-    const res = await fetch(
-      `${TMDB_BASE}/search/person?api_key=${apiKey}&query=${encodeURIComponent(name)}&language=ja-JP`,
-      { cache: 'no-store' },
-    );
-    if (!res.ok) {
-      console.log(`[tmdb] 人物検索エラー HTTP ${res.status}: "${name}"`);
-      return null;
-    }
-    const data = (await res.json()) as TmdbPersonSearchResponse;
-    if (!data.results?.length) {
-      console.log(`[tmdb] 人物検索: 結果なし "${name}"`);
-      return null;
-    }
-    const person = data.results[0];
+
+  // tmdbPersonId が設定されている場合は固定ID を直接使用（同名別人対策）
+  if (person.config.tmdbPersonId) {
     console.log(
-      `[tmdb] 人物検索ヒット: "${name}" → id=${person.id} name="${person.name}" popularity=${person.popularity.toFixed(1)}`,
+      `[tmdb] tmdbPersonId固定使用: "${person.name}" → id=${person.config.tmdbPersonId}`,
     );
-    return person.id;
-  } catch (err) {
-    console.error(`[tmdb] 人物検索例外: "${name}"`, err);
+    return {
+      id: person.config.tmdbPersonId,
+      name: person.name,
+      matchScore: 100,
+      matchDetails: 'tmdbPersonId直接指定',
+    };
+  }
+
+  // 検索クエリ一覧（重複なし）
+  const searchQueries = [
+    person.name,
+    ...(person.config.aliases ?? []),
+    ...(person.config.tmdbSearchKeywords ?? []),
+  ].filter((v, i, arr) => arr.indexOf(v) === i);
+
+  const allCandidates: Array<TmdbPersonSearchResult & { matchScore: number; matchDetails: string; fromQuery: string }> =
+    [];
+  const seenIds = new Set<number>();
+
+  for (const query of searchQueries) {
+    const results = await searchTmdbPersonCandidates(query);
+    for (const r of results) {
+      if (seenIds.has(r.id)) continue;
+      seenIds.add(r.id);
+      const { score, details } = computePersonMatchScore(r, person, query);
+      allCandidates.push({ ...r, matchScore: score, matchDetails: details, fromQuery: query });
+    }
+  }
+
+  if (!allCandidates.length) {
+    console.log(`[tmdb] 人物検索: 候補なし "${person.name}"`);
     return null;
   }
+
+  // スコア降順ソート
+  allCandidates.sort((a, b) => b.matchScore - a.matchScore);
+
+  // デバッグログ（上位3件）
+  console.log(`[tmdb] 人物マッチング候補 "${person.name}":`);
+  allCandidates.slice(0, 3).forEach((c, i) => {
+    console.log(
+      `  ${i + 1}. id=${c.id} name="${c.name}" dept=${c.known_for_department} ` +
+        `pop=${c.popularity.toFixed(1)} score=${c.matchScore} [${c.matchDetails}]`,
+    );
+  });
+
+  const best = allCandidates[0];
+  if (best.matchScore < MIN_PERSON_MATCH_SCORE) {
+    console.log(
+      `[tmdb] マッチ不十分: "${person.name}" 最高スコア=${best.matchScore} < 閾値${MIN_PERSON_MATCH_SCORE}`,
+    );
+    return null;
+  }
+
+  console.log(
+    `[tmdb] 人物確定: "${person.name}" → id=${best.id} name="${best.name}" score=${best.matchScore}`,
+  );
+  return {
+    id: best.id,
+    name: best.name,
+    matchScore: best.matchScore,
+    matchDetails: best.matchDetails,
+  };
 }
 
 // person_id から combined_credits を取得（人気順ソート・件数制限あり）

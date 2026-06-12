@@ -11,6 +11,10 @@ export interface PersonConfig {
   realName?: string;          // 本名
   reading?: string;           // 読み仮名
   aliases?: string[];         // 旧芸名・愛称・コンビ名など
+  // TMDb 人物検索設定
+  tmdbPersonId?: number;         // 正しい TMDb 人物ID（設定時はそれを直接使用・同名別人対策）
+  tmdbSearchKeywords?: string[]; // TMDb 検索用追加キーワード（ローマ字表記など）
+  expectedDepartment?: string;   // 期待する known_for_department（Acting / Music 等）
 }
 
 export interface Person {

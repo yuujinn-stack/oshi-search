@@ -4,8 +4,8 @@
 import OpenAI from 'openai';
 import type { PersonWithConfig } from '@/types/person';
 import type { WorkRecord, WorkStatus } from '@/types/work';
-import type { TmdbWorkCandidate } from './tmdb';
-import { searchTmdbPerson, getTmdbCredits } from './tmdb';
+import { findBestTmdbPerson, getTmdbCredits } from './tmdb';
+import type { TmdbWorkCandidate, TmdbPersonMatch } from './tmdb';
 import { getAllWorks, saveWork } from './work-store';
 
 // --- スコア閾値（後から変更しやすい定数） ---
@@ -21,6 +21,7 @@ export interface WorkProcessResult {
   autoPublishedCount: number;
   needsReviewCount: number;
   hiddenCount: number;
+  matchedTmdbPerson?: TmdbPersonMatch; // マッチした TMDb 人物情報
   error?: string;
 }
 
@@ -229,19 +230,15 @@ export async function processPersonWorks(
     hiddenCount: 0,
   };
 
-  // TMDb 人物ID を取得（本名 → aliases の順に試みる）
-  let personId: number | null = null;
-  const searchCandidates = [person.name, ...(person.config.aliases ?? [])];
-  for (const nameCandidate of searchCandidates) {
-    personId = await searchTmdbPerson(nameCandidate);
-    if (personId) break;
-  }
-
-  if (!personId) {
-    result.error = `TMDbに「${person.name}」が見つかりませんでした`;
+  // TMDb 人物をスコアリングで特定
+  const tmdbMatch = await findBestTmdbPerson(person);
+  if (!tmdbMatch) {
+    result.error = `TMDbに「${person.name}」が見つかりませんでした（マッチスコア不足）`;
     console.log(`[work-processor] ${result.error}`);
     return result;
   }
+  result.matchedTmdbPerson = tmdbMatch;
+  const personId = tmdbMatch.id;
 
   const candidates = await getTmdbCredits(personId);
   if (!candidates.length) {
