@@ -9,7 +9,7 @@ interface Props {
 }
 
 export async function generateStaticParams() {
-  return ALL_GENRES.map((genre) => ({ genre: encodeURIComponent(genre) }));
+  return ALL_GENRES.map((genre) => ({ genre }));
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
