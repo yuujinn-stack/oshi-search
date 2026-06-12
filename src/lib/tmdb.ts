@@ -39,8 +39,10 @@ interface TmdbPersonSearchResponse {
 
 interface TmdbCreditItem {
   id: number;
-  title?: string;        // movie
-  name?: string;         // tv
+  title?: string;          // movie (ローカライズ済み)
+  name?: string;           // tv (ローカライズ済み)
+  original_title?: string; // movie 原題
+  original_name?: string;  // tv 原題
   media_type: string;
   character?: string;
   release_date?: string;
@@ -60,6 +62,7 @@ interface TmdbCreditsResponse {
 export interface TmdbWorkCandidate {
   tmdbId: number;
   title: string;
+  originalTitle?: string;  // 原題（タイトルと異なる場合のみセット）
   type: 'movie' | 'tv';
   releaseYear?: number;
   roleName?: string;
@@ -72,6 +75,7 @@ export interface TmdbWorkCandidate {
 export interface TmdbPersonMatch {
   id: number;
   name: string;
+  department?: string;  // known_for_department
   matchScore: number;
   matchDetails: string;
 }
@@ -305,11 +309,12 @@ export async function findBestTmdbPerson(
   }
 
   console.log(
-    `[tmdb] 人物確定: "${person.name}" → id=${best.id} name="${best.name}" score=${best.matchScore}`,
+    `[tmdb] 人物確定: "${person.name}" → id=${best.id} name="${best.name}" dept=${best.known_for_department} score=${best.matchScore}`,
   );
   return {
     id: best.id,
     name: best.name,
+    department: best.known_for_department,
     matchScore: best.matchScore,
     matchDetails: best.matchDetails,
   };
@@ -339,9 +344,12 @@ export async function getTmdbCredits(personId: number): Promise<TmdbWorkCandidat
       const dateStr = item.release_date ?? item.first_air_date ?? '';
       const releaseYear = dateStr ? parseInt(dateStr.slice(0, 4), 10) : undefined;
 
+      const originalTitle = (item.original_title ?? item.original_name) || undefined;
       credits.push({
         tmdbId: item.id,
         title,
+        // タイトルと原題が異なる場合のみ originalTitle をセット
+        originalTitle: originalTitle && originalTitle !== title ? originalTitle : undefined,
         type: item.media_type === 'movie' ? 'movie' : 'tv',
         releaseYear: releaseYear && !isNaN(releaseYear) ? releaseYear : undefined,
         roleName: item.character || undefined,

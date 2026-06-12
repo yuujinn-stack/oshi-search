@@ -70,3 +70,17 @@ export async function deleteWork(personName: string, workId: string): Promise<vo
   if (!redis) return;
   await redis.hdel(hashKey(personName), workId);
 }
+
+// source別に一括削除（AI補完作品を再実行する際に使用）
+export async function deleteWorksBySource(
+  personName: string,
+  source: string,
+): Promise<number> {
+  const redis = getRedis();
+  if (!redis) return 0;
+  const all = await getAllWorks(personName);
+  const targets = all.filter((w) => w.source === source);
+  if (!targets.length) return 0;
+  await redis.hdel(hashKey(personName), ...targets.map((w) => w.id));
+  return targets.length;
+}

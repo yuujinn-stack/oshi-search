@@ -1,4 +1,4 @@
-// 出演作品取得・AI判定パイプライン
+// 出演作品取得・AI判定・AI補完パイプライン
 // 管理画面から実行される。一般ユーザーのアクセス時には呼ばない。
 
 import OpenAI from 'openai';
@@ -6,11 +6,7 @@ import type { PersonWithConfig } from '@/types/person';
 import type { WorkRecord, WorkStatus } from '@/types/work';
 import { findBestTmdbPerson, getTmdbCredits } from './tmdb';
 import type { TmdbWorkCandidate, TmdbPersonMatch } from './tmdb';
-import { getAllWorks, saveWork } from './work-store';
-
-// --- スコア閾値（後から変更しやすい定数） ---
-export const WORK_SCORE_AUTO_PUBLISH = 90;
-export const WORK_SCORE_NEEDS_REVIEW = 70;
+import { getAllWorks, saveWork, deleteWorksBySource } from './work-store';
 
 export interface WorkProcessResult {
   newCount: number;
@@ -21,18 +17,32 @@ export interface WorkProcessResult {
   autoPublishedCount: number;
   needsReviewCount: number;
   hiddenCount: number;
-  matchedTmdbPerson?: TmdbPersonMatch; // マッチした TMDb 人物情報
+  supplementCount: number;       // AI補完で新規追加した件数
+  matchedTmdbPerson?: TmdbPersonMatch;
   error?: string;
 }
 
-// AI判定の詳細結果
+export interface WorkProcessOptions {
+  action?: 'tmdb' | 'supplement' | 'all'; // デフォルト: 'tmdb'
+  forceRejudge?: boolean;                  // 手動確認済み以外を再判定
+  deleteSupplementFirst?: boolean;         // AI補完作品を削除してから再補完
+}
+
+// AI判定の詳細結果（内部型）
 interface JudgeResult {
-  score: number;
+  decision: WorkStatus;  // AIが直接返した最終判定
+  samePerson: boolean;
   reason: string;
+  confidenceScore: number; // 参考値のみ
   usedAi: boolean;
-  relation?: 'strong' | 'medium' | 'weak' | 'none';
-  statusRecommendation?: WorkStatus;
-  needsHumanReview?: boolean;
+}
+
+// AI補完の作品候補（内部型）
+interface AiWorkSuggestion {
+  title: string;
+  type: 'movie' | 'tv';
+  releaseYear?: number;
+  reason: string;
 }
 
 // 重複判定用タイトル正規化
@@ -53,24 +63,6 @@ function generateWorkId(
   return `ai-${type}-${normalizedTitle.slice(0, 24)}`;
 }
 
-// スコアから status を決定（AIの statusRecommendation より score の閾値を優先）
-function scoreToStatus(score: number): WorkStatus {
-  if (score >= WORK_SCORE_AUTO_PUBLISH) return 'auto_published';
-  if (score >= WORK_SCORE_NEEDS_REVIEW) return 'needs_review';
-  return 'hidden';
-}
-
-// OpenAI APIが未設定の場合に使うルールベーススコア
-// ※ TMDb combined_credits は全件出演クレジット済みのため、基準を高めに設定
-function computeRuleBasedScore(candidate: TmdbWorkCandidate): number {
-  let score = 60; // TMDbクレジット = 出演確認済みなので基準点を高めに
-  if (candidate.roleName) score += 20; // 役名あり = 主要キャスト
-  if ((candidate.voteCount ?? 0) > 5000) score += 20;
-  else if ((candidate.voteCount ?? 0) > 1000) score += 10;
-  else if ((candidate.voteCount ?? 0) > 100) score += 3;
-  return Math.min(score, 100);
-}
-
 // OpenAI クライアント（lazy init）
 let openaiClient: OpenAI | null = null;
 function getOpenAI(): OpenAI | null {
@@ -79,30 +71,36 @@ function getOpenAI(): OpenAI | null {
   return openaiClient;
 }
 
-// 作品の関連度を AI 判定（OpenAI未設定時はルールベースにフォールバック）
+// OpenAI未設定時のフォールバック判定（TMDb由来のみ）
+function ruleBasedDecision(candidate: TmdbWorkCandidate): JudgeResult {
+  // TMDb combined_credits は出演確認済みのため needs_review を基本とする
+  // 役名あり・高vote数は needs_review、それ以外も needs_review（管理者確認推奨）
+  return {
+    decision: 'needs_review',
+    samePerson: true,
+    reason: 'ルールベース（OPENAI_API_KEY未設定）',
+    confidenceScore: candidate.roleName ? 75 : 65,
+    usedAi: false,
+  };
+}
+
+// TMDb由来作品の AI 判定
+// OpenAI に decision を直接返させ、スコア閾値による変換は行わない
 export async function judgeWork(
   candidate: TmdbWorkCandidate,
   person: PersonWithConfig,
+  tmdbMatch?: TmdbPersonMatch,
 ): Promise<JudgeResult> {
   const openai = getOpenAI();
-  if (!openai) {
-    const score = computeRuleBasedScore(candidate);
-    return {
-      score,
-      reason: 'ルールベース判定（OPENAI_API_KEY未設定）',
-      usedAi: false,
-    };
-  }
+  if (!openai) return ruleBasedDecision(candidate);
 
   const typeLabel = candidate.type === 'movie' ? '映画' : 'ドラマ・TV番組';
 
-  const aliasText =
+  const personLines = [
+    `名前: ${person.name}`,
     person.config.aliases?.length
       ? `別名・愛称: ${person.config.aliases.join('、')}`
-      : '';
-  const personText = [
-    `芸名: ${person.name}`,
-    aliasText,
+      : '',
     person.config.realName ? `本名: ${person.config.realName}` : '',
     person.group ? `グループ: ${person.group}` : '',
     person.genre ? `ジャンル: ${person.genre}` : '',
@@ -110,50 +108,51 @@ export async function judgeWork(
     .filter(Boolean)
     .join('\n');
 
-  const workText = [
+  const tmdbPersonLines = tmdbMatch
+    ? [
+        `TMDb人物名: ${tmdbMatch.name}`,
+        tmdbMatch.department ? `TMDb部門: ${tmdbMatch.department}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : '';
+
+  const workLines = [
     `タイトル: ${candidate.title}`,
+    candidate.originalTitle ? `原題: ${candidate.originalTitle}` : '',
     `種別: ${typeLabel}`,
     candidate.releaseYear ? `公開年: ${candidate.releaseYear}` : '',
-    `TMDb役名: ${candidate.roleName ?? '（未記載）'}`,
-    candidate.overview ? `概要: ${candidate.overview.slice(0, 200)}` : '',
+    `役名: ${candidate.roleName ?? '（未記載）'}`,
+    candidate.overview ? `概要: ${candidate.overview.slice(0, 150)}` : '',
   ]
     .filter(Boolean)
     .join('\n');
 
-  const prompt = `あなたは日本の芸能人・アーティストの出演作品を判定するAIです。
+  const prompt = `あなたは日本の芸能人・アーティストの出演作品管理AIです。
+以下のTMDbクレジットデータが対象人物の出演作品かどうかを判定してください。
 
 【対象人物】
-${personText}
+${personLines}
 
-【作品情報（TMDbクレジットデータ）】
-${workText}
+${tmdbPersonLines ? `【TMDb人物マッチング情報】\n${tmdbPersonLines}\n\n` : ''}【作品情報（TMDbクレジット）】
+${workLines}
 
-【判定手順】
-1. この TMDb クレジットが本当に対象人物（同名別人でない）のものか確認する
-2. 役名から本人の役割の重要度を判断する（主役・主要キャスト・脇役・エキストラ等）
-3. 対象人物のファンにとって価値のある作品かを評価する
-4. グループ名義の場合：グループ名が一致すれば有効（メンバーとして参加）
-
-【confidenceScore 基準】
-90〜100: 本人主演・重要な役での出演が明確（例: 主演映画・主演ドラマ）
-80〜89:  本人出演は明確だが役割が脇役、またはグループ名義の主要作品
-70〜79:  出演は確認できるが不確実・確認推奨（役名不明、マイナー作品等）
-50〜69:  関連がありそうだが人物や役の確認が必要（同名別人の可能性あり等）
-30〜49:  関連が薄い、または関係ない可能性が高い
-0〜29:   無関係、または明確に別人
+【判定基準】
+auto_published: 本人出演が明確。役名あり、または主要グループ名義の代表作
+needs_review: 出演の可能性はあるが確認推奨。役名不明・マイナー作品・短い名前で同名別人の懸念あり
+hidden: 同名別人である可能性が高い、または無関係・エキストラ以下
 
 【注意】
-- TMDb役名が空欄でも出演確認済みの可能性あり（エキストラは除く）
-- 日本人に多い短い名前（1〜2文字）は同名別人に注意
-- グループ作品はメンバー全員関連とみなして80以上を基本とする
+- 日本人タレントで1〜2文字の名前は同名別人リスクに注意
+- グループ名義で本人も参加している場合は auto_published 可
+- 役名が空欄でもTMDbクレジット自体は出演の証拠になる
 
-以下のJSONのみ返してください（他のテキスト不要）:
+以下のJSONのみ返してください:
 {
-  "relation": "strong | medium | weak | none",
-  "confidenceScore": 0,
-  "statusRecommendation": "auto_published | needs_review | hidden",
-  "reason": "50文字以内の判定理由",
-  "needsHumanReview": true
+  "decision": "auto_published | needs_review | hidden",
+  "samePerson": true,
+  "reason": "30文字以内の判定理由",
+  "confidenceScore": 85
 }`;
 
   try {
@@ -161,64 +160,144 @@ ${workText}
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
-      max_tokens: 120,
+      max_tokens: 100,
       temperature: 0,
     });
 
     const raw = res.choices[0]?.message?.content ?? '{}';
     const parsed = JSON.parse(raw) as {
-      relation?: string;
-      confidenceScore?: number;
-      statusRecommendation?: string;
+      decision?: string;
+      samePerson?: boolean;
       reason?: string;
-      needsHumanReview?: boolean;
+      confidenceScore?: number;
     };
 
-    const score =
+    const validStatuses: WorkStatus[] = ['auto_published', 'needs_review', 'hidden'];
+    const decision: WorkStatus = validStatuses.includes(parsed.decision as WorkStatus)
+      ? (parsed.decision as WorkStatus)
+      : 'needs_review';
+
+    const confidenceScore =
       typeof parsed.confidenceScore === 'number'
         ? Math.max(0, Math.min(100, parsed.confidenceScore))
         : 50;
 
-    const validStatuses: WorkStatus[] = ['auto_published', 'needs_review', 'hidden'];
-    const aiStatusRec =
-      validStatuses.includes(parsed.statusRecommendation as WorkStatus)
-        ? (parsed.statusRecommendation as WorkStatus)
-        : undefined;
-
-    const validRelations = ['strong', 'medium', 'weak', 'none'] as const;
-    const relation = validRelations.includes(parsed.relation as (typeof validRelations)[number])
-      ? (parsed.relation as (typeof validRelations)[number])
-      : undefined;
-
     console.log(
-      `[work-judge] AI判定: "${candidate.title}" → score:${score} relation:${relation ?? '?'} status:${aiStatusRec ?? '?'} reason:"${parsed.reason ?? ''}"`,
+      `[work-judge] "${candidate.title}" → decision:${decision} same:${parsed.samePerson ?? '?'} score:${confidenceScore} reason:"${parsed.reason ?? ''}"`,
     );
 
     return {
-      score,
+      decision,
+      samePerson: parsed.samePerson !== false,
       reason: parsed.reason ?? '',
+      confidenceScore,
       usedAi: true,
-      relation,
-      statusRecommendation: aiStatusRec,
-      needsHumanReview: parsed.needsHumanReview,
     };
   } catch (err) {
     console.error(`[work-judge] OpenAIエラー: "${candidate.title}"`, err);
-    const score = computeRuleBasedScore(candidate);
-    return {
-      score,
-      reason: 'AI判定エラー（ルールベースにフォールバック）',
-      usedAi: false,
-    };
+    return ruleBasedDecision(candidate);
   }
 }
 
-// 人物の出演作品を TMDb から取得・AI判定・Redis 保存
-// forceRejudge=true: 手動確認済み（checkedAt あり）以外を再判定
+// OpenAI による作品補完（TMDbにない日本のバラエティ・番組等）
+// 管理者操作時のみ呼ぶ。結果は全件 needs_review で保存。
+async function supplementWithOpenAI(
+  person: PersonWithConfig,
+  existingNormalizedTitles: Set<string>,
+): Promise<AiWorkSuggestion[]> {
+  const openai = getOpenAI();
+  if (!openai) {
+    console.log('[work-supplement] OPENAI_API_KEY未設定 → 補完スキップ');
+    return [];
+  }
+
+  const personLines = [
+    `名前: ${person.name}`,
+    person.config.aliases?.length
+      ? `別名・愛称: ${person.config.aliases.join('、')}`
+      : '',
+    person.group ? `グループ: ${person.group}` : '',
+    person.genre ? `ジャンル: ${person.genre}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const prompt = `あなたは日本の芸能人・アーティストの出演作品管理AIです。
+以下の人物についてTMDbに登録されていない可能性が高い日本のバラエティ番組・
+アイドル番組・ドラマ・映画などの出演作品を補完してください。
+
+【対象人物】
+${personLines}
+
+【補完対象】
+- 日本のバラエティ番組でのレギュラー・準レギュラー・ゲスト出演（特集回は除く）
+- グループの主要TV・映像出演
+- ドラマ・映画での出演
+- 確実性が高いものを優先
+
+【除外条件】
+- 音楽番組での単発歌唱披露（レギュラーでない限り）
+- 推測・不確かな情報
+- 出演が確認できないもの
+
+最大15件まで。以下のJSONのみ返してください:
+{
+  "works": [
+    {
+      "title": "作品タイトル",
+      "type": "tv",
+      "releaseYear": 2022,
+      "reason": "補完理由（20文字以内）"
+    }
+  ]
+}`;
+
+  try {
+    const res = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      response_format: { type: 'json_object' },
+      max_tokens: 600,
+      temperature: 0,
+    });
+
+    const raw = res.choices[0]?.message?.content ?? '{}';
+    const parsed = JSON.parse(raw) as { works?: unknown[] };
+    const works = Array.isArray(parsed.works) ? parsed.works : [];
+
+    const suggestions: AiWorkSuggestion[] = [];
+    for (const w of works) {
+      if (typeof w !== 'object' || !w || !('title' in w)) continue;
+      const item = w as Record<string, unknown>;
+      const title = typeof item.title === 'string' ? item.title.trim() : '';
+      if (!title) continue;
+      // 既存タイトルと重複チェック
+      if (existingNormalizedTitles.has(normalizeWorkTitle(title))) continue;
+
+      suggestions.push({
+        title,
+        type: item.type === 'movie' ? 'movie' : 'tv',
+        releaseYear:
+          typeof item.releaseYear === 'number' ? item.releaseYear : undefined,
+        reason: typeof item.reason === 'string' ? item.reason : '',
+      });
+    }
+
+    console.log(`[work-supplement] "${person.name}": ${suggestions.length}件補完`);
+    return suggestions;
+  } catch (err) {
+    console.error(`[work-supplement] OpenAIエラー: "${person.name}"`, err);
+    return [];
+  }
+}
+
+// 人物の出演作品を処理する（TMDb取得・AI補完・AI判定・Redis保存）
 export async function processPersonWorks(
   person: PersonWithConfig,
-  forceRejudge = false,
+  options: WorkProcessOptions = {},
 ): Promise<WorkProcessResult> {
+  const { action = 'tmdb', forceRejudge = false, deleteSupplementFirst = false } = options;
+
   const result: WorkProcessResult = {
     newCount: 0,
     skippedCount: 0,
@@ -228,102 +307,140 @@ export async function processPersonWorks(
     autoPublishedCount: 0,
     needsReviewCount: 0,
     hiddenCount: 0,
+    supplementCount: 0,
   };
-
-  // TMDb 人物をスコアリングで特定
-  const tmdbMatch = await findBestTmdbPerson(person);
-  if (!tmdbMatch) {
-    result.error = `TMDbに「${person.name}」が見つかりませんでした（マッチスコア不足）`;
-    console.log(`[work-processor] ${result.error}`);
-    return result;
-  }
-  result.matchedTmdbPerson = tmdbMatch;
-  const personId = tmdbMatch.id;
-
-  const candidates = await getTmdbCredits(personId);
-  if (!candidates.length) {
-    result.error = 'TMDbでクレジットが見つかりませんでした';
-    return result;
-  }
-
-  // 既存 work をマップで保持（重複スキップ・再判定に使用）
-  const existing = await getAllWorks(person.name);
-  const existingById = new Map(existing.map((w) => [w.id, w]));
-  const existingByTmdbId = new Map(
-    existing.filter((w) => w.tmdbId !== undefined).map((w) => [w.tmdbId!, w]),
-  );
 
   const now = Date.now();
 
-  for (const candidate of candidates) {
-    const normalizedTitle = normalizeWorkTitle(candidate.title);
-    const id = generateWorkId(candidate.tmdbId, normalizedTitle, candidate.type);
-
-    // 既存チェック
-    const existingWork =
-      existingById.get(id) ?? (candidate.tmdbId ? existingByTmdbId.get(candidate.tmdbId) : undefined);
-
-    if (existingWork) {
-      if (!forceRejudge) {
-        // 通常モード: 既存はすべてスキップ
-        result.skippedCount++;
-        continue;
-      }
-      // forceRejudge: 手動確認済み（checkedAt あり）はスキップ
-      if (existingWork.checkedAt) {
-        result.skippedCount++;
-        continue;
-      }
-      // AI自動判定のみのものは再判定
-      result.rejudgedCount++;
-    }
-
-    // AI判定（またはルールベース）
-    const judgment = await judgeWork(candidate, person);
-    if (judgment.usedAi) result.aiJudgedCount++;
-    else result.ruleBasedCount++;
-
-    const status = scoreToStatus(judgment.score);
-    const work: WorkRecord = {
-      id,
-      personName: person.name,
-      title: candidate.title,
-      normalizedTitle,
-      type: candidate.type,
-      tmdbId: candidate.tmdbId,
-      source: 'tmdb',
-      releaseYear: candidate.releaseYear,
-      roleName: candidate.roleName,
-      overview: candidate.overview,
-      posterUrl: candidate.posterUrl,
-      confidenceScore: judgment.score,
-      status,
-      aiReason: judgment.reason,
-      aiRelation: judgment.relation,
-      aiStatusRecommendation: judgment.statusRecommendation,
-      aiNeedsHumanReview: judgment.needsHumanReview,
-      usedAi: judgment.usedAi,
-      createdAt: existingWork?.createdAt ?? now,
-      updatedAt: now,
-    };
-
-    await saveWork(work);
-
-    if (existingWork) {
-      // 再判定はカウントを newCount に含めない
+  // --- TMDb 取得・AI判定フロー ---
+  if (action === 'tmdb' || action === 'all') {
+    const tmdbMatch = await findBestTmdbPerson(person);
+    if (!tmdbMatch) {
+      result.error = `TMDbに「${person.name}」が見つかりませんでした（マッチスコア不足）`;
+      console.log(`[work-processor] ${result.error}`);
+      // TMDbが見つからなくても supplement は続行
+      if (action !== 'all') return result;
     } else {
-      result.newCount++;
+      result.matchedTmdbPerson = tmdbMatch;
+      const candidates = await getTmdbCredits(tmdbMatch.id);
+
+      // 既存 work マップ
+      const existing = await getAllWorks(person.name);
+      const existingById = new Map(existing.map((w) => [w.id, w]));
+      const existingByTmdbId = new Map(
+        existing.filter((w) => w.tmdbId !== undefined).map((w) => [w.tmdbId!, w]),
+      );
+
+      for (const candidate of candidates) {
+        const normalizedTitle = normalizeWorkTitle(candidate.title);
+        const id = generateWorkId(candidate.tmdbId, normalizedTitle, candidate.type);
+
+        const existingWork =
+          existingById.get(id) ??
+          (candidate.tmdbId ? existingByTmdbId.get(candidate.tmdbId) : undefined);
+
+        if (existingWork) {
+          if (!forceRejudge) {
+            result.skippedCount++;
+            continue;
+          }
+          if (existingWork.checkedAt) {
+            result.skippedCount++;
+            continue;
+          }
+          result.rejudgedCount++;
+        }
+
+        // AI判定（decision を直接採用）
+        const judgment = await judgeWork(candidate, person, tmdbMatch);
+        if (judgment.usedAi) result.aiJudgedCount++;
+        else result.ruleBasedCount++;
+
+        const work: WorkRecord = {
+          id,
+          personName: person.name,
+          title: candidate.title,
+          originalTitle: candidate.originalTitle,
+          normalizedTitle,
+          type: candidate.type,
+          tmdbId: candidate.tmdbId,
+          source: 'tmdb',
+          releaseYear: candidate.releaseYear,
+          roleName: candidate.roleName,
+          overview: candidate.overview,
+          posterUrl: candidate.posterUrl,
+          confidenceScore: judgment.confidenceScore,
+          status: judgment.decision,       // ← AIの decision をそのまま採用
+          aiDecision: judgment.decision,
+          aiSamePerson: judgment.samePerson,
+          aiReason: judgment.reason,
+          usedAi: judgment.usedAi,
+          tmdbMatchedPersonId: tmdbMatch.id,
+          tmdbMatchedPersonName: tmdbMatch.name,
+          createdAt: existingWork?.createdAt ?? now,
+          updatedAt: now,
+        };
+
+        await saveWork(work);
+
+        if (!existingWork) result.newCount++;
+
+        if (judgment.decision === 'auto_published') result.autoPublishedCount++;
+        else if (judgment.decision === 'needs_review') result.needsReviewCount++;
+        else result.hiddenCount++;
+      }
+    }
+  }
+
+  // --- AI補完フロー ---
+  if (action === 'supplement' || action === 'all') {
+    // 既存 AI補完作品を削除してから再補完する場合
+    if (deleteSupplementFirst) {
+      await deleteWorksBySource(person.name, 'openai_suggestion');
+      console.log(`[work-supplement] "${person.name}": 既存AI補完作品を削除`);
     }
 
-    if (status === 'auto_published') result.autoPublishedCount++;
-    else if (status === 'needs_review') result.needsReviewCount++;
-    else result.hiddenCount++;
+    // 重複除外のために現在の全タイトルを取得
+    const allExisting = await getAllWorks(person.name);
+    const existingNormalized = new Set(allExisting.map((w) => normalizeWorkTitle(w.title)));
+
+    const suggestions = await supplementWithOpenAI(person, existingNormalized);
+
+    for (const s of suggestions) {
+      const normalizedTitle = normalizeWorkTitle(s.title);
+      const id = generateWorkId(undefined, normalizedTitle, s.type);
+
+      // 保存直前に再度重複チェック（補完候補同士の重複対策）
+      if (existingNormalized.has(normalizedTitle)) continue;
+      existingNormalized.add(normalizedTitle);
+
+      const work: WorkRecord = {
+        id,
+        personName: person.name,
+        title: s.title,
+        normalizedTitle,
+        type: s.type,
+        source: 'openai_suggestion',
+        releaseYear: s.releaseYear,
+        confidenceScore: 50,         // 補完作品は参考値50固定
+        status: 'needs_review',      // AI補完は常に needs_review
+        aiReason: s.reason,
+        usedAi: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await saveWork(work);
+      result.supplementCount++;
+      result.needsReviewCount++;
+    }
   }
 
   console.log(
     `[work-processor] ${person.name}: ` +
-      `新規${result.newCount} 再判定${result.rejudgedCount} スキップ${result.skippedCount} ` +
-      `AI${result.aiJudgedCount} ルール${result.ruleBasedCount} ` +
+      `TMDb新規${result.newCount} 再判定${result.rejudgedCount} スキップ${result.skippedCount} ` +
+      `AI補完${result.supplementCount} ` +
+      `AI判定${result.aiJudgedCount} ルール${result.ruleBasedCount} ` +
       `公開${result.autoPublishedCount} 確認待ち${result.needsReviewCount} 非表示${result.hiddenCount}`,
   );
   return result;

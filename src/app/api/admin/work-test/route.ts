@@ -5,7 +5,7 @@ import type { TmdbWorkCandidate } from '@/lib/tmdb';
 
 // POST /api/admin/work-test
 // body: { personName, work: TmdbWorkCandidate }
-// 単一作品に対してAI判定テストを実行し、入力・出力を詳細に返す（保存なし）
+// 単一作品に対してAI判定テストを実行し、結果を返す（保存なし）
 // 管理画面のデバッグ用途のみ
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
@@ -30,21 +30,19 @@ export async function POST(req: NextRequest) {
     personName,
     work: {
       title: work.title,
+      originalTitle: work.originalTitle,
       type: work.type,
       tmdbId: work.tmdbId,
       releaseYear: work.releaseYear,
       roleName: work.roleName,
-      voteCount: work.voteCount,
     },
     openAiConfigured: hasOpenAI,
     judgment: {
-      usedAi: result.usedAi,
-      confidenceScore: result.score,
-      status: result.score >= 90 ? 'auto_published' : result.score >= 70 ? 'needs_review' : 'hidden',
-      relation: result.relation,
-      statusRecommendation: result.statusRecommendation,
+      decision: result.decision,
+      samePerson: result.samePerson,
       reason: result.reason,
-      needsHumanReview: result.needsHumanReview,
+      confidenceScore: result.confidenceScore,
+      usedAi: result.usedAi,
     },
   });
 }

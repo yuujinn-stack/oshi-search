@@ -3,14 +3,15 @@ import { getPersonWithConfig } from '@/lib/persons';
 import { processPersonWorks } from '@/lib/work-processor';
 
 // POST /api/admin/work-process
-// body: { personName: string }
-// TMDb から出演作品を取得し AI 判定して Redis に保存する
+// body: { personName, action?, forceRejudge?, deleteSupplementFirst? }
 // 管理画面からのみ呼び出し可（proxy.ts で認証済み）
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const { personName, forceRejudge } = body as {
+  const { personName, action, forceRejudge, deleteSupplementFirst } = body as {
     personName?: string;
+    action?: 'tmdb' | 'supplement' | 'all';
     forceRejudge?: boolean;
+    deleteSupplementFirst?: boolean;
   };
 
   if (!personName) {
@@ -22,6 +23,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '人物が見つかりません' }, { status: 404 });
   }
 
-  const result = await processPersonWorks(person, forceRejudge ?? false);
+  const result = await processPersonWorks(person, {
+    action: action ?? 'tmdb',
+    forceRejudge: forceRejudge ?? false,
+    deleteSupplementFirst: deleteSupplementFirst ?? false,
+  });
   return NextResponse.json(result);
 }

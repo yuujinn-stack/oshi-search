@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { WorkRecord, WorkStatus } from '@/types/work';
+import type { WorkRecord, WorkStatus, WorkSource } from '@/types/work';
 
 interface Counts {
   total: number;
@@ -16,7 +16,8 @@ interface Props {
   counts: Counts;
 }
 
-type FilterMode = WorkStatus | 'all';
+type StatusFilter = WorkStatus | 'all';
+type SourceFilter = WorkSource | 'all';
 
 const STATUS_LABEL: Record<WorkStatus, string> = {
   auto_published: '公開中',
@@ -30,40 +31,33 @@ const STATUS_BADGE: Record<WorkStatus, string> = {
   hidden: 'bg-gray-100 text-gray-500',
 };
 
-const RELATION_LABEL: Record<string, string> = {
-  strong: '強い関連',
-  medium: '中程度の関連',
-  weak: '弱い関連',
-  none: '関連なし',
+// source バッジ（青=TMDb、紫=AI補完、緑=手動）
+const SOURCE_BADGE: Record<WorkSource, string> = {
+  tmdb: 'bg-blue-100 text-blue-700',
+  openai_suggestion: 'bg-purple-100 text-purple-700',
+  manual: 'bg-green-100 text-green-700',
 };
-
-const RELATION_COLOR: Record<string, string> = {
-  strong: 'text-green-600',
-  medium: 'text-blue-600',
-  weak: 'text-orange-500',
-  none: 'text-red-500',
+const SOURCE_LABEL: Record<WorkSource, string> = {
+  tmdb: 'TMDb',
+  openai_suggestion: 'AI補完',
+  manual: '手動',
 };
-
-// スコアがどの閾値に該当するか説明
-function scoreExplanation(score: number): string {
-  if (score >= 90) return `${score}点 → 自動公開（90点以上）`;
-  if (score >= 70) return `${score}点 → 確認待ち（70〜89点）`;
-  return `${score}点 → 非表示（70点未満）`;
-}
 
 export default function PersonWorks({ personName, group, counts }: Props) {
   const [open, setOpen] = useState(false);
   const [works, setWorks] = useState<WorkRecord[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [processing, setProcessing] = useState(false);
+  const [processing, setProcessing] = useState<string | null>(null);
   const [message, setMessage] = useState('');
-  const [filter, setFilter] = useState<FilterMode>('needs_review');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('needs_review');
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
   const [debugMode, setDebugMode] = useState(false);
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
   const [testingWorkId, setTestingWorkId] = useState<string | null>(null);
   const [matchedPerson, setMatchedPerson] = useState<{
     id: number;
     name: string;
+    department?: string;
     matchScore: number;
     matchDetails: string;
   } | null>(null);
@@ -83,44 +77,61 @@ export default function PersonWorks({ personName, group, counts }: Props) {
     setOpen((v) => !v);
   }
 
-  async function handleProcess(forceRejudge = false) {
-    setProcessing(true);
+  async function handleProcess(
+    action: 'tmdb' | 'supplement' | 'all',
+    opts?: { forceRejudge?: boolean; deleteSupplementFirst?: boolean },
+  ) {
+    setProcessing(action);
     setMessage('');
     const res = await fetch('/api/admin/work-process', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ personName, forceRejudge }),
+      body: JSON.stringify({
+        personName,
+        action,
+        forceRejudge: opts?.forceRejudge ?? false,
+        deleteSupplementFirst: opts?.deleteSupplementFirst ?? false,
+      }),
     });
     if (res.ok) {
       const data = (await res.json()) as {
         newCount: number;
         rejudgedCount: number;
+        supplementCount: number;
         aiJudgedCount: number;
         ruleBasedCount: number;
         autoPublishedCount: number;
         needsReviewCount: number;
         hiddenCount: number;
-        matchedTmdbPerson?: { id: number; name: string; matchScore: number; matchDetails: string };
+        matchedTmdbPerson?: { id: number; name: string; department?: string; matchScore: number; matchDetails: string };
         error?: string;
       };
       if (data.matchedTmdbPerson) setMatchedPerson(data.matchedTmdbPerson);
       if (data.error) {
         setMessage(`エラー: ${data.error}`);
       } else {
-        const parts = [
-          `新規${data.newCount}件`,
-          forceRejudge && data.rejudgedCount > 0 ? `再判定${data.rejudgedCount}件` : '',
+        const parts: string[] = [];
+        if (action === 'tmdb' || action === 'all') {
+          if (data.newCount > 0 || opts?.forceRejudge) {
+            parts.push(`TMDb新規${data.newCount}件`);
+            if (opts?.forceRejudge && data.rejudgedCount > 0)
+              parts.push(`再判定${data.rejudgedCount}件`);
+          }
+        }
+        if (action === 'supplement' || action === 'all') {
+          parts.push(`AI補完${data.supplementCount}件`);
+        }
+        parts.push(
           `AI判定${data.aiJudgedCount}件`,
-          data.ruleBasedCount > 0 ? `ルールベース${data.ruleBasedCount}件` : '',
           `公開${data.autoPublishedCount} / 確認待ち${data.needsReviewCount} / 非表示${data.hiddenCount}`,
-        ].filter(Boolean);
+        );
         setMessage(`完了: ${parts.join(' ')}`);
         await loadWorks();
       }
     } else {
       setMessage('処理に失敗しました');
     }
-    setProcessing(false);
+    setProcessing(null);
   }
 
   async function handleVerdict(workId: string, status: WorkStatus) {
@@ -155,29 +166,34 @@ export default function PersonWorks({ personName, group, counts }: Props) {
         work: {
           tmdbId: work.tmdbId,
           title: work.title,
+          originalTitle: work.originalTitle,
           type: work.type,
           releaseYear: work.releaseYear,
           roleName: work.roleName,
           overview: work.overview,
-          voteCount: undefined,
         },
       }),
     });
-    if (res.ok) {
-      setTestResult(await res.json());
-    }
+    if (res.ok) setTestResult(await res.json());
     setTestingWorkId(null);
   }
 
   const filteredWorks = works
-    ? (filter === 'all' ? works : works.filter((w) => w.status === filter)).sort(
-        (a, b) => b.confidenceScore - a.confidenceScore,
-      )
+    ? works
+        .filter((w) => statusFilter === 'all' || w.status === statusFilter)
+        .filter((w) => sourceFilter === 'all' || w.source === sourceFilter)
+        .sort((a, b) => b.confidenceScore - a.confidenceScore)
     : [];
 
   const reviewCount = works
     ? works.filter((w) => w.status === 'needs_review').length
     : counts.review;
+
+  const supplementCount = works
+    ? works.filter((w) => w.source === 'openai_suggestion').length
+    : 0;
+
+  const isProcessing = processing !== null;
 
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden">
@@ -201,6 +217,11 @@ export default function PersonWorks({ personName, group, counts }: Props) {
               確認待ち {reviewCount}件
             </span>
           )}
+          {supplementCount > 0 && (
+            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
+              AI補完 {supplementCount}件
+            </span>
+          )}
           <span className="text-gray-400 text-xs ml-1">{open ? '▲' : '▼'}</span>
         </div>
       </button>
@@ -211,19 +232,35 @@ export default function PersonWorks({ personName, group, counts }: Props) {
           {/* アクションバー */}
           <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={() => handleProcess(false)}
-              disabled={processing}
-              className="text-xs px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors disabled:opacity-50"
+              onClick={() => handleProcess('tmdb')}
+              disabled={isProcessing}
+              className="text-xs px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 transition-colors disabled:opacity-50"
             >
-              {processing ? '処理中...' : '🎬 TMDb取得・AI判定'}
+              {processing === 'tmdb' ? '処理中...' : '🎬 TMDb取得・AI判定'}
             </button>
             <button
-              onClick={() => handleProcess(true)}
-              disabled={processing}
-              title="手動確認済み以外を全て再判定（プロンプト改善後に使用）"
+              onClick={() => handleProcess('tmdb', { forceRejudge: true })}
+              disabled={isProcessing}
+              title="手動確認済み以外を全て再判定"
               className="text-xs px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-600 transition-colors disabled:opacity-50"
             >
-              {processing ? '処理中...' : '🔄 再判定'}
+              {processing === 'tmdb' ? '処理中...' : '🔄 再判定'}
+            </button>
+            <button
+              onClick={() => handleProcess('supplement')}
+              disabled={isProcessing}
+              title="TMDbにない作品をOpenAIで補完"
+              className="text-xs px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-600 transition-colors disabled:opacity-50"
+            >
+              {processing === 'supplement' ? '補完中...' : '🤖 AI補完'}
+            </button>
+            <button
+              onClick={() => handleProcess('supplement', { deleteSupplementFirst: true })}
+              disabled={isProcessing}
+              title="AI補完作品を削除して再補完"
+              className="text-xs px-3 py-1.5 rounded-lg bg-pink-50 hover:bg-pink-100 text-pink-600 transition-colors disabled:opacity-50"
+            >
+              {processing === 'supplement' ? '補完中...' : '🔁 AI補完リセット'}
             </button>
             <button
               onClick={loadWorks}
@@ -236,28 +273,55 @@ export default function PersonWorks({ personName, group, counts }: Props) {
               onClick={() => setDebugMode((v) => !v)}
               className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${
                 debugMode
-                  ? 'bg-purple-100 text-purple-700'
+                  ? 'bg-gray-700 text-white'
                   : 'bg-gray-100 hover:bg-gray-200 text-slate-600'
               }`}
             >
               🔍 デバッグ{debugMode ? ' ON' : ''}
             </button>
-            {/* フィルタ */}
-            <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs ml-auto">
+          </div>
+
+          {/* フィルターバー */}
+          <div className="flex flex-wrap gap-2">
+            {/* ステータスフィルター */}
+            <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
               {(
                 [
                   { key: 'needs_review', label: '確認待ち' },
                   { key: 'auto_published', label: '公開中' },
                   { key: 'hidden', label: '非表示' },
-                  { key: 'all', label: '全て' },
-                ] as { key: FilterMode; label: string }[]
+                  { key: 'all', label: '全ステータス' },
+                ] as { key: StatusFilter; label: string }[]
               ).map(({ key, label }) => (
                 <button
                   key={key}
-                  onClick={() => setFilter(key)}
+                  onClick={() => setStatusFilter(key)}
                   className={`px-3 py-1.5 border-l first:border-l-0 border-gray-200 ${
-                    filter === key
-                      ? 'bg-indigo-50 text-indigo-700 font-medium'
+                    statusFilter === key
+                      ? 'bg-slate-700 text-white font-medium'
+                      : 'text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* ソースフィルター */}
+            <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
+              {(
+                [
+                  { key: 'all', label: '全ソース' },
+                  { key: 'tmdb', label: 'TMDb' },
+                  { key: 'openai_suggestion', label: 'AI補完' },
+                  { key: 'manual', label: '手動' },
+                ] as { key: SourceFilter; label: string }[]
+              ).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setSourceFilter(key)}
+                  className={`px-3 py-1.5 border-l first:border-l-0 border-gray-200 ${
+                    sourceFilter === key
+                      ? 'bg-slate-700 text-white font-medium'
                       : 'text-gray-500 hover:bg-gray-50'
                   }`}
                 >
@@ -284,6 +348,9 @@ export default function PersonWorks({ personName, group, counts }: Props) {
             <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs flex-wrap">
               <span className="text-slate-500">TMDb人物:</span>
               <span className="font-medium text-slate-700">{matchedPerson.name}</span>
+              {matchedPerson.department && (
+                <span className="text-slate-400">{matchedPerson.department}</span>
+              )}
               <span className="text-slate-400">id={matchedPerson.id}</span>
               <span
                 className={`px-1.5 py-0.5 rounded font-mono ${
@@ -298,7 +365,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                 マッチ度{matchedPerson.matchScore}
               </span>
               {matchedPerson.matchScore < 40 && (
-                <span className="text-orange-500">⚠️ 人物不一致の可能性あり・tmdbPersonIdで固定推奨</span>
+                <span className="text-orange-500">⚠️ 人物不一致の可能性・tmdbPersonIdで固定推奨</span>
               )}
               {debugMode && (
                 <span className="text-slate-400 text-[10px] w-full mt-0.5 font-mono">
@@ -310,17 +377,17 @@ export default function PersonWorks({ personName, group, counts }: Props) {
 
           {/* テスト結果 */}
           {testResult && (
-            <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 text-xs space-y-2">
+            <div className="bg-gray-900 border border-gray-700 rounded-xl p-4 text-xs space-y-2">
               <div className="flex items-center justify-between">
-                <p className="font-bold text-purple-800">🔍 AI判定テスト結果</p>
+                <p className="font-bold text-gray-200">🔍 AI判定テスト結果</p>
                 <button
                   onClick={() => setTestResult(null)}
-                  className="text-purple-400 hover:text-purple-600"
+                  className="text-gray-400 hover:text-gray-200"
                 >
                   ✕
                 </button>
               </div>
-              <pre className="bg-white rounded p-3 overflow-auto text-purple-900 text-[10px] max-h-60">
+              <pre className="overflow-auto text-green-400 text-[10px] max-h-60">
                 {JSON.stringify(testResult, null, 2)}
               </pre>
             </div>
@@ -331,7 +398,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
             <p className="text-sm text-gray-400 text-center py-4">読み込み中...</p>
           ) : filteredWorks.length === 0 ? (
             <p className="text-sm text-gray-400 text-center py-4">
-              {filter === 'needs_review'
+              {statusFilter === 'needs_review' && sourceFilter === 'all'
                 ? '確認待ちの作品はありません ✓'
                 : counts.total === 0
                   ? '作品データがありません。「TMDb取得・AI判定」を実行してください。'
@@ -367,16 +434,14 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-slate-800">{work.title}</span>
+                      {work.originalTitle && work.originalTitle !== work.title && (
+                        <span className="text-gray-400 text-[10px]">{work.originalTitle}</span>
+                      )}
                       <span className="text-gray-400">
                         {work.type === 'movie' ? '映画' : 'ドラマ'}
                       </span>
                       {work.releaseYear && (
                         <span className="text-gray-400">{work.releaseYear}年</span>
-                      )}
-                      {work.checkedAt && (
-                        <span className="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">
-                          手動確認済
-                        </span>
                       )}
                     </div>
 
@@ -387,22 +452,25 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                       <p className="text-gray-500 mt-0.5 line-clamp-2">{work.overview}</p>
                     )}
 
-                    {/* ステータス・スコア */}
+                    {/* ステータス・ソース・判定バッジ */}
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      {/* ステータスバッジ */}
                       <span className={`px-1.5 py-0.5 rounded ${STATUS_BADGE[work.status]}`}>
                         {STATUS_LABEL[work.status]}
                       </span>
+                      {/* ソースバッジ（常に表示） */}
                       <span
-                        className="font-mono text-gray-600"
-                        title={scoreExplanation(work.confidenceScore)}
+                        className={`px-1.5 py-0.5 rounded font-medium ${SOURCE_BADGE[work.source] ?? 'bg-gray-100 text-gray-500'}`}
                       >
-                        {work.confidenceScore}点
+                        {SOURCE_LABEL[work.source] ?? work.source}
                       </span>
-                      {work.aiRelation && (
-                        <span className={`${RELATION_COLOR[work.aiRelation] ?? 'text-gray-500'}`}>
-                          {RELATION_LABEL[work.aiRelation]}
+                      {/* 手動確認済み */}
+                      {work.checkedAt && (
+                        <span className="bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">
+                          手動確認済
                         </span>
                       )}
+                      {/* AI使用バッジ */}
                       <span
                         className={`px-1 py-0.5 rounded ${
                           work.usedAi
@@ -412,39 +480,43 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                       >
                         {work.usedAi ? '🤖 AI' : '⚙️ ルール'}
                       </span>
-                      {work.aiNeedsHumanReview && (
-                        <span className="text-orange-500">⚠️ 要確認</span>
-                      )}
+                      {/* 参考スコア */}
+                      <span className="font-mono text-gray-400 text-[10px]">
+                        {work.confidenceScore}pt
+                      </span>
                     </div>
 
                     {work.aiReason && (
                       <p className="text-gray-500 mt-1 italic">{work.aiReason}</p>
                     )}
 
+                    {/* AI補完作品の注意書き */}
+                    {work.source === 'openai_suggestion' && !work.checkedAt && (
+                      <p className="text-purple-600 mt-1 text-[10px]">
+                        ⚠️ AI推測による補完作品です。出演を確認してから公開してください。
+                      </p>
+                    )}
+
                     {/* デバッグ詳細 */}
                     {debugMode && (
-                      <div className="mt-2 p-2 bg-gray-50 rounded text-[10px] font-mono text-gray-600 space-y-0.5">
+                      <div className="mt-2 p-2 bg-gray-900 rounded text-[10px] font-mono text-green-400 space-y-0.5">
                         <p>id: {work.id}</p>
-                        <p>tmdbId: {work.tmdbId ?? '—'}</p>
                         <p>source: {work.source}</p>
-                        <p>score: {work.confidenceScore} → threshold 90/70</p>
-                        <p>
-                          scoreExplanation: {scoreExplanation(work.confidenceScore)}
-                        </p>
-                        {work.aiStatusRecommendation && (
-                          <p>AI推奨ステータス: {work.aiStatusRecommendation}</p>
+                        <p>tmdbId: {work.tmdbId ?? '—'}</p>
+                        <p>aiDecision: {work.aiDecision ?? '旧データ（なし）'}</p>
+                        <p>aiSamePerson: {String(work.aiSamePerson ?? '不明')}</p>
+                        <p>confidenceScore: {work.confidenceScore}（参考値）</p>
+                        <p>usedAi: {String(work.usedAi ?? '不明')}</p>
+                        {work.tmdbMatchedPersonId && (
+                          <p>tmdbPerson: {work.tmdbMatchedPersonName} (id={work.tmdbMatchedPersonId})</p>
                         )}
-                        <p>usedAi: {String(work.usedAi ?? '不明（旧データ）')}</p>
                         <p>
                           checkedAt:{' '}
                           {work.checkedAt
                             ? new Date(work.checkedAt).toLocaleString('ja-JP')
                             : '未確認'}
                         </p>
-                        <p>
-                          createdAt:{' '}
-                          {new Date(work.createdAt).toLocaleString('ja-JP')}
-                        </p>
+                        <p>createdAt: {new Date(work.createdAt).toLocaleString('ja-JP')}</p>
                       </div>
                     )}
                   </div>
@@ -459,6 +531,13 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                       公開
                     </button>
                     <button
+                      onClick={() => handleVerdict(work.id, 'needs_review')}
+                      disabled={work.status === 'needs_review'}
+                      className="text-xs px-2 py-1 rounded bg-yellow-100 hover:bg-yellow-200 text-yellow-700 disabled:opacity-40"
+                    >
+                      確認待ち
+                    </button>
+                    <button
                       onClick={() => handleVerdict(work.id, 'hidden')}
                       disabled={work.status === 'hidden'}
                       className="text-xs px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 disabled:opacity-40"
@@ -469,7 +548,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                       <button
                         onClick={() => handleTestJudge(work)}
                         disabled={testingWorkId === work.id}
-                        className="text-xs px-2 py-1 rounded bg-purple-100 hover:bg-purple-200 text-purple-700 disabled:opacity-40"
+                        className="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 disabled:opacity-40"
                       >
                         {testingWorkId === work.id ? '判定中...' : 'テスト'}
                       </button>
