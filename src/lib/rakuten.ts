@@ -32,6 +32,12 @@ function affiliateLink(affiliate: string, item: string): string {
 
 // 楽天URLから安定したプロダクトIDを生成（インデックスではなくURLベース）
 // これにより同じ商品は常に同じIDを持ち、AI判定結果が再利用できる
+// 楽天市場の画像URLを高解像度版に変換（128x128 → 500x500）
+function upgradeIchibaImageUrl(url: string): string {
+  if (!url) return '';
+  return url.replace('?_ex=128x128', '?_ex=500x500');
+}
+
 function stableId(prefix: string, itemUrl: string): string {
   try {
     const url = new URL(itemUrl);
@@ -473,7 +479,7 @@ async function fetchIchiba(
         price: Number(Item.itemPrice ?? 0),
         reviewCount: Number(Item.reviewCount ?? 0),
         reviewAverage: Number(Item.reviewAverage ?? 0),
-        imageUrl: Item.mediumImageUrls?.[0]?.imageUrl ?? '',
+        imageUrl: upgradeIchibaImageUrl(Item.mediumImageUrls?.[0]?.imageUrl ?? ''),
         itemUrl: Item.itemUrl ?? '',
         affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
         category: 'グッズ' as const,
@@ -574,7 +580,7 @@ async function fetchUsed(
         price: Number(Item.itemPrice ?? 0),
         reviewCount: Number(Item.reviewCount ?? 0),
         reviewAverage: Number(Item.reviewAverage ?? 0),
-        imageUrl: Item.mediumImageUrls?.[0]?.imageUrl ?? '',
+        imageUrl: upgradeIchibaImageUrl(Item.mediumImageUrls?.[0]?.imageUrl ?? ''),
         itemUrl: Item.itemUrl ?? '',
         affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
         category: '中古' as const,

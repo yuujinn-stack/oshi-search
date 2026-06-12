@@ -1,28 +1,50 @@
+'use client';
+
+import { useState } from 'react';
 import type { RakutenItem } from '@/types/rakuten';
 
 export default function ProductCard({ product }: { product: RakutenItem }) {
+  const [loaded, setLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
   const href = product.affiliateUrl || product.itemUrl;
+  const hasImage = !!product.imageUrl && !imgError;
 
   return (
-    <div className={`bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition-shadow flex flex-col ${product.isUsed ? 'border border-amber-200' : 'border border-gray-100'}`}>
+    <div
+      className={`bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition-shadow flex flex-col ${
+        product.isUsed ? 'border border-amber-200' : 'border border-gray-100'
+      }`}
+    >
       {/* 商品画像（クリックでアフィリエイトリンクへ） */}
       <a
         href={href}
         target="_blank"
         rel="noopener noreferrer sponsored"
-        className="block aspect-[3/4] bg-gray-100 overflow-hidden relative"
+        className="block aspect-square bg-gray-50 overflow-hidden relative"
       >
+        {/* 中古バッジ */}
         {product.isUsed && (
           <span className="absolute top-1.5 left-1.5 z-10 text-[10px] font-bold bg-amber-500 text-white px-1.5 py-0.5 rounded">
             中古
           </span>
         )}
-        {product.imageUrl ? (
+
+        {/* スケルトン：画像読み込み中に表示 */}
+        {!loaded && hasImage && (
+          <div className="absolute inset-0 bg-gray-200 animate-pulse" />
+        )}
+
+        {hasImage ? (
           <img
             src={product.imageUrl}
             alt={product.title}
-            className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
+            className={`absolute inset-0 w-full h-full object-contain p-2 transition-opacity duration-300 ${
+              loaded ? 'opacity-100' : 'opacity-0'
+            }`}
             loading="lazy"
+            onLoad={() => setLoaded(true)}
+            onError={() => setImgError(true)}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs text-center px-2">
