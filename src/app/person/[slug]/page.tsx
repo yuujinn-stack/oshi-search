@@ -4,8 +4,10 @@ import { notFound } from 'next/navigation';
 import { getPersonWithConfig, getPersonsByGroup } from '@/lib/persons';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
+import { getPublishedWorks } from '@/lib/work-store';
 import ProductSectionList from '@/components/ProductSectionList';
 import PersonCard from '@/components/PersonCard';
+import WorkCard from '@/components/WorkCard';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
 
 interface Props {
@@ -63,11 +65,12 @@ export default async function PersonPage({ params }: Props) {
         .slice(0, 4)
     : [];
 
-  // Redis から保存済み商品と判定結果を並列取得
-  // ユーザーページでは楽天 API / OpenAI API を一切呼ばない
-  const [storedData, verdicts] = await Promise.all([
+  // Redis から保存済み商品・判定結果・出演作品を並列取得
+  // ユーザーページでは楽天 API / OpenAI API / TMDb API を一切呼ばない
+  const [storedData, verdicts, publishedWorks] = await Promise.all([
     getAllStoredProducts(person.name),
     getAllVerdicts(person.name),
+    getPublishedWorks(person.name),
   ]);
 
   // 中古カテゴリの関連済み商品を取得（全セクションで共有）
@@ -188,6 +191,18 @@ export default async function PersonPage({ params }: Props) {
             )}
           </section>
         ))}
+
+        {/* 出演作品 */}
+        {publishedWorks.length > 0 && (
+          <section>
+            <h2 className="text-base font-bold text-slate-800 mb-4">出演作品</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {publishedWorks.map((work) => (
+                <WorkCard key={work.id} work={work} />
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* VOD */}
         <section>

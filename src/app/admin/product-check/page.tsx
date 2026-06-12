@@ -93,9 +93,14 @@ export default async function AdminProductCheckPage() {
           <h1 className="text-2xl font-black text-slate-800">商品確認 管理画面</h1>
           <p className="text-sm text-gray-500 mt-1">全{persons.length}件の登録人物</p>
         </div>
-        <a href="/api/admin/logout" className="text-xs text-gray-400 hover:text-red-500 mt-1">
-          ログアウト
-        </a>
+        <div className="flex items-center gap-4 mt-1">
+          <a href="/admin/work-check" className="text-xs text-indigo-600 hover:underline">
+            出演作品管理 →
+          </a>
+          <a href="/api/admin/logout" className="text-xs text-gray-400 hover:text-red-500">
+            ログアウト
+          </a>
+        </div>
       </div>
 
       {/* バッチ実行パネル */}
