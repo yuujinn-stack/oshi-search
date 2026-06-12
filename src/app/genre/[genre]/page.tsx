@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
 import PersonCard from '@/components/PersonCard';
 import { getPersonsByGenre, ALL_GENRES } from '@/lib/persons';
 import type { Genre } from '@/types/person';
