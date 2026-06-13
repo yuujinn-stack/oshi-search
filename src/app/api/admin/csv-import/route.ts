@@ -5,16 +5,18 @@ import type { VodProvider, VodProviderType } from '@/types/vod';
 import type { WorkRecord } from '@/types/work';
 
 // POST /api/admin/csv-import
-// body: { csvContent: string, commit?: boolean }
+// body: { csvContent: string, commit?: boolean, personName?: string }
+//   personName: CSVにpersonId列がない場合のフォールバック（UIで選択した人物）
 // commit=false (default): プレビューのみ（保存しない）
 // commit=true: 実際に保存する
 // 管理画面からのみ呼び出し可（proxy.ts で認証済み）
+//
+// 照合キー: personName + workId（同一workIdでも人物が違えば別レコード）
 
 // ─────────────────────────────────────────
 // 定数
 // ─────────────────────────────────────────
 
-// よく使われる配信サービス名 → TMDb providerId マッピング
 const SERVICE_LOOKUP: Record<string, { id: number; logoPath?: string }> = {
   'Netflix': { id: 8, logoPath: '/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg' },
   'ネットフリックス': { id: 8, logoPath: '/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg' },
@@ -52,29 +54,19 @@ const SERVICE_LOOKUP: Record<string, { id: number; logoPath?: string }> = {
 };
 
 const TYPE_MAP: Record<string, VodProviderType> = {
-  flatrate: 'flatrate',
-  subscription: 'flatrate',
-  見放題: 'flatrate',
-  rent: 'rent',
-  rental: 'rent',
-  レンタル: 'rent',
-  buy: 'buy',
-  purchase: 'buy',
-  購入: 'buy',
-  free: 'free',
-  無料: 'free',
-  ads: 'ads',
-  'ad-supported': 'ads',
-  広告付き: 'ads',
+  flatrate: 'flatrate', subscription: 'flatrate', 見放題: 'flatrate',
+  rent: 'rent', rental: 'rent', レンタル: 'rent',
+  buy: 'buy', purchase: 'buy', 購入: 'buy',
+  free: 'free', 無料: 'free',
+  ads: 'ads', 'ad-supported': 'ads', 広告付き: 'ads',
   unknown: 'unknown',
 };
 
 const REQUIRED_COLS = ['workid', 'vodservice'] as const;
 
-const EXAMPLE_CSV = `workId,vodService,availabilityType,confidence,sourceUrl,note
-abc123,Hulu,flatrate,high,https://www.hulu.jp/...,公式ページで確認
-abc123,Lemino,flatrate,medium,,配信情報サイトで確認
-def456,Netflix,flatrate,high,https://www.netflix.com/jp/title/...,`;
+const EXAMPLE_CSV = `workId,personId,vodService,availabilityType,confidence,sourceUrl,note
+tmdb-tv-12345,賀喜遥香,Hulu,flatrate,high,https://www.hulu.jp/...,公式ページで確認
+tmdb-tv-12345,賀喜遥香,U-NEXT,flatrate,medium,,`;
 
 // ─────────────────────────────────────────
 // ユーティリティ
@@ -82,20 +74,18 @@ def456,Netflix,flatrate,high,https://www.netflix.com/jp/title/...,`;
 
 function stringHash(s: string): number {
   let h = 5381;
-  for (let i = 0; i < s.length; i++) {
-    h = (Math.imul(h, 33) ^ s.charCodeAt(i)) >>> 0;
-  }
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 33) ^ s.charCodeAt(i)) >>> 0;
   return -(h % 90000) - 10200;
 }
 
 // RFC 4180 準拠の簡易 CSV パーサー（BOM・改行コード対応）
 function parseCSV(content: string): string[][] {
   const normalized = content
-    .replace(/^﻿/, '')   // BOM 除去（UTF-8 BOM あり/なし 両対応）
+    .replace(/^﻿/, '')
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n');
-  const lines = normalized.split('\n');
-  return lines
+  return normalized
+    .split('\n')
     .map((line) => {
       const fields: string[] = [];
       let current = '';
@@ -106,9 +96,7 @@ function parseCSV(content: string): string[][] {
           if (ch === '"') {
             if (line[i + 1] === '"') { current += '"'; i++; }
             else inQuotes = false;
-          } else {
-            current += ch;
-          }
+          } else current += ch;
         } else {
           if (ch === '"') inQuotes = true;
           else if (ch === ',') { fields.push(current); current = ''; }
@@ -125,8 +113,7 @@ function lookupService(name: string): { id: number; logoPath?: string } {
   const key = Object.keys(SERVICE_LOOKUP).find(
     (k) => k.toLowerCase() === name.toLowerCase(),
   );
-  if (key) return SERVICE_LOOKUP[key];
-  return { id: stringHash(name) };
+  return key ? SERVICE_LOOKUP[key] : { id: stringHash(name) };
 }
 
 // ─────────────────────────────────────────
@@ -154,9 +141,14 @@ export interface ImportPreviewRow {
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const { csvContent, commit = false } = body as {
+  const {
+    csvContent,
+    commit = false,
+    personName: bodyPersonName = '',
+  } = body as {
     csvContent?: string;
     commit?: boolean;
+    personName?: string;  // UIで選択した人物（CSVにpersonId列がない場合のfallback）
   };
 
   if (!csvContent || typeof csvContent !== 'string') {
@@ -169,11 +161,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'CSVが空またはヘッダー行のみです' }, { status: 400 });
   }
 
-  // ヘッダー行を小文字・スペース除去で正規化して列インデックスを取得
   const rawHeader = rows[0];
   const header = rawHeader.map((h) => h.trim().toLowerCase().replace(/\s+/g, ''));
 
-  // 必須列チェック（不足していたら詳細エラーを返す）
+  // 必須列チェック
   const missingCols = REQUIRED_COLS.filter((col) => header.indexOf(col) === -1);
   if (missingCols.length > 0) {
     const foundDisplay = rawHeader.map((h) => h.trim()).join(', ') || '（列が見つかりません）';
@@ -194,9 +185,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 列インデックス（任意列は -1 = 存在しない）
+  // 列インデックス
+  // personId 列: "personid" または "personname" のどちらでも認識
   const COL = {
     workId:           header.indexOf('workid'),
+    personId:         Math.max(header.indexOf('personid'), header.indexOf('personname')),
     vodService:       header.indexOf('vodservice'),
     availabilityType: header.indexOf('availabilitytype'),
     confidence:       header.indexOf('confidence'),
@@ -205,17 +198,22 @@ export async function POST(req: NextRequest) {
     note:             header.indexOf('note'),
   };
 
-  // ── 全作品を workId → WorkRecord にインデックス化 ──
+  // ── 全作品を (personName + workId) → WorkRecord でインデックス化 ──
+  // キー形式: "${personName}:${workId}"
+  // → 同じ workId でも人物が異なれば別エントリになる（バグ修正の核心）
   const persons = getAllPersonsWithConfig();
   const workMap = new Map<string, WorkRecord>();
   for (const person of persons) {
     const works = await getAllWorks(person.name);
-    for (const w of works) workMap.set(w.id, w);
+    for (const w of works) {
+      workMap.set(`${w.personName}:${w.id}`, w);
+    }
   }
 
   // ── データ行をパース・バリデーション ──
   const previewRows: ImportPreviewRow[] = [];
-  const seenInCsv = new Set<string>(); // workId:vodService（CSV内重複除去用）
+  // 重複除去キー: personName + workId + vodService（人物をまたいで同一workIdが来ても区別）
+  const seenInCsv = new Set<string>();
 
   const dataRows = rows.slice(1);
   for (let i = 0; i < dataRows.length; i++) {
@@ -223,6 +221,7 @@ export async function POST(req: NextRequest) {
     const get = (col: number) => (col >= 0 ? (row[col] ?? '').trim() : '');
 
     const workId           = get(COL.workId);
+    const csvPersonId      = get(COL.personId);  // CSV の personId 列（あれば）
     const vodService       = get(COL.vodService);
     const availabilityType = get(COL.availabilityType) || 'flatrate';
     const confidence       = get(COL.confidence) || 'medium';
@@ -230,50 +229,65 @@ export async function POST(req: NextRequest) {
     const checkedDate      = get(COL.checkedDate);
     const note             = get(COL.note);
 
-    // workId が空 → エラー
+    // personName の決定: CSV列 → UI選択 の優先順
+    // どちらもない場合はエラー（別人物データ混入防止のため必須）
+    const effectivePersonName = csvPersonId || bodyPersonName;
+
     if (!workId) {
       previewRows.push({
-        rowNum: i + 2, workId: '', personName: '', title: '', vodService,
+        rowNum: i + 2, workId: '', personName: effectivePersonName, title: '', vodService,
         availabilityType, confidence, sourceUrl, checkedDate, note,
         action: 'error', reason: 'workId が空です',
       });
       continue;
     }
 
-    // vodService が空 → スキップ（無視）
     if (!vodService) {
       previewRows.push({
-        rowNum: i + 2, workId, personName: '', title: '', vodService: '',
+        rowNum: i + 2, workId, personName: effectivePersonName, title: '', vodService: '',
         availabilityType, confidence, sourceUrl, checkedDate, note,
         action: 'ignore', reason: 'vodService が空のためスキップ',
       });
       continue;
     }
 
-    // workId が DB に存在しない → エラー
-    const work = workMap.get(workId);
-    if (!work) {
+    if (!effectivePersonName) {
       previewRows.push({
         rowNum: i + 2, workId, personName: '', title: '', vodService,
         availabilityType, confidence, sourceUrl, checkedDate, note,
-        action: 'error', reason: `workId "${workId}" が見つかりません`,
+        action: 'error',
+        reason:
+          'personId列がなく対象人物も未選択です。インポート対象の人物をセレクターで選択してください。',
       });
       continue;
     }
 
-    // CSV内の重複 → 無視（同じ workId+vodService が既出）
-    const dedupeKey = `${workId}:${vodService.toLowerCase()}`;
+    // personName + workId で照合（別人物の同一workIdは別エントリ）
+    const mapKey = `${effectivePersonName}:${workId}`;
+    const work = workMap.get(mapKey);
+    if (!work) {
+      previewRows.push({
+        rowNum: i + 2, workId, personName: effectivePersonName, title: '', vodService,
+        availabilityType, confidence, sourceUrl, checkedDate, note,
+        action: 'error',
+        reason: `workId "${workId}" が "${effectivePersonName}" の作品として見つかりません`,
+      });
+      continue;
+    }
+
+    // CSV 内の重複（同じ person + workId + vodService）→ 無視
+    const dedupeKey = `${effectivePersonName}:${workId}:${vodService.toLowerCase()}`;
     if (seenInCsv.has(dedupeKey)) {
       previewRows.push({
         rowNum: i + 2, workId, personName: work.personName, title: work.title, vodService,
         availabilityType, confidence, sourceUrl, checkedDate, note,
-        action: 'ignore', reason: 'このCSV内で同じ workId+vodService が既出のため無視',
+        action: 'ignore', reason: 'このCSV内で同じ personId+workId+vodService が既出のため無視',
       });
       continue;
     }
     seenInCsv.add(dedupeKey);
 
-    // DB内に同じ manual_csv エントリが存在するか確認（add vs update）
+    // DB 内に既存の manual_csv エントリがあるか（add vs update）
     const existingCsvEntry = (work.vodProviders ?? []).find(
       (p) =>
         p.source === 'manual_csv' &&
@@ -301,31 +315,36 @@ export async function POST(req: NextRequest) {
   const ignoreCount = previewRows.filter((r) => r.action === 'ignore').length;
   const errorCount  = previewRows.filter((r) => r.action === 'error').length;
 
-  // プレビューのみ → ここで返す
   if (!commit) {
     return NextResponse.json({ addCount, updateCount, ignoreCount, errorCount, previewRows });
   }
 
-  // ── コミット: workId ごとにグループ化してアップサート ──
+  // ── コミット: (personName, workId) ごとにグループ化してアップサート ──
+  // キー: "personName:workId"
   const workGroups = new Map<string, ImportPreviewRow[]>();
   for (const row of previewRows) {
     if (row.action !== 'add' && row.action !== 'update') continue;
-    if (!workGroups.has(row.workId)) workGroups.set(row.workId, []);
-    workGroups.get(row.workId)!.push(row);
+    const groupKey = `${row.personName}:${row.workId}`;
+    if (!workGroups.has(groupKey)) workGroups.set(groupKey, []);
+    workGroups.get(groupKey)!.push(row);
   }
 
   let savedWorkCount = 0;
   let savedProviderCount = 0;
   const errors: string[] = [];
 
-  for (const [workId, importRows] of workGroups) {
-    const work = workMap.get(workId);
-    if (!work) continue;
+  for (const [groupKey, importRows] of workGroups) {
+    // groupKey = "${personName}:${workId}" → workMap と同じキー形式なのでそのまま引ける
+    const work = workMap.get(groupKey);
+    if (!work) {
+      errors.push(`保存時に作品が見つかりません: ${groupKey}`);
+      continue;
+    }
 
+    const today = new Date().toISOString().slice(0, 10);
     const providers: VodProvider[] = importRows.map((row) => {
       const serviceInfo = lookupService(row.vodService);
       const providerType = TYPE_MAP[row.availabilityType.toLowerCase()] ?? 'flatrate';
-      const today = new Date().toISOString().slice(0, 10);
       return {
         providerId: serviceInfo.id,
         providerName: row.vodService,
@@ -346,13 +365,17 @@ export async function POST(req: NextRequest) {
     });
 
     try {
-      const { added, updated } = await upsertManualCsvVodProviders(work.personName, workId, providers);
+      const { added, updated } = await upsertManualCsvVodProviders(
+        work.personName,
+        work.id,
+        providers,
+      );
       if (added + updated > 0) {
         savedWorkCount++;
         savedProviderCount += added + updated;
       }
     } catch (err) {
-      errors.push(`workId=${workId}: ${String(err)}`);
+      errors.push(`workId=${work.id} (${work.personName}): ${String(err)}`);
     }
   }
 

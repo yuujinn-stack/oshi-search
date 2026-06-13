@@ -69,6 +69,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
   const [exportFilter, setExportFilter] = useState<ExportFilter>('all');
   const [exportPerson, setExportPerson] = useState('');
 
+  const [importPerson, setImportPerson] = useState('');
   const [csvContent, setCsvContent] = useState<string | null>(null);
   const [fileName, setFileName] = useState('');
   const [importing, setImporting] = useState(false);
@@ -105,7 +106,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
       const res = await fetch('/api/admin/csv-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csvContent, commit: false }),
+        body: JSON.stringify({ csvContent, commit: false, personName: importPersonParam }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -127,7 +128,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
       const res = await fetch('/api/admin/csv-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csvContent, commit: true }),
+        body: JSON.stringify({ csvContent, commit: true, personName: importPersonParam }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -152,6 +153,8 @@ export default function CsvSection({ persons }: { persons: string[] }) {
     setImportError(null);
     if (fileRef.current) fileRef.current.value = '';
   }
+
+  const importPersonParam = importPerson || undefined;
 
   const importTotal = (preview?.addCount ?? 0) + (preview?.updateCount ?? 0);
 
@@ -201,12 +204,41 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           <p className="text-[11px] text-gray-400 mt-0.5">
             ChatGPT等で調査した結果をインポートします。既存のTMDb・AI情報は保持されます。
           </p>
-          <div className="mt-1 bg-gray-50 rounded-lg px-3 py-2">
-            <p className="text-[10px] text-gray-500 font-semibold mb-0.5">必須列: workId, vodService　（列順・余分な列は自由）</p>
-            <p className="text-[10px] font-mono text-gray-400">
-              workId, vodService, availabilityType, confidence, sourceUrl, note
+          <div className="mt-1 bg-gray-50 rounded-lg px-3 py-2 space-y-1">
+            <p className="text-[10px] text-gray-500 font-semibold">
+              必須列: <span className="font-mono">workId, vodService</span>　（列順・余分な列は自由）
+            </p>
+            <p className="text-[10px] text-gray-500">
+              任意列: <span className="font-mono">personId, availabilityType, confidence, sourceUrl, note</span>
+            </p>
+            <p className="text-[10px] text-orange-500 font-medium">
+              ※ CSVにpersonId列がない場合は、下の「対象人物」を必ず選択してください
             </p>
           </div>
+        </div>
+
+        {/* 対象人物セレクター（CSVにpersonId列がない場合のfallback） */}
+        <div className="flex items-center gap-2">
+          <label className="text-[11px] text-gray-600 font-medium whitespace-nowrap">対象人物:</label>
+          <select
+            value={importPerson}
+            onChange={(e) => {
+              setImportPerson(e.target.value);
+              setPreview(null);
+              setImportError(null);
+            }}
+            className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
+          >
+            <option value="">CSVのpersonId列を使用</option>
+            {persons.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+          {importPerson && (
+            <span className="text-[11px] text-orange-600 font-medium">
+              → {importPerson} の作品のみ対象
+            </span>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-2 items-center">
