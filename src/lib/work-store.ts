@@ -3,6 +3,7 @@
 
 import { getRedis } from './redis';
 import type { WorkRecord, WorkStatus } from '@/types/work';
+import type { VodProvider } from '@/types/vod';
 
 // Redis hash key: "works:{personName}" → field: workId → value: WorkRecord JSON
 function hashKey(personName: string): string {
@@ -69,6 +70,70 @@ export async function deleteWork(personName: string, workId: string): Promise<vo
   const redis = getRedis();
   if (!redis) return;
   await redis.hdel(hashKey(personName), workId);
+}
+
+// 配信サービス情報を更新（TMDb Watch Providers または手動追加）
+export async function updateWorkVod(
+  personName: string,
+  workId: string,
+  providers: VodProvider[],
+): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  const raw = await redis.hget(hashKey(personName), workId);
+  if (!raw) return;
+  try {
+    const work = (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
+    work.vodProviders = providers;
+    work.vodUpdatedAt = Date.now();
+    work.updatedAt = Date.now();
+    await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+  } catch { /* skip */ }
+}
+
+// 手動で配信サービスを1件追加（既存の tmdb_watch_provider は保持）
+export async function addManualVodProvider(
+  personName: string,
+  workId: string,
+  provider: VodProvider,
+): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  const raw = await redis.hget(hashKey(personName), workId);
+  if (!raw) return;
+  try {
+    const work = (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
+    const existing = work.vodProviders ?? [];
+    // 同じ providerId かつ source:manual は上書き
+    const filtered = existing.filter(
+      (p) => !(p.providerId === provider.providerId && p.source === 'manual'),
+    );
+    work.vodProviders = [...filtered, { ...provider, source: 'manual' }];
+    work.vodUpdatedAt = Date.now();
+    work.updatedAt = Date.now();
+    await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+  } catch { /* skip */ }
+}
+
+// 手動配信サービスを1件削除
+export async function removeManualVodProvider(
+  personName: string,
+  workId: string,
+  providerId: number,
+): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  const raw = await redis.hget(hashKey(personName), workId);
+  if (!raw) return;
+  try {
+    const work = (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
+    work.vodProviders = (work.vodProviders ?? []).filter(
+      (p) => !(p.providerId === providerId && p.source === 'manual'),
+    );
+    work.vodUpdatedAt = Date.now();
+    work.updatedAt = Date.now();
+    await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+  } catch { /* skip */ }
 }
 
 // source別に一括削除（AI補完作品を再実行する際に使用）

@@ -2,6 +2,9 @@
 
 import { useState } from 'react';
 import type { WorkRecord, WorkStatus, WorkSource } from '@/types/work';
+import type { VodProvider } from '@/types/vod';
+
+const PROVIDER_LOGO_BASE = 'https://image.tmdb.org/t/p/w45';
 
 interface Counts {
   total: number;
@@ -61,6 +64,11 @@ export default function PersonWorks({ personName, group, counts }: Props) {
     matchScore: number;
     matchDetails: string;
   } | null>(null);
+  const [vodFetching, setVodFetching] = useState(false);
+  const [vodMessage, setVodMessage] = useState('');
+  const [manualVodWorkId, setManualVodWorkId] = useState<string | null>(null);
+  const [manualVodName, setManualVodName] = useState('');
+  const [manualVodLink, setManualVodLink] = useState('');
 
   async function loadWorks() {
     setLoading(true);
@@ -75,6 +83,52 @@ export default function PersonWorks({ personName, group, counts }: Props) {
   async function handleOpen() {
     if (!open && !works) await loadWorks();
     setOpen((v) => !v);
+  }
+
+  async function handleVodFetch(workId?: string) {
+    setVodFetching(true);
+    setVodMessage('');
+    const res = await fetch('/api/admin/vod-fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, workId }),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { updatedCount: number; skippedCount: number; message?: string };
+      setVodMessage(
+        data.message ?? `配信情報: ${data.updatedCount}件更新 ${data.skippedCount}件スキップ`,
+      );
+      await loadWorks();
+    } else {
+      setVodMessage('配信情報取得に失敗しました');
+    }
+    setVodFetching(false);
+  }
+
+  async function handleManualVodAdd(workId: string) {
+    if (!manualVodName.trim()) return;
+    await fetch('/api/admin/vod-add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        personName,
+        workId,
+        provider: { providerName: manualVodName.trim(), link: manualVodLink.trim() || undefined, type: 'flatrate' },
+      }),
+    });
+    setManualVodName('');
+    setManualVodLink('');
+    setManualVodWorkId(null);
+    await loadWorks();
+  }
+
+  async function handleManualVodRemove(workId: string, provider: VodProvider) {
+    await fetch('/api/admin/vod-add', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, workId, providerId: provider.providerId }),
+    });
+    await loadWorks();
   }
 
   async function handleProcess(
@@ -270,6 +324,14 @@ export default function PersonWorks({ personName, group, counts }: Props) {
               {loading ? '読込中...' : '更新'}
             </button>
             <button
+              onClick={() => handleVodFetch()}
+              disabled={isProcessing || vodFetching}
+              title="公開中の全作品の配信情報をTMDbから取得"
+              className="text-xs px-3 py-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-600 transition-colors disabled:opacity-50"
+            >
+              {vodFetching ? '取得中...' : '📺 配信情報取得'}
+            </button>
+            <button
               onClick={() => setDebugMode((v) => !v)}
               className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${
                 debugMode
@@ -340,6 +402,17 @@ export default function PersonWorks({ personName, group, counts }: Props) {
               }`}
             >
               {message}
+            </p>
+          )}
+          {vodMessage && (
+            <p
+              className={`text-xs font-medium px-3 py-2 rounded-lg ${
+                vodMessage.includes('失敗')
+                  ? 'bg-red-50 text-red-600'
+                  : 'bg-teal-50 text-teal-700'
+              }`}
+            >
+              📺 {vodMessage}
             </p>
           )}
 
@@ -496,6 +569,99 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                         ⚠️ AI推測による補完作品です。出演を確認してから公開してください。
                       </p>
                     )}
+
+                    {/* 配信情報 */}
+                    {(work.vodProviders?.length ?? 0) > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1 items-center">
+                        <span className="text-[10px] text-teal-600 font-medium">📺</span>
+                        {work.vodProviders!.map((p) => (
+                          <span
+                            key={`${p.providerId}-${p.type}`}
+                            className={`flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border ${
+                              p.source === 'manual'
+                                ? 'bg-green-50 border-green-200 text-green-700'
+                                : 'bg-teal-50 border-teal-200 text-teal-700'
+                            }`}
+                          >
+                            {p.logoPath ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={`${PROVIDER_LOGO_BASE}${p.logoPath}`} alt="" className="w-3 h-3 rounded-sm" />
+                            ) : null}
+                            {p.providerName}
+                            {p.source === 'manual' && debugMode && (
+                              <button
+                                onClick={() => handleManualVodRemove(work.id, p)}
+                                className="ml-0.5 text-red-400 hover:text-red-600"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                        {work.tmdbId && (
+                          <button
+                            onClick={() => handleVodFetch(work.id)}
+                            disabled={vodFetching}
+                            className="text-[10px] text-teal-500 hover:text-teal-700 ml-1"
+                            title="この作品の配信情報を再取得"
+                          >
+                            🔄
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      work.tmdbId ? (
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-[10px] text-gray-400">📺 配信情報なし</span>
+                          <button
+                            onClick={() => handleVodFetch(work.id)}
+                            disabled={vodFetching}
+                            className="text-[10px] text-teal-500 hover:text-teal-700"
+                          >
+                            取得する
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-[10px] text-gray-300">📺 配信情報取得不可（tmdbIdなし）</p>
+                      )
+                    )}
+
+                    {/* 手動VOD追加フォーム（デバッグモード） */}
+                    {debugMode && manualVodWorkId === work.id ? (
+                      <div className="mt-2 flex gap-1">
+                        <input
+                          value={manualVodName}
+                          onChange={(e) => setManualVodName(e.target.value)}
+                          placeholder="サービス名"
+                          className="text-[10px] border border-gray-200 rounded px-2 py-1 flex-1 min-w-0"
+                        />
+                        <input
+                          value={manualVodLink}
+                          onChange={(e) => setManualVodLink(e.target.value)}
+                          placeholder="URL（任意）"
+                          className="text-[10px] border border-gray-200 rounded px-2 py-1 w-24"
+                        />
+                        <button
+                          onClick={() => handleManualVodAdd(work.id)}
+                          className="text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded"
+                        >
+                          追加
+                        </button>
+                        <button
+                          onClick={() => setManualVodWorkId(null)}
+                          className="text-[10px] text-gray-400"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : debugMode ? (
+                      <button
+                        onClick={() => setManualVodWorkId(work.id)}
+                        className="mt-1 text-[10px] text-green-500 hover:text-green-700"
+                      >
+                        + 手動でVOD追加
+                      </button>
+                    ) : null}
 
                     {/* デバッグ詳細 */}
                     {debugMode && (

@@ -2,6 +2,7 @@
 // 管理画面からの処理時のみ呼び出す（一般ユーザーのページアクセス時は使用しない）
 
 import type { PersonWithConfig } from '@/types/person';
+import type { VodProvider } from '@/types/vod';
 
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const POSTER_BASE = 'https://image.tmdb.org/t/p/w500';
@@ -368,5 +369,95 @@ export async function getTmdbCredits(personId: number): Promise<TmdbWorkCandidat
   } catch (err) {
     console.error(`[tmdb] クレジット取得例外: personId=${personId}`, err);
     return [];
+  }
+}
+
+// --- Watch Providers ---
+
+interface WatchProvidersResult {
+  link?: string;
+  flatrate?: WatchProviderItem[];
+  buy?: WatchProviderItem[];
+  rent?: WatchProviderItem[];
+  free?: WatchProviderItem[];
+  ads?: WatchProviderItem[];
+}
+
+interface WatchProviderItem {
+  provider_id: number;
+  provider_name: string;
+  logo_path: string;
+  display_priority: number;
+}
+
+interface WatchProvidersResponse {
+  results?: Record<string, WatchProvidersResult>;
+}
+
+// 作品の配信サービス情報を取得（日本 JP）
+export async function getWatchProviders(
+  tmdbId: number,
+  type: 'movie' | 'tv',
+  countryCode = 'JP',
+): Promise<{ providers: VodProvider[]; link?: string }> {
+  const apiKey = getApiKey();
+  if (!apiKey) return { providers: [] };
+
+  const endpoint = type === 'movie'
+    ? `${TMDB_BASE}/movie/${tmdbId}/watch/providers`
+    : `${TMDB_BASE}/tv/${tmdbId}/watch/providers`;
+
+  try {
+    const res = await fetch(`${endpoint}?api_key=${apiKey}`, { cache: 'no-store' });
+    if (!res.ok) {
+      console.log(`[tmdb] WatchProviders取得エラー HTTP ${res.status}: ${type}/${tmdbId}`);
+      return { providers: [] };
+    }
+
+    const data = (await res.json()) as WatchProvidersResponse;
+    const countryData = data.results?.[countryCode];
+    if (!countryData) {
+      console.log(`[tmdb] WatchProviders: ${countryCode}向けデータなし ${type}/${tmdbId}`);
+      return { providers: [] };
+    }
+
+    const providers: VodProvider[] = [];
+    const typeMap: [keyof WatchProvidersResult, VodProvider['type']][] = [
+      ['flatrate', 'flatrate'],
+      ['free', 'free'],
+      ['ads', 'ads'],
+      ['buy', 'buy'],
+      ['rent', 'rent'],
+    ];
+
+    for (const [key, providerType] of typeMap) {
+      const items = countryData[key] as WatchProviderItem[] | undefined;
+      if (!Array.isArray(items)) continue;
+      for (const item of items) {
+        // 重複排除（同じプロバイダーが複数タイプに含まれる場合、flatrateを優先）
+        if (providers.some((p) => p.providerId === item.provider_id)) continue;
+        providers.push({
+          providerId: item.provider_id,
+          providerName: item.provider_name,
+          logoPath: item.logo_path,
+          displayPriority: item.display_priority,
+          type: providerType,
+          countryCode,
+          source: 'tmdb_watch_provider',
+          link: countryData.link,
+        });
+      }
+    }
+
+    // displayPriority 昇順ソート（数値が小さいほど重要）
+    providers.sort((a, b) => (a.displayPriority ?? 999) - (b.displayPriority ?? 999));
+
+    console.log(
+      `[tmdb] WatchProviders: ${type}/${tmdbId} → ${providers.length}件 (${providers.map((p) => p.providerName).join(', ')})`,
+    );
+    return { providers, link: countryData.link };
+  } catch (err) {
+    console.error(`[tmdb] WatchProviders例外: ${type}/${tmdbId}`, err);
+    return { providers: [] };
   }
 }

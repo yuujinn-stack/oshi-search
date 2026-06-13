@@ -2,6 +2,8 @@ export type WorkStatus = 'auto_published' | 'needs_review' | 'hidden';
 export type WorkType = 'movie' | 'tv';
 export type WorkSource = 'tmdb' | 'openai_suggestion' | 'manual';
 
+export type { VodProvider, VodProviderType, VodSource } from './vod';
+
 export interface WorkRecord {
   id: string;
   personName: string;
@@ -28,7 +30,10 @@ export interface WorkRecord {
   // TMDb人物マッチング情報（誤取得検証用）
   tmdbMatchedPersonId?: number;
   tmdbMatchedPersonName?: string;
-  checkedAt?: number; // 管理者が手動でステータスを変更した日時
+  checkedAt?: number;      // 管理者が手動でステータスを変更した日時
+  // 配信サービス情報
+  vodProviders?: import('./vod').VodProvider[];
+  vodUpdatedAt?: number;   // 最後に配信情報を更新した日時
   createdAt: number;
   updatedAt: number;
 }

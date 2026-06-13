@@ -195,24 +195,18 @@ export default async function PersonPage({ params }: Props) {
         {/* 出演作品 */}
         {publishedWorks.length > 0 && (
           <section>
-            <h2 className="text-base font-bold text-slate-800 mb-4">出演作品</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-bold text-slate-800">出演作品</h2>
+              <span className="text-xs text-gray-400">{publishedWorks.length}件</span>
+            </div>
+            {/* PC:3列 / タブレット:2列 / スマホ:2列（小さめ） */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-3">
               {publishedWorks.map((work) => (
                 <WorkCard key={work.id} work={work} />
               ))}
             </div>
           </section>
         )}
-
-        {/* VOD */}
-        <section>
-          <h2 className="text-base font-bold text-slate-800 mb-4">VOD視聴先</h2>
-          <div className="bg-amber-50 border-2 border-amber-200 border-dashed rounded-2xl p-8 text-center">
-            <p className="text-2xl mb-2">📺</p>
-            <p className="font-bold text-amber-800 mb-1">視聴先情報を準備中</p>
-            <p className="text-sm text-amber-600">Hulu・U-NEXT・Amazon Prime等のリンクを順次追加予定です</p>
-          </div>
-        </section>
 
         {/* 関連メンバー */}
         {related.length > 0 && (
