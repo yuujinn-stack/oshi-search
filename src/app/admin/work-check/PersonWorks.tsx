@@ -85,23 +85,30 @@ export default function PersonWorks({ personName, group, counts }: Props) {
     setOpen((v) => !v);
   }
 
-  async function handleVodFetch(workId?: string) {
+  async function handleVodFetch(workId?: string, opts?: { forceAi?: boolean; skipAi?: boolean }) {
     setVodFetching(true);
     setVodMessage('');
     const res = await fetch('/api/admin/vod-fetch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ personName, workId }),
+      body: JSON.stringify({
+        personName,
+        workId,
+        forceAi: opts?.forceAi ?? false,
+        skipAi: opts?.skipAi ?? false,
+      }),
     });
     if (res.ok) {
       const data = (await res.json()) as {
         updatedCount: number;
         skippedCount: number;
+        aiCalledCount: number;
         message?: string;
         debugInfo?: Array<{
           title: string;
           workId: string;
           providerCount: number;
+          aiUsed: boolean;
           debug: {
             jpExists: boolean;
             jpFlatrate: string[];
@@ -111,11 +118,11 @@ export default function PersonWorks({ personName, group, counts }: Props) {
       };
 
       const noJp = data.debugInfo?.filter((d) => !d.debug.jpExists) ?? [];
-      const noProvider = data.debugInfo?.filter((d) => d.debug.jpExists && d.providerCount === 0) ?? [];
+      const aiHit = data.debugInfo?.filter((d) => d.aiUsed && d.providerCount > 0) ?? [];
 
       let msg = data.message ?? `配信情報: ${data.updatedCount}件更新`;
-      if (noJp.length > 0) msg += ` / JP情報なし${noJp.length}件`;
-      if (noProvider.length > 0) msg += ` / 配信なし${noProvider.length}件`;
+      if (data.aiCalledCount > 0) msg += ` / AI補完${data.aiCalledCount}件呼出し（取得${aiHit.length}件）`;
+      if (noJp.length > 0 && data.aiCalledCount === 0) msg += ` / JP情報なし${noJp.length}件`;
 
       setVodMessage(msg);
       if (debugMode && data.debugInfo) {
@@ -349,10 +356,18 @@ export default function PersonWorks({ personName, group, counts }: Props) {
             <button
               onClick={() => handleVodFetch()}
               disabled={isProcessing || vodFetching}
-              title="公開中の全作品の配信情報をTMDbから取得"
+              title="公開中の全作品の配信情報をTMDb+AI補完で取得"
               className="text-xs px-3 py-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-600 transition-colors disabled:opacity-50"
             >
               {vodFetching ? '取得中...' : '📺 配信情報取得'}
+            </button>
+            <button
+              onClick={() => handleVodFetch(undefined, { forceAi: true })}
+              disabled={isProcessing || vodFetching}
+              title="AI補完を強制再実行（前回から7日未満でも再実行）"
+              className="text-xs px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-600 transition-colors disabled:opacity-50"
+            >
+              {vodFetching ? '取得中...' : '🤖 AI配信補完'}
             </button>
             <button
               onClick={() => setDebugMode((v) => !v)}
@@ -597,20 +612,26 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                     {(work.vodProviders?.length ?? 0) > 0 ? (
                       <div className="mt-2 flex flex-wrap gap-1 items-center">
                         <span className="text-[10px] text-teal-600 font-medium">📺</span>
-                        {work.vodProviders!.map((p) => (
+                        {work.vodProviders!.map((p, pi) => (
                           <span
-                            key={`${p.providerId}-${p.type}`}
+                            key={`${p.providerId}-${p.type}-${pi}`}
                             className={`flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border ${
                               p.source === 'manual'
                                 ? 'bg-green-50 border-green-200 text-green-700'
-                                : 'bg-teal-50 border-teal-200 text-teal-700'
+                                : p.source === 'openai_supplement'
+                                  ? 'bg-purple-50 border-purple-200 text-purple-700'
+                                  : 'bg-blue-50 border-blue-200 text-blue-700'
                             }`}
+                            title={`${p.providerName} [${p.source}]${p.confidence ? ` 確度:${p.confidence}` : ''}`}
                           >
                             {p.logoPath ? (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img src={`${PROVIDER_LOGO_BASE}${p.logoPath}`} alt="" className="w-3 h-3 rounded-sm" />
                             ) : null}
                             {p.providerName}
+                            {p.source === 'openai_supplement' && (
+                              <span className="text-[8px] ml-0.5 text-purple-400">AI</span>
+                            )}
                             {p.source === 'manual' && debugMode && (
                               <button
                                 onClick={() => handleManualVodRemove(work.id, p)}
@@ -631,17 +652,36 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                             🔄
                           </button>
                         )}
+                        {work.vodUpdatedAt && (
+                          <span className="text-[9px] text-gray-300 ml-1">
+                            {new Date(work.vodUpdatedAt).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}確認
+                          </span>
+                        )}
                       </div>
                     ) : (
                       work.tmdbId ? (
-                        <div className="mt-2 flex items-center gap-2">
-                          <span className="text-[10px] text-gray-400">📺 配信情報なし</span>
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] text-gray-400">
+                            📺 配信情報なし
+                            {work.vodUpdatedAt && (
+                              <span className="ml-1 text-gray-300">
+                                （{new Date(work.vodUpdatedAt).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}確認済み）
+                              </span>
+                            )}
+                          </span>
                           <button
                             onClick={() => handleVodFetch(work.id)}
                             disabled={vodFetching}
                             className="text-[10px] text-teal-500 hover:text-teal-700"
                           >
-                            取得する
+                            再取得
+                          </button>
+                          <button
+                            onClick={() => handleVodFetch(work.id, { forceAi: true })}
+                            disabled={vodFetching}
+                            className="text-[10px] text-purple-500 hover:text-purple-700"
+                          >
+                            AI補完
                           </button>
                         </div>
                       ) : (
@@ -704,6 +744,18 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                           {work.checkedAt
                             ? new Date(work.checkedAt).toLocaleString('ja-JP')
                             : '未確認'}
+                        </p>
+                        <p>
+                          vodUpdatedAt:{' '}
+                          {work.vodUpdatedAt
+                            ? new Date(work.vodUpdatedAt).toLocaleString('ja-JP')
+                            : '未取得'}
+                        </p>
+                        <p>
+                          vodAiCheckedAt:{' '}
+                          {work.vodAiCheckedAt
+                            ? new Date(work.vodAiCheckedAt).toLocaleString('ja-JP')
+                            : '未実行'}
                         </p>
                         <p>createdAt: {new Date(work.createdAt).toLocaleString('ja-JP')}</p>
                       </div>

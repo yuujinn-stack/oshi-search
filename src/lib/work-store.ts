@@ -72,11 +72,30 @@ export async function deleteWork(personName: string, workId: string): Promise<vo
   await redis.hdel(hashKey(personName), workId);
 }
 
-// 配信サービス情報を更新（TMDb Watch Providers または手動追加）
+// 特定の作品を1件取得
+export async function getWork(personName: string, workId: string): Promise<WorkRecord | null> {
+  const redis = getRedis();
+  if (!redis) return null;
+  try {
+    const raw = await redis.hget(hashKey(personName), workId);
+    if (!raw) return null;
+    return (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
+  } catch {
+    return null;
+  }
+}
+
+// 配信サービス情報を更新（手動プロバイダーは保持し、指定ソースのみ置換）
+// replaceSources で指定したソースのプロバイダーを新しいリストで置き換える
+// 指定外のソース（manualなど）はそのまま残す
 export async function updateWorkVod(
   personName: string,
   workId: string,
   providers: VodProvider[],
+  options?: {
+    replaceSources?: Array<'tmdb_watch_provider' | 'openai_supplement'>;
+    vodAiCheckedAt?: number;
+  },
 ): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
@@ -84,8 +103,12 @@ export async function updateWorkVod(
   if (!raw) return;
   try {
     const work = (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
-    work.vodProviders = providers;
+    const replaceSources = options?.replaceSources ?? ['tmdb_watch_provider', 'openai_supplement'];
+    // 手動プロバイダーなど、置換対象外のものを保持
+    const kept = (work.vodProviders ?? []).filter((p) => !replaceSources.includes(p.source as never));
+    work.vodProviders = [...kept, ...providers];
     work.vodUpdatedAt = Date.now();
+    if (options?.vodAiCheckedAt) work.vodAiCheckedAt = options.vodAiCheckedAt;
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
   } catch { /* skip */ }

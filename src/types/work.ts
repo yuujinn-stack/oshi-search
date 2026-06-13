@@ -33,7 +33,8 @@ export interface WorkRecord {
   checkedAt?: number;      // 管理者が手動でステータスを変更した日時
   // 配信サービス情報
   vodProviders?: import('./vod').VodProvider[];
-  vodUpdatedAt?: number;   // 最後に配信情報を更新した日時
+  vodUpdatedAt?: number;      // 最後に配信情報チェックを実行した日時（プロバイダーなし含む）
+  vodAiCheckedAt?: number;    // 最後に OpenAI 補完を実行した日時
   createdAt: number;
   updatedAt: number;
 }
