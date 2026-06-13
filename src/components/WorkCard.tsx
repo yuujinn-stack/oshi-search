@@ -15,6 +15,7 @@ const TYPE_ORDER: Record<string, number> = {
 
 const VOD_SOURCE_BADGE: Record<string, string> = {
   openai_supplement: 'bg-purple-100 text-purple-700',
+  openai_web_search: 'bg-purple-100 text-purple-700',
 };
 
 export default function WorkCard({ work }: { work: WorkRecord }) {
@@ -22,9 +23,10 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
 
   // 公開ページ用フィルタ:
   //   tmdb_watch_provider / manual は常に表示
-  //   openai_supplement は confidence=low を除外
+  //   openai_supplement / openai_web_search は confidence=low を除外
   const publicProviders = (work.vodProviders ?? []).filter((p) => {
-    if (p.source === 'openai_supplement' && p.confidence === 'low') return false;
+    const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
+    if (isAiSource && p.confidence === 'low') return false;
     return true;
   });
 
@@ -42,10 +44,12 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
   // JustWatchリンク（flatrate > free > ads > buy > rent の順で優先）
   const jwLink = sortedProviders.find((p) => p.link)?.link;
 
-  // AI補完のみかどうか
+  // AI補完のみかどうか（openai_supplement / openai_web_search のみ）
   const hasAiOnly =
     sortedProviders.length > 0 &&
-    sortedProviders.every((p) => p.source === 'openai_supplement');
+    sortedProviders.every(
+      (p) => p.source === 'openai_supplement' || p.source === 'openai_web_search',
+    );
 
   // 確認日表示
   const checkedDate = work.vodUpdatedAt
@@ -153,7 +157,11 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
             )}
             {/* AI補完ラベル */}
             {hasAiOnly && (
-              <span className="text-[9px] text-purple-400 w-full">AI補完情報</span>
+              <span className="text-[9px] text-purple-400 w-full">
+                {sortedProviders.some((p) => p.source === 'openai_web_search')
+                  ? 'AI Web検索情報'
+                  : 'AI補完情報'}
+              </span>
             )}
           </div>
         ) : (

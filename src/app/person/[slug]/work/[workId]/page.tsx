@@ -26,12 +26,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 const SOURCE_LABEL: Record<string, string> = {
   tmdb_watch_provider: 'TMDb',
   openai_supplement: 'AI補完',
+  openai_web_search: 'AI Web検索',
   manual: '手動',
 };
 
 const SOURCE_BADGE: Record<string, string> = {
   tmdb_watch_provider: 'bg-blue-100 text-blue-700',
   openai_supplement: 'bg-purple-100 text-purple-700',
+  openai_web_search: 'bg-violet-100 text-violet-700',
   manual: 'bg-green-100 text-green-700',
 };
 
@@ -68,9 +70,10 @@ export default async function WorkDetailPage({ params }: Props) {
   const work = await getWork(personName, workId);
   if (!work || work.status !== 'auto_published') notFound();
 
-  // 公開ページ用: confidence=low の openai_supplement は除外
+  // 公開ページ用: confidence=low の openai_supplement / openai_web_search は除外
   const publicProviders = (work.vodProviders ?? []).filter((p) => {
-    if (p.source === 'openai_supplement' && p.confidence === 'low') return false;
+    const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
+    if (isAiSource && p.confidence === 'low') return false;
     return true;
   });
 
@@ -92,12 +95,15 @@ export default async function WorkDetailPage({ params }: Props) {
   // JustWatch リンク（flatrate → free → ads → rent → buy 優先）
   const jwLink = sortedProviders.find((p) => p.link)?.link;
 
-  const hasAi = sortedProviders.some((p) => p.source === 'openai_supplement');
+  const hasAi = sortedProviders.some(
+    (p) => p.source === 'openai_supplement' || p.source === 'openai_web_search',
+  );
 
   // confidence=low で非表示になったプロバイダー数
-  const lowConfidenceCount = (work.vodProviders ?? []).filter(
-    (p) => p.source === 'openai_supplement' && p.confidence === 'low',
-  ).length;
+  const lowConfidenceCount = (work.vodProviders ?? []).filter((p) => {
+    const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
+    return isAiSource && p.confidence === 'low';
+  }).length;
 
   function ProviderRow({ p }: { p: VodProvider }) {
     return (

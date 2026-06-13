@@ -93,7 +93,7 @@ export async function updateWorkVod(
   workId: string,
   providers: VodProvider[],
   options?: {
-    replaceSources?: Array<'tmdb_watch_provider' | 'openai_supplement'>;
+    replaceSources?: Array<'tmdb_watch_provider' | 'openai_supplement' | 'openai_web_search'>;
     vodAiCheckedAt?: number;
   },
 ): Promise<void> {
@@ -103,7 +103,7 @@ export async function updateWorkVod(
   if (!raw) return;
   try {
     const work = (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
-    const replaceSources = options?.replaceSources ?? ['tmdb_watch_provider', 'openai_supplement'];
+    const replaceSources = options?.replaceSources ?? ['tmdb_watch_provider', 'openai_supplement', 'openai_web_search'];
     // 手動プロバイダーなど、置換対象外のものを保持
     const kept = (work.vodProviders ?? []).filter((p) => !replaceSources.includes(p.source as never));
     work.vodProviders = [...kept, ...providers];

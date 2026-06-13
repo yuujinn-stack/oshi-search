@@ -1,5 +1,5 @@
 export type VodProviderType = 'flatrate' | 'buy' | 'rent' | 'free' | 'ads' | 'unknown';
-export type VodSource = 'tmdb_watch_provider' | 'openai_supplement' | 'manual';
+export type VodSource = 'tmdb_watch_provider' | 'openai_supplement' | 'openai_web_search' | 'manual';
 
 export interface VodProvider {
   providerId: number;
@@ -9,9 +9,11 @@ export interface VodProvider {
   type: VodProviderType;    // flatrate=定額, buy=購入, rent=レンタル, free=無料, ads=広告付き, unknown=不明
   countryCode: string;      // 'JP'
   source: VodSource;
-  sourceLabel?: string;     // 表示用ラベル（"TMDb" / "AI補完" / "手動"）
-  confidence?: 'high' | 'medium' | 'low';  // AI補完時の信頼度
+  sourceLabel?: string;     // 表示用ラベル（"TMDb" / "AI補完" / "AI Web検索補完" / "手動"）
+  confidence?: 'high' | 'medium' | 'low';  // AI補完時の信頼度（low は公開ページ非表示）
   sourceUrl?: string;       // AI補完時の参照URL
+  officialUrl?: string;     // Web検索で確認した配信ページURL
+  reason?: string;          // AI判定理由（管理画面のみ表示）
   checkedDate?: string;     // 情報確認日 (YYYY-MM-DD)
   note?: string;            // 補足メモ
   link?: string;            // JustWatch URL（TMDb が返す作品ページへのリンク）

@@ -27,6 +27,8 @@ interface VodFetchDebugItem {
     source: string;
     sourceLabel?: string;
     confidence?: string;
+    officialUrl?: string;
+    reason?: string;
     checkedDate?: string;
     note?: string;
     publicVisible: boolean;
@@ -153,7 +155,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
       const aiSkipped = data.debugInfo?.filter((d) => !d.aiCalled && d.tmdbProviderCount === 0) ?? [];
 
       let msg = data.message ?? `配信情報: ${data.updatedCount}件更新`;
-      if (data.aiCalledCount > 0) msg += ` / AI補完${data.aiCalledCount}件呼出し（取得${aiHit.length}件）`;
+      if (data.aiCalledCount > 0) msg += ` / AI Web検索補完${data.aiCalledCount}件呼出し（取得${aiHit.length}件）`;
       if (aiSkipped.length > 0) msg += ` / AI未実行${aiSkipped.length}件（スタール期間内）`;
 
       setVodMessage(msg);
@@ -396,10 +398,10 @@ export default function PersonWorks({ personName, group, counts }: Props) {
             <button
               onClick={() => handleVodFetch(undefined, { forceAi: true })}
               disabled={isProcessing || vodFetching}
-              title="AI補完を強制再実行（前回から7日未満でも再実行）"
-              className="text-xs px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-600 transition-colors disabled:opacity-50"
+              title="AI Web検索補完を強制再実行（前回から7日未満でも再実行）"
+              className="text-xs px-3 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-600 transition-colors disabled:opacity-50"
             >
-              {vodFetching ? '取得中...' : '🤖 AI配信補完'}
+              {vodFetching ? '取得中...' : '🔍 AI Web検索補完'}
             </button>
             <button
               onClick={() => setDebugMode((v) => !v)}
@@ -650,19 +652,23 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                             className={`flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border ${
                               p.source === 'manual'
                                 ? 'bg-green-50 border-green-200 text-green-700'
-                                : p.source === 'openai_supplement'
-                                  ? 'bg-purple-50 border-purple-200 text-purple-700'
-                                  : 'bg-blue-50 border-blue-200 text-blue-700'
+                                : p.source === 'openai_web_search'
+                                  ? 'bg-violet-50 border-violet-200 text-violet-700'
+                                  : p.source === 'openai_supplement'
+                                    ? 'bg-purple-50 border-purple-200 text-purple-700'
+                                    : 'bg-blue-50 border-blue-200 text-blue-700'
                             }`}
-                            title={`${p.providerName} [${p.source}]${p.confidence ? ` 確度:${p.confidence}` : ''}`}
+                            title={`${p.providerName} [${p.source}]${p.confidence ? ` 確度:${p.confidence}` : ''}${p.reason ? ` | ${p.reason}` : ''}`}
                           >
                             {p.logoPath ? (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img src={`${PROVIDER_LOGO_BASE}${p.logoPath}`} alt="" className="w-3 h-3 rounded-sm" />
                             ) : null}
                             {p.providerName}
-                            {p.source === 'openai_supplement' && (
-                              <span className="text-[8px] ml-0.5 text-purple-400">AI</span>
+                            {(p.source === 'openai_supplement' || p.source === 'openai_web_search') && (
+                              <span className="text-[8px] ml-0.5 text-purple-400">
+                                {p.source === 'openai_web_search' ? 'Web' : 'AI'}
+                              </span>
                             )}
                             {p.source === 'manual' && debugMode && (
                               <button
@@ -838,6 +844,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                                             <th className="text-left p-1 border border-gray-200">確度</th>
                                             <th className="text-left p-1 border border-gray-200">確認日</th>
                                             <th className="text-left p-1 border border-gray-200">公開</th>
+                                            <th className="text-left p-1 border border-gray-200">根拠・URL</th>
                                           </tr>
                                         </thead>
                                         <tbody>
@@ -846,6 +853,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                                               <td className="p-1 border border-gray-200">{p.name}</td>
                                               <td className="p-1 border border-gray-200">{p.type}</td>
                                               <td className={`p-1 border border-gray-200 ${
+                                                p.source === 'openai_web_search' ? 'text-violet-600' :
                                                 p.source === 'openai_supplement' ? 'text-purple-600' :
                                                 p.source === 'tmdb_watch_provider' ? 'text-blue-600' : 'text-green-600'
                                               }`}>{p.sourceLabel ?? p.source}</td>
@@ -858,8 +866,23 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                                               <td className="p-1 border border-gray-200">
                                                 {p.publicVisible
                                                   ? <span className="text-green-600">✓</span>
-                                                  : <span className="text-red-500" title={p.hiddenReason}>✗</span>
+                                                  : <span className="text-red-500" title={p.hiddenReason}>✗ {p.hiddenReason}</span>
                                                 }
+                                              </td>
+                                              <td className="p-1 border border-gray-200 max-w-[180px]">
+                                                {p.reason && (
+                                                  <p className="text-gray-600 text-[9px] mb-0.5">{p.reason}</p>
+                                                )}
+                                                {p.officialUrl && (
+                                                  <a
+                                                    href={p.officialUrl}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-[9px] text-blue-500 underline break-all"
+                                                  >
+                                                    {p.officialUrl.slice(0, 50)}{p.officialUrl.length > 50 ? '…' : ''}
+                                                  </a>
+                                                )}
                                               </td>
                                             </tr>
                                           ))}

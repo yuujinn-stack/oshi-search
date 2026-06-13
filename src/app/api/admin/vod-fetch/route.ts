@@ -39,6 +39,8 @@ export interface VodFetchDebugItem {
     source: string;
     sourceLabel?: string;
     confidence?: string;
+    officialUrl?: string;
+    reason?: string;
     checkedDate?: string;
     note?: string;
     publicVisible: boolean;
@@ -168,17 +170,20 @@ export async function POST(req: NextRequest) {
         aiProviderCount,
         finalProviderCount: finalProviders.length,
         finalProviders: finalProviders.map((p) => {
-          const isLowConfidence = p.source === 'openai_supplement' && p.confidence === 'low';
+          const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
+          const isLowConfidence = isAiSource && p.confidence === 'low';
           return {
             name: p.providerName,
             type: p.type,
             source: p.source,
             sourceLabel: p.sourceLabel,
             confidence: p.confidence,
+            officialUrl: p.officialUrl,
+            reason: p.reason,
             checkedDate: p.checkedDate,
             note: p.note,
             publicVisible: !isLowConfidence,
-            hiddenReason: isLowConfidence ? 'AI補完・confidence=low' : undefined,
+            hiddenReason: isLowConfidence ? `${p.sourceLabel ?? p.source}・confidence=low` : undefined,
           };
         }),
         savedDebug: debug,

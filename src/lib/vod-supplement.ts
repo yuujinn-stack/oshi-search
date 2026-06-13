@@ -1,13 +1,13 @@
-// OpenAI による配信サービス情報補完
+// OpenAI Responses API + web_search_preview による配信サービス情報補完
 // TMDb Watch Providers で JP 情報が取得できなかった場合のみ呼び出す
 // 管理画面・Cron のみ使用可。一般ユーザーアクセス時には絶対に呼ばない。
+// モデル: gpt-4o（出演作品判定の gpt-4o-mini とは別）
 
 import OpenAI from 'openai';
 import type { VodProvider } from '@/types/vod';
 import type { WorkRecord } from '@/types/work';
 
 // 既知の日本向け配信サービスと TMDb provider_id の対応表
-// ロゴパスは TMDb API の /watch/providers/movie?language=ja で確認できる値
 const JP_PROVIDER_LOOKUP: Record<string, { id: number; logoPath?: string }> = {
   'Netflix': { id: 8, logoPath: '/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg' },
   'ネットフリックス': { id: 8, logoPath: '/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg' },
@@ -33,6 +33,8 @@ const JP_PROVIDER_LOOKUP: Record<string, { id: number; logoPath?: string }> = {
   'アベマ': { id: 223, logoPath: '/5T4b5p6OI7ZhWgpEnNcHKi5FHZB.jpg' },
   'NHKプラス': { id: -101 },
   'NHK+': { id: -101 },
+  'NHKオンデマンド': { id: -107 },
+  'NHK on Demand': { id: -107 },
   'TVer': { id: -102 },
   'ティーバー': { id: -102 },
   'YouTube': { id: 192, logoPath: '/oIkQkEkwfmcG7IGpRR1NB8frZZM.jpg' },
@@ -46,9 +48,10 @@ const JP_PROVIDER_LOOKUP: Record<string, { id: number; logoPath?: string }> = {
   'WOWOWプラス': { id: -105 },
   'dアニメストア': { id: -106 },
   'dAnime Store': { id: -106 },
+  'バンダイチャンネル': { id: -108 },
+  'Bandai Channel': { id: -108 },
 };
 
-// 未知サービス名から合成 providerId を生成（負の値で TMDb と衝突しない）
 function syntheticProviderId(name: string): number {
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
@@ -65,7 +68,6 @@ function lookupProvider(name: string): { id: number; logoPath?: string } {
   return { id: syntheticProviderId(name) };
 }
 
-// OpenAI クライアント（lazy init）
 let client: OpenAI | null = null;
 function getOpenAI(): OpenAI | null {
   if (!process.env.OPENAI_API_KEY) return null;
@@ -73,21 +75,31 @@ function getOpenAI(): OpenAI | null {
   return client;
 }
 
-interface AiVodResult {
-  providers: AiVodProvider[];
-  sourceUrl?: string;
-  checkedDate?: string;
-  note?: string;
-}
-
 interface AiVodProvider {
   name: string;
   type: 'flatrate' | 'rent' | 'buy' | 'free' | 'ads' | 'unknown';
   confidence: 'high' | 'medium' | 'low';
+  officialUrl?: string;
+  reason?: string;
   note?: string;
 }
 
-// OpenAI に配信情報を問い合わせる（作品単位）
+interface AiVodResult {
+  providers: AiVodProvider[];
+  note?: string;
+}
+
+function extractJson(text: string): AiVodResult {
+  const blockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  const jsonStr = blockMatch ? blockMatch[1] : text.match(/\{[\s\S]*\}/)?.[0];
+  if (!jsonStr) throw new Error('JSONが見つかりません');
+  return JSON.parse(jsonStr) as AiVodResult;
+}
+
+const BACKTICK3 = '```';
+
+// gpt-4o + web_search_preview で配信情報を検索・補完（作品単位）
+// source: openai_web_search, sourceLabel: AI Web検索補完
 export async function supplementVodWithAI(
   work: WorkRecord,
 ): Promise<VodProvider[]> {
@@ -103,7 +115,7 @@ export async function supplementVodWithAI(
   const overviewStr = work.overview ? `概要: ${work.overview.slice(0, 150)}` : '';
 
   const prompt = `あなたは日本の動画配信サービス調査アシスタントです。
-以下の作品について、2026年現在、日本国内で視聴可能な配信サービスを調査してください。
+以下の作品について、2026年現在、日本国内で視聴可能な配信サービスをWebで検索・調査してください。
 
 タイトル: ${titleStr}
 公開年: ${yearStr}
@@ -111,62 +123,79 @@ export async function supplementVodWithAI(
 TMDb ID: ${work.tmdbId ?? '不明'}
 ${overviewStr}
 
-【調査対象サービス（優先的に確認）】
-Hulu, U-NEXT, DMM TV, Lemino, Netflix, Prime Video, ABEMA, TVer, FOD, TELASA, Disney+, WOWOWオンデマンド, dアニメストア, NHKプラス, Paravi, 楽天TV
+【調査方法】
+以下のキーワードでWeb検索して情報を収集してください:
+- "${work.title} 配信"
+- "${work.title} 見逃し配信"
+- "${work.title} どこで見れる"
+- "${work.title} Hulu", "${work.title} U-NEXT", "${work.title} ABEMA"
+- "${work.title} TVer", "${work.title} Lemino", "${work.title} DMM TV"
+- "${work.title} FOD", "${work.title} Prime Video", "${work.title} Netflix"
 
-【作品種別ごとの注意】
-・バラエティ番組・アイドル冠番組・特番: Hulu, ABEMA, TVer, FOD, U-NEXT, Lemino を優先確認
-・日本のドラマ・連続ドラマ: Hulu, U-NEXT, TELASA, FOD, Netflix, Prime Video を優先確認
-・映画（邦画）: U-NEXT, Prime Video, Netflix, DMM TV, 楽天TV を優先確認
-・アニメ: dアニメストア, U-NEXT, ABEMA, Netflix, Prime Video を優先確認
+【日本のバラエティ・アイドル番組の場合の追加考慮】
+番組の放送局が判明している場合、以下の傾向を参考にしてください（推測のみで確定せず、検索で確認すること）:
+- 日本テレビ系 → Hulu の可能性が高い
+- テレビ東京系 → U-NEXT / Lemino / TVer の可能性
+- テレビ朝日系 → TELASA / ABEMA の可能性
+- フジテレビ系 → FOD の可能性が高い
+- TBS系 → U-NEXT / TVer の可能性
 
-【重要なルール】
-・2026年現在、実際に日本で配信中のサービスのみ回答してください
-・過去に配信していたが現在は終了しているものは含めないでください
-・見逃し配信・期間限定配信も type: "free" または "ads" で含めてください
-・配信中である可能性が高い場合は confidence: "medium" 以上で返してください
-・確信が持てない場合は confidence: "low" を返してください（省略しないこと）
-・全く不明な場合は providers: [] を返してください
+【優先的に確認するサービス】
+Hulu, U-NEXT, DMM TV, Lemino, Netflix, Prime Video, ABEMA, TVer, FOD, TELASA, Disney+, WOWOWオンデマンド, Paravi系コンテンツ, NHKオンデマンド, バンダイチャンネル, dアニメストア
 
-以下のJSON形式のみで回答してください（コメント・説明文は一切不要）:
+【ルール】
+- 2026年現在、実際に日本で配信中のサービスのみ回答してください
+- 過去に配信していたが現在は終了しているものは含めないでください
+- 見放題・レンタル・購入・見逃し配信・期間限定配信を含めてください
+- Webで実際に確認できた場合: confidence "high" または "medium"
+- 可能性が高いが確認できなかった場合: confidence "medium"
+- 推測のみで確認できていない場合: confidence "low"（note に不確かである旨を記載）
+- 全く確認できない場合は providers: [] を返してください
+
+以下のJSON形式のみで最終回答してください（${BACKTICK3}json ブロックで囲む）:
+
+${BACKTICK3}json
 {
   "providers": [
     {
-      "name": "サービス名（正式名称で記載）",
+      "name": "サービス名（公式正式名称）",
       "type": "flatrate|rent|buy|free|ads|unknown",
       "confidence": "high|medium|low",
-      "note": "補足（例: 見逃し配信、期間限定等）"
+      "officialUrl": "配信を確認したURL（公式または信頼できるページ、不明なら空文字）",
+      "reason": "このサービスで配信されている根拠（検索で確認した内容を簡潔に）",
+      "note": "補足（見逃し配信・期間限定・不確かな点など）"
     }
   ],
-  "sourceUrl": "参照URL（わかる場合のみ、不明なら空文字）",
-  "checkedDate": "2026年",
   "note": "全体的な補足（不要なら空文字）"
 }
+${BACKTICK3}
 
 type の意味:
-・flatrate = 月額見放題
-・rent = レンタル（個別課金）
-・buy = 購入
-・free = 無料配信（見逃し・NHKプラス等）
-・ads = 広告付き無料配信（ABEMA無料枠・TVer等）
-・unknown = 配信あるが視聴方法不明`;
+- flatrate = 月額見放題
+- rent = レンタル（個別課金）
+- buy = 購入
+- free = 無料配信（見逃し・NHKオンデマンド等）
+- ads = 広告付き無料配信（ABEMA無料枠・TVer等）
+- unknown = 配信あるが視聴方法不明`;
 
   try {
-    console.log(`[vod-ai] OpenAI補完開始: "${work.title}" (${typeLabel}, ${yearStr})`);
-    const res = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      response_format: { type: 'json_object' },
-      max_tokens: 800,
-      temperature: 0,
+    console.log(`[vod-ai] Web検索補完開始: "${work.title}" (${typeLabel}, ${yearStr})`);
+
+    // Responses API + web_search_preview（gpt-4o）
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await (openai as any).responses.create({
+      model: 'gpt-4o',
+      tools: [{ type: 'web_search_preview' }],
+      input: prompt,
     });
 
-    const raw = res.choices[0]?.message?.content;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw: string = (response as any).output_text ?? '';
     if (!raw) return [];
 
-    const parsed = JSON.parse(raw) as AiVodResult;
+    const parsed = extractJson(raw);
     if (!Array.isArray(parsed.providers) || parsed.providers.length === 0) {
-      console.log(`[vod-ai] "${work.title}": AI補完結果なし`);
+      console.log(`[vod-ai] "${work.title}": Web検索補完結果なし`);
       return [];
     }
 
@@ -179,10 +208,11 @@ type の意味:
         logoPath: meta.logoPath,
         type: p.type ?? 'unknown',
         countryCode: 'JP',
-        source: 'openai_supplement',
-        sourceLabel: 'AI補完',
+        source: 'openai_web_search',
+        sourceLabel: 'AI Web検索補完',
         confidence: p.confidence ?? 'low',
-        sourceUrl: parsed.sourceUrl || undefined,
+        officialUrl: p.officialUrl || undefined,
+        reason: p.reason || undefined,
         checkedDate: today,
         note: p.note || parsed.note || undefined,
         createdAt: Date.now(),
@@ -195,7 +225,7 @@ type の意味:
     );
     return providers;
   } catch (err) {
-    console.error(`[vod-ai] OpenAI補完エラー: "${work.title}"`, err);
+    console.error(`[vod-ai] Web検索補完エラー: "${work.title}"`, err);
     return [];
   }
 }
