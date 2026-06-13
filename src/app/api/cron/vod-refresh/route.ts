@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
         let finalProviders: VodProvider[] = tmdbProviders;
         let vodAiCheckedAt: number | undefined;
 
-        // TMDBでJP情報なし かつ AI呼び出し枠が残っている場合
+        // providers=0（jpExists の有無に関わらず）かつ AI枠が残っている場合に補完
         if (
           tmdbProviders.length === 0 &&
           aiCallCount < AI_CALL_LIMIT_PER_CRON
@@ -74,12 +74,20 @@ export async function GET(req: NextRequest) {
           const isAiStale = Date.now() - lastAiCheck >= AI_STALE_MS;
 
           if (isAiStale) {
+            console.log(
+              `[cron/vod-refresh] AI補完: "${work.title}" (${work.type}/${work.tmdbId})`,
+            );
             const aiProviders = await supplementVodWithAI(work);
             finalProviders = aiProviders;
             aiCallCount++;
             personAi++;
             totalAi++;
             vodAiCheckedAt = Date.now();
+          } else {
+            const daysSince = Math.floor((Date.now() - lastAiCheck) / (1000 * 60 * 60 * 24));
+            console.log(
+              `[cron/vod-refresh] AI補完スキップ: "${work.title}" (${daysSince}日前実行済み)`,
+            );
           }
         }
 

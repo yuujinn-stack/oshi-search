@@ -20,8 +20,15 @@ const VOD_SOURCE_BADGE: Record<string, string> = {
 export default function WorkCard({ work }: { work: WorkRecord }) {
   const workDetailUrl = `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
 
-  // 視聴可能なサービスを優先順に並べる
-  const sortedProviders = (work.vodProviders ?? [])
+  // 公開ページ用フィルタ:
+  //   tmdb_watch_provider / manual は常に表示
+  //   openai_supplement は confidence=low を除外
+  const publicProviders = (work.vodProviders ?? []).filter((p) => {
+    if (p.source === 'openai_supplement' && p.confidence === 'low') return false;
+    return true;
+  });
+
+  const sortedProviders = publicProviders
     .slice()
     .sort((a, b) => (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9));
 

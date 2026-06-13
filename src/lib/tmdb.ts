@@ -502,6 +502,8 @@ export async function getWatchProviders(
       ['rent', 'rent'],
     ];
 
+    const today = new Date().toISOString().slice(0, 10);
+
     for (const [key, providerType] of typeMap) {
       const items = countryData[key] as WatchProviderItem[] | undefined;
       if (!Array.isArray(items)) continue;
@@ -515,7 +517,11 @@ export async function getWatchProviders(
           type: providerType,
           countryCode,
           source: 'tmdb_watch_provider',
+          sourceLabel: 'TMDb',
+          checkedDate: today,
           link: countryData.link,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
         });
       }
     }

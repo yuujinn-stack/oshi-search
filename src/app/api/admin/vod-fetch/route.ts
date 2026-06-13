@@ -9,7 +9,44 @@ import type { VodProvider } from '@/types/vod';
 // POST /api/admin/vod-fetch
 // body: { personName, workId?, skipAi?, forceAi? }
 // 管理画面からのみ呼び出し可（proxy.ts で認証済み）
-// 処理順: TMDb Watch Providers → (JP情報なしの場合) OpenAI 補完
+// 処理順:
+//   1. TMDb Watch Providers (JP)
+//   2. providers=0 の場合 → OpenAI補完（stale/forceAiチェック）
+//   3. 両方0 → 配信情報なし保存
+
+export interface VodFetchDebugItem {
+  title: string;
+  workId: string;
+  tmdbId?: number;
+  workType: 'movie' | 'tv';
+  // TMDb debug
+  jpExists: boolean;
+  tmdbProviderCount: number;
+  tmdbFlatrateCount: number;
+  tmdbRentCount: number;
+  tmdbBuyCount: number;
+  tmdbAdsCount: number;
+  tmdbReason?: string;
+  // AI debug
+  aiCalled: boolean;
+  aiCallReason: string;     // なぜAIを呼んだ / 呼ばなかったか
+  aiProviderCount: number;
+  // 最終結果
+  finalProviderCount: number;
+  finalProviders: Array<{
+    name: string;
+    type: string;
+    source: string;
+    sourceLabel?: string;
+    confidence?: string;
+    checkedDate?: string;
+    note?: string;
+    publicVisible: boolean;
+    hiddenReason?: string;
+  }>;
+  savedDebug: WatchProvidersDebug;
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const {
@@ -53,44 +90,58 @@ export async function POST(req: NextRequest) {
 
   // AI補完の呼び出し制限（コスト制御）
   const AI_CALL_LIMIT = 10;
-  // 管理者手動実行では staleDays を短くする（常に最新を確認したい）
+  // forceAi=true のときは 0日 = 常に再実行
   const AI_STALE_DAYS = forceAi ? 0 : 7;
   const AI_STALE_MS = AI_STALE_DAYS * 24 * 60 * 60 * 1000;
 
   let updatedCount = 0;
   let skippedCount = 0;
   let aiCalledCount = 0;
-  const debugInfo: Array<{
-    title: string;
-    workId: string;
-    providerCount: number;
-    aiUsed: boolean;
-    debug: WatchProvidersDebug;
-  }> = [];
+  const debugInfo: VodFetchDebugItem[] = [];
 
   for (const work of targets) {
     try {
       // 1. TMDb Watch Providers
       const { providers: tmdbProviders, debug } = await getWatchProviders(work.tmdbId!, work.type);
       let finalProviders: VodProvider[] = tmdbProviders;
-      let aiUsed = false;
+      let aiCalled = false;
+      let aiCallReason = '';
+      let aiProviderCount = 0;
       let vodAiCheckedAt: number | undefined;
 
-      // 2. TMDbでJP情報が取れなかった場合 → OpenAI補完
+      // 2. providers=0（jpExists の有無に関わらず）→ AI補完を試みる
+      //    jpExists=true でも providers=0 = TMDb側に配信登録なし → AI で補完
+      //    jpExists=false = TMDb自体にJP情報なし → AI で補完
       const needsAi =
         !skipAi &&
         tmdbProviders.length === 0 &&
         aiCalledCount < AI_CALL_LIMIT;
 
-      if (needsAi) {
-        // AI補完の実行判定: forceAi または前回AI補完から staleDays 以上経過
+      if (!needsAi) {
+        if (skipAi) {
+          aiCallReason = 'スキップ: skipAi=true';
+        } else if (tmdbProviders.length > 0) {
+          aiCallReason = `スキップ: TMDb取得済み（${tmdbProviders.length}件）`;
+        } else if (aiCalledCount >= AI_CALL_LIMIT) {
+          aiCallReason = `スキップ: AI呼び出し上限（${AI_CALL_LIMIT}件）に達した`;
+        }
+      } else {
         const lastAiCheck = work.vodAiCheckedAt ?? 0;
         const isStale = Date.now() - lastAiCheck >= AI_STALE_MS;
+        const daysSince = Math.floor((Date.now() - lastAiCheck) / (1000 * 60 * 60 * 24));
 
-        if (forceAi || isStale) {
+        if (!forceAi && !isStale) {
+          aiCallReason = `スキップ: AI補完を${daysSince}日前に実行済み（${AI_STALE_DAYS}日以内は再実行しない）`;
+        } else {
+          const reason = debug.jpExists
+            ? 'jpExists=true だが providers=0（TMDb配信登録なし）'
+            : 'jpExists=false（TMDbにJP情報なし）';
+
           const aiProviders = await supplementVodWithAI(work);
           finalProviders = aiProviders;
-          aiUsed = true;
+          aiCalled = true;
+          aiCallReason = `実行: ${reason}${forceAi ? ' forceAi=true' : ''}`;
+          aiProviderCount = aiProviders.length;
           aiCalledCount++;
           vodAiCheckedAt = Date.now();
         }
@@ -98,13 +149,41 @@ export async function POST(req: NextRequest) {
 
       await updateWorkVod(personName, work.id, finalProviders, { vodAiCheckedAt });
       updatedCount++;
-      debugInfo.push({
+
+      // デバッグ情報を組み立て
+      const debugItem: VodFetchDebugItem = {
         title: work.title,
         workId: work.id,
-        providerCount: finalProviders.length,
-        aiUsed,
-        debug,
-      });
+        tmdbId: work.tmdbId,
+        workType: work.type,
+        jpExists: debug.jpExists,
+        tmdbProviderCount: tmdbProviders.length,
+        tmdbFlatrateCount: debug.jpFlatrate.length,
+        tmdbRentCount: debug.jpRent.length,
+        tmdbBuyCount: debug.jpBuy.length,
+        tmdbAdsCount: debug.jpAds.length,
+        tmdbReason: debug.reason,
+        aiCalled,
+        aiCallReason,
+        aiProviderCount,
+        finalProviderCount: finalProviders.length,
+        finalProviders: finalProviders.map((p) => {
+          const isLowConfidence = p.source === 'openai_supplement' && p.confidence === 'low';
+          return {
+            name: p.providerName,
+            type: p.type,
+            source: p.source,
+            sourceLabel: p.sourceLabel,
+            confidence: p.confidence,
+            checkedDate: p.checkedDate,
+            note: p.note,
+            publicVisible: !isLowConfidence,
+            hiddenReason: isLowConfidence ? 'AI補完・confidence=low' : undefined,
+          };
+        }),
+        savedDebug: debug,
+      };
+      debugInfo.push(debugItem);
     } catch (err) {
       skippedCount++;
       console.error(`[vod-fetch] エラー: "${work.title}"`, err);

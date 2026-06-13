@@ -92,12 +92,23 @@ export async function supplementVodWithAI(
   const yearStr = work.releaseYear ? `${work.releaseYear}年` : '公開年不明';
   const titleStr = work.originalTitle ? `${work.title}（原題: ${work.originalTitle}）` : work.title;
 
+  const overviewStr = work.overview ? `概要: ${work.overview.slice(0, 120)}` : '';
+
   const prompt = `あなたは日本の映像コンテンツ配信サービスの専門家です。
-以下の作品について、日本で現在視聴できる配信サービスを教えてください。
+2026年現在、以下の作品が日本で視聴できる配信サービスを教えてください。
 
 タイトル: ${titleStr}
 公開年: ${yearStr}
 種別: ${typeLabel}
+TMDb ID: ${work.tmdbId ?? '不明'}
+${overviewStr}
+
+【重要な注意】
+・2026年現在、実際に日本で配信中のサービスのみ回答してください
+・過去に配信していたが現在は終了しているものは含めないでください
+・確信が持てない場合は必ず confidence: "low" を返してください
+・情報源が不明な場合も confidence: "low" にしてください
+・作品が日本で配信されていない、または不明な場合は providers: [] を返してください
 
 以下のJSON形式のみで回答してください（コメント・説明文は一切不要）:
 {
@@ -110,13 +121,11 @@ export async function supplementVodWithAI(
     }
   ],
   "sourceUrl": "参照URL（わかる場合のみ、不明なら空文字）",
-  "checkedDate": "情報の基準となる年月（例: 2024年12月）",
+  "checkedDate": "2026年",
   "note": "全体的な補足（不要なら空文字）"
 }
 
-・配信情報が不明または日本での配信が確認できない場合は providers: [] を返してください
-・確度が低い情報は confidence: "low" にしてください
-・type の意味: flatrate=見放題, rent=レンタル, buy=購入, free=無料, ads=広告付き無料, unknown=不明`;
+type の意味: flatrate=見放題, rent=レンタル, buy=購入, free=無料, ads=広告付き無料, unknown=視聴方法不明`;
 
   try {
     console.log(`[vod-ai] OpenAI補完開始: "${work.title}" (${typeLabel}, ${yearStr})`);

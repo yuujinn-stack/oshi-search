@@ -4,6 +4,36 @@ import { useState } from 'react';
 import type { WorkRecord, WorkStatus, WorkSource } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 
+// vod-fetch API のデバッグ型（route.ts の VodFetchDebugItem と同一）
+interface VodFetchDebugItem {
+  title: string;
+  workId: string;
+  tmdbId?: number;
+  workType: 'movie' | 'tv';
+  jpExists: boolean;
+  tmdbProviderCount: number;
+  tmdbFlatrateCount: number;
+  tmdbRentCount: number;
+  tmdbBuyCount: number;
+  tmdbAdsCount: number;
+  tmdbReason?: string;
+  aiCalled: boolean;
+  aiCallReason: string;
+  aiProviderCount: number;
+  finalProviderCount: number;
+  finalProviders: Array<{
+    name: string;
+    type: string;
+    source: string;
+    sourceLabel?: string;
+    confidence?: string;
+    checkedDate?: string;
+    note?: string;
+    publicVisible: boolean;
+    hiddenReason?: string;
+  }>;
+}
+
 const PROVIDER_LOGO_BASE = 'https://image.tmdb.org/t/p/w45';
 
 interface Counts {
@@ -66,6 +96,9 @@ export default function PersonWorks({ personName, group, counts }: Props) {
   } | null>(null);
   const [vodFetching, setVodFetching] = useState(false);
   const [vodMessage, setVodMessage] = useState('');
+  // workId → 最新の VOD取得デバッグ情報（vod-fetch 実行後に更新）
+  const [vodDebugMap, setVodDebugMap] = useState<Record<string, VodFetchDebugItem>>({});
+  const [expandedVodDebug, setExpandedVodDebug] = useState<string | null>(null);
   const [manualVodWorkId, setManualVodWorkId] = useState<string | null>(null);
   const [manualVodName, setManualVodName] = useState('');
   const [manualVodLink, setManualVodLink] = useState('');
@@ -104,25 +137,24 @@ export default function PersonWorks({ personName, group, counts }: Props) {
         skippedCount: number;
         aiCalledCount: number;
         message?: string;
-        debugInfo?: Array<{
-          title: string;
-          workId: string;
-          providerCount: number;
-          aiUsed: boolean;
-          debug: {
-            jpExists: boolean;
-            jpFlatrate: string[];
-            reason?: string;
-          };
-        }>;
+        debugInfo?: VodFetchDebugItem[];
       };
 
-      const noJp = data.debugInfo?.filter((d) => !d.debug.jpExists) ?? [];
-      const aiHit = data.debugInfo?.filter((d) => d.aiUsed && d.providerCount > 0) ?? [];
+      // debugMap に最新情報を蓄積
+      if (data.debugInfo?.length) {
+        setVodDebugMap((prev) => {
+          const next = { ...prev };
+          for (const d of data.debugInfo!) next[d.workId] = d;
+          return next;
+        });
+      }
+
+      const aiHit = data.debugInfo?.filter((d) => d.aiCalled && d.aiProviderCount > 0) ?? [];
+      const aiSkipped = data.debugInfo?.filter((d) => !d.aiCalled && d.tmdbProviderCount === 0) ?? [];
 
       let msg = data.message ?? `配信情報: ${data.updatedCount}件更新`;
       if (data.aiCalledCount > 0) msg += ` / AI補完${data.aiCalledCount}件呼出し（取得${aiHit.length}件）`;
-      if (noJp.length > 0 && data.aiCalledCount === 0) msg += ` / JP情報なし${noJp.length}件`;
+      if (aiSkipped.length > 0) msg += ` / AI未実行${aiSkipped.length}件（スタール期間内）`;
 
       setVodMessage(msg);
       if (debugMode && data.debugInfo) {
@@ -728,36 +760,124 @@ export default function PersonWorks({ personName, group, counts }: Props) {
 
                     {/* デバッグ詳細 */}
                     {debugMode && (
-                      <div className="mt-2 p-2 bg-gray-900 rounded text-[10px] font-mono text-green-400 space-y-0.5">
-                        <p>id: {work.id}</p>
-                        <p>source: {work.source}</p>
-                        <p>tmdbId: {work.tmdbId ?? '—'}</p>
-                        <p>aiDecision: {work.aiDecision ?? '旧データ（なし）'}</p>
-                        <p>aiSamePerson: {String(work.aiSamePerson ?? '不明')}</p>
-                        <p>confidenceScore: {work.confidenceScore}（参考値）</p>
-                        <p>usedAi: {String(work.usedAi ?? '不明')}</p>
-                        {work.tmdbMatchedPersonId && (
-                          <p>tmdbPerson: {work.tmdbMatchedPersonName} (id={work.tmdbMatchedPersonId})</p>
+                      <div className="mt-2 space-y-2">
+                        {/* 作品メタデバッグ */}
+                        <div className="p-2 bg-gray-900 rounded text-[10px] font-mono text-green-400 space-y-0.5">
+                          <p>id: {work.id}</p>
+                          <p>source: {work.source}</p>
+                          <p>tmdbId: {work.tmdbId ?? '—'}</p>
+                          <p>aiDecision: {work.aiDecision ?? '旧データ（なし）'}</p>
+                          <p>confidenceScore: {work.confidenceScore}（参考値）</p>
+                          <p>usedAi: {String(work.usedAi ?? '不明')}</p>
+                          {work.tmdbMatchedPersonId && (
+                            <p>tmdbPerson: {work.tmdbMatchedPersonName} (id={work.tmdbMatchedPersonId})</p>
+                          )}
+                          <p>vodUpdatedAt: {work.vodUpdatedAt ? new Date(work.vodUpdatedAt).toLocaleString('ja-JP') : '未取得'}</p>
+                          <p>vodAiCheckedAt: {work.vodAiCheckedAt ? new Date(work.vodAiCheckedAt).toLocaleString('ja-JP') : '未実行'}</p>
+                          <p>createdAt: {new Date(work.createdAt).toLocaleString('ja-JP')}</p>
+                        </div>
+
+                        {/* VOD取得デバッグ（vod-fetch実行後に更新） */}
+                        {vodDebugMap[work.id] ? (
+                          <div className="border border-teal-200 rounded-lg overflow-hidden">
+                            <button
+                              onClick={() => setExpandedVodDebug(
+                                expandedVodDebug === work.id ? null : work.id,
+                              )}
+                              className="w-full flex items-center justify-between px-3 py-1.5 bg-teal-50 text-[11px] text-teal-700 font-medium"
+                            >
+                              <span>📺 VOD取得デバッグ（最終実行結果）</span>
+                              <span>{expandedVodDebug === work.id ? '▲' : '▼'}</span>
+                            </button>
+                            {expandedVodDebug === work.id && (() => {
+                              const d = vodDebugMap[work.id];
+                              return (
+                                <div className="p-3 bg-white text-[10px] space-y-2">
+                                  {/* TMDb結果 */}
+                                  <div className="space-y-0.5">
+                                    <p className="font-semibold text-slate-600">TMDb Watch Providers</p>
+                                    <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-gray-600 pl-2">
+                                      <span>tmdbId:</span><span>{d.tmdbId} ({d.workType})</span>
+                                      <span>jpExists:</span>
+                                      <span className={d.jpExists ? 'text-green-600' : 'text-red-500'}>
+                                        {String(d.jpExists)}
+                                      </span>
+                                      <span>providers合計:</span><span>{d.tmdbProviderCount}件</span>
+                                      <span>flatrate:</span><span>{d.tmdbFlatrateCount}件</span>
+                                      <span>rent:</span><span>{d.tmdbRentCount}件</span>
+                                      <span>buy:</span><span>{d.tmdbBuyCount}件</span>
+                                      <span>ads:</span><span>{d.tmdbAdsCount}件</span>
+                                      {d.tmdbReason && (
+                                        <><span>reason:</span><span className="text-orange-500">{d.tmdbReason}</span></>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* AI補完結果 */}
+                                  <div className="space-y-0.5">
+                                    <p className="font-semibold text-slate-600">OpenAI補完</p>
+                                    <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-gray-600 pl-2">
+                                      <span>実行:</span>
+                                      <span className={d.aiCalled ? 'text-purple-600 font-medium' : 'text-gray-400'}>
+                                        {d.aiCalled ? `実行（${d.aiProviderCount}件取得）` : '未実行'}
+                                      </span>
+                                      <span>理由:</span><span className="text-gray-500 col-span-1">{d.aiCallReason}</span>
+                                    </div>
+                                  </div>
+
+                                  {/* 最終プロバイダー一覧 */}
+                                  {d.finalProviders.length > 0 ? (
+                                    <div className="space-y-0.5">
+                                      <p className="font-semibold text-slate-600">保存済みプロバイダー（{d.finalProviders.length}件）</p>
+                                      <table className="w-full text-[10px] border-collapse">
+                                        <thead>
+                                          <tr className="bg-gray-100 text-gray-500">
+                                            <th className="text-left p-1 border border-gray-200">名前</th>
+                                            <th className="text-left p-1 border border-gray-200">種別</th>
+                                            <th className="text-left p-1 border border-gray-200">ソース</th>
+                                            <th className="text-left p-1 border border-gray-200">確度</th>
+                                            <th className="text-left p-1 border border-gray-200">確認日</th>
+                                            <th className="text-left p-1 border border-gray-200">公開</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {d.finalProviders.map((p, pi) => (
+                                            <tr key={pi} className={p.publicVisible ? '' : 'opacity-50 bg-red-50'}>
+                                              <td className="p-1 border border-gray-200">{p.name}</td>
+                                              <td className="p-1 border border-gray-200">{p.type}</td>
+                                              <td className={`p-1 border border-gray-200 ${
+                                                p.source === 'openai_supplement' ? 'text-purple-600' :
+                                                p.source === 'tmdb_watch_provider' ? 'text-blue-600' : 'text-green-600'
+                                              }`}>{p.sourceLabel ?? p.source}</td>
+                                              <td className={`p-1 border border-gray-200 ${
+                                                p.confidence === 'high' ? 'text-green-600' :
+                                                p.confidence === 'medium' ? 'text-yellow-600' :
+                                                p.confidence === 'low' ? 'text-red-500' : ''
+                                              }`}>{p.confidence ?? '—'}</td>
+                                              <td className="p-1 border border-gray-200">{p.checkedDate ?? '—'}</td>
+                                              <td className="p-1 border border-gray-200">
+                                                {p.publicVisible
+                                                  ? <span className="text-green-600">✓</span>
+                                                  : <span className="text-red-500" title={p.hiddenReason}>✗</span>
+                                                }
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  ) : (
+                                    <p className="text-gray-400 pl-2">プロバイダーなし（配信情報なし）</p>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-gray-400 px-2">
+                            VODデバッグ: 配信情報取得ボタンを実行すると詳細が表示されます
+                          </p>
                         )}
-                        <p>
-                          checkedAt:{' '}
-                          {work.checkedAt
-                            ? new Date(work.checkedAt).toLocaleString('ja-JP')
-                            : '未確認'}
-                        </p>
-                        <p>
-                          vodUpdatedAt:{' '}
-                          {work.vodUpdatedAt
-                            ? new Date(work.vodUpdatedAt).toLocaleString('ja-JP')
-                            : '未取得'}
-                        </p>
-                        <p>
-                          vodAiCheckedAt:{' '}
-                          {work.vodAiCheckedAt
-                            ? new Date(work.vodAiCheckedAt).toLocaleString('ja-JP')
-                            : '未実行'}
-                        </p>
-                        <p>createdAt: {new Date(work.createdAt).toLocaleString('ja-JP')}</p>
                       </div>
                     )}
                   </div>

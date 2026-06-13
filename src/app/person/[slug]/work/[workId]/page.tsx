@@ -68,7 +68,13 @@ export default async function WorkDetailPage({ params }: Props) {
   const work = await getWork(personName, workId);
   if (!work || work.status !== 'auto_published') notFound();
 
-  const sortedProviders = (work.vodProviders ?? [])
+  // 公開ページ用: confidence=low の openai_supplement は除外
+  const publicProviders = (work.vodProviders ?? []).filter((p) => {
+    if (p.source === 'openai_supplement' && p.confidence === 'low') return false;
+    return true;
+  });
+
+  const sortedProviders = publicProviders
     .slice()
     .sort((a, b) => (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9));
 
@@ -86,8 +92,12 @@ export default async function WorkDetailPage({ params }: Props) {
   // JustWatch リンク（flatrate → free → ads → rent → buy 優先）
   const jwLink = sortedProviders.find((p) => p.link)?.link;
 
-  const hasTmdb = sortedProviders.some((p) => p.source === 'tmdb_watch_provider');
   const hasAi = sortedProviders.some((p) => p.source === 'openai_supplement');
+
+  // confidence=low で非表示になったプロバイダー数
+  const lowConfidenceCount = (work.vodProviders ?? []).filter(
+    (p) => p.source === 'openai_supplement' && p.confidence === 'low',
+  ).length;
 
   function ProviderRow({ p }: { p: VodProvider }) {
     return (
@@ -207,11 +217,21 @@ export default async function WorkDetailPage({ params }: Props) {
                     ))}
                   </div>
                 )}
-                <div className="py-3" />
+                {lowConfidenceCount > 0 && (
+                  <p className="text-[11px] text-gray-400 pt-2 pb-3">
+                    ※ 確度が低い情報 {lowConfidenceCount}件は表示を省略しています
+                  </p>
+                )}
+                <div className="py-1" />
               </>
             ) : (
               <div className="py-6 text-center">
-                <p className="text-sm text-gray-500">配信サービス情報は現在確認できません</p>
+                <p className="text-sm text-gray-500">配信情報は現在確認できません。</p>
+                {lowConfidenceCount > 0 && (
+                  <p className="text-xs text-orange-400 mt-1">
+                    AI補完情報 {lowConfidenceCount}件がありますが、確度が低いため表示を省略しています
+                  </p>
+                )}
                 {work.vodUpdatedAt && (
                   <p className="text-xs text-gray-400 mt-1">
                     最終確認: {formatDate(work.vodUpdatedAt)}
@@ -234,9 +254,9 @@ export default async function WorkDetailPage({ params }: Props) {
           {/* 注意書き */}
           <div className="px-4 pb-4">
             <p className="text-[11px] text-gray-400 leading-relaxed bg-gray-50 rounded-xl px-3 py-2">
-              配信状況は変更される可能性があります。最新の配信状況は各公式サイトでご確認ください。
-              {hasAi && !hasTmdb && (
-                <> AI補完による情報を含みます。正確性は保証されません。</>
+              ※配信状況は変更される可能性があります。最新の配信状況は各公式サイトでご確認ください。
+              {hasAi && (
+                <> AI補完による情報を含む場合があります。正確性は保証されません。</>
               )}
             </p>
           </div>
