@@ -1,6 +1,7 @@
 import { getAllPersonsWithConfig } from '@/lib/persons';
 import { getAllWorks } from '@/lib/work-store';
 import PersonWorks from './PersonWorks';
+import CsvSection from './CsvSection';
 
 export const dynamic = 'force-dynamic';
 
@@ -93,6 +94,9 @@ export default async function WorkCheckPage() {
           </p>
         </div>
       )}
+
+      {/* CSV出力 / VOD調査インポート */}
+      <CsvSection persons={persons.map((p) => p.name)} />
 
       {/* 人物リスト */}
       <div className="space-y-3">

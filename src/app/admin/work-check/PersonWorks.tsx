@@ -417,6 +417,14 @@ export default function PersonWorks({ personName, group, counts }: Props) {
             >
               {vodFetching ? '取得中...' : '🔍 AI Web検索補完'}
             </button>
+            <a
+              href={`/api/admin/csv-export?person=${encodeURIComponent(personName)}`}
+              download
+              className="text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors"
+              title="この人物の全作品をCSVで出力"
+            >
+              📄 CSV出力
+            </a>
             <button
               onClick={() => setDebugMode((v) => !v)}
               className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${
@@ -666,11 +674,13 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                             className={`flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border ${
                               p.source === 'manual'
                                 ? 'bg-green-50 border-green-200 text-green-700'
-                                : p.source === 'openai_web_search'
-                                  ? 'bg-violet-50 border-violet-200 text-violet-700'
-                                  : p.source === 'openai_supplement'
-                                    ? 'bg-purple-50 border-purple-200 text-purple-700'
-                                    : 'bg-blue-50 border-blue-200 text-blue-700'
+                                : p.source === 'manual_import'
+                                  ? 'bg-orange-50 border-orange-200 text-orange-700'
+                                  : p.source === 'openai_web_search'
+                                    ? 'bg-violet-50 border-violet-200 text-violet-700'
+                                    : p.source === 'openai_supplement'
+                                      ? 'bg-purple-50 border-purple-200 text-purple-700'
+                                      : 'bg-blue-50 border-blue-200 text-blue-700'
                             }`}
                             title={`${p.providerName} [${p.source}]${p.confidence ? ` 確度:${p.confidence}` : ''}${p.reason ? ` | ${p.reason}` : ''}`}
                           >
@@ -683,6 +693,9 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                               <span className="text-[8px] ml-0.5 text-purple-400">
                                 {p.source === 'openai_web_search' ? 'Web' : 'AI'}
                               </span>
+                            )}
+                            {p.source === 'manual_import' && (
+                              <span className="text-[8px] ml-0.5 text-orange-400">CSV</span>
                             )}
                             {p.source === 'manual' && debugMode && (
                               <button
@@ -869,7 +882,8 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                                               <td className={`p-1 border border-gray-200 ${
                                                 p.source === 'openai_web_search' ? 'text-violet-600' :
                                                 p.source === 'openai_supplement' ? 'text-purple-600' :
-                                                p.source === 'tmdb_watch_provider' ? 'text-blue-600' : 'text-green-600'
+                                                p.source === 'tmdb_watch_provider' ? 'text-blue-600' :
+                                                p.source === 'manual_import' ? 'text-orange-600' : 'text-green-600'
                                               }`}>{p.sourceLabel ?? p.source}</td>
                                               <td className={`p-1 border border-gray-200 ${
                                                 p.confidence === 'high' ? 'text-green-600' :

@@ -93,7 +93,7 @@ export async function updateWorkVod(
   workId: string,
   providers: VodProvider[],
   options?: {
-    replaceSources?: Array<'tmdb_watch_provider' | 'openai_supplement' | 'openai_web_search'>;
+    replaceSources?: Array<'tmdb_watch_provider' | 'openai_supplement' | 'openai_web_search' | 'manual_import'>;
     vodAiCheckedAt?: number;
   },
 ): Promise<void> {
