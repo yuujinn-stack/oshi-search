@@ -197,7 +197,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
 
   async function handleProcess(
     action: 'tmdb' | 'supplement' | 'all',
-    opts?: { forceRejudge?: boolean; deleteSupplementFirst?: boolean },
+    opts?: { forceRejudge?: boolean; deleteSupplementFirst?: boolean; includeVod?: boolean },
   ) {
     setProcessing(action);
     setMessage('');
@@ -209,6 +209,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
         action,
         forceRejudge: opts?.forceRejudge ?? false,
         deleteSupplementFirst: opts?.deleteSupplementFirst ?? false,
+        includeVod: opts?.includeVod ?? false,
       }),
     });
     if (res.ok) {
@@ -221,6 +222,8 @@ export default function PersonWorks({ personName, group, counts }: Props) {
         autoPublishedCount: number;
         needsReviewCount: number;
         hiddenCount: number;
+        vodUpdatedCount?: number;
+        vodAiCalledCount?: number;
         matchedTmdbPerson?: { id: number; name: string; department?: string; matchScore: number; matchDetails: string };
         error?: string;
       };
@@ -243,6 +246,9 @@ export default function PersonWorks({ personName, group, counts }: Props) {
           `AI判定${data.aiJudgedCount}件`,
           `公開${data.autoPublishedCount} / 確認待ち${data.needsReviewCount} / 非表示${data.hiddenCount}`,
         );
+        if (data.vodUpdatedCount !== undefined) {
+          parts.push(`📺 配信情報${data.vodUpdatedCount}件更新 / AI Web検索${data.vodAiCalledCount ?? 0}件`);
+        }
         setMessage(`完了: ${parts.join(' ')}`);
         await loadWorks();
       }
@@ -349,6 +355,14 @@ export default function PersonWorks({ personName, group, counts }: Props) {
         <div className="p-4 space-y-4 bg-white">
           {/* アクションバー */}
           <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => handleProcess('all', { includeVod: true })}
+              disabled={isProcessing || vodFetching}
+              title="TMDb取得・AI判定・AI補完・配信情報取得をまとめて実行（新規セットアップ向け）"
+              className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition-colors disabled:opacity-50"
+            >
+              {isProcessing ? '処理中...' : '🚀 フルセットアップ'}
+            </button>
             <button
               onClick={() => handleProcess('tmdb')}
               disabled={isProcessing}

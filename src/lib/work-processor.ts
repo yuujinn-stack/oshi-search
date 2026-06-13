@@ -4,9 +4,11 @@
 import OpenAI from 'openai';
 import type { PersonWithConfig } from '@/types/person';
 import type { WorkRecord, WorkStatus } from '@/types/work';
-import { findBestTmdbPerson, getTmdbCredits } from './tmdb';
+import { findBestTmdbPerson, getTmdbCredits, getWatchProviders } from './tmdb';
 import type { TmdbWorkCandidate, TmdbPersonMatch } from './tmdb';
-import { getAllWorks, saveWork, deleteWorksBySource } from './work-store';
+import { getAllWorks, saveWork, deleteWorksBySource, updateWorkVod } from './work-store';
+import { supplementVodWithAI } from './vod-supplement';
+import type { VodProvider } from '@/types/vod';
 
 export interface WorkProcessResult {
   newCount: number;
@@ -18,6 +20,8 @@ export interface WorkProcessResult {
   needsReviewCount: number;
   hiddenCount: number;
   supplementCount: number;       // AI補完で新規追加した件数
+  vodUpdatedCount?: number;      // 配信情報更新件数（includeVod=true 時）
+  vodAiCalledCount?: number;     // VOD AI Web検索補完の実行件数
   matchedTmdbPerson?: TmdbPersonMatch;
   error?: string;
 }
@@ -26,6 +30,7 @@ export interface WorkProcessOptions {
   action?: 'tmdb' | 'supplement' | 'all'; // デフォルト: 'tmdb'
   forceRejudge?: boolean;                  // 手動確認済み以外を再判定
   deleteSupplementFirst?: boolean;         // AI補完作品を削除してから再補完
+  includeVod?: boolean;                    // 配信情報取得まで含める（新規セットアップ向け）
 }
 
 // AI判定の詳細結果（内部型）
@@ -347,7 +352,7 @@ export async function processPersonWorks(
   person: PersonWithConfig,
   options: WorkProcessOptions = {},
 ): Promise<WorkProcessResult> {
-  const { action = 'tmdb', forceRejudge = false, deleteSupplementFirst = false } = options;
+  const { action = 'tmdb', forceRejudge = false, deleteSupplementFirst = false, includeVod = false } = options;
 
   const result: WorkProcessResult = {
     newCount: 0,
@@ -488,12 +493,70 @@ export async function processPersonWorks(
     }
   }
 
+  // --- 配信情報取得フロー（includeVod=true の場合のみ） ---
+  // 新規セットアップ時に自動実行。一般ユーザーアクセス時は絶対に呼ばない。
+  if (includeVod) {
+    const vodTargets = (await getAllWorks(person.name)).filter(
+      (w) => w.status === 'auto_published' && w.tmdbId,
+    );
+
+    // 1回のセットアップで最大10件（コスト制御）
+    const VOD_AI_LIMIT = 10;
+    // 新規作品は vodAiCheckedAt=undefined → stale=true → 自動でAI実行
+    const VOD_AI_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+
+    let vodUpdated = 0;
+    let vodAiCalled = 0;
+
+    console.log(
+      `[work-processor] VOD取得開始: "${person.name}" 対象${vodTargets.length}件`,
+    );
+
+    for (const work of vodTargets) {
+      try {
+        const { providers: tmdbProviders } = await getWatchProviders(work.tmdbId!, work.type);
+        let finalProviders: VodProvider[] = tmdbProviders;
+        let vodAiCheckedAt: number | undefined;
+
+        // TMDb=0件 かつ AI上限未達 かつ stale → AI Web検索補完
+        if (tmdbProviders.length === 0 && vodAiCalled < VOD_AI_LIMIT) {
+          const lastAiCheck = work.vodAiCheckedAt ?? 0;
+          const isStale = Date.now() - lastAiCheck >= VOD_AI_STALE_MS;
+          if (isStale) {
+            console.log(`[work-processor] VOD AI補完: "${work.title}"`);
+            const aiProviders = await supplementVodWithAI(work);
+            finalProviders = aiProviders;
+            vodAiCalled++;
+            vodAiCheckedAt = Date.now();
+            if (aiProviders.length > 0) {
+              console.log(
+                `[work-processor] VOD AI補完結果: "${work.title}" → ${aiProviders.length}件 (${aiProviders.map((p) => p.providerName).join(', ')})`,
+              );
+            }
+          }
+        }
+
+        await updateWorkVod(person.name, work.id, finalProviders, { vodAiCheckedAt });
+        vodUpdated++;
+      } catch (err) {
+        console.error(`[work-processor] VOD取得エラー: "${work.title}"`, err);
+      }
+    }
+
+    result.vodUpdatedCount = vodUpdated;
+    result.vodAiCalledCount = vodAiCalled;
+    console.log(
+      `[work-processor] VOD取得完了: "${person.name}" 更新${vodUpdated}件 AI補完${vodAiCalled}件`,
+    );
+  }
+
   console.log(
     `[work-processor] ${person.name}: ` +
       `TMDb新規${result.newCount} 再判定${result.rejudgedCount} スキップ${result.skippedCount} ` +
       `AI補完${result.supplementCount} ` +
       `AI判定${result.aiJudgedCount} ルール${result.ruleBasedCount} ` +
-      `公開${result.autoPublishedCount} 確認待ち${result.needsReviewCount} 非表示${result.hiddenCount}`,
+      `公開${result.autoPublishedCount} 確認待ち${result.needsReviewCount} 非表示${result.hiddenCount}` +
+      (result.vodUpdatedCount !== undefined ? ` VOD更新${result.vodUpdatedCount}件 VOD-AI${result.vodAiCalledCount}件` : ''),
   );
   return result;
 }

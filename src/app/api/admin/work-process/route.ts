@@ -3,15 +3,17 @@ import { getPersonWithConfig } from '@/lib/persons';
 import { processPersonWorks } from '@/lib/work-processor';
 
 // POST /api/admin/work-process
-// body: { personName, action?, forceRejudge?, deleteSupplementFirst? }
+// body: { personName, action?, forceRejudge?, deleteSupplementFirst?, includeVod? }
 // 管理画面からのみ呼び出し可（proxy.ts で認証済み）
+// includeVod=true にすると、作品処理後に配信情報取得（TMDb+AI Web検索）まで自動実行する
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const { personName, action, forceRejudge, deleteSupplementFirst } = body as {
+  const { personName, action, forceRejudge, deleteSupplementFirst, includeVod } = body as {
     personName?: string;
     action?: 'tmdb' | 'supplement' | 'all';
     forceRejudge?: boolean;
     deleteSupplementFirst?: boolean;
+    includeVod?: boolean;
   };
 
   if (!personName) {
@@ -27,6 +29,7 @@ export async function POST(req: NextRequest) {
     action: action ?? 'tmdb',
     forceRejudge: forceRejudge ?? false,
     deleteSupplementFirst: deleteSupplementFirst ?? false,
+    includeVod: includeVod ?? false,
   });
   return NextResponse.json(result);
 }
