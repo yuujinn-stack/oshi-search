@@ -93,8 +93,10 @@ export async function updateWorkVod(
   workId: string,
   providers: VodProvider[],
   options?: {
-    replaceSources?: Array<'tmdb_watch_provider' | 'openai_supplement' | 'openai_web_search' | 'manual_import'>;
+    replaceSources?: Array<'tmdb_watch_provider' | 'openai_supplement' | 'openai_web_search' | 'manual_csv'>;
     vodAiCheckedAt?: number;
+    vodStatus?: 'found' | 'not_found';
+    nextVodCheckAt?: number;
   },
 ): Promise<void> {
   const redis = getRedis();
@@ -109,9 +111,49 @@ export async function updateWorkVod(
     work.vodProviders = [...kept, ...providers];
     work.vodUpdatedAt = Date.now();
     if (options?.vodAiCheckedAt) work.vodAiCheckedAt = options.vodAiCheckedAt;
+    if (options?.vodStatus !== undefined) work.vodStatus = options.vodStatus;
+    if (options?.nextVodCheckAt !== undefined) work.nextVodCheckAt = options.nextVodCheckAt;
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
   } catch { /* skip */ }
+}
+
+// CSV調査インポート: manual_csv 配信サービスをアップサート（同名サービスは上書き、新規は追加、TMDb/AI は保持）
+export async function upsertManualCsvVodProviders(
+  personName: string,
+  workId: string,
+  providers: VodProvider[],
+): Promise<{ added: number; updated: number }> {
+  const redis = getRedis();
+  if (!redis) return { added: 0, updated: 0 };
+  const raw = await redis.hget(hashKey(personName), workId);
+  if (!raw) return { added: 0, updated: 0 };
+  try {
+    const work = (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
+    const existing = work.vodProviders ?? [];
+    let added = 0;
+    let updated = 0;
+    for (const p of providers) {
+      const idx = existing.findIndex(
+        (e) => e.source === 'manual_csv' &&
+               e.providerName.toLowerCase() === p.providerName.toLowerCase(),
+      );
+      if (idx >= 0) {
+        existing[idx] = p;
+        updated++;
+      } else {
+        existing.push(p);
+        added++;
+      }
+    }
+    work.vodProviders = existing;
+    work.vodUpdatedAt = Date.now();
+    work.updatedAt = Date.now();
+    await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    return { added, updated };
+  } catch {
+    return { added: 0, updated: 0 };
+  }
 }
 
 // 手動で配信サービスを1件追加（既存の tmdb_watch_provider は保持）

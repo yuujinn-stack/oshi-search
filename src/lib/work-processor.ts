@@ -518,25 +518,53 @@ export async function processPersonWorks(
         let finalProviders: VodProvider[] = tmdbProviders;
         let vodAiCheckedAt: number | undefined;
 
-        // TMDb=0件 かつ AI上限未達 かつ stale → AI Web検索補完
-        if (tmdbProviders.length === 0 && vodAiCalled < VOD_AI_LIMIT) {
+        // TMDb=0件 かつ AI上限未達 かつ stale かつ nextVodCheckAt 未到来でない → AI補完
+        const nextCheckScheduled = work.nextVodCheckAt && Date.now() < work.nextVodCheckAt;
+        if (tmdbProviders.length === 0 && vodAiCalled < VOD_AI_LIMIT && !nextCheckScheduled) {
           const lastAiCheck = work.vodAiCheckedAt ?? 0;
           const isStale = Date.now() - lastAiCheck >= VOD_AI_STALE_MS;
           if (isStale) {
             console.log(`[work-processor] VOD AI補完: "${work.title}"`);
             const aiProviders = await supplementVodWithAI(work);
-            finalProviders = aiProviders;
             vodAiCalled++;
             vodAiCheckedAt = Date.now();
             if (aiProviders.length > 0) {
+              finalProviders = aiProviders;
               console.log(
                 `[work-processor] VOD AI補完結果: "${work.title}" → ${aiProviders.length}件 (${aiProviders.map((p) => p.providerName).join(', ')})`,
               );
+            } else {
+              // 配信確認できずマーカーを保存
+              finalProviders = [{
+                providerId: -9999,
+                providerName: '配信確認できず',
+                type: 'unknown',
+                countryCode: 'JP',
+                source: 'openai_web_search',
+                sourceLabel: 'AI Web検索補完',
+                confidence: 'low',
+                note: '公式配信ページを確認できず。配信なしとは断定しない。',
+                checkedDate: new Date().toISOString().slice(0, 10),
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              }];
             }
           }
         }
 
-        await updateWorkVod(person.name, work.id, finalProviders, { vodAiCheckedAt });
+        const hasRealProviders = finalProviders.some((p) => p.providerName !== '配信確認できず');
+        const vodStatus = vodAiCheckedAt
+          ? (hasRealProviders ? 'found' as const : 'not_found' as const)
+          : undefined;
+        const nextVodCheckAt = vodStatus === 'not_found'
+          ? Date.now() + 30 * 24 * 60 * 60 * 1000
+          : undefined;
+
+        await updateWorkVod(person.name, work.id, finalProviders, {
+          vodAiCheckedAt,
+          vodStatus,
+          nextVodCheckAt,
+        });
         vodUpdated++;
       } catch (err) {
         console.error(`[work-processor] VOD取得エラー: "${work.title}"`, err);

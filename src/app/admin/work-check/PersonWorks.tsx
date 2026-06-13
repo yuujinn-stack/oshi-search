@@ -674,7 +674,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                             className={`flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border ${
                               p.source === 'manual'
                                 ? 'bg-green-50 border-green-200 text-green-700'
-                                : p.source === 'manual_import'
+                                : p.source === 'manual_csv'
                                   ? 'bg-orange-50 border-orange-200 text-orange-700'
                                   : p.source === 'openai_web_search'
                                     ? 'bg-violet-50 border-violet-200 text-violet-700'
@@ -694,7 +694,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                                 {p.source === 'openai_web_search' ? 'Web' : 'AI'}
                               </span>
                             )}
-                            {p.source === 'manual_import' && (
+                            {p.source === 'manual_csv' && (
                               <span className="text-[8px] ml-0.5 text-orange-400">CSV</span>
                             )}
                             {p.source === 'manual' && debugMode && (
@@ -883,7 +883,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                                                 p.source === 'openai_web_search' ? 'text-violet-600' :
                                                 p.source === 'openai_supplement' ? 'text-purple-600' :
                                                 p.source === 'tmdb_watch_provider' ? 'text-blue-600' :
-                                                p.source === 'manual_import' ? 'text-orange-600' : 'text-green-600'
+                                                p.source === 'manual_csv' ? 'text-orange-600' : 'text-green-600'
                                               }`}>{p.sourceLabel ?? p.source}</td>
                                               <td className={`p-1 border border-gray-200 ${
                                                 p.confidence === 'high' ? 'text-green-600' :

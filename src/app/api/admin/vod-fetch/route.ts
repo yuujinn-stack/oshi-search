@@ -100,6 +100,7 @@ export async function POST(req: NextRequest) {
   // forceAi=true のときは 0日 = 常に再実行
   const AI_STALE_DAYS = forceAi ? 0 : 7;
   const AI_STALE_MS = AI_STALE_DAYS * 24 * 60 * 60 * 1000;
+  const VOD_NOT_FOUND_RECHECK_MS = 30 * 24 * 60 * 60 * 1000; // 配信なし → 30日後に再チェック
 
   let updatedCount = 0;
   let skippedCount = 0;
@@ -119,8 +120,12 @@ export async function POST(req: NextRequest) {
       // 2. AI補完が必要かどうかを判定
       //    - forceAi=true: TMDb結果に関わらず AI を実行（テスト・強制補完用）
       //    - 通常: tmdbProviders=0 の場合のみ AI を試みる
+      //    - nextVodCheckAt が未来の場合はスキップ（not_found 時の30日スロットリング）
+      const nextCheckScheduled =
+        !forceAi && work.nextVodCheckAt && Date.now() < work.nextVodCheckAt;
       const needsAi =
         !skipAi &&
+        !nextCheckScheduled &&
         (forceAi || tmdbProviders.length === 0) &&
         aiCalledCount < AI_CALL_LIMIT;
 
@@ -138,6 +143,9 @@ export async function POST(req: NextRequest) {
       if (!needsAi) {
         if (skipAi) {
           aiCallReason = 'スキップ: skipAi=true';
+        } else if (nextCheckScheduled) {
+          const nextDate = new Date(work.nextVodCheckAt!).toLocaleDateString('ja-JP');
+          aiCallReason = `スキップ: 前回「配信確認できず」のため次回チェック予定 ${nextDate}`;
         } else if (tmdbProviders.length > 0) {
           aiCallReason = `スキップ: TMDb取得済み（${tmdbProviders.length}件）`;
         } else if (aiCalledCount >= AI_CALL_LIMIT) {
@@ -171,18 +179,34 @@ export async function POST(req: NextRequest) {
             console.log(
               `[vod-fetch] AI補完失敗または結果なし: workId=${work.id} title="${work.title}"`,
             );
+            // 配信なしマーカーを保存（公開ページでは confidence=low で非表示）
+            const notFoundMarker: VodProvider = {
+              providerId: -9999,
+              providerName: '配信確認できず',
+              type: 'unknown',
+              countryCode: 'JP',
+              source: 'openai_web_search',
+              sourceLabel: 'AI Web検索補完',
+              confidence: 'low',
+              note: '公式配信ページを確認できず。配信なしとは断定しない。',
+              checkedDate: new Date().toISOString().slice(0, 10),
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            };
+            // TMDb に結果があれば TMDb 結果を優先（マーカーは不要）
+            finalProviders = (forceAi && tmdbProviders.length > 0)
+              ? tmdbProviders
+              : [notFoundMarker];
           } else {
             console.log(
               `[vod-fetch] AI補完保存: workId=${work.id} savedProviders=${aiProviders.length}` +
               ` (${aiProviders.map((p) => p.providerName).join(', ')})`,
             );
+            // forceAi=true かつ TMDb にも結果がある場合はマージ（TMDb優先 + AI補完）
+            finalProviders = (forceAi && tmdbProviders.length > 0)
+              ? [...tmdbProviders, ...aiProviders]
+              : aiProviders;
           }
-
-          // forceAi=true かつ TMDb にも結果がある場合はマージ（TMDb優先 + AI補完）
-          // 通常ケース（TMDb=0）は AI結果のみ
-          finalProviders = (forceAi && tmdbProviders.length > 0)
-            ? [...tmdbProviders, ...aiProviders]
-            : aiProviders;
 
           aiCalled = true;
           aiCallReason = `実行: ${aiReason}`;
@@ -192,7 +216,21 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      await updateWorkVod(personName, work.id, finalProviders, { vodAiCheckedAt });
+      // not_found マーカーのみの場合は vodStatus='not_found' + nextVodCheckAt を保存
+      const hasRealProviders = finalProviders.some((p) => p.providerName !== '配信確認できず');
+      const vodStatus: 'found' | 'not_found' | undefined = aiCalled
+        ? (hasRealProviders ? 'found' : 'not_found')
+        : undefined;
+      const nextVodCheckAt =
+        vodStatus === 'not_found'
+          ? Date.now() + VOD_NOT_FOUND_RECHECK_MS
+          : undefined;
+
+      await updateWorkVod(personName, work.id, finalProviders, {
+        vodAiCheckedAt,
+        vodStatus,
+        nextVodCheckAt,
+      });
       updatedCount++;
 
       console.log(

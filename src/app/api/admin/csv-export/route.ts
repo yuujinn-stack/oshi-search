@@ -40,6 +40,7 @@ function workToRow(w: WorkRecord): string {
     ? `https://www.themoviedb.org/${w.type}/${w.tmdbId}`
     : '';
   const vodServices = (w.vodProviders ?? [])
+    .filter((p) => p.providerName !== '配信確認できず') // AI not_found マーカーを除外
     .map((p) => `${p.providerName}(${VOD_TYPE_LABEL[p.type] ?? p.type})`)
     .join('|');
   const checkedDate = w.vodUpdatedAt

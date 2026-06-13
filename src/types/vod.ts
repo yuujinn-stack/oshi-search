@@ -1,5 +1,5 @@
 export type VodProviderType = 'flatrate' | 'buy' | 'rent' | 'free' | 'ads' | 'unknown';
-export type VodSource = 'tmdb_watch_provider' | 'openai_supplement' | 'openai_web_search' | 'manual' | 'manual_import';
+export type VodSource = 'tmdb_watch_provider' | 'openai_supplement' | 'openai_web_search' | 'manual' | 'manual_csv';
 
 export interface VodProvider {
   providerId: number;

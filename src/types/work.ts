@@ -35,6 +35,8 @@ export interface WorkRecord {
   vodProviders?: import('./vod').VodProvider[];
   vodUpdatedAt?: number;      // 最後に配信情報チェックを実行した日時（プロバイダーなし含む）
   vodAiCheckedAt?: number;    // 最後に OpenAI 補完を実行した日時
+  vodStatus?: 'found' | 'not_found'; // AI補完の最終結果（not_found = 調査したが配信なし）
+  nextVodCheckAt?: number;    // 次回VODチェックを許可する日時（not_found 時に30日後を設定）
   createdAt: number;
   updatedAt: number;
 }

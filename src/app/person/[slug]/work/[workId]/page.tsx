@@ -28,7 +28,7 @@ const SOURCE_LABEL: Record<string, string> = {
   openai_supplement: 'AI補完',
   openai_web_search: 'AI Web検索',
   manual: '手動',
-  manual_import: 'CSV調査',
+  manual_csv: 'CSV調査',
 };
 
 const SOURCE_BADGE: Record<string, string> = {
@@ -36,7 +36,7 @@ const SOURCE_BADGE: Record<string, string> = {
   openai_supplement: 'bg-purple-100 text-purple-700',
   openai_web_search: 'bg-violet-100 text-violet-700',
   manual: 'bg-green-100 text-green-700',
-  manual_import: 'bg-orange-100 text-orange-700',
+  manual_csv: 'bg-orange-100 text-orange-700',
 };
 
 const CONFIDENCE_LABEL: Record<string, string> = {

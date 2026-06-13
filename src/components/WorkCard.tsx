@@ -16,14 +16,14 @@ const TYPE_ORDER: Record<string, number> = {
 const VOD_SOURCE_BADGE: Record<string, string> = {
   openai_supplement: 'bg-purple-100 text-purple-700',
   openai_web_search: 'bg-purple-100 text-purple-700',
-  manual_import: 'bg-orange-50 border-orange-200 text-orange-700',
+  manual_csv: 'bg-orange-50 border-orange-200 text-orange-700',
 };
 
 export default function WorkCard({ work }: { work: WorkRecord }) {
   const workDetailUrl = `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
 
   // 公開ページ用フィルタ:
-  //   tmdb_watch_provider / manual / manual_import は常に表示
+  //   tmdb_watch_provider / manual / manual_csv は常に表示
   //   openai_supplement / openai_web_search は confidence=low を除外
   const publicProviders = (work.vodProviders ?? []).filter((p) => {
     const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
@@ -56,7 +56,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
   const hasManualImportOnly =
     !hasAiOnly &&
     sortedProviders.length > 0 &&
-    sortedProviders.every((p) => p.source === 'manual_import');
+    sortedProviders.every((p) => p.source === 'manual_csv');
 
   // 確認日表示
   const checkedDate = work.vodUpdatedAt
