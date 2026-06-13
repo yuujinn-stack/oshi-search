@@ -32,11 +32,20 @@ const JP_PROVIDER_LOOKUP: Record<string, { id: number; logoPath?: string }> = {
   'ABEMA': { id: 223, logoPath: '/5T4b5p6OI7ZhWgpEnNcHKi5FHZB.jpg' },
   'アベマ': { id: 223, logoPath: '/5T4b5p6OI7ZhWgpEnNcHKi5FHZB.jpg' },
   'NHKプラス': { id: -101 },
+  'NHK+': { id: -101 },
   'TVer': { id: -102 },
+  'ティーバー': { id: -102 },
   'YouTube': { id: 192, logoPath: '/oIkQkEkwfmcG7IGpRR1NB8frZZM.jpg' },
   'GyaO!': { id: -103 },
   'RakutenTV': { id: 35, logoPath: '/tb4lB5BSPQSF0u5kJT5AklhKzuE.jpg' },
   '楽天TV': { id: 35, logoPath: '/tb4lB5BSPQSF0u5kJT5AklhKzuE.jpg' },
+  'DMM TV': { id: -104 },
+  'DMMTV': { id: -104 },
+  'WOWOWオンデマンド': { id: -105 },
+  'WOWOW': { id: -105 },
+  'WOWOWプラス': { id: -105 },
+  'dアニメストア': { id: -106 },
+  'dAnime Store': { id: -106 },
 };
 
 // 未知サービス名から合成 providerId を生成（負の値で TMDb と衝突しない）
@@ -91,11 +100,10 @@ export async function supplementVodWithAI(
   const typeLabel = work.type === 'movie' ? '映画' : 'ドラマ・TV';
   const yearStr = work.releaseYear ? `${work.releaseYear}年` : '公開年不明';
   const titleStr = work.originalTitle ? `${work.title}（原題: ${work.originalTitle}）` : work.title;
+  const overviewStr = work.overview ? `概要: ${work.overview.slice(0, 150)}` : '';
 
-  const overviewStr = work.overview ? `概要: ${work.overview.slice(0, 120)}` : '';
-
-  const prompt = `あなたは日本の映像コンテンツ配信サービスの専門家です。
-2026年現在、以下の作品が日本で視聴できる配信サービスを教えてください。
+  const prompt = `あなたは日本の動画配信サービス調査アシスタントです。
+以下の作品について、2026年現在、日本国内で視聴可能な配信サービスを調査してください。
 
 タイトル: ${titleStr}
 公開年: ${yearStr}
@@ -103,21 +111,31 @@ export async function supplementVodWithAI(
 TMDb ID: ${work.tmdbId ?? '不明'}
 ${overviewStr}
 
-【重要な注意】
+【調査対象サービス（優先的に確認）】
+Hulu, U-NEXT, DMM TV, Lemino, Netflix, Prime Video, ABEMA, TVer, FOD, TELASA, Disney+, WOWOWオンデマンド, dアニメストア, NHKプラス, Paravi, 楽天TV
+
+【作品種別ごとの注意】
+・バラエティ番組・アイドル冠番組・特番: Hulu, ABEMA, TVer, FOD, U-NEXT, Lemino を優先確認
+・日本のドラマ・連続ドラマ: Hulu, U-NEXT, TELASA, FOD, Netflix, Prime Video を優先確認
+・映画（邦画）: U-NEXT, Prime Video, Netflix, DMM TV, 楽天TV を優先確認
+・アニメ: dアニメストア, U-NEXT, ABEMA, Netflix, Prime Video を優先確認
+
+【重要なルール】
 ・2026年現在、実際に日本で配信中のサービスのみ回答してください
 ・過去に配信していたが現在は終了しているものは含めないでください
-・確信が持てない場合は必ず confidence: "low" を返してください
-・情報源が不明な場合も confidence: "low" にしてください
-・作品が日本で配信されていない、または不明な場合は providers: [] を返してください
+・見逃し配信・期間限定配信も type: "free" または "ads" で含めてください
+・配信中である可能性が高い場合は confidence: "medium" 以上で返してください
+・確信が持てない場合は confidence: "low" を返してください（省略しないこと）
+・全く不明な場合は providers: [] を返してください
 
 以下のJSON形式のみで回答してください（コメント・説明文は一切不要）:
 {
   "providers": [
     {
-      "name": "サービス名（例: Netflix, Amazon Prime Video, Hulu, Disney+, U-NEXT, ABEMA等）",
+      "name": "サービス名（正式名称で記載）",
       "type": "flatrate|rent|buy|free|ads|unknown",
       "confidence": "high|medium|low",
-      "note": "補足（任意）"
+      "note": "補足（例: 見逃し配信、期間限定等）"
     }
   ],
   "sourceUrl": "参照URL（わかる場合のみ、不明なら空文字）",
@@ -125,7 +143,13 @@ ${overviewStr}
   "note": "全体的な補足（不要なら空文字）"
 }
 
-type の意味: flatrate=見放題, rent=レンタル, buy=購入, free=無料, ads=広告付き無料, unknown=視聴方法不明`;
+type の意味:
+・flatrate = 月額見放題
+・rent = レンタル（個別課金）
+・buy = 購入
+・free = 無料配信（見逃し・NHKプラス等）
+・ads = 広告付き無料配信（ABEMA無料枠・TVer等）
+・unknown = 配信あるが視聴方法不明`;
 
   try {
     console.log(`[vod-ai] OpenAI補完開始: "${work.title}" (${typeLabel}, ${yearStr})`);
@@ -133,7 +157,7 @@ type の意味: flatrate=見放題, rent=レンタル, buy=購入, free=無料, 
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
-      max_tokens: 500,
+      max_tokens: 800,
       temperature: 0,
     });
 
