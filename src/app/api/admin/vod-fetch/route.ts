@@ -11,8 +11,9 @@ import type { VodProvider } from '@/types/vod';
 // 管理画面からのみ呼び出し可（proxy.ts で認証済み）
 // 処理順:
 //   1. TMDb Watch Providers (JP)
-//   2. providers=0 の場合 → OpenAI補完（stale/forceAiチェック）
-//   3. 両方0 → 配信情報なし保存
+//   2. providers=0 の場合 → AI Web検索補完（stale/forceAiチェック）
+//   3. forceAi=true の場合は TMDb結果に関わらず AI を実行し、TMDb結果とマージ
+//   4. 両方0 → 配信情報なし保存
 
 export interface VodFetchDebugItem {
   title: string;
@@ -29,7 +30,7 @@ export interface VodFetchDebugItem {
   tmdbReason?: string;
   // AI debug
   aiCalled: boolean;
-  aiCallReason: string;     // なぜAIを呼んだ / 呼ばなかったか
+  aiCallReason: string;
   aiProviderCount: number;
   // 最終結果
   finalProviderCount: number;
@@ -90,6 +91,10 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  console.log(
+    `[vod-fetch] 開始: "${personName}" 対象${targets.length}件 forceAi=${forceAi} skipAi=${skipAi}`,
+  );
+
   // AI補完の呼び出し制限（コスト制御）
   const AI_CALL_LIMIT = 10;
   // forceAi=true のときは 0日 = 常に再実行
@@ -111,13 +116,24 @@ export async function POST(req: NextRequest) {
       let aiProviderCount = 0;
       let vodAiCheckedAt: number | undefined;
 
-      // 2. providers=0（jpExists の有無に関わらず）→ AI補完を試みる
-      //    jpExists=true でも providers=0 = TMDb側に配信登録なし → AI で補完
-      //    jpExists=false = TMDb自体にJP情報なし → AI で補完
+      // 2. AI補完が必要かどうかを判定
+      //    - forceAi=true: TMDb結果に関わらず AI を実行（テスト・強制補完用）
+      //    - 通常: tmdbProviders=0 の場合のみ AI を試みる
       const needsAi =
         !skipAi &&
-        tmdbProviders.length === 0 &&
+        (forceAi || tmdbProviders.length === 0) &&
         aiCalledCount < AI_CALL_LIMIT;
+
+      // per-work 判定ログ
+      console.log(
+        `[vod-fetch] AI補完判定: workId=${work.id} title="${work.title}" ` +
+        `tmdbProviders=${tmdbProviders.length} jpExists=${debug.jpExists} ` +
+        `forceAi=${forceAi} skipAi=${skipAi} ` +
+        `vodAiCheckedAt=${work.vodAiCheckedAt
+          ? new Date(work.vodAiCheckedAt).toISOString().slice(0, 10)
+          : '未実行'} ` +
+        `needsAi=${needsAi}`,
+      );
 
       if (!needsAi) {
         if (skipAi) {
@@ -133,16 +149,43 @@ export async function POST(req: NextRequest) {
         const daysSince = Math.floor((Date.now() - lastAiCheck) / (1000 * 60 * 60 * 24));
 
         if (!forceAi && !isStale) {
+          // stale期間内はスキップ（forceAi=true ならこのブロックに入らない）
           aiCallReason = `スキップ: AI補完を${daysSince}日前に実行済み（${AI_STALE_DAYS}日以内は再実行しない）`;
+          console.log(
+            `[vod-fetch] AI補完スキップ: workId=${work.id} reason=stale期間内（${daysSince}日前実行済み）`,
+          );
         } else {
-          const reason = debug.jpExists
-            ? 'jpExists=true だが providers=0（TMDb配信登録なし）'
-            : 'jpExists=false（TMDbにJP情報なし）';
+          const aiReason = forceAi && tmdbProviders.length > 0
+            ? `forceAi=true（TMDb取得済み${tmdbProviders.length}件とマージ）`
+            : debug.jpExists
+              ? 'jpExists=true だが providers=0（TMDb配信登録なし）'
+              : 'jpExists=false（TMDbにJP情報なし）';
+
+          console.log(
+            `[vod-fetch] AI補完実行: workId=${work.id} title="${work.title}" reason=${aiReason}`,
+          );
 
           const aiProviders = await supplementVodWithAI(work);
-          finalProviders = aiProviders;
+
+          if (aiProviders.length === 0) {
+            console.log(
+              `[vod-fetch] AI補完失敗または結果なし: workId=${work.id} title="${work.title}"`,
+            );
+          } else {
+            console.log(
+              `[vod-fetch] AI補完保存: workId=${work.id} savedProviders=${aiProviders.length}` +
+              ` (${aiProviders.map((p) => p.providerName).join(', ')})`,
+            );
+          }
+
+          // forceAi=true かつ TMDb にも結果がある場合はマージ（TMDb優先 + AI補完）
+          // 通常ケース（TMDb=0）は AI結果のみ
+          finalProviders = (forceAi && tmdbProviders.length > 0)
+            ? [...tmdbProviders, ...aiProviders]
+            : aiProviders;
+
           aiCalled = true;
-          aiCallReason = `実行: ${reason}${forceAi ? ' forceAi=true' : ''}`;
+          aiCallReason = `実行: ${aiReason}`;
           aiProviderCount = aiProviders.length;
           aiCalledCount++;
           vodAiCheckedAt = Date.now();
@@ -151,6 +194,11 @@ export async function POST(req: NextRequest) {
 
       await updateWorkVod(personName, work.id, finalProviders, { vodAiCheckedAt });
       updatedCount++;
+
+      console.log(
+        `[vod-fetch] 保存完了: workId=${work.id} finalProviders=${finalProviders.length}件` +
+        ` (tmdb=${tmdbProviders.length} ai=${aiProviderCount})`,
+      );
 
       // デバッグ情報を組み立て
       const debugItem: VodFetchDebugItem = {
@@ -191,12 +239,12 @@ export async function POST(req: NextRequest) {
       debugInfo.push(debugItem);
     } catch (err) {
       skippedCount++;
-      console.error(`[vod-fetch] エラー: "${work.title}"`, err);
+      console.error(`[vod-fetch] エラー: workId=${work.id} title="${work.title}"`, err);
     }
   }
 
   console.log(
-    `[vod-fetch] "${personName}": 更新${updatedCount}件 スキップ${skippedCount}件 AI補完${aiCalledCount}件`,
+    `[vod-fetch] 完了: "${personName}" 更新${updatedCount}件 スキップ${skippedCount}件 AI補完${aiCalledCount}件`,
   );
   return NextResponse.json({ updatedCount, skippedCount, aiCalledCount, debugInfo });
 }
