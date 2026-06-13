@@ -94,10 +94,33 @@ export default function PersonWorks({ personName, group, counts }: Props) {
       body: JSON.stringify({ personName, workId }),
     });
     if (res.ok) {
-      const data = (await res.json()) as { updatedCount: number; skippedCount: number; message?: string };
-      setVodMessage(
-        data.message ?? `配信情報: ${data.updatedCount}件更新 ${data.skippedCount}件スキップ`,
-      );
+      const data = (await res.json()) as {
+        updatedCount: number;
+        skippedCount: number;
+        message?: string;
+        debugInfo?: Array<{
+          title: string;
+          workId: string;
+          providerCount: number;
+          debug: {
+            jpExists: boolean;
+            jpFlatrate: string[];
+            reason?: string;
+          };
+        }>;
+      };
+
+      const noJp = data.debugInfo?.filter((d) => !d.debug.jpExists) ?? [];
+      const noProvider = data.debugInfo?.filter((d) => d.debug.jpExists && d.providerCount === 0) ?? [];
+
+      let msg = data.message ?? `配信情報: ${data.updatedCount}件更新`;
+      if (noJp.length > 0) msg += ` / JP情報なし${noJp.length}件`;
+      if (noProvider.length > 0) msg += ` / 配信なし${noProvider.length}件`;
+
+      setVodMessage(msg);
+      if (debugMode && data.debugInfo) {
+        console.log('[vod-debug]', JSON.stringify(data.debugInfo, null, 2));
+      }
       await loadWorks();
     } else {
       setVodMessage('配信情報取得に失敗しました');

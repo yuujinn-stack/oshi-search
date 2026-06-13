@@ -71,6 +71,57 @@ function getOpenAI(): OpenAI | null {
   return openaiClient;
 }
 
+// 安全サイドへの強制ルール（AI判定後に適用）
+// genre が 坂道・芸人・俳優 等で、声優作品・アニメ関連の場合に auto_published を防ぐ
+function applySafetyOverride(
+  candidate: TmdbWorkCandidate,
+  person: PersonWithConfig,
+  tmdbMatch: TmdbPersonMatch | undefined,
+  judgment: JudgeResult,
+): JudgeResult {
+  const genre = person.genre ?? '';
+  const isNonVoice = ['坂道', '芸人', 'テレビ', '俳優'].includes(genre);
+  if (!isNonVoice) return judgment;
+
+  const roleNameLower = (candidate.roleName ?? '').toLowerCase();
+
+  // 役名に voice / (声) が含まれる → hidden 確定
+  if (
+    roleNameLower.includes('voice') ||
+    roleNameLower.includes('(声)') ||
+    roleNameLower.includes('声優')
+  ) {
+    console.log(`[safety] "${candidate.title}" 役名にvoice含む → hidden（上書き）`);
+    return {
+      ...judgment,
+      decision: 'hidden',
+      reason: '役名にvoice含む（声優作品）',
+    };
+  }
+
+  // TMDb人物部門が Animation → auto_published は needs_review に格下げ
+  if (tmdbMatch?.department === 'Animation' && judgment.decision === 'auto_published') {
+    console.log(`[safety] "${candidate.title}" TMDb人物がAnimation部門 → needs_review（格下げ）`);
+    return {
+      ...judgment,
+      decision: 'needs_review',
+      reason: 'TMDb人物がAnimation部門のためauto_published拒否',
+    };
+  }
+
+  // AI が samePerson=false と判定 → auto_published は needs_review に格下げ
+  if (!judgment.samePerson && judgment.decision === 'auto_published') {
+    console.log(`[safety] "${candidate.title}" AI:samePerson=false → needs_review（格下げ）`);
+    return {
+      ...judgment,
+      decision: 'needs_review',
+      reason: '同一人物の確認が取れないためauto_published拒否',
+    };
+  }
+
+  return judgment;
+}
+
 // OpenAI未設定時のフォールバック判定（TMDb由来のみ）
 function ruleBasedDecision(candidate: TmdbWorkCandidate): JudgeResult {
   // TMDb combined_credits は出演確認済みのため needs_review を基本とする
@@ -351,8 +402,9 @@ export async function processPersonWorks(
           result.rejudgedCount++;
         }
 
-        // AI判定（decision を直接採用）
-        const judgment = await judgeWork(candidate, person, tmdbMatch);
+        // AI判定 → 安全ルール適用（voice役・Animation人物対策）
+        const rawJudgment = await judgeWork(candidate, person, tmdbMatch);
+        const judgment = applySafetyOverride(candidate, person, tmdbMatch, rawJudgment);
         if (judgment.usedAi) result.aiJudgedCount++;
         else result.ruleBasedCount++;
 

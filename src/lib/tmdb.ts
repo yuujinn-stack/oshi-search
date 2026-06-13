@@ -95,6 +95,9 @@ const GENRE_EXPECTED_DEPT: Record<string, string> = {
 // アニメジャンルID (TMDb: genre 16 = Animation)
 const ANIMATION_GENRE_ID = 16;
 
+// 坂道・俳優など「声優ではない」ジャンル
+const NON_VOICE_GENRES = new Set(['坂道', '芸人', 'テレビ', '俳優']);
+
 function computePersonMatchScore(
   candidate: TmdbPersonSearchResult,
   person: PersonWithConfig,
@@ -102,6 +105,28 @@ function computePersonMatchScore(
 ): { score: number; details: string } {
   let score = 0;
   const details: string[] = [];
+
+  const dept = candidate.known_for_department;
+  const genre = person.genre ?? '';
+  const isNonVoice = NON_VOICE_GENRES.has(genre);
+
+  // --- 事前チェック: アニメ声優候補を坂道・俳優ジャンルから完全除外 ---
+  if (isNonVoice && candidate.known_for?.length) {
+    const total = candidate.known_for.length;
+    const animeCount = candidate.known_for.filter((w) =>
+      w.genre_ids?.includes(ANIMATION_GENRE_ID),
+    ).length;
+    const animeRatio = animeCount / total;
+
+    if (dept === 'Animation' && animeRatio > 0.5) {
+      // Animation部門かつknown_forの半数超がアニメ → 声優確定・完全拒否
+      return { score: -999, details: `声優完全拒否: dept=Animation,アニメ${animeCount}/${total}` };
+    }
+    if (animeRatio >= 1.0 && total >= 2) {
+      // 全作品アニメで複数作品あり → 実質声優
+      return { score: -999, details: `全作品アニメ完全拒否: アニメ${animeCount}/${total}` };
+    }
+  }
 
   // 1. 名前一致スコア (0 〜 40)
   const ourNames = [
@@ -134,21 +159,20 @@ function computePersonMatchScore(
     details.push('名前部分一致+20');
   }
 
-  // 2. known_for_department スコア (-20 〜 +30)
-  const dept = candidate.known_for_department;
+  // 2. known_for_department スコア
   const expectedDept =
-    person.config.expectedDepartment ?? GENRE_EXPECTED_DEPT[person.genre ?? ''];
+    person.config.expectedDepartment ?? GENRE_EXPECTED_DEPT[genre];
 
   if (expectedDept) {
     if (dept === expectedDept) {
       score += 30;
       details.push(`部門一致(${dept})+30`);
     } else if (dept === 'Animation') {
-      // 声優系は坂道・芸人・俳優にとって強いネガティブシグナル
-      score -= 20;
-      details.push('Animation部門(声優系)-20');
+      // 強化: 坂道・芸人・俳優では -50（名前一致の +40 を上回る）
+      const penalty = isNonVoice ? -50 : -20;
+      score += penalty;
+      details.push(`Animation部門(声優系)${penalty}`);
     } else {
-      // 期待部門と違うが許容範囲（Acting期待でMusicなど）
       if (dept === 'Acting' || dept === 'Directing' || dept === 'Sound') {
         score += 5;
         details.push(`${dept}(許容範囲)+5`);
@@ -158,52 +182,61 @@ function computePersonMatchScore(
       }
     }
   } else {
-    // expectedDept 不明: Acting と Animation で簡易判定
     if (dept === 'Acting') {
       score += 15;
       details.push('Acting+15');
     } else if (dept === 'Animation') {
-      score -= 10;
-      details.push('Animation-10');
+      const penalty = isNonVoice ? -30 : -10;
+      score += penalty;
+      details.push(`Animation${penalty}`);
     }
   }
 
-  // 3. known_for 作品分析 (-25 〜 +20)
+  // 3. known_for 作品分析
   if (candidate.known_for?.length) {
     const total = candidate.known_for.length;
-    const jaCount = candidate.known_for.filter(
-      (w) => w.original_language === 'ja',
-    ).length;
     const animeCount = candidate.known_for.filter((w) =>
       w.genre_ids?.includes(ANIMATION_GENRE_ID),
     ).length;
+    const animeRatio = animeCount / total;
 
-    // 日本語作品比率ボーナス（日本人タレントの特定に有効）
-    const jaRatio = jaCount / total;
-    const jaBonus = Math.round(jaRatio * 20);
-    if (jaBonus > 0) {
-      score += jaBonus;
-      details.push(`日本作品${jaCount}/${total}+${jaBonus}`);
+    // 日本語作品ボーナス（アニメを除いた実写日本作品のみカウント）
+    // ← バグ修正: アニメ作品のjaボーナスを除外
+    const realJaCount = candidate.known_for.filter(
+      (w) => w.original_language === 'ja' && !w.genre_ids?.includes(ANIMATION_GENRE_ID),
+    ).length;
+    if (isNonVoice) {
+      const realJaBonus = Math.round((realJaCount / total) * 20);
+      if (realJaBonus > 0) {
+        score += realJaBonus;
+        details.push(`実写日本作品${realJaCount}/${total}+${realJaBonus}`);
+      }
     } else {
-      const nonJapenalty = Math.round((1 - jaRatio) * 8);
-      score -= nonJapenalty;
-      details.push(`非日本作品${total - jaCount}/${total}-${nonJapenalty}`);
+      const jaCount = candidate.known_for.filter((w) => w.original_language === 'ja').length;
+      const jaRatio = jaCount / total;
+      const jaBonus = Math.round(jaRatio * 20);
+      if (jaBonus > 0) {
+        score += jaBonus;
+        details.push(`日本作品${jaCount}/${total}+${jaBonus}`);
+      } else {
+        const nonJapenalty = Math.round((1 - jaRatio) * 8);
+        score -= nonJapenalty;
+        details.push(`非日本作品${total - jaCount}/${total}-${nonJapenalty}`);
+      }
     }
 
-    // アニメ作品比率ペナルティ（アーティストは半減）
-    const animeRatio = animeCount / total;
+    // アニメ作品比率ペナルティ
     if (animeRatio > 0.3) {
-      const maxPenalty = person.genre === 'アーティスト' ? 12 : 25;
+      const maxPenalty = genre === 'アーティスト' ? 12 : (isNonVoice ? 35 : 25);
       const animePenalty = Math.round(animeRatio * maxPenalty);
       score -= animePenalty;
       details.push(`アニメ多${animeCount}/${total}-${animePenalty}`);
     }
   } else {
-    // known_for なし: まだデータが少ない新人等の可能性あり（ニュートラル）
     details.push('known_forなし(ニュートラル)');
   }
 
-  // 4. 人気度ボーナス (0 〜 10) タイブレーカー
+  // 4. 人気度ボーナス (0 〜 10)
   const popBonus = Math.min(Math.round(candidate.popularity / 5), 10);
   if (popBonus > 0) {
     score += popBonus;
@@ -394,32 +427,71 @@ interface WatchProvidersResponse {
   results?: Record<string, WatchProvidersResult>;
 }
 
+export interface WatchProvidersDebug {
+  tmdbId: number;
+  type: 'movie' | 'tv';
+  apiUrl: string;
+  httpStatus?: number;
+  availableCountries?: string[];
+  jpExists: boolean;
+  jpFlatrate: string[];
+  jpFree: string[];
+  jpAds: string[];
+  jpBuy: string[];
+  jpRent: string[];
+  jpLink?: string;
+  reason?: string;
+}
+
 // 作品の配信サービス情報を取得（日本 JP）
 export async function getWatchProviders(
   tmdbId: number,
   type: 'movie' | 'tv',
   countryCode = 'JP',
-): Promise<{ providers: VodProvider[]; link?: string }> {
+): Promise<{ providers: VodProvider[]; link?: string; debug: WatchProvidersDebug }> {
   const apiKey = getApiKey();
-  if (!apiKey) return { providers: [] };
-
   const endpoint = type === 'movie'
     ? `${TMDB_BASE}/movie/${tmdbId}/watch/providers`
     : `${TMDB_BASE}/tv/${tmdbId}/watch/providers`;
+  const apiUrl = `${endpoint}?api_key=***`;
+
+  const emptyDebug: WatchProvidersDebug = {
+    tmdbId, type, apiUrl,
+    jpExists: false, jpFlatrate: [], jpFree: [], jpAds: [], jpBuy: [], jpRent: [],
+  };
+
+  if (!apiKey) {
+    return { providers: [], debug: { ...emptyDebug, reason: 'TMDB_API_KEY未設定' } };
+  }
 
   try {
     const res = await fetch(`${endpoint}?api_key=${apiKey}`, { cache: 'no-store' });
+    const debug: WatchProvidersDebug = { ...emptyDebug, httpStatus: res.status };
+
     if (!res.ok) {
-      console.log(`[tmdb] WatchProviders取得エラー HTTP ${res.status}: ${type}/${tmdbId}`);
-      return { providers: [] };
+      const reason = `HTTP ${res.status}`;
+      console.log(`[tmdb] WatchProviders取得エラー ${reason}: ${type}/${tmdbId}`);
+      return { providers: [], debug: { ...debug, reason } };
     }
 
     const data = (await res.json()) as WatchProvidersResponse;
+    const availableCountries = Object.keys(data.results ?? {});
+    debug.availableCountries = availableCountries;
+
     const countryData = data.results?.[countryCode];
     if (!countryData) {
-      console.log(`[tmdb] WatchProviders: ${countryCode}向けデータなし ${type}/${tmdbId}`);
-      return { providers: [] };
+      const reason = `${countryCode}向けデータなし（利用可能: ${availableCountries.slice(0, 5).join(',')}${availableCountries.length > 5 ? '...' : ''}）`;
+      console.log(`[tmdb] WatchProviders: ${reason} ${type}/${tmdbId}`);
+      return { providers: [], debug: { ...debug, reason } };
     }
+
+    debug.jpExists = true;
+    debug.jpFlatrate = (countryData.flatrate ?? []).map((p) => p.provider_name);
+    debug.jpFree = (countryData.free ?? []).map((p) => p.provider_name);
+    debug.jpAds = (countryData.ads ?? []).map((p) => p.provider_name);
+    debug.jpBuy = (countryData.buy ?? []).map((p) => p.provider_name);
+    debug.jpRent = (countryData.rent ?? []).map((p) => p.provider_name);
+    debug.jpLink = countryData.link;
 
     const providers: VodProvider[] = [];
     const typeMap: [keyof WatchProvidersResult, VodProvider['type']][] = [
@@ -434,7 +506,6 @@ export async function getWatchProviders(
       const items = countryData[key] as WatchProviderItem[] | undefined;
       if (!Array.isArray(items)) continue;
       for (const item of items) {
-        // 重複排除（同じプロバイダーが複数タイプに含まれる場合、flatrateを優先）
         if (providers.some((p) => p.providerId === item.provider_id)) continue;
         providers.push({
           providerId: item.provider_id,
@@ -449,15 +520,18 @@ export async function getWatchProviders(
       }
     }
 
-    // displayPriority 昇順ソート（数値が小さいほど重要）
     providers.sort((a, b) => (a.displayPriority ?? 999) - (b.displayPriority ?? 999));
 
     console.log(
-      `[tmdb] WatchProviders: ${type}/${tmdbId} → ${providers.length}件 (${providers.map((p) => p.providerName).join(', ')})`,
+      `[tmdb] WatchProviders: ${type}/${tmdbId} → ${providers.length}件` +
+      (providers.length > 0 ? ` (${providers.map((p) => p.providerName).join(', ')})` : ` JPデータあり・配信なし`),
     );
-    return { providers, link: countryData.link };
+    if (providers.length === 0) {
+      debug.reason = 'JPデータあるが配信サービス登録なし';
+    }
+    return { providers, link: countryData.link, debug };
   } catch (err) {
     console.error(`[tmdb] WatchProviders例外: ${type}/${tmdbId}`, err);
-    return { providers: [] };
+    return { providers: [], debug: { ...emptyDebug, reason: `例外: ${String(err)}` } };
   }
 }

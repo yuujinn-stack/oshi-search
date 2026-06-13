@@ -115,7 +115,9 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
             )}
           </div>
         ) : (
-          <div className="mt-auto" />
+          <p className="mt-auto text-[11px] text-gray-400 leading-snug">
+            配信サービス情報は現在確認できません
+          </p>
         )}
 
         {/* 視聴先ボタン */}
@@ -133,9 +135,13 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
             href={tmdbUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="block text-center text-xs text-gray-400 hover:text-indigo-500 py-1.5 rounded-xl border border-gray-200 hover:border-indigo-300 transition-colors"
+            className={`block text-center text-xs py-1.5 rounded-xl border transition-colors ${
+              sortedProviders.length === 0
+                ? 'font-semibold text-indigo-600 border-indigo-300 hover:bg-indigo-50'
+                : 'text-gray-400 hover:text-indigo-500 border-gray-200 hover:border-indigo-300'
+            }`}
           >
-            TMDbで見る
+            TMDbで詳細を見る
           </a>
         ) : null}
       </div>

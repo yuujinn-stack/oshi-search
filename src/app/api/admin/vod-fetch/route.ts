@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getPersonWithConfig } from '@/lib/persons';
 import { getAllWorks, updateWorkVod } from '@/lib/work-store';
 import { getWatchProviders } from '@/lib/tmdb';
+import type { WatchProvidersDebug } from '@/lib/tmdb';
 
 // POST /api/admin/vod-fetch
 // body: { personName, workId? }
@@ -24,31 +25,46 @@ export async function POST(req: NextRequest) {
 
   // 対象作品を絞り込み（workId指定 or 全公開作品 + tmdbId あり）
   const targets = allWorks.filter((w) => {
-    if (!w.tmdbId) return false; // tmdbId なし（AI補完作品等）は取得不可
+    if (!w.tmdbId) return false;
     if (workId) return w.id === workId;
-    return w.status === 'auto_published'; // 公開中のみ対象
+    return w.status === 'auto_published';
   });
 
   if (!targets.length) {
     return NextResponse.json({
       message: '対象作品がありません（tmdbId なし、または公開中の作品がない）',
       updatedCount: 0,
+      skippedCount: 0,
+      debugInfo: [],
     });
   }
 
   let updatedCount = 0;
   let skippedCount = 0;
+  const debugInfo: Array<{
+    title: string;
+    workId: string;
+    providerCount: number;
+    debug: WatchProvidersDebug;
+  }> = [];
 
   for (const work of targets) {
     try {
-      const { providers } = await getWatchProviders(work.tmdbId!, work.type);
+      const { providers, debug } = await getWatchProviders(work.tmdbId!, work.type);
       await updateWorkVod(personName, work.id, providers);
       updatedCount++;
-    } catch {
+      debugInfo.push({
+        title: work.title,
+        workId: work.id,
+        providerCount: providers.length,
+        debug,
+      });
+    } catch (err) {
       skippedCount++;
+      console.error(`[vod-fetch] エラー: "${work.title}"`, err);
     }
   }
 
   console.log(`[vod-fetch] "${personName}": 更新${updatedCount}件 スキップ${skippedCount}件`);
-  return NextResponse.json({ updatedCount, skippedCount });
+  return NextResponse.json({ updatedCount, skippedCount, debugInfo });
 }
