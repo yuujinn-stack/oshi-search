@@ -2,18 +2,45 @@
 
 import { useState, useRef } from 'react';
 
-type ExportFilter = 'all' | 'auto_published' | 'needs_review' | 'no_vod' | 'ai_only' | 'tmdb_only';
+// ─────────────────────────────────────────
+// 型定義
+// ─────────────────────────────────────────
+
+type ExportFilter =
+  | 'all'
+  | 'auto_published'
+  | 'needs_review'
+  | 'hidden'
+  | 'no_vod'
+  | 'ai_only'
+  | 'tmdb_only';
 
 const FILTER_LABELS: Record<ExportFilter, string> = {
   all: '全作品',
   auto_published: '公開中のみ',
   needs_review: '確認待ちのみ',
+  hidden: '非表示のみ',
   no_vod: '配信情報なし',
   ai_only: 'AI補完VOD作品',
   tmdb_only: 'TMDb VOD取得作品',
 };
 
-interface PreviewRow {
+const STATUS_LABEL: Record<string, string> = {
+  auto_published: '公開中',
+  needs_review: '確認待ち',
+  hidden: '非表示',
+};
+const STATUS_BADGE: Record<string, string> = {
+  auto_published: 'bg-green-100 text-green-700',
+  needs_review: 'bg-yellow-100 text-yellow-700',
+  hidden: 'bg-gray-100 text-gray-500',
+};
+
+// ─────────────────────────────────────────
+// インポート関連型
+// ─────────────────────────────────────────
+
+interface ImportPreviewRow {
   rowNum: number;
   workId: string;
   personName: string;
@@ -28,15 +55,15 @@ interface PreviewRow {
   reason: string;
 }
 
-interface PreviewResult {
+interface ImportPreviewResult {
   addCount: number;
   updateCount: number;
   ignoreCount: number;
   errorCount: number;
-  previewRows: PreviewRow[];
+  previewRows: ImportPreviewRow[];
 }
 
-interface CommitResult {
+interface ImportCommitResult {
   savedWorkCount: number;
   savedProviderCount: number;
   errors: string[];
@@ -52,40 +79,136 @@ interface ImportError {
   };
 }
 
-const ACTION_BADGE: Record<PreviewRow['action'], string> = {
+// ─────────────────────────────────────────
+// エクスポートプレビュー型
+// ─────────────────────────────────────────
+
+interface ExportPreviewWork {
+  workId: string;
+  title: string;
+  personName: string;
+  status: string;
+  releaseYear: number | null;
+  currentVodServices: string;
+}
+
+interface ExportPreviewResult {
+  count: number;
+  personName: string;
+  filter: string;
+  works: ExportPreviewWork[];
+  warning?: string;
+}
+
+// ─────────────────────────────────────────
+// バッジ定義
+// ─────────────────────────────────────────
+
+const ACTION_BADGE: Record<ImportPreviewRow['action'], string> = {
   add: 'bg-green-100 text-green-700',
   update: 'bg-yellow-100 text-yellow-700',
   ignore: 'bg-gray-100 text-gray-500',
   error: 'bg-red-100 text-red-700',
 };
-const ACTION_LABEL: Record<PreviewRow['action'], string> = {
+const ACTION_LABEL: Record<ImportPreviewRow['action'], string> = {
   add: '追加',
   update: '上書',
   ignore: '無視',
   error: 'エラー',
 };
 
+// ─────────────────────────────────────────
+// コンポーネント
+// ─────────────────────────────────────────
+
 export default function CsvSection({ persons }: { persons: string[] }) {
+  // ── エクスポート状態 ──
   const [exportFilter, setExportFilter] = useState<ExportFilter>('all');
   const [exportPerson, setExportPerson] = useState('');
+  const [exportPreview, setExportPreview] = useState<ExportPreviewResult | null>(null);
+  const [exportPreviewLoading, setExportPreviewLoading] = useState(false);
+  const [exportPreviewError, setExportPreviewError] = useState('');
 
+  // ── インポート状態 ──
   const [importPerson, setImportPerson] = useState('');
   const [csvContent, setCsvContent] = useState<string | null>(null);
   const [fileName, setFileName] = useState('');
   const [importing, setImporting] = useState(false);
-  const [preview, setPreview] = useState<PreviewResult | null>(null);
-  const [commitResult, setCommitResult] = useState<CommitResult | null>(null);
+  const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null);
+  const [importCommitResult, setImportCommitResult] = useState<ImportCommitResult | null>(null);
   const [importError, setImportError] = useState<ImportError | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
 
-  function buildExportUrl() {
+  // ─────────────────────────────────────────
+  // URL ビルダー
+  // ─────────────────────────────────────────
+
+  function buildExportUrl(extraParams?: Record<string, string>): string {
     const params = new URLSearchParams();
     if (exportFilter !== 'all') params.set('filter', exportFilter);
     if (exportPerson) params.set('person', exportPerson);
+    if (extraParams) {
+      for (const [k, v] of Object.entries(extraParams)) params.set(k, v);
+    }
     const qs = params.toString();
     return `/api/admin/csv-export${qs ? `?${qs}` : ''}`;
   }
+
+  // ─────────────────────────────────────────
+  // エクスポートハンドラー
+  // ─────────────────────────────────────────
+
+  function resetExportPreview() {
+    setExportPreview(null);
+    setExportPreviewError('');
+  }
+
+  async function handleExportPreview() {
+    setExportPreviewLoading(true);
+    resetExportPreview();
+    try {
+      const res = await fetch(buildExportUrl({ mode: 'preview' }));
+      const data = (await res.json()) as ExportPreviewResult;
+      if (res.ok) {
+        setExportPreview(data);
+      } else {
+        setExportPreviewError((data as { error?: string }).error ?? 'プレビュー取得に失敗しました');
+      }
+    } catch {
+      setExportPreviewError('通信エラーが発生しました');
+    }
+    setExportPreviewLoading(false);
+  }
+
+  async function handleCsvDownload() {
+    if (!exportPreview || exportPreview.count === 0) return;
+    try {
+      const res = await fetch(buildExportUrl());
+      if (!res.ok) {
+        setExportPreviewError('CSV取得に失敗しました');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      // Content-Disposition のファイル名を利用（フォールバックは手動生成）
+      const cd = res.headers.get('Content-Disposition') ?? '';
+      const fnMatch = cd.match(/filename\*=UTF-8''(.+)$/i);
+      a.download = fnMatch ? decodeURIComponent(fnMatch[1]) : `works_export.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportPreviewError('ダウンロードに失敗しました');
+    }
+  }
+
+  // ─────────────────────────────────────────
+  // インポートハンドラー
+  // ─────────────────────────────────────────
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -93,12 +216,14 @@ export default function CsvSection({ persons }: { persons: string[] }) {
     const text = await file.text();
     setCsvContent(text);
     setFileName(file.name);
-    setPreview(null);
-    setCommitResult(null);
+    setImportPreview(null);
+    setImportCommitResult(null);
     setImportError(null);
   }
 
-  async function handlePreview() {
+  const importPersonParam = importPerson || undefined;
+
+  async function handleImportPreview() {
     if (!csvContent) return;
     setImporting(true);
     setImportError(null);
@@ -110,7 +235,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
       });
       const data = await res.json();
       if (res.ok) {
-        setPreview(data as PreviewResult);
+        setImportPreview(data as ImportPreviewResult);
       } else {
         setImportError(data as ImportError);
       }
@@ -120,8 +245,8 @@ export default function CsvSection({ persons }: { persons: string[] }) {
     setImporting(false);
   }
 
-  async function handleCommit() {
-    if (!csvContent || !preview) return;
+  async function handleImportCommit() {
+    if (!csvContent || !importPreview) return;
     setImporting(true);
     setImportError(null);
     try {
@@ -132,8 +257,8 @@ export default function CsvSection({ persons }: { persons: string[] }) {
       });
       const data = await res.json();
       if (res.ok) {
-        setCommitResult(data as CommitResult);
-        setPreview(null);
+        setImportCommitResult(data as ImportCommitResult);
+        setImportPreview(null);
         setCsvContent(null);
         setFileName('');
         if (fileRef.current) fileRef.current.value = '';
@@ -146,29 +271,41 @@ export default function CsvSection({ persons }: { persons: string[] }) {
     setImporting(false);
   }
 
-  function handleReset() {
-    setPreview(null);
+  function handleImportReset() {
+    setImportPreview(null);
     setCsvContent(null);
     setFileName('');
     setImportError(null);
     if (fileRef.current) fileRef.current.value = '';
   }
 
-  const importPersonParam = importPerson || undefined;
+  const importTotal = (importPreview?.addCount ?? 0) + (importPreview?.updateCount ?? 0);
 
-  const importTotal = (preview?.addCount ?? 0) + (preview?.updateCount ?? 0);
+  // ─────────────────────────────────────────
+  // レンダリング
+  // ─────────────────────────────────────────
 
   return (
     <div className="border border-gray-200 rounded-xl p-4 mb-6 bg-white space-y-5">
       <h2 className="text-sm font-bold text-slate-700">CSV 出力 / VOD調査インポート</h2>
 
-      {/* ── 出力セクション ── */}
-      <div className="space-y-2">
+      {/* ════════════════════════════════
+          エクスポートセクション
+      ════════════════════════════════ */}
+      <div className="space-y-3">
         <p className="text-xs font-semibold text-slate-600">作品データ CSV出力</p>
+        <p className="text-[11px] text-gray-400">
+          プレビューで対象件数を確認してからCSVをダウンロードしてください。
+        </p>
+
+        {/* フィルター + 人物 選択 */}
         <div className="flex flex-wrap gap-2 items-center">
           <select
             value={exportFilter}
-            onChange={(e) => setExportFilter(e.target.value as ExportFilter)}
+            onChange={(e) => {
+              setExportFilter(e.target.value as ExportFilter);
+              resetExportPreview();
+            }}
             className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
           >
             {(Object.entries(FILTER_LABELS) as [ExportFilter, string][]).map(([k, v]) => (
@@ -177,7 +314,10 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           </select>
           <select
             value={exportPerson}
-            onChange={(e) => setExportPerson(e.target.value)}
+            onChange={(e) => {
+              setExportPerson(e.target.value);
+              resetExportPreview();
+            }}
             className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
           >
             <option value="">全人物</option>
@@ -185,19 +325,107 @@ export default function CsvSection({ persons }: { persons: string[] }) {
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
-          <a
-            href={buildExportUrl()}
-            download
-            className="text-xs px-3 py-1.5 rounded-lg bg-slate-700 text-white hover:bg-slate-800 transition-colors font-medium"
+          <button
+            onClick={handleExportPreview}
+            disabled={exportPreviewLoading}
+            className="text-xs px-3 py-1.5 rounded-lg bg-slate-600 text-white hover:bg-slate-700 transition-colors disabled:opacity-50 font-medium"
           >
-            📄 CSV出力
-          </a>
+            {exportPreviewLoading ? '確認中...' : '🔍 プレビュー確認'}
+          </button>
         </div>
+
+        {/* エクスポートプレビューエラー */}
+        {exportPreviewError && (
+          <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
+            {exportPreviewError}
+          </p>
+        )}
+
+        {/* エクスポートプレビュー結果 */}
+        {exportPreview && (
+          <div className="space-y-2">
+            {/* 件数バナー */}
+            {exportPreview.warning ? (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+                <p className="text-xs text-orange-700 font-semibold">⚠️ {exportPreview.warning}</p>
+              </div>
+            ) : exportPreview.count === 0 ? (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
+                <p className="text-xs text-yellow-700 font-semibold">
+                  出力対象作品がありません（{exportPreview.personName} / {FILTER_LABELS[exportPreview.filter as ExportFilter] ?? exportPreview.filter}）
+                </p>
+                <p className="text-[11px] text-yellow-600 mt-0.5">
+                  フィルターまたは人物を変更してください。
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-700">
+                      {exportPreview.personName} / {FILTER_LABELS[exportPreview.filter as ExportFilter] ?? exportPreview.filter}
+                    </span>
+                    <span className="ml-2 text-xs text-slate-500">
+                      {exportPreview.count}件
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleCsvDownload}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors font-bold"
+                  >
+                    📄 CSVダウンロード（{exportPreview.count}件）
+                  </button>
+                </div>
+
+                {/* 作品リスト */}
+                <div className="overflow-x-auto border border-gray-200 rounded-lg max-h-56 overflow-y-auto">
+                  <table className="w-full text-[10px] border-collapse">
+                    <thead className="sticky top-0 bg-gray-50">
+                      <tr className="text-gray-500">
+                        <th className="text-left p-1.5 border-b border-gray-200">人物</th>
+                        <th className="text-left p-1.5 border-b border-gray-200">作品タイトル</th>
+                        <th className="text-left p-1.5 border-b border-gray-200">年</th>
+                        <th className="text-left p-1.5 border-b border-gray-200">ステータス</th>
+                        <th className="text-left p-1.5 border-b border-gray-200">配信</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {exportPreview.works.slice(0, 200).map((w, i) => (
+                        <tr key={i} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                          <td className="p-1.5 text-gray-500 whitespace-nowrap">{w.personName}</td>
+                          <td className="p-1.5 text-slate-700 max-w-[180px] truncate" title={w.title}>
+                            {w.title}
+                          </td>
+                          <td className="p-1.5 text-gray-400 whitespace-nowrap">{w.releaseYear ?? '—'}</td>
+                          <td className="p-1.5">
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${STATUS_BADGE[w.status] ?? 'bg-gray-100 text-gray-500'}`}>
+                              {STATUS_LABEL[w.status] ?? w.status}
+                            </span>
+                          </td>
+                          <td className="p-1.5 text-gray-500 max-w-[120px] truncate" title={w.currentVodServices}>
+                            {w.currentVodServices}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {exportPreview.works.length > 200 && (
+                    <p className="text-[10px] text-gray-400 p-2">
+                      ... 他 {exportPreview.works.length - 200}件（先頭200件を表示中）
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <hr className="border-gray-100" />
 
-      {/* ── インポートセクション ── */}
+      {/* ════════════════════════════════
+          インポートセクション
+      ════════════════════════════════ */}
       <div className="space-y-3">
         <div>
           <p className="text-xs font-semibold text-slate-600">VOD調査結果 CSVインポート</p>
@@ -217,14 +445,14 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           </div>
         </div>
 
-        {/* 対象人物セレクター（CSVにpersonId列がない場合のfallback） */}
+        {/* 対象人物セレクター */}
         <div className="flex items-center gap-2">
           <label className="text-[11px] text-gray-600 font-medium whitespace-nowrap">対象人物:</label>
           <select
             value={importPerson}
             onChange={(e) => {
               setImportPerson(e.target.value);
-              setPreview(null);
+              setImportPreview(null);
               setImportError(null);
             }}
             className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
@@ -241,6 +469,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           )}
         </div>
 
+        {/* ファイル選択 + プレビューボタン */}
         <div className="flex flex-wrap gap-2 items-center">
           <input
             ref={fileRef}
@@ -249,9 +478,9 @@ export default function CsvSection({ persons }: { persons: string[] }) {
             onChange={handleFileChange}
             className="text-xs text-gray-600 file:mr-2 file:text-xs file:border file:border-gray-200 file:rounded-lg file:px-2 file:py-1 file:bg-gray-50 file:text-gray-600 file:cursor-pointer hover:file:bg-gray-100"
           />
-          {csvContent && !preview && (
+          {csvContent && !importPreview && (
             <button
-              onClick={handlePreview}
+              onClick={handleImportPreview}
               disabled={importing}
               className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 font-medium"
             >
@@ -264,7 +493,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           <p className="text-[10px] text-gray-400">読み込み: {fileName}</p>
         )}
 
-        {/* ── エラー表示（詳細付き） ── */}
+        {/* インポートエラー表示 */}
         {importError && (
           <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 space-y-2">
             <p className="text-xs font-semibold text-red-700">{importError.error}</p>
@@ -292,38 +521,38 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           </div>
         )}
 
-        {/* ── コミット完了 ── */}
-        {commitResult && (
+        {/* コミット完了 */}
+        {importCommitResult && (
           <div className="text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2 space-y-0.5">
             <p className="font-semibold">
-              インポート完了: {commitResult.savedWorkCount}件の作品に {commitResult.savedProviderCount}件の配信情報を保存しました
+              インポート完了: {importCommitResult.savedWorkCount}件の作品に {importCommitResult.savedProviderCount}件の配信情報を保存しました
             </p>
-            {commitResult.errors.length > 0 && (
+            {importCommitResult.errors.length > 0 && (
               <p className="text-orange-600">
-                エラー {commitResult.errors.length}件: {commitResult.errors.slice(0, 2).join(' / ')}
+                エラー {importCommitResult.errors.length}件: {importCommitResult.errors.slice(0, 2).join(' / ')}
               </p>
             )}
           </div>
         )}
 
-        {/* ── プレビュー ── */}
-        {preview && (
+        {/* インポートプレビュー */}
+        {importPreview && (
           <div className="space-y-3">
             {/* サマリー */}
             <div className="flex flex-wrap gap-2 text-xs">
               <span className="font-semibold text-slate-600 self-center">取込予定:</span>
-              <span className="bg-green-100 text-green-700 px-2 py-1 rounded-lg font-medium">追加 {preview.addCount}件</span>
-              <span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded-lg font-medium">上書 {preview.updateCount}件</span>
-              <span className="bg-gray-100 text-gray-500 px-2 py-1 rounded-lg font-medium">スキップ {preview.ignoreCount}件</span>
-              <span className="bg-red-100 text-red-700 px-2 py-1 rounded-lg font-medium">エラー {preview.errorCount}件</span>
+              <span className="bg-green-100 text-green-700 px-2 py-1 rounded-lg font-medium">追加 {importPreview.addCount}件</span>
+              <span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded-lg font-medium">上書 {importPreview.updateCount}件</span>
+              <span className="bg-gray-100 text-gray-500 px-2 py-1 rounded-lg font-medium">スキップ {importPreview.ignoreCount}件</span>
+              <span className="bg-red-100 text-red-700 px-2 py-1 rounded-lg font-medium">エラー {importPreview.errorCount}件</span>
             </div>
 
             {/* プレビューテーブル */}
-            {preview.previewRows.length > 0 && (
-              <div className="overflow-x-auto border border-gray-200 rounded-lg">
+            {importPreview.previewRows.length > 0 && (
+              <div className="overflow-x-auto border border-gray-200 rounded-lg max-h-72 overflow-y-auto">
                 <table className="w-full text-[10px] border-collapse">
-                  <thead>
-                    <tr className="bg-gray-50 text-gray-500">
+                  <thead className="sticky top-0 bg-gray-50">
+                    <tr className="text-gray-500">
                       <th className="text-left p-1.5 border-b border-gray-200 w-8">行</th>
                       <th className="text-left p-1.5 border-b border-gray-200 w-12">操作</th>
                       <th className="text-left p-1.5 border-b border-gray-200">人物</th>
@@ -335,7 +564,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {preview.previewRows.slice(0, 200).map((row, i) => (
+                    {importPreview.previewRows.slice(0, 200).map((row, i) => (
                       <tr
                         key={i}
                         className={`border-b border-gray-100 last:border-0 ${
@@ -363,9 +592,9 @@ export default function CsvSection({ persons }: { persons: string[] }) {
                     ))}
                   </tbody>
                 </table>
-                {preview.previewRows.length > 200 && (
+                {importPreview.previewRows.length > 200 && (
                   <p className="text-[10px] text-gray-400 p-2">
-                    ... 他 {preview.previewRows.length - 200}行（先頭200行を表示中）
+                    ... 他 {importPreview.previewRows.length - 200}行（先頭200行を表示中）
                   </p>
                 )}
               </div>
@@ -375,7 +604,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
             <div className="flex items-center gap-3">
               {importTotal > 0 ? (
                 <button
-                  onClick={handleCommit}
+                  onClick={handleImportCommit}
                   disabled={importing}
                   className="text-xs px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50 font-bold"
                 >
@@ -385,7 +614,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
                 <p className="text-xs text-gray-500">保存対象がありません（エラー・スキップのみ）</p>
               )}
               <button
-                onClick={handleReset}
+                onClick={handleImportReset}
                 className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
               >
                 キャンセル
