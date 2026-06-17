@@ -51,21 +51,25 @@ interface ImportPreviewRow {
   sourceUrl: string;
   checkedDate: string;
   note: string;
-  action: 'add' | 'update' | 'ignore' | 'error';
+  action: 'add' | 'update' | 'delete' | 'ignore' | 'error';
   reason: string;
 }
 
 interface ImportPreviewResult {
+  syncMode: boolean;
   addCount: number;
   updateCount: number;
+  deleteCount: number;
   ignoreCount: number;
   errorCount: number;
   previewRows: ImportPreviewRow[];
 }
 
 interface ImportCommitResult {
+  syncMode: boolean;
   savedWorkCount: number;
   savedProviderCount: number;
+  deletedProviderCount: number;
   errors: string[];
 }
 
@@ -107,12 +111,14 @@ interface ExportPreviewResult {
 const ACTION_BADGE: Record<ImportPreviewRow['action'], string> = {
   add: 'bg-green-100 text-green-700',
   update: 'bg-yellow-100 text-yellow-700',
+  delete: 'bg-red-100 text-red-700',
   ignore: 'bg-gray-100 text-gray-500',
-  error: 'bg-red-100 text-red-700',
+  error: 'bg-orange-100 text-orange-700',
 };
 const ACTION_LABEL: Record<ImportPreviewRow['action'], string> = {
   add: '追加',
   update: '上書',
+  delete: '削除',
   ignore: '無視',
   error: 'エラー',
 };
@@ -130,6 +136,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
   const [exportPreviewError, setExportPreviewError] = useState('');
 
   // ── インポート状態 ──
+  const [importMode, setImportMode] = useState<'upsert' | 'sync'>('upsert');
   const [importPerson, setImportPerson] = useState('');
   const [csvContent, setCsvContent] = useState<string | null>(null);
   const [fileName, setFileName] = useState('');
@@ -231,7 +238,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
       const res = await fetch('/api/admin/csv-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csvContent, commit: false, personName: importPersonParam }),
+        body: JSON.stringify({ csvContent, commit: false, personName: importPersonParam, syncMode: importMode === 'sync' }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -253,7 +260,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
       const res = await fetch('/api/admin/csv-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csvContent, commit: true, personName: importPersonParam }),
+        body: JSON.stringify({ csvContent, commit: true, personName: importPersonParam, syncMode: importMode === 'sync' }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -280,6 +287,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
   }
 
   const importTotal = (importPreview?.addCount ?? 0) + (importPreview?.updateCount ?? 0);
+  const importDeleteCount = importPreview?.deleteCount ?? 0;
 
   // ─────────────────────────────────────────
   // レンダリング
@@ -445,6 +453,49 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           </div>
         </div>
 
+        {/* モード選択 */}
+        <div className="flex items-center gap-3">
+          <label className="text-[11px] text-gray-600 font-medium whitespace-nowrap">インポートモード:</label>
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
+            <button
+              type="button"
+              onClick={() => { setImportMode('upsert'); setImportPreview(null); setImportError(null); }}
+              className={`px-3 py-1.5 transition-colors ${
+                importMode === 'upsert'
+                  ? 'bg-slate-700 text-white font-medium'
+                  : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              追加/更新モード
+            </button>
+            <button
+              type="button"
+              onClick={() => { setImportMode('sync'); setImportPreview(null); setImportError(null); }}
+              className={`px-3 py-1.5 border-l border-gray-200 transition-colors ${
+                importMode === 'sync'
+                  ? 'bg-red-600 text-white font-medium'
+                  : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              同期モード
+            </button>
+          </div>
+          {importMode === 'sync' && (
+            <span className="text-[11px] text-red-600 font-medium">
+              ⚠️ CSVにない manual_csv 配信先を削除します
+            </span>
+          )}
+        </div>
+        {importMode === 'sync' && (
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-[11px] text-red-700 space-y-0.5">
+            <p className="font-semibold">同期モードの動作:</p>
+            <p>• CSVに記載された配信先を追加/更新します</p>
+            <p>• CSVに記載されていない既存の <span className="font-mono">manual_csv</span> 配信先を削除します</p>
+            <p>• TMDb・AI・manual 由来の配信先は削除しません</p>
+            <p>• 削除対象は CSV に記載された personId + workId の組み合わせのみです</p>
+          </div>
+        )}
+
         {/* 対象人物セレクター */}
         <div className="flex items-center gap-2">
           <label className="text-[11px] text-gray-600 font-medium whitespace-nowrap">対象人物:</label>
@@ -525,7 +576,14 @@ export default function CsvSection({ persons }: { persons: string[] }) {
         {importCommitResult && (
           <div className="text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2 space-y-0.5">
             <p className="font-semibold">
-              インポート完了: {importCommitResult.savedWorkCount}件の作品に {importCommitResult.savedProviderCount}件の配信情報を保存しました
+              {importCommitResult.syncMode ? '同期モード' : '追加/更新モード'}完了:
+              {' '}{importCommitResult.savedWorkCount}件の作品を更新しました
+            </p>
+            <p>
+              配信先 追加/更新: {importCommitResult.savedProviderCount}件
+              {importCommitResult.syncMode && importCommitResult.deletedProviderCount > 0 && (
+                <span className="text-red-600 ml-2">削除: {importCommitResult.deletedProviderCount}件</span>
+              )}
             </p>
             {importCommitResult.errors.length > 0 && (
               <p className="text-orange-600">
@@ -539,12 +597,17 @@ export default function CsvSection({ persons }: { persons: string[] }) {
         {importPreview && (
           <div className="space-y-3">
             {/* サマリー */}
-            <div className="flex flex-wrap gap-2 text-xs">
-              <span className="font-semibold text-slate-600 self-center">取込予定:</span>
+            <div className="flex flex-wrap gap-2 text-xs items-center">
+              <span className="font-semibold text-slate-600">
+                {importPreview.syncMode ? '同期モード' : '追加/更新モード'}:
+              </span>
               <span className="bg-green-100 text-green-700 px-2 py-1 rounded-lg font-medium">追加 {importPreview.addCount}件</span>
               <span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded-lg font-medium">上書 {importPreview.updateCount}件</span>
+              {importPreview.syncMode && (
+                <span className="bg-red-100 text-red-700 px-2 py-1 rounded-lg font-medium">削除 {importDeleteCount}件</span>
+              )}
               <span className="bg-gray-100 text-gray-500 px-2 py-1 rounded-lg font-medium">スキップ {importPreview.ignoreCount}件</span>
-              <span className="bg-red-100 text-red-700 px-2 py-1 rounded-lg font-medium">エラー {importPreview.errorCount}件</span>
+              <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded-lg font-medium">エラー {importPreview.errorCount}件</span>
             </div>
 
             {/* プレビューテーブル */}
@@ -568,11 +631,14 @@ export default function CsvSection({ persons }: { persons: string[] }) {
                       <tr
                         key={i}
                         className={`border-b border-gray-100 last:border-0 ${
-                          row.action === 'error' ? 'bg-red-50' :
+                          row.action === 'delete' ? 'bg-red-50/60' :
+                          row.action === 'error'  ? 'bg-orange-50' :
                           row.action === 'ignore' ? 'opacity-50' : ''
                         }`}
                       >
-                        <td className="p-1.5 text-gray-400">{row.rowNum}</td>
+                        <td className="p-1.5 text-gray-400">
+                          {row.rowNum === 0 ? '—' : row.rowNum}
+                        </td>
                         <td className="p-1.5">
                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${ACTION_BADGE[row.action]}`}>
                             {ACTION_LABEL[row.action]}
@@ -602,13 +668,22 @@ export default function CsvSection({ persons }: { persons: string[] }) {
 
             {/* インポート実行ボタン */}
             <div className="flex items-center gap-3">
-              {importTotal > 0 ? (
+              {importTotal > 0 || (importPreview.syncMode && importDeleteCount > 0) ? (
                 <button
                   onClick={handleImportCommit}
                   disabled={importing}
-                  className="text-xs px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50 font-bold"
+                  className={`text-xs px-4 py-2 rounded-lg transition-colors disabled:opacity-50 font-bold text-white ${
+                    importPreview.syncMode
+                      ? 'bg-red-600 hover:bg-red-700'
+                      : 'bg-green-600 hover:bg-green-700'
+                  }`}
                 >
-                  {importing ? '保存中...' : `インポート実行（${importTotal}件保存）`}
+                  {importing
+                    ? '保存中...'
+                    : importPreview.syncMode
+                      ? `同期モード実行（追加/更新${importTotal}件・削除${importDeleteCount}件）`
+                      : `インポート実行（${importTotal}件保存）`
+                  }
                 </button>
               ) : (
                 <p className="text-xs text-gray-500">保存対象がありません（エラー・スキップのみ）</p>

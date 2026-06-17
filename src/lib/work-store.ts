@@ -156,6 +156,32 @@ export async function upsertManualCsvVodProviders(
   }
 }
 
+// CSV同期インポート: manual_csv 配信サービスを完全置換（CSVにないものは削除、TMDb/AI/manual は保持）
+export async function syncManualCsvVodProviders(
+  personName: string,
+  workId: string,
+  providers: VodProvider[],
+): Promise<{ removed: number; added: number }> {
+  const redis = getRedis();
+  if (!redis) return { removed: 0, added: 0 };
+  const raw = await redis.hget(hashKey(personName), workId);
+  if (!raw) return { removed: 0, added: 0 };
+  try {
+    const work = (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
+    const existing = work.vodProviders ?? [];
+    const removedCount = existing.filter((p) => p.source === 'manual_csv').length;
+    // manual_csv 以外（TMDb・AI・manual）はそのまま保持し、manual_csv のみ新リストで置換
+    const nonCsv = existing.filter((p) => p.source !== 'manual_csv');
+    work.vodProviders = [...nonCsv, ...providers];
+    work.vodUpdatedAt = Date.now();
+    work.updatedAt = Date.now();
+    await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    return { removed: removedCount, added: providers.length };
+  } catch {
+    return { removed: 0, added: 0 };
+  }
+}
+
 // 手動で配信サービスを1件追加（既存の tmdb_watch_provider は保持）
 export async function addManualVodProvider(
   personName: string,

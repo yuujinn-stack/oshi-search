@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsWithConfig } from '@/lib/persons';
-import { getAllWorks, upsertManualCsvVodProviders } from '@/lib/work-store';
+import { getAllWorks, upsertManualCsvVodProviders, syncManualCsvVodProviders } from '@/lib/work-store';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 import type { WorkRecord } from '@/types/work';
 
 // POST /api/admin/csv-import
-// body: { csvContent: string, commit?: boolean, personName?: string }
-//   personName: CSVにpersonId列がない場合のフォールバック（UIで選択した人物）
-// commit=false (default): プレビューのみ（保存しない）
-// commit=true: 実際に保存する
+// body: {
+//   csvContent: string,
+//   commit?: boolean,
+//   personName?: string,   // CSVにpersonId列がない場合のUI選択フォールバック
+//   syncMode?: boolean,    // true=同期モード（CSVにない manual_csv を削除）
+// }
+// 照合キー: personName + workId（workId 単体では別人物の作品を混入させない）
 // 管理画面からのみ呼び出し可（proxy.ts で認証済み）
-//
-// 照合キー: personName + workId（同一workIdでも人物が違えば別レコード）
 
 // ─────────────────────────────────────────
 // 定数
@@ -121,7 +122,7 @@ function lookupService(name: string): { id: number; logoPath?: string } {
 // ─────────────────────────────────────────
 
 export interface ImportPreviewRow {
-  rowNum: number;
+  rowNum: number;   // CSV行番号。同期モードの削除行は 0
   workId: string;
   personName: string;
   title: string;
@@ -131,7 +132,7 @@ export interface ImportPreviewRow {
   sourceUrl: string;
   checkedDate: string;
   note: string;
-  action: 'add' | 'update' | 'ignore' | 'error';
+  action: 'add' | 'update' | 'delete' | 'ignore' | 'error';
   reason: string;
 }
 
@@ -145,17 +146,19 @@ export async function POST(req: NextRequest) {
     csvContent,
     commit = false,
     personName: bodyPersonName = '',
+    syncMode = false,
   } = body as {
     csvContent?: string;
     commit?: boolean;
-    personName?: string;  // UIで選択した人物（CSVにpersonId列がない場合のfallback）
+    personName?: string;
+    syncMode?: boolean;
   };
 
   if (!csvContent || typeof csvContent !== 'string') {
     return NextResponse.json({ error: 'csvContent が必要です' }, { status: 400 });
   }
 
-  // ── CSVパース ──
+  // ── CSV パース ──
   const rows = parseCSV(csvContent);
   if (rows.length < 2) {
     return NextResponse.json({ error: 'CSVが空またはヘッダー行のみです' }, { status: 400 });
@@ -185,8 +188,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 列インデックス
-  // personId 列: "personid" または "personname" のどちらでも認識
+  // 列インデックス（personid / personname 両方認識）
   const COL = {
     workId:           header.indexOf('workid'),
     personId:         Math.max(header.indexOf('personid'), header.indexOf('personname')),
@@ -199,8 +201,7 @@ export async function POST(req: NextRequest) {
   };
 
   // ── 全作品を (personName + workId) → WorkRecord でインデックス化 ──
-  // キー形式: "${personName}:${workId}"
-  // → 同じ workId でも人物が異なれば別エントリになる（バグ修正の核心）
+  // キー: "${personName}:${workId}"（同一 workId でも人物が異なれば別エントリ）
   const persons = getAllPersonsWithConfig();
   const workMap = new Map<string, WorkRecord>();
   for (const person of persons) {
@@ -210,10 +211,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── データ行をパース・バリデーション ──
+  // ── CSV データ行をパース・バリデーション ──
   const previewRows: ImportPreviewRow[] = [];
-  // 重複除去キー: personName + workId + vodService（人物をまたいで同一workIdが来ても区別）
+  // 重複除去キー: personName + workId + vodService
   const seenInCsv = new Set<string>();
+  // 同期モード用: workキーごとにCSVに登場したvodServiceを記録
+  // Map<"personName:workId", Set<vodService.toLowerCase()>>
+  const csvServicesPerWork = new Map<string, Set<string>>();
 
   const dataRows = rows.slice(1);
   for (let i = 0; i < dataRows.length; i++) {
@@ -221,7 +225,7 @@ export async function POST(req: NextRequest) {
     const get = (col: number) => (col >= 0 ? (row[col] ?? '').trim() : '');
 
     const workId           = get(COL.workId);
-    const csvPersonId      = get(COL.personId);  // CSV の personId 列（あれば）
+    const csvPersonId      = get(COL.personId);
     const vodService       = get(COL.vodService);
     const availabilityType = get(COL.availabilityType) || 'flatrate';
     const confidence       = get(COL.confidence) || 'medium';
@@ -229,8 +233,7 @@ export async function POST(req: NextRequest) {
     const checkedDate      = get(COL.checkedDate);
     const note             = get(COL.note);
 
-    // personName の決定: CSV列 → UI選択 の優先順
-    // どちらもない場合はエラー（別人物データ混入防止のため必須）
+    // personName の決定: CSV 列 → UI 選択 → エラー
     const effectivePersonName = csvPersonId || bodyPersonName;
 
     if (!workId) {
@@ -256,13 +259,12 @@ export async function POST(req: NextRequest) {
         rowNum: i + 2, workId, personName: '', title: '', vodService,
         availabilityType, confidence, sourceUrl, checkedDate, note,
         action: 'error',
-        reason:
-          'personId列がなく対象人物も未選択です。インポート対象の人物をセレクターで選択してください。',
+        reason: 'personId列がなく対象人物も未選択です。インポート対象の人物をセレクターで選択してください。',
       });
       continue;
     }
 
-    // personName + workId で照合（別人物の同一workIdは別エントリ）
+    // personName + workId で照合（workId 単体で別人物の作品に混入しない）
     const mapKey = `${effectivePersonName}:${workId}`;
     const work = workMap.get(mapKey);
     if (!work) {
@@ -275,7 +277,7 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    // CSV 内の重複（同じ person + workId + vodService）→ 無視
+    // CSV 内重複チェック
     const dedupeKey = `${effectivePersonName}:${workId}:${vodService.toLowerCase()}`;
     if (seenInCsv.has(dedupeKey)) {
       previewRows.push({
@@ -287,8 +289,12 @@ export async function POST(req: NextRequest) {
     }
     seenInCsv.add(dedupeKey);
 
+    // 同期モード用: この workKey にCSV登場のvodServiceを記録
+    if (!csvServicesPerWork.has(mapKey)) csvServicesPerWork.set(mapKey, new Set());
+    csvServicesPerWork.get(mapKey)!.add(vodService.toLowerCase());
+
     // DB 内に既存の manual_csv エントリがあるか（add vs update）
-    const existingCsvEntry = (work.vodProviders ?? []).find(
+    const existingEntry = (work.vodProviders ?? []).find(
       (p) =>
         p.source === 'manual_csv' &&
         p.providerName.toLowerCase() === vodService.toLowerCase(),
@@ -305,22 +311,60 @@ export async function POST(req: NextRequest) {
       sourceUrl,
       checkedDate,
       note,
-      action: existingCsvEntry ? 'update' : 'add',
-      reason: existingCsvEntry ? '既存のCSVインポートデータを最新情報で上書き' : '新規追加',
+      action: existingEntry ? 'update' : 'add',
+      reason: existingEntry ? '既存のCSVインポートデータを最新情報で上書き' : '新規追加',
     });
+  }
+
+  // ── 同期モード: CSVにない既存 manual_csv 配信先を削除予定行として追加 ──
+  // 対象: CSVに登場した personName + workId の組み合わせのみ
+  // TMDb / AI / manual ソースは対象外
+  if (syncMode) {
+    for (const [mapKey, csvServices] of csvServicesPerWork) {
+      const work = workMap.get(mapKey);
+      if (!work) continue;
+      for (const p of (work.vodProviders ?? [])) {
+        if (p.source !== 'manual_csv') continue; // TMDb/AI/manual は触れない
+        if (!csvServices.has(p.providerName.toLowerCase())) {
+          previewRows.push({
+            rowNum: 0, // CSV 由来でない行
+            workId: work.id,
+            personName: work.personName,
+            title: work.title,
+            vodService: p.providerName,
+            availabilityType: p.type,
+            confidence: p.confidence ?? '',
+            sourceUrl: p.sourceUrl ?? '',
+            checkedDate: p.checkedDate ?? '',
+            note: p.note ?? '',
+            action: 'delete',
+            reason: '同期モード: CSVに記載がないため削除',
+          });
+        }
+      }
+    }
   }
 
   const addCount    = previewRows.filter((r) => r.action === 'add').length;
   const updateCount = previewRows.filter((r) => r.action === 'update').length;
+  const deleteCount = previewRows.filter((r) => r.action === 'delete').length;
   const ignoreCount = previewRows.filter((r) => r.action === 'ignore').length;
   const errorCount  = previewRows.filter((r) => r.action === 'error').length;
 
   if (!commit) {
-    return NextResponse.json({ addCount, updateCount, ignoreCount, errorCount, previewRows });
+    return NextResponse.json({
+      syncMode,
+      addCount,
+      updateCount,
+      deleteCount,
+      ignoreCount,
+      errorCount,
+      previewRows,
+    });
   }
 
-  // ── コミット: (personName, workId) ごとにグループ化してアップサート ──
-  // キー: "personName:workId"
+  // ── コミット ──
+  // (personName + workId) ごとに add/update 行をグループ化
   const workGroups = new Map<string, ImportPreviewRow[]>();
   for (const row of previewRows) {
     if (row.action !== 'add' && row.action !== 'update') continue;
@@ -331,17 +375,17 @@ export async function POST(req: NextRequest) {
 
   let savedWorkCount = 0;
   let savedProviderCount = 0;
+  let deletedProviderCount = 0;
   const errors: string[] = [];
+  const today = new Date().toISOString().slice(0, 10);
 
   for (const [groupKey, importRows] of workGroups) {
-    // groupKey = "${personName}:${workId}" → workMap と同じキー形式なのでそのまま引ける
     const work = workMap.get(groupKey);
     if (!work) {
       errors.push(`保存時に作品が見つかりません: ${groupKey}`);
       continue;
     }
 
-    const today = new Date().toISOString().slice(0, 10);
     const providers: VodProvider[] = importRows.map((row) => {
       const serviceInfo = lookupService(row.vodService);
       const providerType = TYPE_MAP[row.availabilityType.toLowerCase()] ?? 'flatrate';
@@ -365,19 +409,38 @@ export async function POST(req: NextRequest) {
     });
 
     try {
-      const { added, updated } = await upsertManualCsvVodProviders(
-        work.personName,
-        work.id,
-        providers,
-      );
-      if (added + updated > 0) {
+      if (syncMode) {
+        // 同期モード: manual_csv を providers で完全置換（TMDb/AI/manual は保持）
+        const { removed, added } = await syncManualCsvVodProviders(
+          work.personName,
+          work.id,
+          providers,
+        );
         savedWorkCount++;
-        savedProviderCount += added + updated;
+        savedProviderCount += added;
+        deletedProviderCount += removed - added; // 実質削除数（新規追加分を引く）
+      } else {
+        // 追加/更新モード: 既存 manual_csv はそのまま、CSV 分だけ upsert
+        const { added, updated } = await upsertManualCsvVodProviders(
+          work.personName,
+          work.id,
+          providers,
+        );
+        if (added + updated > 0) {
+          savedWorkCount++;
+          savedProviderCount += added + updated;
+        }
       }
     } catch (err) {
       errors.push(`workId=${work.id} (${work.personName}): ${String(err)}`);
     }
   }
 
-  return NextResponse.json({ savedWorkCount, savedProviderCount, errors });
+  return NextResponse.json({
+    syncMode,
+    savedWorkCount,
+    savedProviderCount,
+    deletedProviderCount,
+    errors,
+  });
 }
