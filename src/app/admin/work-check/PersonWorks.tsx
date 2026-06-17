@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { WorkRecord, WorkStatus, WorkSource } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
+import { deduplicateProviders } from '@/lib/vod-dedup';
 
 // vod-fetch API のデバッグ型（route.ts の VodFetchDebugItem と同一）
 interface VodFetchDebugItem {
@@ -668,7 +669,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                     {(work.vodProviders?.length ?? 0) > 0 ? (
                       <div className="mt-2 flex flex-wrap gap-1 items-center">
                         <span className="text-[10px] text-teal-600 font-medium">📺</span>
-                        {work.vodProviders!.map((p, pi) => (
+                        {deduplicateProviders(work.vodProviders!).map((p, pi) => (
                           <span
                             key={`${p.providerId}-${p.type}-${pi}`}
                             className={`flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border ${

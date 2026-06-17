@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsWithConfig } from '@/lib/persons';
 import { getAllWorks, upsertManualCsvVodProviders, syncManualCsvVodProviders } from '@/lib/work-store';
+import { normalizeProviderName, VOD_SOURCE_PRIORITY, VOD_SOURCE_LABEL } from '@/lib/vod-dedup';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 import type { WorkRecord } from '@/types/work';
 
@@ -132,7 +133,8 @@ export interface ImportPreviewRow {
   sourceUrl: string;
   checkedDate: string;
   note: string;
-  action: 'add' | 'update' | 'delete' | 'ignore' | 'error';
+  // skip: 高優先度ソースが同名サービスを既に持つためCSV側をスキップ
+  action: 'add' | 'update' | 'delete' | 'skip' | 'ignore' | 'error';
   reason: string;
 }
 
@@ -289,16 +291,38 @@ export async function POST(req: NextRequest) {
     }
     seenInCsv.add(dedupeKey);
 
-    // 同期モード用: この workKey にCSV登場のvodServiceを記録
-    if (!csvServicesPerWork.has(mapKey)) csvServicesPerWork.set(mapKey, new Set());
-    csvServicesPerWork.get(mapKey)!.add(vodService.toLowerCase());
-
-    // DB 内に既存の manual_csv エントリがあるか（add vs update）
-    const existingEntry = (work.vodProviders ?? []).find(
-      (p) =>
-        p.source === 'manual_csv' &&
-        p.providerName.toLowerCase() === vodService.toLowerCase(),
+    // 正規化したサービス名で既存プロバイダーを検索
+    const normalizedVodService = normalizeProviderName(vodService);
+    const existingByNorm = (work.vodProviders ?? []).find(
+      (p) => normalizeProviderName(p.providerName) === normalizedVodService,
     );
+
+    let rowAction: ImportPreviewRow['action'];
+    let rowReason: string;
+
+    if (existingByNorm) {
+      const existingPriority = VOD_SOURCE_PRIORITY[existingByNorm.source] ?? 99;
+      const csvPriority = VOD_SOURCE_PRIORITY['manual_csv']; // 5
+      if (existingPriority < csvPriority) {
+        // 高優先度ソース（TMDb / AI / manual）が同名サービスを保持 → CSV側をスキップ
+        rowAction = 'skip';
+        rowReason = `${VOD_SOURCE_LABEL[existingByNorm.source] ?? existingByNorm.source}由来の「${existingByNorm.providerName}」が既に存在するためスキップ（CSV側は追加しません）`;
+      } else {
+        // 既存が manual_csv → 上書き
+        rowAction = 'update';
+        rowReason = '既存のCSVインポートデータを最新情報で上書き';
+      }
+    } else {
+      rowAction = 'add';
+      rowReason = '新規追加';
+    }
+
+    // 同期モード用: 追加・更新・スキップ いずれもCSVに「このサービスが含まれている」として記録
+    // （スキップ分もCSVの意思表示として扱い、sync時に不用意に削除しない）
+    if (rowAction === 'add' || rowAction === 'update' || rowAction === 'skip') {
+      if (!csvServicesPerWork.has(mapKey)) csvServicesPerWork.set(mapKey, new Set());
+      csvServicesPerWork.get(mapKey)!.add(normalizedVodService);
+    }
 
     previewRows.push({
       rowNum: i + 2,
@@ -311,8 +335,8 @@ export async function POST(req: NextRequest) {
       sourceUrl,
       checkedDate,
       note,
-      action: existingEntry ? 'update' : 'add',
-      reason: existingEntry ? '既存のCSVインポートデータを最新情報で上書き' : '新規追加',
+      action: rowAction,
+      reason: rowReason,
     });
   }
 
@@ -348,6 +372,7 @@ export async function POST(req: NextRequest) {
   const addCount    = previewRows.filter((r) => r.action === 'add').length;
   const updateCount = previewRows.filter((r) => r.action === 'update').length;
   const deleteCount = previewRows.filter((r) => r.action === 'delete').length;
+  const skipCount   = previewRows.filter((r) => r.action === 'skip').length;
   const ignoreCount = previewRows.filter((r) => r.action === 'ignore').length;
   const errorCount  = previewRows.filter((r) => r.action === 'error').length;
 
@@ -357,6 +382,7 @@ export async function POST(req: NextRequest) {
       addCount,
       updateCount,
       deleteCount,
+      skipCount,
       ignoreCount,
       errorCount,
       previewRows,

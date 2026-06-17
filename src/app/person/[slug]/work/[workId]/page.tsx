@@ -5,6 +5,7 @@ import { getPersonWithConfig } from '@/lib/persons';
 import { getWork } from '@/lib/work-store';
 import { VOD_TYPE_LABEL } from '@/types/vod';
 import type { VodProvider } from '@/types/vod';
+import { deduplicateProviders } from '@/lib/vod-dedup';
 
 interface Props {
   params: Promise<{ slug: string; workId: string }>;
@@ -72,12 +73,14 @@ export default async function WorkDetailPage({ params }: Props) {
   const work = await getWork(personName, workId);
   if (!work || work.status !== 'auto_published') notFound();
 
-  // 公開ページ用: confidence=low の openai_supplement / openai_web_search は除外
-  const publicProviders = (work.vodProviders ?? []).filter((p) => {
-    const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
-    if (isAiSource && p.confidence === 'low') return false;
-    return true;
-  });
+  // 公開ページ用: confidence=low の AI ソースは非表示、同名は優先度の高いソースを1件残す
+  const publicProviders = deduplicateProviders(
+    (work.vodProviders ?? []).filter((p) => {
+      const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
+      if (isAiSource && p.confidence === 'low') return false;
+      return true;
+    }),
+  );
 
   const sortedProviders = publicProviders
     .slice()

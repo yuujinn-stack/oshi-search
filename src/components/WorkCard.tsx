@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { WorkRecord } from '@/types/work';
+import { deduplicateProviders } from '@/lib/vod-dedup';
 
 const PROVIDER_LOGO_BASE = 'https://image.tmdb.org/t/p/w45';
 
@@ -23,13 +24,15 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
   const workDetailUrl = `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
 
   // 公開ページ用フィルタ:
-  //   tmdb_watch_provider / manual / manual_csv は常に表示
-  //   openai_supplement / openai_web_search は confidence=low を除外
-  const publicProviders = (work.vodProviders ?? []).filter((p) => {
-    const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
-    if (isAiSource && p.confidence === 'low') return false;
-    return true;
-  });
+  //   confidence=low の AI ソースは非表示
+  //   同名サービスは優先度の高いソースを1件だけ残す（TMDb > AI > CSV の順）
+  const publicProviders = deduplicateProviders(
+    (work.vodProviders ?? []).filter((p) => {
+      const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
+      if (isAiSource && p.confidence === 'low') return false;
+      return true;
+    }),
+  );
 
   const sortedProviders = publicProviders
     .slice()

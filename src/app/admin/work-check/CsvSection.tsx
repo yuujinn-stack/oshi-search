@@ -51,7 +51,7 @@ interface ImportPreviewRow {
   sourceUrl: string;
   checkedDate: string;
   note: string;
-  action: 'add' | 'update' | 'delete' | 'ignore' | 'error';
+  action: 'add' | 'update' | 'delete' | 'ignore' | 'skip' | 'error';
   reason: string;
 }
 
@@ -61,6 +61,7 @@ interface ImportPreviewResult {
   updateCount: number;
   deleteCount: number;
   ignoreCount: number;
+  skipCount: number;
   errorCount: number;
   previewRows: ImportPreviewRow[];
 }
@@ -113,6 +114,7 @@ const ACTION_BADGE: Record<ImportPreviewRow['action'], string> = {
   update: 'bg-yellow-100 text-yellow-700',
   delete: 'bg-red-100 text-red-700',
   ignore: 'bg-gray-100 text-gray-500',
+  skip: 'bg-sky-100 text-sky-700',
   error: 'bg-orange-100 text-orange-700',
 };
 const ACTION_LABEL: Record<ImportPreviewRow['action'], string> = {
@@ -120,6 +122,7 @@ const ACTION_LABEL: Record<ImportPreviewRow['action'], string> = {
   update: '上書',
   delete: '削除',
   ignore: '無視',
+  skip: 'スキップ',
   error: 'エラー',
 };
 
@@ -146,6 +149,12 @@ export default function CsvSection({ persons }: { persons: string[] }) {
   const [importError, setImportError] = useState<ImportError | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // ── 重複整理状態 ──
+  const [dedupPerson, setDedupPerson] = useState('');
+  const [deduping, setDeduping] = useState(false);
+  const [dedupResult, setDedupResult] = useState<{ checkedWorks: number; deduplicatedWorks: number; removedCount: number } | null>(null);
+  const [dedupError, setDedupError] = useState('');
 
   // ─────────────────────────────────────────
   // URL ビルダー
@@ -284,6 +293,28 @@ export default function CsvSection({ persons }: { persons: string[] }) {
     setFileName('');
     setImportError(null);
     if (fileRef.current) fileRef.current.value = '';
+  }
+
+  async function handleDedup() {
+    setDeduping(true);
+    setDedupResult(null);
+    setDedupError('');
+    try {
+      const res = await fetch('/api/admin/vod-dedup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personName: dedupPerson || undefined }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDedupResult(data as { checkedWorks: number; deduplicatedWorks: number; removedCount: number });
+      } else {
+        setDedupError((data as { error?: string }).error ?? '重複整理に失敗しました');
+      }
+    } catch {
+      setDedupError('通信エラーが発生しました');
+    }
+    setDeduping(false);
   }
 
   const importTotal = (importPreview?.addCount ?? 0) + (importPreview?.updateCount ?? 0);
@@ -606,7 +637,10 @@ export default function CsvSection({ persons }: { persons: string[] }) {
               {importPreview.syncMode && (
                 <span className="bg-red-100 text-red-700 px-2 py-1 rounded-lg font-medium">削除 {importDeleteCount}件</span>
               )}
-              <span className="bg-gray-100 text-gray-500 px-2 py-1 rounded-lg font-medium">スキップ {importPreview.ignoreCount}件</span>
+              {(importPreview.skipCount ?? 0) > 0 && (
+                <span className="bg-sky-100 text-sky-700 px-2 py-1 rounded-lg font-medium">重複スキップ {importPreview.skipCount}件</span>
+              )}
+              <span className="bg-gray-100 text-gray-500 px-2 py-1 rounded-lg font-medium">無視 {importPreview.ignoreCount}件</span>
               <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded-lg font-medium">エラー {importPreview.errorCount}件</span>
             </div>
 
@@ -695,6 +729,54 @@ export default function CsvSection({ persons }: { persons: string[] }) {
                 キャンセル
               </button>
             </div>
+          </div>
+        )}
+      </div>
+
+      <hr className="border-gray-100" />
+
+      {/* ════════════════════════════════
+          重複整理セクション
+      ════════════════════════════════ */}
+      <div className="space-y-3">
+        <div>
+          <p className="text-xs font-semibold text-slate-600">配信情報の重複を整理</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            同じ配信サービスが複数ソース（TMDb・AI・CSV）に存在する場合、優先度の高いソースを1件残して重複を削除します。
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2 items-center">
+          <select
+            value={dedupPerson}
+            onChange={(e) => { setDedupPerson(e.target.value); setDedupResult(null); setDedupError(''); }}
+            className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
+          >
+            <option value="">全人物</option>
+            {persons.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+          <button
+            onClick={handleDedup}
+            disabled={deduping}
+            className="text-xs px-3 py-1.5 rounded-lg bg-slate-600 text-white hover:bg-slate-700 transition-colors disabled:opacity-50 font-medium"
+          >
+            {deduping ? '整理中...' : '🧹 重複を整理'}
+          </button>
+        </div>
+
+        {dedupError && (
+          <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{dedupError}</p>
+        )}
+        {dedupResult && (
+          <div className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 space-y-0.5">
+            <p className="font-semibold text-slate-700">
+              重複整理完了: {dedupResult.removedCount === 0 ? '重複なし' : `${dedupResult.removedCount}件削除`}
+            </p>
+            <p className="text-gray-500">
+              確認作品: {dedupResult.checkedWorks}件 / 整理した作品: {dedupResult.deduplicatedWorks}件
+            </p>
           </div>
         )}
       </div>
