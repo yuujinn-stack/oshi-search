@@ -115,6 +115,13 @@ export async function processPerson(
         continue;
       }
 
+      // ━━━ 最優先: deleted (管理者が手動削除) は何があってもスキップ ━━━
+      if (existingVerdicts[p.id]?.verdict === 'deleted') {
+        skipped++;
+        catSkipped++;
+        continue;
+      }
+
       // ━━━ 優先度1: 自動承認チェック（スキップ判定より前に実行）━━━
       // 既存の ai 判定が unrelated でも、条件を満たす商品は即 related で上書きする
       // 例: 人物名+写真集がタイトルに含まれる、グループCDのアーティスト名が一致する

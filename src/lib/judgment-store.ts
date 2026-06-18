@@ -3,7 +3,7 @@
 
 import { getRedis } from './redis';
 
-export type Verdict = 'related' | 'uncertain' | 'unrelated';
+export type Verdict = 'related' | 'uncertain' | 'unrelated' | 'deleted';
 
 export interface JudgmentRecord {
   verdict: Verdict;
@@ -59,6 +59,20 @@ export async function deleteVerdict(personName: string, productId: string): Prom
   const redis = getRedis();
   if (!redis) return;
   await redis.hdel(hashKey(personName), productId);
+}
+
+// 複数商品を一括でverdictを設定（削除用途）
+export async function bulkSaveVerdict(
+  personName: string,
+  productIds: string[],
+  verdict: Verdict,
+): Promise<void> {
+  const redis = getRedis();
+  if (!redis || productIds.length === 0) return;
+  const record: JudgmentRecord = { verdict, score: 0, source: 'manual', timestamp: Date.now() };
+  const fields: Record<string, string> = {};
+  for (const id of productIds) fields[id] = JSON.stringify(record);
+  await redis.hset(hashKey(personName), fields);
 }
 
 // 判定結果を適用して商品を表示/非表示にフィルタリング（ユーザーページ用）
