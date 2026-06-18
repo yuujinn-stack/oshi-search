@@ -208,6 +208,7 @@ export default async function WorkDetailPage({ params }: Props) {
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.vercel.app';
   const workUrl = `${siteOrigin}/person/${encodeURIComponent(personName)}/work/${encodeURIComponent(workId)}`;
   const personUrl = `${siteOrigin}/person/${encodeURIComponent(personName)}`;
+  const groupUrl = person.group ? `${siteOrigin}/group/${encodeURIComponent(person.group)}` : null;
 
   // ─── JSON-LD: Movie / TVSeries ──
   const workJsonLd = {
@@ -231,14 +232,21 @@ export default async function WorkDetailPage({ params }: Props) {
   };
 
   // ─── JSON-LD: BreadcrumbList ──
+  const breadcrumbItems: Array<{ '@type': string; position: number; name: string; item: string }> = [
+    { '@type': 'ListItem', position: 1, name: 'ホーム', item: siteOrigin },
+  ];
+  if (person.group && groupUrl) {
+    breadcrumbItems.push({ '@type': 'ListItem', position: 2, name: person.group, item: groupUrl });
+    breadcrumbItems.push({ '@type': 'ListItem', position: 3, name: personName, item: personUrl });
+    breadcrumbItems.push({ '@type': 'ListItem', position: 4, name: work.title, item: workUrl });
+  } else {
+    breadcrumbItems.push({ '@type': 'ListItem', position: 2, name: personName, item: personUrl });
+    breadcrumbItems.push({ '@type': 'ListItem', position: 3, name: work.title, item: workUrl });
+  }
   const breadcrumbJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
-    itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'ホーム', item: siteOrigin },
-      { '@type': 'ListItem', position: 2, name: personName, item: personUrl },
-      { '@type': 'ListItem', position: 3, name: work.title, item: workUrl },
-    ],
+    itemListElement: breadcrumbItems,
   };
 
   return (
@@ -253,6 +261,14 @@ export default async function WorkDetailPage({ params }: Props) {
         <nav aria-label="パンくずリスト" className="bg-white border-b border-gray-200">
           <div className="max-w-lg mx-auto px-4 py-2.5 flex items-center gap-1.5 text-xs text-gray-500 overflow-x-auto whitespace-nowrap">
             <Link href="/" className="hover:text-indigo-600 transition-colors shrink-0">ホーム</Link>
+            {person.group && (
+              <>
+                <span className="text-gray-300 shrink-0">›</span>
+                <Link href={`/group/${encodeURIComponent(person.group)}`} className="hover:text-indigo-600 transition-colors shrink-0">
+                  {person.group}
+                </Link>
+              </>
+            )}
             <span className="text-gray-300 shrink-0">›</span>
             <Link href={`/person/${encodeURIComponent(personName)}`} className="hover:text-indigo-600 transition-colors shrink-0">
               {personName}
@@ -469,8 +485,16 @@ export default async function WorkDetailPage({ params }: Props) {
 
           {/* ━━━ 出演者（当サイト登録） ━━━ */}
           <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
               <h2 className="font-bold text-slate-800">出演者（当サイト登録）</h2>
+              {person.group && (
+                <Link
+                  href={`/group/${encodeURIComponent(person.group)}`}
+                  className="text-xs text-indigo-500 hover:text-indigo-700 transition-colors"
+                >
+                  {person.group}へ →
+                </Link>
+              )}
             </div>
             <div className="p-4 space-y-1">
               {/* 現在の人物 */}
@@ -485,9 +509,14 @@ export default async function WorkDetailPage({ params }: Props) {
                   <p className="text-sm font-semibold text-slate-800 group-hover:text-indigo-700 transition-colors">
                     {personName}
                   </p>
-                  <p className="text-[11px] text-gray-400">
-                    {person.group}{work.roleName && ` · 役: ${work.roleName}`}
-                  </p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    {person.group ? (
+                      <span className="text-[11px] text-gray-400">{person.group}</span>
+                    ) : null}
+                    {work.roleName && (
+                      <span className="text-[11px] text-indigo-400">· 役: {work.roleName}</span>
+                    )}
+                  </div>
                 </div>
                 <span className="text-indigo-300 text-sm">›</span>
               </Link>
@@ -506,9 +535,14 @@ export default async function WorkDetailPage({ params }: Props) {
                     <p className="text-sm font-semibold text-slate-800 group-hover:text-indigo-700 transition-colors">
                       {star.name}
                     </p>
-                    <p className="text-[11px] text-gray-400">
-                      {star.group}{star.roleName && ` · 役: ${star.roleName}`}
-                    </p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      {star.group ? (
+                        <span className="text-[11px] text-gray-400">{star.group}</span>
+                      ) : null}
+                      {star.roleName && (
+                        <span className="text-[11px] text-indigo-400">· 役: {star.roleName}</span>
+                      )}
+                    </div>
                   </div>
                   <span className="text-indigo-300 text-sm">›</span>
                 </Link>

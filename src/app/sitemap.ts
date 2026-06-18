@@ -1,10 +1,11 @@
 import type { MetadataRoute } from 'next';
-import { getAllPersons, ALL_GENRES } from '@/lib/persons';
+import { getAllPersons, getAllGroups, ALL_GENRES } from '@/lib/persons';
 
-const BASE_URL = 'https://oshi-search.example.com';
+const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.vercel.app';
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const persons = getAllPersons();
+  const groups = getAllGroups();
 
   return [
     {
@@ -13,6 +14,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: 'daily',
       priority: 1,
     },
+    ...groups.map((group) => ({
+      url: `${BASE_URL}/group/${encodeURIComponent(group)}`,
+      lastModified: new Date(),
+      changeFrequency: 'weekly' as const,
+      priority: 0.9,
+    })),
     ...ALL_GENRES.map((genre) => ({
       url: `${BASE_URL}/genre/${encodeURIComponent(genre)}`,
       lastModified: new Date(),

@@ -76,7 +76,7 @@ export default function HomePage() {
             {groups.map((group) => (
               <Link
                 key={group}
-                href={`/search?q=${encodeURIComponent(group)}`}
+                href={`/group/${encodeURIComponent(group)}`}
                 className="px-4 py-2.5 bg-white shadow-sm border border-gray-200 rounded-xl hover:border-primary hover:text-primary transition-colors text-sm font-medium text-slate-700"
                 style={{ minHeight: '44px', lineHeight: '20px', display: 'flex', alignItems: 'center' }}
               >

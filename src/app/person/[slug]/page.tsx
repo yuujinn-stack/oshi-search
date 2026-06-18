@@ -145,10 +145,10 @@ export default async function PersonPage({ params }: Props) {
               <h1 className="text-3xl font-black text-white">{person.name}</h1>
               {person.group ? (
                 <Link
-                  href={`/search?q=${encodeURIComponent(person.group)}`}
+                  href={`/group/${encodeURIComponent(person.group)}`}
                   className="text-indigo-200 hover:text-white mt-1 block text-sm transition-colors"
                 >
-                  {person.group}
+                  {person.group} →
                 </Link>
               ) : (
                 <p className="text-indigo-300 mt-1 text-sm">ソロ活動</p>
@@ -214,10 +214,10 @@ export default async function PersonPage({ params }: Props) {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-bold text-slate-800">{person.group} のメンバー</h2>
               <Link
-                href={`/search?q=${encodeURIComponent(person.group)}`}
+                href={`/group/${encodeURIComponent(person.group)}`}
                 className="text-primary text-sm font-medium hover:underline"
               >
-                全員を見る →
+                グループページへ →
               </Link>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
