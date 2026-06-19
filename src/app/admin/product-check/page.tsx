@@ -100,6 +100,9 @@ export default async function AdminProductCheckPage() {
           <a href="/admin/providers" className="text-xs text-indigo-600 hover:underline">
             配信サービス管理 →
           </a>
+          <a href="/admin/people/import" className="text-xs text-indigo-600 hover:underline">
+            人物CSV登録 →
+          </a>
           <a href="/api/admin/logout" className="text-xs text-gray-400 hover:text-red-500">
             ログアウト
           </a>
