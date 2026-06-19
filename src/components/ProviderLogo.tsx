@@ -153,10 +153,10 @@ export default function ProviderLogo({
   const registeredFailed = useRef(false);
 
   useEffect(() => {
-    if (logoPath) return; // TMDb ロゴがある場合は不要
+    // logoPath（TMDb）の有無に関わらず常に確認する。
+    // 管理画面登録ロゴが最優先なので、取得できた時点で状態を上書きする。
     fetchRegisteredProviders().then((providers) => {
       const serviceKey = resolveServiceKey(providerName);
-      // PROVIDER_SLUG 経由のファイル slug またはサービスキーで検索
       const url = providers[localSlug ?? ''] ?? providers[serviceKey] ?? null;
       if (url) {
         setRegisteredUrl(url);
@@ -164,20 +164,20 @@ export default function ProviderLogo({
         registeredFailed.current = false;
       }
     });
-  }, [providerName, logoPath, localSlug]);
+  }, [providerName, localSlug]);
 
+  // 優先順位: registered → tmdb → local → fallback
   const handleError = () => {
-    if (imgState === 'tmdb') {
-      // registered → local → fallback
-      if (registeredUrl && !registeredFailed.current) {
-        setImgState('registered');
+    if (imgState === 'registered') {
+      registeredFailed.current = true;
+      if (logoPath) {
+        setImgState('tmdb');
       } else if (localSlug) {
         setImgState('local');
       } else {
         setImgState('fallback');
       }
-    } else if (imgState === 'registered') {
-      registeredFailed.current = true;
+    } else if (imgState === 'tmdb') {
       setImgState(localSlug ? 'local' : 'fallback');
     } else {
       setImgState('fallback');
