@@ -43,6 +43,9 @@ export default async function WorkCheckPage() {
           <a href="/admin/product-check" className="text-xs text-indigo-600 hover:underline">
             ← 商品確認
           </a>
+          <a href="/admin/providers" className="text-xs text-indigo-600 hover:underline">
+            配信サービス管理 →
+          </a>
           <a
             href="/api/admin/logout"
             className="text-xs text-gray-400 hover:text-red-500 transition-colors"

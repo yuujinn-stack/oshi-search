@@ -5,14 +5,28 @@
  *
  * 画像の取得順:
  *  1. TMDb logoPath  （tmdb_watch_provider データから）
- *  2. /providers/{slug}.png  （/public/providers/ に置いた独自画像）
- *  3. SVG フォールバックアイコン  （文字表示は一切しない）
+ *  2. 管理画面登録 logoUrl  （Redis → /api/providers）
+ *  3. /providers/{slug}.png  （/public/providers/ に置いた独自画像）
+ *  4. SVG フォールバックアイコン  （文字表示は一切しない）
  */
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { normalizeProviderName } from '@/lib/vod-dedup';
 
 const TMDB_LOGO_BASE = 'https://image.tmdb.org/t/p/w92';
+
+// ─── 管理画面登録ロゴのモジュールレベルキャッシュ ────────────────────────────
+// ページロードごとに 1 回だけ /api/providers を取得し、全インスタンスで共有する
+let _providersPromise: Promise<Record<string, string>> | null = null;
+
+function fetchRegisteredProviders(): Promise<Record<string, string>> {
+  if (!_providersPromise) {
+    _providersPromise = fetch('/api/providers')
+      .then((r) => (r.ok ? (r.json() as Promise<Record<string, string>>) : Promise.resolve({})))
+      .catch(() => ({}));
+  }
+  return _providersPromise;
+}
 
 // ─── Amazon Channel → 親サービスキーのマッピング ────────────────────────────
 const AMAZON_CHANNEL_PARENT: Record<string, string> = {
@@ -101,23 +115,21 @@ function PlayFallback() {
       className="w-3/5 h-3/5"
       aria-hidden="true"
     >
-      {/* 薄いグレー円 */}
       <circle cx="20" cy="20" r="20" fill="#F3F4F6" />
-      {/* プレイ三角 */}
       <path d="M16 13l12 7-12 7V13z" fill="#D1D5DB" />
     </svg>
   );
 }
 
 // ─── 状態マシン ───────────────────────────────────────────────────────────────
-type ImgState = 'tmdb' | 'local' | 'fallback';
+// tmdb → registered → local → fallback の順で試みる
+type ImgState = 'tmdb' | 'registered' | 'local' | 'fallback';
 
 // ─── コンポーネント ───────────────────────────────────────────────────────────
 interface Props {
   providerName: string;
-  logoPath?: string;   // TMDb の logoPath（例: "/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg"）
+  logoPath?: string;
   size?: Size;
-  /** 外側 div への追加クラス（rounded-xl / shadow-sm など） */
   className?: string;
 }
 
@@ -135,8 +147,37 @@ export default function ProviderLogo({
     return 'fallback';
   });
 
+  // 管理画面登録ロゴ（非同期で取得）
+  const [registeredUrl, setRegisteredUrl] = useState<string | null>(null);
+  // registered を試みた後に失敗したか（handleError 内で使う）
+  const registeredFailed = useRef(false);
+
+  useEffect(() => {
+    if (logoPath) return; // TMDb ロゴがある場合は不要
+    fetchRegisteredProviders().then((providers) => {
+      const serviceKey = resolveServiceKey(providerName);
+      // PROVIDER_SLUG 経由のファイル slug またはサービスキーで検索
+      const url = providers[localSlug ?? ''] ?? providers[serviceKey] ?? null;
+      if (url) {
+        setRegisteredUrl(url);
+        setImgState('registered');
+        registeredFailed.current = false;
+      }
+    });
+  }, [providerName, logoPath, localSlug]);
+
   const handleError = () => {
     if (imgState === 'tmdb') {
+      // registered → local → fallback
+      if (registeredUrl && !registeredFailed.current) {
+        setImgState('registered');
+      } else if (localSlug) {
+        setImgState('local');
+      } else {
+        setImgState('fallback');
+      }
+    } else if (imgState === 'registered') {
+      registeredFailed.current = true;
       setImgState(localSlug ? 'local' : 'fallback');
     } else {
       setImgState('fallback');
@@ -144,8 +185,9 @@ export default function ProviderLogo({
   };
 
   const imgSrc =
-    imgState === 'tmdb'  ? `${TMDB_LOGO_BASE}${logoPath}` :
-    imgState === 'local' ? `/providers/${localSlug}.png`  :
+    imgState === 'tmdb'       ? `${TMDB_LOGO_BASE}${logoPath}` :
+    imgState === 'registered' ? registeredUrl :
+    imgState === 'local'      ? `/providers/${localSlug}.png` :
     null;
 
   return (
