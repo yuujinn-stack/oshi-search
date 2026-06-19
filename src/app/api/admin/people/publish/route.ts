@@ -1,9 +1,10 @@
 // インポート済み人物を公開ページに反映する API
 // POST: 指定した人物（または未公開全員）を persons:published ハッシュに書き込む
-// 書き込み後 revalidateTag('persons') で公開ページのキャッシュをバスト
+// 書き込み後 revalidatePath でホームページの ISR キャッシュをバスト
+// /search / /group / /person は force-dynamic なので revalidatePath 不要
 
 import { NextRequest, NextResponse } from 'next/server';
-import { revalidateTag } from 'next/cache';
+import { revalidatePath } from 'next/cache';
 import {
   getAllImportedPersons,
   type ImportedPerson,
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
     // ── 非公開化 ─────────────────────────────────────────────────────────────
     if (unpublish) {
       await unpublishPerson(unpublish);
-      revalidateTag('persons', 'default');
+      revalidatePath('/', 'page');
       return NextResponse.json({ ok: true, unpublished: unpublish });
     }
 
@@ -82,7 +83,9 @@ export async function POST(req: NextRequest) {
 
     const records = targets.map(toPublishedRecord);
     await publishPersonsBatch(records);
-    revalidateTag('persons', 'default');
+
+    // ホームページの ISR キャッシュをバスト（force-dynamic なページは不要）
+    revalidatePath('/', 'page');
 
     return NextResponse.json({
       published: records.map((r) => r.name),

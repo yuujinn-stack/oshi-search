@@ -1,6 +1,7 @@
 import type { Person, PersonConfig, PersonWithConfig, Genre } from '@/types/person';
 import personsRaw from '../../data/persons_master.json';
 import personsConfigRaw from '../../data/persons_config.json';
+import { getCachedPublishedPersons } from './published-persons';
 
 // JSON を型付き配列に変換（fs.readFileSync を使わないのでサーバーレス環境でも安全）
 const ALL_PERSONS: Person[] = (personsRaw as Array<{ name: string; group: string; genre: string }>).map(
@@ -9,12 +10,12 @@ const ALL_PERSONS: Person[] = (personsRaw as Array<{ name: string; group: string
 
 const PERSONS_CONFIG: Record<string, PersonConfig> = personsConfigRaw as Record<string, PersonConfig>;
 
-// --- 人物一覧 ---
+// ── 同期関数（admin バッチ処理・既存 API から使う）──────────────────────────
+
 export function getAllPersons(): Person[] {
   return ALL_PERSONS;
 }
 
-// --- PersonWithConfig ヘルパー ---
 export function getPersonWithConfig(name: string): PersonWithConfig | undefined {
   const person = getPersonByName(name);
   if (!person) return undefined;
@@ -25,7 +26,6 @@ export function getAllPersonsWithConfig(): PersonWithConfig[] {
   return ALL_PERSONS.map((p) => ({ ...p, config: PERSONS_CONFIG[p.name] ?? {} }));
 }
 
-// --- 既存の検索ユーティリティ ---
 export function searchPersons(query: string): Person[] {
   const q = query.toLowerCase();
   return ALL_PERSONS.filter(
@@ -54,19 +54,18 @@ export function getAllGroups(): string[] {
 
 export const ALL_GENRES: Genre[] = ['坂道', '芸人', 'テレビ', 'アーティスト', '俳優'];
 
-// ─── Async merged functions (JSON + Redis published) ─────────────────────────
-// 公開ページはすべてこちらを使う。Redis `persons:published` に登録された
-// インポート人物が persons_master.json の後に追加される。
-
-import { getCachedPublishedPersons } from './published-persons';
+// ── 非同期マージ関数（公開ページで使う）────────────────────────────────────
+// persons_master.json の人物 ＋ Redis persons:published の公開反映済み人物を返す。
+// getCachedPublishedPersons は react.cache でリクエスト内重複を防ぐ。
+// cross-request キャッシュなし → 公開反映直後のリクエストから即時反映される。
 
 async function getPublishedExtra(): Promise<PersonWithConfig[]> {
   const published = await getCachedPublishedPersons();
   const jsonNames = new Set(ALL_PERSONS.map((p) => p.name));
+  // JSON に既にいる人物は除外（重複防止）
   return published.filter((p) => !jsonNames.has(p.name));
 }
 
-/** JSON persons + Redis published（公開ページ向け） */
 export async function getAllPersonsMerged(): Promise<PersonWithConfig[]> {
   const extra = await getPublishedExtra();
   return [

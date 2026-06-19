@@ -2,7 +2,7 @@
 // getAllPersonsMerged() から参照される。公開ページで使う唯一の追加データソース。
 // 管理画面 /admin/people/import の「公開反映」ボタンからのみ書き込む。
 
-import { unstable_cache } from 'next/cache';
+import { cache } from 'react';
 import { getRedis } from './redis';
 import type { PersonWithConfig } from '@/types/person';
 
@@ -13,7 +13,7 @@ export interface PublishedRecord extends PersonWithConfig {
   publishedAt: number;
 }
 
-// ── Raw fetch（キャッシュなし・admin 操作から呼ぶ）──────────────────────────
+// ── Raw fetch（キャッシュなし）────────────────────────────────────────────────
 export async function getAllPublishedPersonsRaw(): Promise<PublishedRecord[]> {
   const redis = getRedis();
   if (!redis) return [];
@@ -30,15 +30,12 @@ export async function getAllPublishedPersonsRaw(): Promise<PublishedRecord[]> {
   }
 }
 
-// ── キャッシュ版（公開ページから呼ぶ）─────────────────────────────────────
-// revalidateTag('persons') で即時バスト、最大 60s キャッシュ
-export const getCachedPublishedPersons = unstable_cache(
-  async (): Promise<PublishedRecord[]> => getAllPublishedPersonsRaw(),
-  ['persons-published'],
-  { tags: ['persons'], revalidate: 60 },
-);
+// ── リクエスト内メモ化版（公開ページから呼ぶ）─────────────────────────────
+// react の cache() でリクエスト内の重複 Redis 呼び出しを防ぐ。
+// cross-request キャッシュは使わないため、常に最新データを返す。
+export const getCachedPublishedPersons = cache(getAllPublishedPersonsRaw);
 
-// ── 公開済み人物名の Set（PersonList の表示判定用）─────────────────────────
+// ── 公開済み人物名の一覧（PersonList の表示判定用）─────────────────────────
 export async function getPublishedPersonNames(): Promise<string[]> {
   const redis = getRedis();
   if (!redis) return [];
