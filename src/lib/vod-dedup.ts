@@ -34,6 +34,7 @@ export function normalizeProviderName(name: string): string {
     .toLowerCase()
     .replace(/\s*csv\s*$/i, '')          // 末尾の " CSV" を除去
     .replace(/^csv\s+/i, '')             // 先頭の "CSV " を除去
+    .replace(/\s*[|｜]\s*.*$/g, '')      // "|" 以降を削除（"Hulu | フールー" → "hulu"）
     .replace(/[+＋]/g, 'plus')           // "+" → "plus"（Disney+ など）
     .replace(/[-_\s・　]/g, '')           // ハイフン・アンダースコア・スペース除去
     .replace(/[（(][^)）]*[)）]/g, '')    // 括弧とその中身を除去

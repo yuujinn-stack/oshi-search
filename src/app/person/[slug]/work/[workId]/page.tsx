@@ -9,6 +9,7 @@ import type { VodProvider } from '@/types/vod';
 import type { ProductCategory } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
 import { deduplicateProviders, normalizeProviderName } from '@/lib/vod-dedup';
+import ServiceIcon from '@/components/ServiceIcon';
 
 interface Props {
   params: Promise<{ slug: string; workId: string }>;
@@ -142,7 +143,6 @@ function getVodLink(p: VodProvider): string | undefined {
 
 // ─── その他の定数 ──────────────────────────────────────────────────────────────
 const TYPE_ORDER: Record<string, number> = { flatrate: 0, free: 1, ads: 2, rent: 3, buy: 4, unknown: 5 };
-const TMDB_LOGO_BASE = 'https://image.tmdb.org/t/p/w45';
 
 const CATEGORY_ICON: Record<string, string> = {
   'Blu-ray・DVD': '📀',
@@ -391,14 +391,12 @@ export default async function WorkDetailPage({ params }: Props) {
                     <div key={`${p.providerId}-${p.type}-${i}`} className={`rounded-xl border ${cfg.border} ${cfg.bg} p-3`}>
                       <div className="flex items-center gap-3">
                         {/* ロゴ */}
-                        <div className="w-11 h-11 rounded-xl bg-white shadow-sm overflow-hidden flex items-center justify-center flex-shrink-0 border border-gray-100">
-                          {p.logoPath ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={`${TMDB_LOGO_BASE}${p.logoPath}`} alt={p.providerName} className="w-11 h-11 object-contain" />
-                          ) : (
-                            <span className="text-[10px] text-gray-400 text-center px-1 leading-tight font-medium">{p.providerName.slice(0, 4)}</span>
-                          )}
-                        </div>
+                        <ServiceIcon
+                          providerName={p.providerName}
+                          logoPath={p.logoPath}
+                          size="xl"
+                          className="rounded-xl shadow-sm"
+                        />
                         {/* サービス名・種別 */}
                         <div className="flex-1 min-w-0">
                           <p className="font-bold text-slate-800 text-sm leading-tight">{p.providerName}</p>

@@ -1,8 +1,7 @@
 import Link from 'next/link';
 import type { WorkRecord } from '@/types/work';
 import { deduplicateProviders } from '@/lib/vod-dedup';
-
-const PROVIDER_LOGO_BASE = 'https://image.tmdb.org/t/p/w45';
+import ServiceIcon from '@/components/ServiceIcon';
 
 // 定額配信（flatrate）を最優先、次に無料・広告付き、購入・レンタルは後ろ
 const TYPE_ORDER: Record<string, number> = {
@@ -141,14 +140,12 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
                   VOD_SOURCE_BADGE[p.source] ?? 'bg-gray-50 border-gray-200 text-gray-700'
                 }`}
               >
-                {p.logoPath ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={`${PROVIDER_LOGO_BASE}${p.logoPath}`}
-                    alt={p.providerName}
-                    className="w-4 h-4 rounded-sm object-contain"
-                  />
-                ) : null}
+                <ServiceIcon
+                  providerName={p.providerName}
+                  logoPath={p.logoPath}
+                  size="xs"
+                  className="rounded-sm border-0 bg-transparent"
+                />
                 <span className="truncate max-w-[5rem]">{p.providerName}</span>
               </span>
             ))}

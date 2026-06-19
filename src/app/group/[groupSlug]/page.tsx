@@ -8,6 +8,7 @@ import { getAllVerdicts } from '@/lib/judgment-store';
 import { deduplicateProviders } from '@/lib/vod-dedup';
 import PersonCard from '@/components/PersonCard';
 import WorkCard from '@/components/WorkCard';
+import ServiceIcon from '@/components/ServiceIcon';
 import type { WorkRecord } from '@/types/work';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
@@ -20,7 +21,6 @@ interface Props {
 }
 
 // ─── 定数 ──────────────────────────────────────────────────────────────────────
-const TMDB_LOGO_BASE = 'https://image.tmdb.org/t/p/w45';
 const MAX_PRODUCTS_PER_SECTION = 12;
 const MAX_WORKS_PER_PROVIDER = 6;
 
@@ -485,20 +485,11 @@ export default async function GroupPage({ params }: Props) {
                     className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
                   >
                     <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
-                      <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0">
-                        {logoPath ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={`${TMDB_LOGO_BASE}${logoPath}`}
-                            alt={providerName}
-                            className="w-8 h-8 object-contain"
-                          />
-                        ) : (
-                          <span className="text-[9px] text-gray-400 font-medium text-center">
-                            {providerName.slice(0, 3)}
-                          </span>
-                        )}
-                      </div>
+                      <ServiceIcon
+                        providerName={providerName}
+                        logoPath={logoPath}
+                        size="md"
+                      />
                       <span className="font-semibold text-slate-700 text-sm flex-1">
                         {providerName}
                       </span>
