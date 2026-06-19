@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import PersonCard from '@/components/PersonCard';
-import { getPersonsByGenre, ALL_GENRES } from '@/lib/persons';
+import { getPersonsByGenreMerged, ALL_GENRES } from '@/lib/persons';
 import type { Genre } from '@/types/person';
 
 interface Props {
@@ -23,7 +23,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function GenrePage({ params }: Props) {
   const { genre } = await params;
   const decodedGenre = decodeURIComponent(genre) as Genre;
-  const persons = getPersonsByGenre(decodedGenre);
+  const persons = await getPersonsByGenreMerged(decodedGenre);
 
   // Group by group name
   const grouped = persons.reduce<Record<string, typeof persons>>((acc, p) => {

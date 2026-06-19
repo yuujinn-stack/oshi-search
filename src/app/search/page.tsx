@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import SearchForm from '@/components/SearchForm';
 import PersonCard from '@/components/PersonCard';
-import { searchPersons, getAllPersons } from '@/lib/persons';
+import { searchPersonsMerged, getAllPersonsMerged } from '@/lib/persons';
 
 interface Props {
   searchParams: Promise<{ q?: string }>;
@@ -17,8 +17,8 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
 
 export default async function SearchPage({ searchParams }: Props) {
   const { q } = await searchParams;
-  const query = q?.trim() ?? '';
-  const persons = query ? searchPersons(query) : getAllPersons();
+  const query   = q?.trim() ?? '';
+  const persons = query ? await searchPersonsMerged(query) : await getAllPersonsMerged();
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getAllGroups, getPersonsByGroup } from '@/lib/persons';
+import { getAllPersonsMerged } from '@/lib/persons';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts, CATEGORIES } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
@@ -134,7 +134,8 @@ function MiniProductCard({ product, used }: { product: RakutenItem; used?: boole
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { groupSlug } = await params;
   const groupName = decodeURIComponent(groupSlug);
-  const members = getPersonsByGroup(groupName);
+  const allPersons = await getAllPersonsMerged();
+  const members = allPersons.filter((p) => p.group === groupName);
   if (members.length === 0) return {};
 
   return {
@@ -151,8 +152,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 // ─── ページ ────────────────────────────────────────────────────────────────────
 export default async function GroupPage({ params }: Props) {
   const { groupSlug } = await params;
-  const groupName = decodeURIComponent(groupSlug);
-  const members = getPersonsByGroup(groupName);
+  const groupName  = decodeURIComponent(groupSlug);
+  const allPersons = await getAllPersonsMerged();
+  const members    = allPersons.filter((p) => p.group === groupName);
   if (members.length === 0) notFound();
 
   const genre = members[0]?.genre;
@@ -264,9 +266,10 @@ export default async function GroupPage({ params }: Props) {
   const totalProductCount = newProductMap.size + usedProductMap.size;
 
   // ── 関連グループ（同ジャンル・別グループ）──
-  const relatedGroupNames = getAllGroups().filter((g) => {
+  const allGroups = [...new Set(allPersons.map((p) => p.group).filter(Boolean))];
+  const relatedGroupNames = allGroups.filter((g) => {
     if (g === groupName) return false;
-    return getPersonsByGroup(g).some((m) => m.genre === genre);
+    return allPersons.filter((p) => p.group === g).some((p) => p.genre === genre);
   });
 
   // ── JSON-LD ──

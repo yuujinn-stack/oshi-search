@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getPersonWithConfig, getPersonsByGroup } from '@/lib/persons';
+import { getPersonWithConfigMerged, getPersonsByGroupMerged } from '@/lib/persons';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 import { getPublishedWorks } from '@/lib/work-store';
@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic';
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const name = decodeURIComponent(slug);
-  const person = getPersonWithConfig(name);
+  const person = await getPersonWithConfigMerged(name);
   if (!person) return {};
 
   const groupText = person.group ? `（${person.group}）` : '';
@@ -56,14 +56,11 @@ const DISPLAY_SECTIONS: Array<{
 export default async function PersonPage({ params }: Props) {
   const { slug } = await params;
   const name = decodeURIComponent(slug);
-  const person = getPersonWithConfig(name);
+  const person = await getPersonWithConfigMerged(name);
   if (!person) notFound();
 
-  const related = person.group
-    ? getPersonsByGroup(person.group)
-        .filter((p) => p.name !== person.name)
-        .slice(0, 4)
-    : [];
+  const groupMembers = person.group ? await getPersonsByGroupMerged(person.group) : [];
+  const related = groupMembers.filter((p) => p.name !== person.name).slice(0, 4);
 
   // Redis から保存済み商品・判定結果・出演作品を並列取得
   // ユーザーページでは楽天 API / OpenAI API / TMDb API を一切呼ばない

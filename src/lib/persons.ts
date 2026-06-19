@@ -53,3 +53,58 @@ export function getAllGroups(): string[] {
 }
 
 export const ALL_GENRES: Genre[] = ['坂道', '芸人', 'テレビ', 'アーティスト', '俳優'];
+
+// ─── Async merged functions (JSON + Redis published) ─────────────────────────
+// 公開ページはすべてこちらを使う。Redis `persons:published` に登録された
+// インポート人物が persons_master.json の後に追加される。
+
+import { getCachedPublishedPersons } from './published-persons';
+
+async function getPublishedExtra(): Promise<PersonWithConfig[]> {
+  const published = await getCachedPublishedPersons();
+  const jsonNames = new Set(ALL_PERSONS.map((p) => p.name));
+  return published.filter((p) => !jsonNames.has(p.name));
+}
+
+/** JSON persons + Redis published（公開ページ向け） */
+export async function getAllPersonsMerged(): Promise<PersonWithConfig[]> {
+  const extra = await getPublishedExtra();
+  return [
+    ...ALL_PERSONS.map((p) => ({ ...p, config: PERSONS_CONFIG[p.name] ?? {} })),
+    ...extra,
+  ];
+}
+
+export async function getPersonWithConfigMerged(name: string): Promise<PersonWithConfig | undefined> {
+  const jsonPerson = ALL_PERSONS.find((p) => p.name === name);
+  if (jsonPerson) return { ...jsonPerson, config: PERSONS_CONFIG[name] ?? {} };
+  const extra = await getPublishedExtra();
+  return extra.find((p) => p.name === name);
+}
+
+export async function getAllGroupsMerged(): Promise<string[]> {
+  const all = await getAllPersonsMerged();
+  return [...new Set(all.map((p) => p.group).filter(Boolean))];
+}
+
+export async function getPersonsByGroupMerged(group: string): Promise<PersonWithConfig[]> {
+  const all = await getAllPersonsMerged();
+  return all.filter((p) => p.group === group);
+}
+
+export async function getPersonsByGenreMerged(genre: string): Promise<PersonWithConfig[]> {
+  const all = await getAllPersonsMerged();
+  return all.filter((p) => p.genre === genre);
+}
+
+export async function searchPersonsMerged(query: string): Promise<PersonWithConfig[]> {
+  const q = query.toLowerCase();
+  const all = await getAllPersonsMerged();
+  return all.filter(
+    (p) =>
+      p.name.toLowerCase().includes(q) ||
+      p.group.toLowerCase().includes(q) ||
+      p.genre.toLowerCase().includes(q) ||
+      (p.config.aliases ?? []).some((a) => a.toLowerCase().includes(q)),
+  );
+}

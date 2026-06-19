@@ -1,7 +1,10 @@
 import Link from 'next/link';
 import SearchForm from '@/components/SearchForm';
 import PersonCard from '@/components/PersonCard';
-import { getAllPersons, getAllGroups, ALL_GENRES } from '@/lib/persons';
+import { getAllPersonsMerged, ALL_GENRES } from '@/lib/persons';
+
+// 公開反映時に revalidateTag('persons') でキャッシュバスト、最大 60s ISR
+export const revalidate = 60;
 
 const GENRE_EMOJI: Record<string, string> = {
   '坂道': '🌸',
@@ -11,9 +14,9 @@ const GENRE_EMOJI: Record<string, string> = {
   '俳優': '🎬',
 };
 
-export default function HomePage() {
-  const persons = getAllPersons();
-  const groups = getAllGroups();
+export default async function HomePage() {
+  const persons = await getAllPersonsMerged();
+  const groups  = [...new Set(persons.map((p) => p.group).filter(Boolean))];
   const featured = persons.slice(0, 8);
 
   return (
