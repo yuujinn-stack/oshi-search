@@ -8,8 +8,9 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const map = await getActiveProviderLogoMap();
+    // CDN・ブラウザキャッシュを無効化し、管理画面の更新を即時反映させる
     return NextResponse.json(map, {
-      headers: { 'Cache-Control': 'public, max-age=300, stale-while-revalidate=600' },
+      headers: { 'Cache-Control': 'no-store' },
     });
   } catch {
     return NextResponse.json({});

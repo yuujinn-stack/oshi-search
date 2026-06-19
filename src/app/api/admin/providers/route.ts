@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllProviders, saveProvider } from '@/lib/provider-store';
 import type { ProviderRecord } from '@/lib/provider-store';
+import { normalizeProviderName } from '@/lib/vod-dedup';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,10 +26,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // slug は ProviderLogo の resolveServiceKey と同じ正規化ルールを適用する
+    // 例: "U-NEXT" / "u-next" → "unext" / "Prime Video" → "primevideo"
+    const normalizedSlug = normalizeProviderName(slug.trim());
+
     const record: ProviderRecord = {
-      id: slug.trim().toLowerCase(),
+      id: normalizedSlug,
       name: name.trim(),
-      slug: slug.trim().toLowerCase(),
+      slug: normalizedSlug,
       logoUrl: logoUrl.trim(),
       isActive: isActive ?? true,
       createdAt: Date.now(),
