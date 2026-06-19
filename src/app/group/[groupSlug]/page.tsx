@@ -8,7 +8,7 @@ import { getAllVerdicts } from '@/lib/judgment-store';
 import { deduplicateProviders } from '@/lib/vod-dedup';
 import PersonCard from '@/components/PersonCard';
 import WorkCard from '@/components/WorkCard';
-import ServiceIcon from '@/components/ServiceIcon';
+import ProviderLogo from '@/components/ProviderLogo';
 import type { WorkRecord } from '@/types/work';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
@@ -485,7 +485,7 @@ export default async function GroupPage({ params }: Props) {
                     className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
                   >
                     <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
-                      <ServiceIcon
+                      <ProviderLogo
                         providerName={providerName}
                         logoPath={logoPath}
                         size="md"

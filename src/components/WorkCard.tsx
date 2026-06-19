@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import type { WorkRecord } from '@/types/work';
 import { deduplicateProviders } from '@/lib/vod-dedup';
-import ServiceIcon from '@/components/ServiceIcon';
+import ProviderLogo from '@/components/ProviderLogo';
 
 // 定額配信（flatrate）を最優先、次に無料・広告付き、購入・レンタルは後ろ
 const TYPE_ORDER: Record<string, number> = {
@@ -140,7 +140,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
                   VOD_SOURCE_BADGE[p.source] ?? 'bg-gray-50 border-gray-200 text-gray-700'
                 }`}
               >
-                <ServiceIcon
+                <ProviderLogo
                   providerName={p.providerName}
                   logoPath={p.logoPath}
                   size="xs"

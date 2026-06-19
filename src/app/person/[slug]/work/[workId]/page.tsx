@@ -9,7 +9,7 @@ import type { VodProvider } from '@/types/vod';
 import type { ProductCategory } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
 import { deduplicateProviders, normalizeProviderName } from '@/lib/vod-dedup';
-import ServiceIcon from '@/components/ServiceIcon';
+import ProviderLogo from '@/components/ProviderLogo';
 
 interface Props {
   params: Promise<{ slug: string; workId: string }>;
@@ -391,7 +391,7 @@ export default async function WorkDetailPage({ params }: Props) {
                     <div key={`${p.providerId}-${p.type}-${i}`} className={`rounded-xl border ${cfg.border} ${cfg.bg} p-3`}>
                       <div className="flex items-center gap-3">
                         {/* ロゴ */}
-                        <ServiceIcon
+                        <ProviderLogo
                           providerName={p.providerName}
                           logoPath={p.logoPath}
                           size="xl"
