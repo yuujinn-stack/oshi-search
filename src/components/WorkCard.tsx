@@ -45,9 +45,6 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
     ['buy', 'rent'].includes(p.type),
   );
 
-  // JustWatchリンク（flatrate > free > ads > buy > rent の順で優先）
-  const jwLink = sortedProviders.find((p) => p.link)?.link;
-
   // AI補完のみかどうか（openai_supplement / openai_web_search のみ）
   const hasAiOnly =
     sortedProviders.length > 0 &&
@@ -189,28 +186,13 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
           <p className="text-[10px] text-gray-300">確認日: {checkedDate}</p>
         )}
 
-        {/* 視聴先ボタン */}
-        {jwLink ? (
-          <a
-            href={jwLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block text-center text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-xl transition-colors"
-          >
-            視聴先を探す →
-          </a>
-        ) : (
-          <Link
-            href={workDetailUrl}
-            className={`block text-center text-xs py-1.5 rounded-xl border transition-colors ${
-              sortedProviders.length === 0
-                ? 'font-semibold text-indigo-600 border-indigo-300 hover:bg-indigo-50'
-                : 'text-gray-400 hover:text-indigo-500 border-gray-200 hover:border-indigo-300'
-            }`}
-          >
-            {sortedProviders.length === 0 ? 'TMDbで詳細を見る' : '詳細を見る'}
-          </Link>
-        )}
+        {/* 作品詳細ボタン（常に内部リンク） */}
+        <Link
+          href={workDetailUrl}
+          className="block text-center text-xs font-semibold text-indigo-600 border border-indigo-300 hover:bg-indigo-50 py-1.5 rounded-xl transition-colors"
+        >
+          作品詳細 →
+        </Link>
       </div>
     </div>
   );
