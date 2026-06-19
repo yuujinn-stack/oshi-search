@@ -8,6 +8,7 @@ import { storeProducts, saveBatchMeta, CATEGORIES } from './product-store';
 import { getAllVerdicts, saveVerdict } from './judgment-store';
 import { judgeProducts, shouldAutoApprove, PROMPT_VERSION } from './ai-judge';
 import type { RakutenItem } from '@/types/rakuten';
+import type { PersonWithConfig } from '@/types/person';
 
 // 1人あたりの AI 呼び出し上限（Vercel の 300s タイムアウト対策）
 const MAX_AI_PER_PERSON = 150;
@@ -42,12 +43,14 @@ export interface BatchSummary {
 
 // 人物1人分のバッチ処理
 // forceRejudge=true の場合: ai判定済み商品も再判定（manual は常に保持）
+// configOverride: persons_master.json にない人物（CSVインポート組）を処理するときに使う
 export async function processPerson(
   personName: string,
   forceRejudge = false,
+  configOverride?: PersonWithConfig,
 ): Promise<PersonBatchResult> {
   const all = getAllPersonsWithConfig();
-  const person = all.find((p) => p.name === personName);
+  const person = configOverride ?? all.find((p) => p.name === personName);
   if (!person) {
     return { personName, stored: 0, aiJudged: 0, aiQueued: 0, skipped: 0, excluded: 0, error: '人物が見つかりません' };
   }

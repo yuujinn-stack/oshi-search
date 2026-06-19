@@ -179,14 +179,15 @@ export async function POST(req: NextRequest) {
     const toAdd: ImportedPerson[] = previewRows
       .filter((r) => r.action === 'add')
       .map((r) => ({
-        name:         r.name,
-        group:        r.group,
-        genre:        r.genre,
-        aliases:      r.aliases,
-        tmdbPersonId: r.tmdbPersonId ?? undefined,
-        description:  r.description || undefined,
-        status:       'imported' as const,
-        importedAt:   Date.now(),
+        name:             r.name,
+        group:            r.group,
+        genre:            r.genre,
+        aliases:          r.aliases,
+        tmdbPersonId:     r.tmdbPersonId ?? undefined,
+        description:      r.description || undefined,
+        status:           'imported' as const,
+        importedAt:       Date.now(),
+        dataFetchStatus:  'not_started' as const,
       }));
 
     const errors: string[] = [];

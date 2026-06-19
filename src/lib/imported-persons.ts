@@ -1,11 +1,18 @@
 // CSVインポートで登録した人物データの永続ストレージ（Upstash Redis）
 // 管理画面 /admin/people/import からのみ書き込む
-// 将来のバッチ処理（TMDb/VOD/楽天取得）で getImportedPersonNames() を使う
+// getImportedPersonNames() を将来のバッチ処理（TMDb/VOD/楽天取得）で使う
 
 import { getRedis } from './redis';
 import type { Genre } from '@/types/person';
 
 const HASH_KEY = 'imported:persons';
+
+export type DataFetchStatus =
+  | 'not_started'   // 未取得
+  | 'processing'    // 取得中
+  | 'completed'     // 取得完了
+  | 'partial_error' // 一部失敗
+  | 'failed';       // 全体失敗
 
 export interface ImportedPerson {
   name: string;
@@ -16,6 +23,21 @@ export interface ImportedPerson {
   description?: string;
   status: 'imported';
   importedAt: number;
+  // データ取得状態
+  dataFetchStatus: DataFetchStatus;
+  lastDataFetchedAt?: number;
+  dataFetchErrorMessage?: string;
+}
+
+function deserialize(v: unknown): ImportedPerson | null {
+  try {
+    const record = (typeof v === 'string' ? JSON.parse(v) : v) as ImportedPerson;
+    // 旧データの移行: dataFetchStatus がない場合はデフォルト設定
+    if (!record.dataFetchStatus) record.dataFetchStatus = 'not_started';
+    return record;
+  } catch {
+    return null;
+  }
 }
 
 export async function getAllImportedPersons(): Promise<ImportedPerson[]> {
@@ -25,13 +47,7 @@ export async function getAllImportedPersons(): Promise<ImportedPerson[]> {
     const raw = await redis.hgetall(HASH_KEY);
     if (!raw) return [];
     return Object.values(raw)
-      .map((v) => {
-        try {
-          return (typeof v === 'string' ? JSON.parse(v) : v) as ImportedPerson;
-        } catch {
-          return null;
-        }
-      })
+      .map(deserialize)
       .filter((p): p is ImportedPerson => p !== null)
       .sort((a, b) => b.importedAt - a.importedAt);
   } catch {
@@ -53,6 +69,28 @@ export async function saveImportedPersonsBatch(persons: ImportedPerson[]): Promi
     entries[p.name] = JSON.stringify(p);
   }
   await redis.hset(HASH_KEY, entries);
+}
+
+export async function updateImportedPersonStatus(
+  name: string,
+  dataFetchStatus: DataFetchStatus,
+  errorMessage?: string,
+): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  const raw = await redis.hget(HASH_KEY, name);
+  if (!raw) return;
+  const person = deserialize(raw);
+  if (!person) return;
+  const updated: ImportedPerson = {
+    ...person,
+    dataFetchStatus,
+    lastDataFetchedAt: dataFetchStatus !== 'not_started' && dataFetchStatus !== 'processing'
+      ? Date.now()
+      : person.lastDataFetchedAt,
+    dataFetchErrorMessage: errorMessage ?? undefined,
+  };
+  await redis.hset(HASH_KEY, { [name]: JSON.stringify(updated) });
 }
 
 export async function deleteImportedPerson(name: string): Promise<void> {

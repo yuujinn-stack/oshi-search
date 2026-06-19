@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react';
 import type { PersonPreviewRow } from '@/app/api/admin/people/import/route';
+import type { DataFetchStatus } from '@/lib/imported-persons';
 
 const SAMPLE_CSV = `name,groupName,genre,aliases,tmdbId,description
 賀喜遥香,乃木坂46,坂道,"かっきー,賀喜ちゃん",,
@@ -20,7 +21,24 @@ const ACTION_LABEL: Record<string, string> = {
   error: 'エラー',
 };
 
+const FETCH_STATUS_LABEL: Record<DataFetchStatus, string> = {
+  not_started:   '未取得',
+  processing:    '取得中',
+  completed:     '取得完了',
+  partial_error: '一部失敗',
+  failed:        '失敗',
+};
+const FETCH_STATUS_COLOR: Record<DataFetchStatus, string> = {
+  not_started:   'text-gray-400',
+  processing:    'text-blue-600',
+  completed:     'text-green-600',
+  partial_error: 'text-amber-600',
+  failed:        'text-red-600',
+};
+
 // ─── 型 ──────────────────────────────────────────────────────────────────────
+type Phase = 'input' | 'preview' | 'fetching' | 'done';
+
 interface PreviewResult {
   rows: PersonPreviewRow[];
   addCount: number;
@@ -34,18 +52,33 @@ interface SaveResult {
   errors: string[];
 }
 
-// ─── メインコンポーネント ─────────────────────────────────────────────────────
+interface FetchResult {
+  name: string;
+  status: DataFetchStatus;
+  error?: string;
+}
+
 interface Props {
   initialCount: number;
 }
 
+// ─── メインコンポーネント ─────────────────────────────────────────────────────
 export default function ImportForm({ initialCount }: Props) {
-  const [csvText, setCsvText]           = useState('');
-  const [preview, setPreview]           = useState<PreviewResult | null>(null);
-  const [saveResult, setSaveResult]     = useState<SaveResult | null>(null);
-  const [loading, setLoading]           = useState(false);
-  const [error, setError]               = useState('');
+  const [phase, setPhase]         = useState<Phase>('input');
+  const [csvText, setCsvText]     = useState('');
+  const [preview, setPreview]     = useState<PreviewResult | null>(null);
+  const [autoFetch, setAutoFetch] = useState(false);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState('');
   const [importedCount, setImportedCount] = useState(initialCount);
+
+  // 登録結果
+  const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
+
+  // 取得進捗
+  const [fetchProgress, setFetchProgress] = useState<{ current: number; total: number; name: string } | null>(null);
+  const [fetchResults, setFetchResults]   = useState<FetchResult[]>([]);
+
   const fileRef = useRef<HTMLInputElement>(null);
 
   // ── ファイル読み込み ────────────────────────────────────────────────────────
@@ -56,12 +89,10 @@ export default function ImportForm({ initialCount }: Props) {
     reader.onload = (ev) => {
       setCsvText((ev.target?.result as string) ?? '');
       setPreview(null);
-      setSaveResult(null);
     };
     reader.readAsText(file, 'utf-8');
   }
 
-  // ── ドラッグ&ドロップ ────────────────────────────────────────────────────────
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
@@ -70,7 +101,6 @@ export default function ImportForm({ initialCount }: Props) {
     reader.onload = (ev) => {
       setCsvText((ev.target?.result as string) ?? '');
       setPreview(null);
-      setSaveResult(null);
     };
     reader.readAsText(file, 'utf-8');
   }
@@ -81,7 +111,6 @@ export default function ImportForm({ initialCount }: Props) {
     setLoading(true);
     setError('');
     setPreview(null);
-    setSaveResult(null);
     try {
       const res = await fetch('/api/admin/people/import', {
         method: 'POST',
@@ -89,11 +118,9 @@ export default function ImportForm({ initialCount }: Props) {
         body: JSON.stringify({ csvContent: csvText, commit: false }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? 'プレビューに失敗しました');
-        return;
-      }
+      if (!res.ok) { setError(data.error ?? 'プレビューに失敗しました'); return; }
       setPreview(data as PreviewResult);
+      setPhase('preview');
     } catch {
       setError('通信エラーが発生しました');
     } finally {
@@ -101,27 +128,61 @@ export default function ImportForm({ initialCount }: Props) {
     }
   }
 
-  // ── 登録 ────────────────────────────────────────────────────────────────────
+  // ── 単一人物の取得（fetch API 呼び出し）────────────────────────────────────
+  async function fetchOnePerson(name: string): Promise<FetchResult> {
+    try {
+      const res = await fetch('/api/admin/people/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      return {
+        name,
+        status: (data.status as DataFetchStatus) ?? 'failed',
+        error:  data.error,
+      };
+    } catch (err) {
+      return { name, status: 'failed', error: String(err) };
+    }
+  }
+
+  // ── 登録（+ 任意で自動取得）─────────────────────────────────────────────────
   async function handleSave() {
     if (!csvText.trim() || !preview || preview.addCount === 0) return;
     setLoading(true);
     setError('');
     try {
+      // CSV 保存
       const res = await fetch('/api/admin/people/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ csvContent: csvText, commit: true }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? '登録に失敗しました');
-        return;
-      }
+      if (!res.ok) { setError(data.error ?? '登録に失敗しました'); return; }
+
       const result = data as SaveResult;
       setSaveResult(result);
       setImportedCount((prev) => prev + result.added.length);
-      setPreview(null);
       setCsvText('');
+      setPreview(null);
+
+      // 自動取得
+      if (autoFetch && result.added.length > 0) {
+        setPhase('fetching');
+        setFetchResults([]);
+        const targets = result.added;
+
+        for (let i = 0; i < targets.length; i++) {
+          setFetchProgress({ current: i + 1, total: targets.length, name: targets[i] });
+          const fr = await fetchOnePerson(targets[i]);
+          setFetchResults((prev) => [...prev, fr]);
+        }
+        setFetchProgress(null);
+      }
+
+      setPhase('done');
     } catch {
       setError('通信エラーが発生しました');
     } finally {
@@ -130,12 +191,147 @@ export default function ImportForm({ initialCount }: Props) {
   }
 
   function handleReset() {
+    setPhase('input');
     setCsvText('');
     setPreview(null);
     setSaveResult(null);
+    setFetchResults([]);
+    setFetchProgress(null);
     setError('');
   }
 
+  // ── 取得中 ───────────────────────────────────────────────────────────────
+  if (phase === 'fetching' && fetchProgress) {
+    return (
+      <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6 text-center">
+        <div className="text-blue-700 font-bold text-lg mb-2">
+          データ取得中… {fetchProgress.current} / {fetchProgress.total}
+        </div>
+        <div className="text-sm text-blue-600 mb-4">{fetchProgress.name}</div>
+        {/* プログレスバー */}
+        <div className="w-full bg-blue-100 rounded-full h-2 mb-4">
+          <div
+            className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+            style={{ width: `${(fetchProgress.current / fetchProgress.total) * 100}%` }}
+          />
+        </div>
+        {/* これまでの結果 */}
+        {fetchResults.length > 0 && (
+          <div className="text-left mt-4 space-y-1 max-h-40 overflow-y-auto">
+            {fetchResults.map((fr) => (
+              <div key={fr.name} className="flex items-center gap-2 text-xs">
+                <span className={FETCH_STATUS_COLOR[fr.status]}>
+                  {fr.status === 'completed' ? '✓' : fr.status === 'partial_error' ? '△' : '✕'}
+                </span>
+                <span className="text-slate-700">{fr.name}</span>
+                <span className={`text-xs ${FETCH_STATUS_COLOR[fr.status]}`}>
+                  {FETCH_STATUS_LABEL[fr.status]}
+                </span>
+                {fr.error && (
+                  <span className="text-red-400 truncate max-w-[200px]">{fr.error}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-xs text-blue-400 mt-3">処理を中断しないでください</p>
+      </div>
+    );
+  }
+
+  // ── 完了 ────────────────────────────────────────────────────────────────
+  if (phase === 'done' && saveResult) {
+    const fetchCompleted     = fetchResults.filter((r) => r.status === 'completed').length;
+    const fetchPartialError  = fetchResults.filter((r) => r.status === 'partial_error').length;
+    const fetchFailed        = fetchResults.filter((r) => r.status === 'failed').length;
+    const fetchNotRun        = saveResult.added.length - fetchResults.length;
+    const didFetch           = fetchResults.length > 0;
+
+    return (
+      <div className="bg-green-50 border border-green-200 rounded-2xl p-5 space-y-4">
+        <h2 className="font-bold text-green-800 text-base">登録完了</h2>
+
+        {/* 登録サマリー */}
+        <div className="grid grid-cols-3 gap-3 text-center text-xs">
+          <div className="bg-white rounded-xl border border-green-100 py-3">
+            <div className="text-2xl font-black text-green-700">{saveResult.added.length}</div>
+            <div className="text-gray-500 mt-0.5">新規登録</div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 py-3">
+            <div className="text-2xl font-black text-gray-400">{saveResult.skipped.length}</div>
+            <div className="text-gray-400 mt-0.5">スキップ</div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 py-3">
+            <div className="text-2xl font-black text-red-400">{saveResult.errors.length}</div>
+            <div className="text-gray-400 mt-0.5">エラー</div>
+          </div>
+        </div>
+
+        {/* 取得サマリー */}
+        {didFetch && (
+          <div className="bg-white rounded-xl border border-green-100 p-3">
+            <p className="text-xs font-semibold text-gray-600 mb-2">データ取得結果</p>
+            <div className="flex flex-wrap gap-3 text-xs">
+              {fetchCompleted > 0 && (
+                <span className="text-green-600 font-medium">✓ 取得完了 {fetchCompleted}件</span>
+              )}
+              {fetchPartialError > 0 && (
+                <span className="text-amber-600 font-medium">△ 一部失敗 {fetchPartialError}件</span>
+              )}
+              {fetchFailed > 0 && (
+                <span className="text-red-500 font-medium">✕ 失敗 {fetchFailed}件</span>
+              )}
+              {fetchNotRun > 0 && (
+                <span className="text-gray-400">未取得 {fetchNotRun}件</span>
+              )}
+            </div>
+            {/* エラー詳細 */}
+            {fetchResults.filter((r) => r.error).length > 0 && (
+              <div className="mt-2 space-y-0.5">
+                {fetchResults
+                  .filter((r) => r.error)
+                  .map((r) => (
+                    <p key={r.name} className="text-xs text-red-500">
+                      {r.name}: {r.error}
+                    </p>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!didFetch && saveResult.added.length > 0 && (
+          <p className="text-xs text-gray-500">
+            ページ下部の人物一覧から「データ取得」ボタンで出演作品・楽天商品を取得できます。
+          </p>
+        )}
+
+        {/* アクション */}
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handleReset}
+            className="px-4 py-2 text-sm font-semibold bg-green-600 text-white rounded-xl hover:bg-green-700 transition-colors"
+          >
+            続けてインポートする
+          </button>
+          <a
+            href="/admin/product-check"
+            className="px-4 py-2 text-sm text-indigo-600 border border-indigo-200 rounded-xl hover:bg-indigo-50 transition-colors"
+          >
+            商品確認画面
+          </a>
+          <a
+            href="/admin/work-check"
+            className="px-4 py-2 text-sm text-indigo-600 border border-indigo-200 rounded-xl hover:bg-indigo-50 transition-colors"
+          >
+            作品確認画面
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  // ── 入力 / プレビュー 画面 ────────────────────────────────────────────────
   return (
     <div className="space-y-6">
       {/* 登録済み件数 */}
@@ -152,40 +348,8 @@ export default function ImportForm({ initialCount }: Props) {
         </a>
       </div>
 
-      {/* 成功メッセージ */}
-      {saveResult && (
-        <div className="bg-green-50 border border-green-200 rounded-2xl p-5">
-          <p className="font-bold text-green-800 mb-2">
-            {saveResult.added.length}件を登録しました
-          </p>
-          {saveResult.added.length > 0 && (
-            <div className="text-sm text-green-700 space-y-0.5">
-              {saveResult.added.map((n) => (
-                <div key={n}>✓ {n}</div>
-              ))}
-            </div>
-          )}
-          {saveResult.skipped.length > 0 && (
-            <p className="text-xs text-gray-500 mt-2">
-              スキップ: {saveResult.skipped.join('、')}
-            </p>
-          )}
-          {saveResult.errors.length > 0 && (
-            <p className="text-xs text-red-600 mt-2">
-              エラー: {saveResult.errors.join(' / ')}
-            </p>
-          )}
-          <button
-            onClick={handleReset}
-            className="mt-3 text-xs text-green-600 underline hover:no-underline"
-          >
-            続けてインポートする
-          </button>
-        </div>
-      )}
-
       {/* CSV入力エリア */}
-      {!saveResult && (
+      {phase === 'input' && (
         <div className="bg-white rounded-2xl border border-gray-200">
           <div className="px-5 py-4 border-b border-gray-100">
             <h2 className="font-bold text-slate-700 text-sm mb-1">CSV入力</h2>
@@ -209,13 +373,12 @@ export default function ImportForm({ initialCount }: Props) {
           >
             <textarea
               value={csvText}
-              onChange={(e) => { setCsvText(e.target.value); setPreview(null); setSaveResult(null); }}
+              onChange={(e) => { setCsvText(e.target.value); setPreview(null); }}
               placeholder={SAMPLE_CSV}
               rows={10}
               className="w-full font-mono text-xs border border-gray-200 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-y"
             />
             <div className="flex flex-wrap items-center gap-2 mt-2">
-              {/* ファイル選択 */}
               <label className="cursor-pointer px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
                 ファイルを選択
                 <input
@@ -226,7 +389,6 @@ export default function ImportForm({ initialCount }: Props) {
                   onChange={handleFile}
                 />
               </label>
-              {/* サンプル挿入 */}
               <button
                 type="button"
                 onClick={() => { setCsvText(SAMPLE_CSV); setPreview(null); }}
@@ -243,7 +405,6 @@ export default function ImportForm({ initialCount }: Props) {
                   クリア
                 </button>
               )}
-              {/* プレビューボタン */}
               <button
                 type="button"
                 onClick={handlePreview}
@@ -266,10 +427,16 @@ export default function ImportForm({ initialCount }: Props) {
       )}
 
       {/* プレビュー結果 */}
-      {preview && !saveResult && (
+      {phase === 'preview' && preview && (
         <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-          {/* サマリー */}
-          <div className="px-5 py-3 border-b border-gray-100 flex flex-wrap items-center gap-4">
+          {/* サマリー + 登録ボタン */}
+          <div className="px-5 py-3 border-b border-gray-100 flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => { setPhase('input'); setPreview(null); }}
+              className="text-xs text-gray-400 hover:text-gray-600"
+            >
+              ← 戻る
+            </button>
             <span className="font-bold text-slate-700 text-sm">プレビュー結果</span>
             <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
               新規追加 {preview.addCount}件
@@ -284,14 +451,40 @@ export default function ImportForm({ initialCount }: Props) {
                 エラー {preview.errorCount}件
               </span>
             )}
-            <button
-              onClick={handleSave}
-              disabled={loading || preview.addCount === 0}
-              className="ml-auto px-5 py-1.5 text-sm font-semibold bg-green-600 text-white rounded-xl hover:bg-green-700 disabled:opacity-40 transition-colors"
-            >
-              {loading ? '登録中…' : `${preview.addCount}件を登録する`}
-            </button>
+
+            {/* 自動取得チェックボックス + 登録ボタン */}
+            <div className="ml-auto flex items-center gap-3 flex-shrink-0">
+              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoFetch}
+                  onChange={(e) => setAutoFetch(e.target.checked)}
+                  className="rounded text-indigo-600"
+                />
+                <span className="text-xs text-gray-600">登録後すぐデータ取得</span>
+              </label>
+              <button
+                onClick={handleSave}
+                disabled={loading || preview.addCount === 0}
+                className="px-5 py-1.5 text-sm font-semibold bg-green-600 text-white rounded-xl hover:bg-green-700 disabled:opacity-40 transition-colors"
+              >
+                {loading ? '登録中…' : `${preview.addCount}件を登録する`}
+              </button>
+            </div>
           </div>
+
+          {autoFetch && (
+            <div className="px-5 py-2 bg-amber-50 border-b border-amber-100 text-xs text-amber-700">
+              登録後、楽天商品（AI判定含む）と TMDb 出演作品を順番に取得します。
+              人数が多い場合は数分かかります。
+            </div>
+          )}
+
+          {error && (
+            <div className="px-5 py-2 bg-red-50 border-b border-red-100">
+              <p className="text-xs text-red-600">{error}</p>
+            </div>
+          )}
 
           {/* テーブル */}
           <div className="overflow-x-auto">
@@ -325,9 +518,7 @@ export default function ImportForm({ initialCount }: Props) {
                     <td className="px-3 py-2 text-gray-500">
                       {row.aliases.length > 0 ? row.aliases.join('、') : '—'}
                     </td>
-                    <td className="px-3 py-2 text-gray-400">
-                      {row.tmdbPersonId ?? '—'}
-                    </td>
+                    <td className="px-3 py-2 text-gray-400">{row.tmdbPersonId ?? '—'}</td>
                     <td className="px-3 py-2">
                       <span className={`px-2 py-0.5 rounded-full font-medium ${ACTION_BADGE[row.action]}`}>
                         {ACTION_LABEL[row.action]}
@@ -343,7 +534,7 @@ export default function ImportForm({ initialCount }: Props) {
       )}
 
       {/* CSV 仕様メモ */}
-      {!preview && !saveResult && (
+      {phase === 'input' && !preview && (
         <details className="bg-gray-50 border border-gray-200 rounded-xl">
           <summary className="px-4 py-3 text-xs font-semibold text-gray-600 cursor-pointer select-none">
             CSV 仕様・ジャンル一覧
@@ -374,7 +565,7 @@ export default function ImportForm({ initialCount }: Props) {
 {`name,groupName,genre,aliases,tmdbId,description
 賀喜遥香,乃木坂46,坂道,"かっきー,賀喜ちゃん",,
 遠藤さくら,乃木坂46,坂道,さくちゃん|えんさく,,
-吉本ばなな,,俳優,,,,小説家`}
+吉本ばなな,,俳優,,,小説家`}
             </pre>
           </div>
         </details>
