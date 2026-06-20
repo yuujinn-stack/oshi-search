@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, upsertManualCsvVodProviders } from '@/lib/work-store';
+import { saveImportHistory } from '@/lib/import-history';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 
 export const dynamic = 'force-dynamic';
@@ -130,7 +131,8 @@ export interface VodTitlePreviewRow {
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const { csvContent, commit = false } = body as { csvContent?: string; commit?: boolean };
+  const { csvContent, commit = false, fileName } = body as { csvContent?: string; commit?: boolean; fileName?: string };
+  const startedAt = Date.now();
 
   if (!csvContent || typeof csvContent !== 'string') {
     return NextResponse.json({ error: 'csvContent が必要です' }, { status: 400 });
@@ -309,6 +311,32 @@ export async function POST(req: NextRequest) {
       errors.push(`${personName} / ${workId}: ${String(err)}`);
     }
   }
+
+  const successRows = previewRows.filter((r) => r.action === 'add' || r.action === 'update');
+  const skipRows    = previewRows.filter((r) => r.action === 'unmatched');
+  const errRows     = previewRows.filter((r) => r.action === 'error');
+
+  await saveImportHistory({
+    importType: 'vod_title_csv',
+    executedAt: startedAt,
+    fileName,
+    totalRows: previewRows.length,
+    successCount: successRows.length,
+    skipCount: skipRows.length,
+    errorCount: errRows.length + errors.length,
+    durationMs: Date.now() - startedAt,
+    status: successRows.length === 0 ? 'failed'
+          : (errRows.length + errors.length) > 0 ? 'partial_error'
+          : 'completed',
+    rows: previewRows.map((r) => ({
+      label: `${r.workTitle}（${r.personName}）`,
+      action: (r.action === 'add' || r.action === 'update') ? 'success'
+            : r.action === 'unmatched' ? 'skip'
+            : 'error',
+      reason: r.reason,
+    })),
+    csvContent: csvContent && csvContent.length < 200_000 ? csvContent : undefined,
+  }).catch(() => {});
 
   return NextResponse.json({
     savedWorkCount,

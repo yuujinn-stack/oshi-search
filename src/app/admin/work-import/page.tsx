@@ -20,6 +20,9 @@ export default function WorkImportPage() {
           <a href="/admin/people/import" className="text-gray-400 hover:underline">
             人物登録
           </a>
+          <a href="/admin/import-history" className="text-gray-400 hover:underline">
+            インポート履歴
+          </a>
           <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">
             ログアウト
           </a>

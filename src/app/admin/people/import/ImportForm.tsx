@@ -42,6 +42,7 @@ interface Props {
 export default function ImportForm({ initialCount }: Props) {
   const [phase, setPhase]         = useState<Phase>('input');
   const [csvText, setCsvText]     = useState('');
+  const [fileName, setFileName]   = useState<string | undefined>(undefined);
   const [preview, setPreview]     = useState<PreviewResult | null>(null);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState('');
@@ -53,6 +54,7 @@ export default function ImportForm({ initialCount }: Props) {
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    setFileName(file.name);
     const reader = new FileReader();
     reader.onload = (ev) => {
       setCsvText((ev.target?.result as string) ?? '');
@@ -65,6 +67,7 @@ export default function ImportForm({ initialCount }: Props) {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
     if (!file) return;
+    setFileName(file.name);
     const reader = new FileReader();
     reader.onload = (ev) => {
       setCsvText((ev.target?.result as string) ?? '');
@@ -103,7 +106,7 @@ export default function ImportForm({ initialCount }: Props) {
       const res = await fetch('/api/admin/people/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csvContent: csvText, commit: true }),
+        body: JSON.stringify({ csvContent: csvText, commit: true, fileName }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? '登録に失敗しました'); return; }

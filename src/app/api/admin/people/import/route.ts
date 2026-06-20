@@ -7,6 +7,7 @@ import {
   type ImportedPerson,
 } from '@/lib/imported-persons';
 import { enqueuePersonJob } from '@/lib/person-job-queue';
+import { saveImportHistory } from '@/lib/import-history';
 import type { Genre } from '@/types/person';
 
 export const dynamic = 'force-dynamic';
@@ -81,8 +82,9 @@ export async function GET() {
 // ─── POST: プレビュー（commit=false）または保存（commit=true）────────────────
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { csvContent?: string; commit?: boolean };
-    const { csvContent, commit = false } = body;
+    const body = (await req.json()) as { csvContent?: string; commit?: boolean; fileName?: string };
+    const { csvContent, commit = false, fileName } = body;
+    const startedAt = Date.now();
 
     if (!csvContent?.trim()) {
       return NextResponse.json({ error: 'csvContent が必要です' }, { status: 400 });
@@ -216,6 +218,25 @@ export async function POST(req: NextRequest) {
         await updateImportedPersonStatus(p.name, 'not_started').catch(() => {});
       }
     }
+
+    // 履歴保存
+    await saveImportHistory({
+      importType: 'person_csv',
+      executedAt: startedAt,
+      fileName,
+      totalRows: previewRows.filter((r) => r.name).length,
+      successCount: addCount,
+      skipCount: skipCount,
+      errorCount: errorCount,
+      durationMs: Date.now() - startedAt,
+      status: addCount === 0 && errorCount > 0 ? 'failed' : errorCount > 0 ? 'partial_error' : 'completed',
+      rows: previewRows.map((r) => ({
+        label: r.name || `行${r.rowNum}`,
+        action: r.action === 'add' ? 'success' : r.action === 'skip' ? 'skip' : 'error',
+        reason: r.reason,
+      })),
+      csvContent: csvContent && csvContent.length < 200_000 ? csvContent : undefined,
+    }).catch(() => {});
 
     return NextResponse.json({
       added:       toAdd.map((p) => p.name),

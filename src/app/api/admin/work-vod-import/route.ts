@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, saveWorkIfAbsent, upsertManualCsvVodProviders } from '@/lib/work-store';
+import { saveImportHistory } from '@/lib/import-history';
 import type { WorkRecord } from '@/types/work';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 
@@ -145,7 +146,8 @@ export interface WorkVodPreviewRow {
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const { csvContent, commit = false } = body as { csvContent?: string; commit?: boolean };
+  const { csvContent, commit = false, fileName } = body as { csvContent?: string; commit?: boolean; fileName?: string };
+  const startedAt = Date.now();
 
   if (!csvContent || typeof csvContent !== 'string') {
     return NextResponse.json({ error: 'csvContent が必要です' }, { status: 400 });
@@ -378,6 +380,30 @@ export async function POST(req: NextRequest) {
       errors.push(`${personName} / ${work.title}: ${String(err)}`);
     }
   }
+
+  const successCount = previewRows.filter((r) => r.action === 'add_vod' || r.action === 'create_work').length;
+  const skipCount    = previewRows.filter((r) => r.action === 'unknown_person').length;
+  const errCount     = previewRows.filter((r) => r.action === 'error').length;
+
+  await saveImportHistory({
+    importType: 'work_vod_csv',
+    executedAt: startedAt,
+    fileName,
+    totalRows: previewRows.length,
+    successCount,
+    skipCount,
+    errorCount: errCount + errors.length,
+    durationMs: Date.now() - startedAt,
+    status: successCount === 0 ? 'failed' : (errCount + errors.length) > 0 ? 'partial_error' : 'completed',
+    rows: previewRows.map((r) => ({
+      label: `${r.workTitle}（${r.personName}）`,
+      action: (r.action === 'add_vod' || r.action === 'create_work') ? 'success'
+            : r.action === 'unknown_person' ? 'skip'
+            : 'error',
+      reason: r.reason,
+    })),
+    csvContent: csvContent && csvContent.length < 200_000 ? csvContent : undefined,
+  }).catch(() => {});
 
   return NextResponse.json({
     ok: true,

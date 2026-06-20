@@ -36,6 +36,9 @@ export default async function PeopleImportPage() {
           <a href="/admin/work-import" className="text-indigo-600 hover:underline">
             作品・配信追加 →
           </a>
+          <a href="/admin/import-history" className="text-gray-400 hover:underline">
+            インポート履歴
+          </a>
           <a href="/admin/product-check" className="text-gray-400 hover:underline">
             商品確認
           </a>

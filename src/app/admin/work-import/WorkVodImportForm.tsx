@@ -34,6 +34,7 @@ interface DoneResult {
 export default function WorkVodImportForm() {
   const [phase, setPhase] = useState<Phase>('input');
   const [csvText, setCsvText] = useState('');
+  const [fileName, setFileName] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [done, setDone] = useState<DoneResult | null>(null);
@@ -66,7 +67,7 @@ export default function WorkVodImportForm() {
     const res = await fetch('/api/admin/work-vod-import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ csvContent: csvText, commit: true }),
+      body: JSON.stringify({ csvContent: csvText, commit: true, fileName }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -81,6 +82,7 @@ export default function WorkVodImportForm() {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    setFileName(file.name);
     const reader = new FileReader();
     reader.onload = (ev) => setCsvText((ev.target?.result as string) ?? '');
     reader.readAsText(file, 'UTF-8');
