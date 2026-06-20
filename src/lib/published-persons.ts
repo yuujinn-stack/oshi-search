@@ -16,16 +16,23 @@ export interface PublishedRecord extends PersonWithConfig {
 // ── Raw fetch（キャッシュなし）────────────────────────────────────────────────
 export async function getAllPublishedPersonsRaw(): Promise<PublishedRecord[]> {
   const redis = getRedis();
-  if (!redis) return [];
+  if (!redis) {
+    console.error('[published-persons] getRedis() returned null — check UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN');
+    return [];
+  }
   try {
     const raw = await redis.hgetall(HASH_KEY);
+    console.log(`[published-persons] hgetall(${HASH_KEY}) keys=${raw ? Object.keys(raw).length : 'null'}`);
     if (!raw) return [];
-    return Object.values(raw)
+    const records = Object.values(raw)
       .map((v) => {
         try { return JSON.parse(v as string) as PublishedRecord; } catch { return null; }
       })
       .filter((p): p is PublishedRecord => p !== null);
-  } catch {
+    console.log(`[published-persons] parsed ${records.length} records: ${records.map((r) => r.name).join(', ')}`);
+    return records;
+  } catch (err) {
+    console.error('[published-persons] hgetall failed:', err);
     return [];
   }
 }
@@ -48,13 +55,17 @@ export async function getPublishedPersonNames(): Promise<string[]> {
 
 // ── 書き込み ────────────────────────────────────────────────────────────────
 export async function publishPersonsBatch(records: PublishedRecord[]): Promise<void> {
+  if (records.length === 0) return;
   const redis = getRedis();
-  if (!redis || records.length === 0) return;
+  if (!redis) {
+    throw new Error('[published-persons] Redis not available — cannot publishPersonsBatch');
+  }
   const entries: Record<string, string> = {};
   for (const r of records) {
     entries[r.name] = JSON.stringify(r);
   }
-  await redis.hset(HASH_KEY, entries);
+  const result = await redis.hset(HASH_KEY, entries);
+  console.log(`[published-persons] hset(${HASH_KEY}) wrote ${records.length} records, result=${result}`);
 }
 
 export async function unpublishPerson(name: string): Promise<void> {

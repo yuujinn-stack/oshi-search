@@ -3,6 +3,8 @@ import SearchForm from '@/components/SearchForm';
 import PersonCard from '@/components/PersonCard';
 import { searchPersonsMerged, getAllPersonsMerged } from '@/lib/persons';
 
+export const dynamic = 'force-dynamic';
+
 interface Props {
   searchParams: Promise<{ q?: string }>;
 }
