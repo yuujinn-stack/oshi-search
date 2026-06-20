@@ -26,7 +26,13 @@ export async function getAllPublishedPersonsRaw(): Promise<PublishedRecord[]> {
     if (!raw) return [];
     const records = Object.values(raw)
       .map((v) => {
-        try { return JSON.parse(v as string) as PublishedRecord; } catch { return null; }
+        // Upstash SDK auto-deserializes JSON values from hgetall → v is already an object
+        if (v && typeof v === 'object') return v as PublishedRecord;
+        // Fallback: if somehow still a string, parse manually
+        if (typeof v === 'string') {
+          try { return JSON.parse(v) as PublishedRecord; } catch { return null; }
+        }
+        return null;
       })
       .filter((p): p is PublishedRecord => p !== null);
     console.log(`[published-persons] parsed ${records.length} records: ${records.map((r) => r.name).join(', ')}`);
