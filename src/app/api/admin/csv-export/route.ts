@@ -5,8 +5,10 @@ import type { WorkRecord } from '@/types/work';
 
 // GET /api/admin/csv-export
 //   ?filter=all|auto_published|needs_review|hidden|no_vod|ai_only|tmdb_only
-//   &person=NAME          ← personId（= personName）で1人に絞り込む。省略で全人物
+//   &person=NAME          ← 後方互換: 1人に絞り込む
+//   &persons=A,B,C        ← 新: カンマ区切り複数人物（省略で全人物）
 //   &mode=preview|csv     ← preview なら JSON、csv（デフォルト）なら CSV ファイル
+//   &format=full|simple   ← 新: simple=ChatGPT用8列CSV（mode=csv 時のみ有効）
 //
 // 管理画面からのみ呼び出し可（proxy.ts で認証済み）
 // 【重要】作品の取得は getAllWorks(personName) で personName スコープ済みの Redis から行う
@@ -87,6 +89,24 @@ function matchesFilter(w: WorkRecord, filterParam: string): boolean {
 // 作品 → CSV 行
 // ─────────────────────────────────────────
 
+// ChatGPT調査用 8列簡略CSV
+function workToSimpleRow(w: WorkRecord, groupName: string): string {
+  const vodServices = (w.vodProviders ?? [])
+    .filter((p) => p.providerName !== '配信確認できず')
+    .map((p) => p.providerName)
+    .join('/');
+  return [
+    csvEscape(w.personName),
+    csvEscape(groupName),
+    csvEscape(w.title),
+    csvEscape(w.type),
+    csvEscape(String(w.releaseYear ?? '')),
+    csvEscape(w.roleName ?? ''),
+    csvEscape(w.source),
+    csvEscape(vodServices),
+  ].join(',');
+}
+
 function workToRow(w: WorkRecord): string {
   const tmdbUrl = w.tmdbId
     ? `https://www.themoviedb.org/${w.type}/${w.tmdbId}`
@@ -125,37 +145,44 @@ function workToRow(w: WorkRecord): string {
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const filterParam = searchParams.get('filter') ?? 'all';
-  const personParam = searchParams.get('person') ?? '';   // personId === personName
-  const mode = searchParams.get('mode') ?? 'csv';         // 'preview' | 'csv'
+  const personParam  = searchParams.get('person')  ?? '';   // 後方互換: 1人
+  const personsParam = searchParams.get('persons') ?? '';   // 新: カンマ区切り複数
+  const mode   = searchParams.get('mode')   ?? 'csv';       // 'preview' | 'csv'
+  const format = searchParams.get('format') ?? 'full';      // 'full' | 'simple'
 
   const allPersons = await getAllPersonsMerged();
+  const personGroupMap = new Map(allPersons.map((p) => [p.name, p.group ?? '']));
 
-  // ── 人物絞り込み: personId（= personName）で照合 ──
-  // personParam が空なら全人物が対象
-  const targetPersons = personParam
-    ? allPersons.filter((p) => p.name === personParam)
+  // ── 人物絞り込み ──
+  // persons=A,B,C (新) → person=NAME (後方互換) → 全人物 の優先順
+  let selectedNames: string[] = [];
+  if (personsParam) {
+    selectedNames = personsParam.split(',').map((s) => s.trim()).filter(Boolean);
+  } else if (personParam) {
+    selectedNames = [personParam];
+  }
+
+  const targetPersons = selectedNames.length > 0
+    ? allPersons.filter((p) => selectedNames.includes(p.name))
     : allPersons;
 
-  // personParam が指定されているのに一致する人物が存在しない場合
-  if (personParam && targetPersons.length === 0) {
-    console.warn('[csv-export] 対象人物が見つかりません', {
-      selectedPersonId: personParam,
-      availablePersonIds: allPersons.map((p) => p.name),
-    });
+  // 選択名が指定されているのに一致する人物が存在しない場合
+  if (selectedNames.length > 0 && targetPersons.length === 0) {
+    const label = selectedNames.join(', ');
+    console.warn('[csv-export] 対象人物が見つかりません', { selectedNames });
 
     if (mode === 'preview') {
       return NextResponse.json({
         count: 0,
-        personName: personParam,
+        personName: label,
         filter: filterParam,
         works: [],
-        warning: `personId "${personParam}" に一致する人物がいません`,
+        warning: `"${label}" に一致する人物がいません`,
       });
     }
 
-    // CSV: 0件の場合はエラーレスポンス（UI 側でプレビュー確認済みのはずだが念のため）
     return NextResponse.json(
-      { error: `personId "${personParam}" に一致する人物がいません` },
+      { error: `"${label}" に一致する人物がいません` },
       { status: 404 },
     );
   }
@@ -177,22 +204,27 @@ export async function GET(req: NextRequest) {
     return (b.releaseYear ?? 0) - (a.releaseYear ?? 0);
   });
 
+  // プレビュー表示名
+  const displayName = selectedNames.length === 0
+    ? '全人物'
+    : selectedNames.length === 1
+    ? selectedNames[0]
+    : `${selectedNames.length}人選択中`;
+
   // ── ログ ──
   console.log('[csv-export]', {
-    selectedPersonId: personParam || '（全人物）',
-    selectedPersonName: personParam || '（全人物）',
+    selectedNames: selectedNames.length > 0 ? selectedNames : '（全人物）',
     selectedFilter: filterParam,
+    format,
     mode,
     exportCount: filtered.length,
-    exportWorkIds: filtered.map((w) => w.id),
-    exportTitles: filtered.map((w) => w.title),
   });
 
   // ── プレビューモード: JSON を返す ──
   if (mode === 'preview') {
     return NextResponse.json({
       count: filtered.length,
-      personName: personParam || '全人物',
+      personName: displayName,
       filter: filterParam,
       works: filtered.map((w) => ({
         workId: w.id,
@@ -208,7 +240,26 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ── CSVモード ──
+  // ── CSVモード: simple（ChatGPT用8列）──
+  if (format === 'simple') {
+    const simpleHeaders = ['personName', 'groupName', 'workTitle', 'workType', 'releaseYear', 'roleName', 'source', 'vodServices'];
+    const rows = filtered.map((w) => workToSimpleRow(w, personGroupMap.get(w.personName) ?? ''));
+    const csv = [simpleHeaders.join(','), ...rows].join('\n');
+
+    const date = new Date().toISOString().slice(0, 10);
+    const filename = selectedNames.length === 1
+      ? `works_chatgpt_${selectedNames[0]}_${filterParam}_${date}.csv`
+      : `works_chatgpt_${filterParam}_${date}.csv`;
+
+    return new NextResponse(csv, {
+      headers: {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      },
+    });
+  }
+
+  // ── CSVモード: full（詳細16列）──
   const csvHeaders = [
     'personId', 'personName', 'workId', 'title', 'originalTitle',
     'type', 'releaseYear', 'overview', 'tmdbId', 'tmdbUrl',
@@ -219,8 +270,10 @@ export async function GET(req: NextRequest) {
   const csv = '﻿' + [csvHeaders.join(','), ...rows].join('\n'); // BOM付きUTF-8
 
   const date = new Date().toISOString().slice(0, 10);
-  const filename = personParam
-    ? `works_${personParam}_${filterParam}_${date}.csv`
+  const filename = selectedNames.length === 1
+    ? `works_${selectedNames[0]}_${filterParam}_${date}.csv`
+    : selectedNames.length > 1
+    ? `works_${selectedNames.length}persons_${filterParam}_${date}.csv`
     : `works_${filterParam}_${date}.csv`;
 
   return new NextResponse(csv, {

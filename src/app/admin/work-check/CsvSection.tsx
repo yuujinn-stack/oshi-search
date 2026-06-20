@@ -6,6 +6,11 @@ import { useState, useRef } from 'react';
 // 型定義
 // ─────────────────────────────────────────
 
+interface PersonInfo {
+  name: string;
+  group: string;
+}
+
 type ExportFilter =
   | 'all'
   | 'auto_published'
@@ -127,11 +132,10 @@ const ACTION_LABEL: Record<ImportPreviewRow['action'], string> = {
 };
 
 // ─────────────────────────────────────────
-// コンポーネント
+// ChatGPT調査用プロンプトを生成（入力: 8列簡略CSV、出力指示: 10列統合CSV形式）
 // ─────────────────────────────────────────
 
-// ChatGPT調査用プロンプトを生成
-function buildChatGptPrompt(csv: string): string {
+function buildChatGptPrompt(simpleCsv: string): string {
   return `━━━━━━━━━━━━━━━━━━
 調査依頼
 ━━━━━━━━━━━━━━━━━━
@@ -161,19 +165,25 @@ personName,workTitle,workType,releaseYear,roleName,vodService,availabilityType,s
 
 CSV:
 
-${csv}
+${simpleCsv}
 
 ━━━━━━━━━━━━━━━━━━`;
 }
 
-export default function CsvSection({ persons }: { persons: string[] }) {
+// ─────────────────────────────────────────
+// コンポーネント
+// ─────────────────────────────────────────
+
+export default function CsvSection({ persons }: { persons: PersonInfo[] }) {
   // ── エクスポート状態 ──
   const [exportFilter, setExportFilter] = useState<ExportFilter>('all');
-  const [exportPerson, setExportPerson] = useState('');
+  const [exportPersons, setExportPersons] = useState<string[]>([]); // 空 = 全人物
+  const [personSelectorOpen, setPersonSelectorOpen] = useState(false);
   const [exportPreview, setExportPreview] = useState<ExportPreviewResult | null>(null);
   const [exportPreviewLoading, setExportPreviewLoading] = useState(false);
   const [exportPreviewError, setExportPreviewError] = useState('');
-  const [csvText, setCsvText] = useState<string | null>(null);
+  const [csvText, setCsvText] = useState<string | null>(null);         // 詳細CSV（ダウンロード・クリップボード用）
+  const [simpleCsvText, setSimpleCsvText] = useState<string | null>(null); // 8列CSV（ChatGPT用）
   const [copyLoading, setCopyLoading] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'csv' | 'prompt'>('idle');
 
@@ -196,18 +206,34 @@ export default function CsvSection({ persons }: { persons: string[] }) {
   const [dedupError, setDedupError] = useState('');
 
   // ─────────────────────────────────────────
+  // グループ別に人物をまとめる（UI表示用）
+  // ─────────────────────────────────────────
+
+  const groupedPersons: Record<string, PersonInfo[]> = {};
+  for (const p of persons) {
+    const key = p.group || '（グループなし）';
+    if (!groupedPersons[key]) groupedPersons[key] = [];
+    groupedPersons[key].push(p);
+  }
+  const groupNames = Object.keys(groupedPersons).sort();
+
+  // ─────────────────────────────────────────
   // URL ビルダー
   // ─────────────────────────────────────────
 
   function buildExportUrl(extraParams?: Record<string, string>): string {
     const params = new URLSearchParams();
     if (exportFilter !== 'all') params.set('filter', exportFilter);
-    if (exportPerson) params.set('person', exportPerson);
+    if (exportPersons.length > 0) params.set('persons', exportPersons.join(','));
     if (extraParams) {
       for (const [k, v] of Object.entries(extraParams)) params.set(k, v);
     }
     const qs = params.toString();
     return `/api/admin/csv-export${qs ? `?${qs}` : ''}`;
+  }
+
+  function buildSimpleExportUrl(): string {
+    return buildExportUrl({ format: 'simple' });
   }
 
   // ─────────────────────────────────────────
@@ -218,6 +244,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
     setExportPreview(null);
     setExportPreviewError('');
     setCsvText(null);
+    setSimpleCsvText(null);
     setCopyStatus('idle');
   }
 
@@ -238,6 +265,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
     setExportPreviewLoading(false);
   }
 
+  // ① 補完CSVダウンロード（詳細CSV）
   async function handleCsvDownload() {
     if (!exportPreview || exportPreview.count === 0) return;
     try {
@@ -252,7 +280,6 @@ export default function CsvSection({ persons }: { persons: string[] }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      // Content-Disposition のファイル名を利用（フォールバックは手動生成）
       const cd = res.headers.get('Content-Disposition') ?? '';
       const fnMatch = cd.match(/filename\*=UTF-8''(.+)$/i);
       a.download = fnMatch ? decodeURIComponent(fnMatch[1]) : `works_export.csv`;
@@ -265,6 +292,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
     }
   }
 
+  // 詳細CSV（ダウンロード・クリップボード用）をキャッシュ付きで取得
   async function fetchCsvAsText(): Promise<string | null> {
     if (csvText !== null) return csvText;
     const res = await fetch(buildExportUrl());
@@ -274,6 +302,17 @@ export default function CsvSection({ persons }: { persons: string[] }) {
     return text;
   }
 
+  // 8列簡略CSV（ChatGPT用）をキャッシュ付きで取得
+  async function fetchSimpleCsvAsText(): Promise<string | null> {
+    if (simpleCsvText !== null) return simpleCsvText;
+    const res = await fetch(buildSimpleExportUrl());
+    if (!res.ok) return null;
+    const text = await res.text();
+    setSimpleCsvText(text);
+    return text;
+  }
+
+  // ③ CSVをクリップボードへコピー（詳細CSV）
   async function handleCopyCsv() {
     if (!exportPreview || exportPreview.count === 0) return;
     setCopyLoading(true);
@@ -290,12 +329,13 @@ export default function CsvSection({ persons }: { persons: string[] }) {
     }
   }
 
+  // ② ChatGPT調査用コピー（8列簡略CSV + プロンプト）
   async function handleCopyPrompt() {
     if (!exportPreview || exportPreview.count === 0) return;
     setCopyLoading(true);
     try {
-      const text = await fetchCsvAsText();
-      if (!text) { setExportPreviewError('CSV取得に失敗しました'); return; }
+      const text = await fetchSimpleCsvAsText();
+      if (!text) { setExportPreviewError('ChatGPT用CSV取得に失敗しました'); return; }
       await navigator.clipboard.writeText(buildChatGptPrompt(text));
       setCopyStatus('prompt');
       setTimeout(() => setCopyStatus('idle'), 2000);
@@ -304,6 +344,38 @@ export default function CsvSection({ persons }: { persons: string[] }) {
     } finally {
       setCopyLoading(false);
     }
+  }
+
+  // ─────────────────────────────────────────
+  // 人物選択ヘルパー
+  // ─────────────────────────────────────────
+
+  function togglePerson(name: string) {
+    setExportPersons((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+    );
+    resetExportPreview();
+  }
+
+  function toggleGroup(groupKey: string) {
+    const groupNames = (groupedPersons[groupKey] ?? []).map((p) => p.name);
+    const allSelected = groupNames.every((n) => exportPersons.includes(n));
+    if (allSelected) {
+      setExportPersons((prev) => prev.filter((n) => !groupNames.includes(n)));
+    } else {
+      setExportPersons((prev) => [...new Set([...prev, ...groupNames])]);
+    }
+    resetExportPreview();
+  }
+
+  function selectAll() {
+    setExportPersons([]);
+    resetExportPreview();
+  }
+
+  function deselectAll() {
+    setExportPersons(persons.map((p) => p.name));
+    resetExportPreview();
   }
 
   // ─────────────────────────────────────────
@@ -404,6 +476,14 @@ export default function CsvSection({ persons }: { persons: string[] }) {
   const importTotal = (importPreview?.addCount ?? 0) + (importPreview?.updateCount ?? 0);
   const importDeleteCount = importPreview?.deleteCount ?? 0;
 
+  // 人物選択ラベル（ヘッダー表示用）
+  const personSelectionLabel =
+    exportPersons.length === 0
+      ? '全人物'
+      : exportPersons.length === persons.length
+      ? '全人物'
+      : `${exportPersons.length}人選択中`;
+
   // ─────────────────────────────────────────
   // レンダリング
   // ─────────────────────────────────────────
@@ -421,7 +501,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           プレビューで対象件数を確認してからCSVをダウンロードしてください。
         </p>
 
-        {/* フィルター + 人物 選択 */}
+        {/* ── フィルター選択 ── */}
         <div className="flex flex-wrap gap-2 items-center">
           <select
             value={exportFilter}
@@ -435,19 +515,6 @@ export default function CsvSection({ persons }: { persons: string[] }) {
               <option key={k} value={k}>{v}</option>
             ))}
           </select>
-          <select
-            value={exportPerson}
-            onChange={(e) => {
-              setExportPerson(e.target.value);
-              resetExportPreview();
-            }}
-            className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
-          >
-            <option value="">全人物</option>
-            {persons.map((p) => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
           <button
             onClick={handleExportPreview}
             disabled={exportPreviewLoading}
@@ -455,6 +522,111 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           >
             {exportPreviewLoading ? '確認中...' : '🔍 プレビュー確認'}
           </button>
+        </div>
+
+        {/* ── 対象人物 複数選択（折りたたみ式） ── */}
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setPersonSelectorOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 bg-gray-50 hover:bg-gray-100 text-xs transition-colors"
+          >
+            <span className="font-medium text-slate-700">
+              対象人物:{' '}
+              <span className={exportPersons.length > 0 && exportPersons.length < persons.length ? 'text-indigo-600' : 'text-gray-500'}>
+                {personSelectionLabel}
+              </span>
+            </span>
+            <span className="text-gray-400 text-[10px]">{personSelectorOpen ? '▲ 閉じる' : '▼ 選択する'}</span>
+          </button>
+
+          {personSelectorOpen && (
+            <div className="border-t border-gray-100">
+              {/* 全選択/全解除 */}
+              <div className="flex items-center gap-3 px-3 py-2 bg-white border-b border-gray-100 text-[11px]">
+                <button
+                  type="button"
+                  onClick={selectAll}
+                  className={`font-medium transition-colors ${exportPersons.length === 0 ? 'text-indigo-600' : 'text-gray-400 hover:text-indigo-500'}`}
+                >
+                  全人物
+                </button>
+                <span className="text-gray-300">|</span>
+                <button
+                  type="button"
+                  onClick={deselectAll}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  全員選択
+                </button>
+                <button
+                  type="button"
+                  onClick={selectAll}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  全解除
+                </button>
+                {exportPersons.length > 0 && exportPersons.length < persons.length && (
+                  <span className="ml-auto text-indigo-500 font-medium">
+                    {exportPersons.length}人選択
+                  </span>
+                )}
+              </div>
+
+              {/* グループ別チェックボックスリスト */}
+              <div className="max-h-56 overflow-y-auto px-3 py-2 space-y-3">
+                {groupNames.map((groupKey) => {
+                  const groupPersons = groupedPersons[groupKey] ?? [];
+                  const selectedInGroup = groupPersons.filter((p) => exportPersons.includes(p.name)).length;
+                  const allInGroupSelected = selectedInGroup === groupPersons.length;
+                  const someInGroupSelected = selectedInGroup > 0 && !allInGroupSelected;
+
+                  return (
+                    <div key={groupKey}>
+                      {/* グループ名（クリックでグループ全選択/解除） */}
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(groupKey)}
+                        className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 hover:text-indigo-600 mb-1.5 transition-colors"
+                      >
+                        <span className={`w-3 h-3 rounded border flex items-center justify-center flex-shrink-0 ${
+                          allInGroupSelected
+                            ? 'bg-indigo-600 border-indigo-600'
+                            : someInGroupSelected
+                            ? 'bg-indigo-200 border-indigo-400'
+                            : 'border-gray-300'
+                        }`}>
+                          {(allInGroupSelected || someInGroupSelected) && (
+                            <span className="text-white text-[8px] leading-none">{allInGroupSelected ? '✓' : '−'}</span>
+                          )}
+                        </span>
+                        {groupKey}
+                        <span className="text-gray-400 font-normal">（{groupPersons.length}人）</span>
+                      </button>
+
+                      {/* 個人チェックボックス */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-0.5 ml-4">
+                        {groupPersons.map((p) => (
+                          <label
+                            key={p.name}
+                            className="flex items-center gap-1.5 text-[11px] cursor-pointer hover:text-slate-700 py-0.5"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={exportPersons.includes(p.name)}
+                              onChange={() => togglePerson(p.name)}
+                              className="w-3 h-3 rounded accent-indigo-600 flex-shrink-0"
+                            />
+                            <span className="truncate">{p.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* エクスポートプレビューエラー */}
@@ -493,14 +665,14 @@ export default function CsvSection({ persons }: { persons: string[] }) {
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {/* ① 補完CSVダウンロード */}
+                    {/* ① 補完CSVダウンロード（詳細CSV） */}
                     <button
                       onClick={handleCsvDownload}
                       className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors font-bold"
                     >
                       📄 補完CSVダウンロード
                     </button>
-                    {/* ② ChatGPT調査用コピー */}
+                    {/* ② ChatGPT調査用コピー（8列簡略CSV + プロンプト） */}
                     <button
                       onClick={handleCopyPrompt}
                       disabled={copyLoading}
@@ -516,7 +688,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
                         ? 'コピー済み!'
                         : '🤖 ChatGPT調査用コピー'}
                     </button>
-                    {/* ③ CSVをクリップボードへコピー */}
+                    {/* ③ CSVをクリップボードへコピー（詳細CSV） */}
                     <button
                       onClick={handleCopyCsv}
                       disabled={copyLoading}
@@ -533,6 +705,9 @@ export default function CsvSection({ persons }: { persons: string[] }) {
                         : '📋 CSVをクリップボードへコピー'}
                     </button>
                   </div>
+                  <p className="text-[10px] text-gray-400">
+                    ※ ChatGPT調査用コピーは8列簡略形式（personName/groupName/workTitle/workType/releaseYear/roleName/source/vodServices）
+                  </p>
                 </div>
 
                 {/* 作品リスト */}
@@ -646,7 +821,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           </div>
         )}
 
-        {/* 対象人物セレクター */}
+        {/* 対象人物セレクター（インポート用: 従来の単一select） */}
         <div className="flex items-center gap-2">
           <label className="text-[11px] text-gray-600 font-medium whitespace-nowrap">対象人物:</label>
           <select
@@ -660,7 +835,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           >
             <option value="">CSVのpersonId列を使用</option>
             {persons.map((p) => (
-              <option key={p} value={p}>{p}</option>
+              <option key={p.name} value={p.name}>{p.name}</option>
             ))}
           </select>
           {importPerson && (
@@ -873,7 +1048,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
           >
             <option value="">全人物</option>
             {persons.map((p) => (
-              <option key={p} value={p}>{p}</option>
+              <option key={p.name} value={p.name}>{p.name}</option>
             ))}
           </select>
           <button

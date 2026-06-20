@@ -101,7 +101,7 @@ export default async function WorkCheckPage() {
       )}
 
       {/* CSV出力 / VOD調査インポート */}
-      <CsvSection persons={persons.map((p) => p.name)} />
+      <CsvSection persons={persons.map((p) => ({ name: p.name, group: p.group ?? '' }))} />
 
       {/* 配信情報再確認対象一覧 */}
       <VodRecheckSection />
