@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { WorkRecord, WorkStatus, WorkSource } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 import { deduplicateProviders } from '@/lib/vod-dedup';
+import VodIntensiveModal from './VodIntensiveModal';
 
 // vod-fetch API のデバッグ型（route.ts の VodFetchDebugItem と同一）
 interface VodFetchDebugItem {
@@ -105,6 +106,11 @@ export default function PersonWorks({ personName, group, counts }: Props) {
   const [manualVodWorkId, setManualVodWorkId] = useState<string | null>(null);
   const [manualVodName, setManualVodName] = useState('');
   const [manualVodLink, setManualVodLink] = useState('');
+  const [recheckingWorkId, setRecheckingWorkId] = useState<string | null>(null);
+  const [recheckMessage, setRecheckMessage] = useState('');
+  const [intensiveModalOpen, setIntensiveModalOpen] = useState(false);
+  const [intensiveCronEnabled, setIntensiveCronEnabled] = useState<boolean | null>(null);
+  const [intensiveCronLoading, setIntensiveCronLoading] = useState(false);
 
   async function loadWorks() {
     setLoading(true);
@@ -194,6 +200,46 @@ export default function PersonWorks({ personName, group, counts }: Props) {
       body: JSON.stringify({ personName, workId, providerId: provider.providerId }),
     });
     await loadWorks();
+  }
+
+  async function handleVodRecheck(workId: string) {
+    setRecheckingWorkId(workId);
+    setRecheckMessage('');
+    const res = await fetch('/api/admin/vod-recheck', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, workId }),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { providerCount: number; vodCheckStatus: string };
+      setRecheckMessage(`AI再確認完了: ${data.providerCount}件取得 (${data.vodCheckStatus})`);
+      await loadWorks();
+    } else {
+      const data = (await res.json()).catch?.() ?? {};
+      setRecheckMessage(`AI再確認失敗: ${(data as { error?: string }).error ?? 'Unknown error'}`);
+    }
+    setRecheckingWorkId(null);
+  }
+
+  async function handlePriorityToggle(workId: string, current: boolean) {
+    await fetch('/api/admin/vod-recheck', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, workId, priority: !current }),
+    });
+    await loadWorks();
+  }
+
+  async function handleIntensiveCronToggle() {
+    setIntensiveCronLoading(true);
+    const newVal = !intensiveCronEnabled;
+    const res = await fetch('/api/admin/vod-person-recheck', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, intensive: newVal }),
+    });
+    if (res.ok) setIntensiveCronEnabled(newVal);
+    setIntensiveCronLoading(false);
   }
 
   async function handleProcess(
@@ -427,6 +473,30 @@ export default function PersonWorks({ personName, group, counts }: Props) {
               📄 CSV出力
             </a>
             <button
+              onClick={() => setIntensiveModalOpen(true)}
+              disabled={isProcessing || vodFetching}
+              title="この人物の全出演作品（条件除外なし）をAIで配信確認"
+              className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-semibold transition-colors disabled:opacity-50"
+            >
+              🎯 重点配信確認
+            </button>
+            <button
+              onClick={handleIntensiveCronToggle}
+              disabled={intensiveCronLoading}
+              title={
+                intensiveCronEnabled
+                  ? 'Cronでの重点確認を解除（通常の条件フィルタに戻す）'
+                  : 'Cronでもこの人物の全作品を継続的に確認対象にする'
+              }
+              className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${
+                intensiveCronEnabled
+                  ? 'bg-red-100 hover:bg-red-200 text-red-700 font-medium'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
+              }`}
+            >
+              {intensiveCronLoading ? '...' : intensiveCronEnabled ? '🔄 Cron重点 ON' : 'Cron重点設定'}
+            </button>
+            <button
               onClick={() => setDebugMode((v) => !v)}
               className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${
                 debugMode
@@ -508,6 +578,17 @@ export default function PersonWorks({ personName, group, counts }: Props) {
               }`}
             >
               📺 {vodMessage}
+            </p>
+          )}
+          {recheckMessage && (
+            <p
+              className={`text-xs font-medium px-3 py-2 rounded-lg ${
+                recheckMessage.includes('失敗')
+                  ? 'bg-red-50 text-red-600'
+                  : 'bg-violet-50 text-violet-700'
+              }`}
+            >
+              🔍 {recheckMessage}
             </p>
           )}
 
@@ -665,6 +746,36 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                       </p>
                     )}
 
+                    {/* 配信再確認ステータス */}
+                    {(work.vodCheckStatus || work.priorityRecheck) && (
+                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                        {work.priorityRecheck && (
+                          <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-medium">
+                            🚨 優先再確認
+                          </span>
+                        )}
+                        {work.vodCheckStatus === 'checking' && (
+                          <span className="text-[9px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">確認中...</span>
+                        )}
+                        {work.vodCheckStatus === 'needs_recheck' && (
+                          <span className="text-[9px] bg-yellow-100 text-yellow-600 px-1.5 py-0.5 rounded-full">要確認</span>
+                        )}
+                        {work.vodCheckStatus === 'checked' && (
+                          <span className="text-[9px] bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full">確認済</span>
+                        )}
+                        {work.vodCheckStatus === 'failed' && (
+                          <span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full" title={work.vodCheckError}>
+                            失敗
+                          </span>
+                        )}
+                        {work.lastVodCheckAt && (
+                          <span className="text-[9px] text-gray-300">
+                            {new Date(work.lastVodCheckAt).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}再確認
+                          </span>
+                        )}
+                      </div>
+                    )}
+
                     {/* 配信情報 */}
                     {(work.vodProviders?.length ?? 0) > 0 ? (
                       <div className="mt-2 flex flex-wrap gap-1 items-center">
@@ -679,9 +790,11 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                                   ? 'bg-orange-50 border-orange-200 text-orange-700'
                                   : p.source === 'openai_web_search'
                                     ? 'bg-violet-50 border-violet-200 text-violet-700'
-                                    : p.source === 'openai_supplement'
-                                      ? 'bg-purple-50 border-purple-200 text-purple-700'
-                                      : 'bg-blue-50 border-blue-200 text-blue-700'
+                                    : p.source === 'ai_recheck'
+                                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                      : p.source === 'openai_supplement'
+                                        ? 'bg-purple-50 border-purple-200 text-purple-700'
+                                        : 'bg-blue-50 border-blue-200 text-blue-700'
                             }`}
                             title={`${p.providerName} [${p.source}]${p.confidence ? ` 確度:${p.confidence}` : ''}${p.reason ? ` | ${p.reason}` : ''}`}
                           >
@@ -690,9 +803,9 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                               <img src={`${PROVIDER_LOGO_BASE}${p.logoPath}`} alt="" className="w-3 h-3 rounded-sm" />
                             ) : null}
                             {p.providerName}
-                            {(p.source === 'openai_supplement' || p.source === 'openai_web_search') && (
+                            {(p.source === 'openai_supplement' || p.source === 'openai_web_search' || p.source === 'ai_recheck') && (
                               <span className="text-[8px] ml-0.5 text-purple-400">
-                                {p.source === 'openai_web_search' ? 'Web' : 'AI'}
+                                {p.source === 'ai_recheck' ? '再確認' : p.source === 'openai_web_search' ? 'Web' : 'AI'}
                               </span>
                             )}
                             {p.source === 'manual_csv' && (
@@ -808,6 +921,9 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                           )}
                           <p>vodUpdatedAt: {work.vodUpdatedAt ? new Date(work.vodUpdatedAt).toLocaleString('ja-JP') : '未取得'}</p>
                           <p>vodAiCheckedAt: {work.vodAiCheckedAt ? new Date(work.vodAiCheckedAt).toLocaleString('ja-JP') : '未実行'}</p>
+                          <p>lastVodCheckAt: {work.lastVodCheckAt ? new Date(work.lastVodCheckAt).toLocaleString('ja-JP') : '未実行'}</p>
+                          <p>vodCheckStatus: {work.vodCheckStatus ?? '—'} / source: {work.vodCheckSource ?? '—'}</p>
+                          {work.vodCheckError && <p className="text-red-400">vodCheckError: {work.vodCheckError}</p>}
                           <p>createdAt: {new Date(work.createdAt).toLocaleString('ja-JP')}</p>
                         </div>
 
@@ -957,6 +1073,29 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                     >
                       非表示
                     </button>
+                    {work.tmdbId && (
+                      <button
+                        onClick={() => handleVodRecheck(work.id)}
+                        disabled={recheckingWorkId === work.id || work.vodCheckStatus === 'checking'}
+                        title="OpenAI Web検索でこの作品の配信情報を再確認"
+                        className="text-xs px-2 py-1 rounded bg-violet-100 hover:bg-violet-200 text-violet-700 disabled:opacity-40"
+                      >
+                        {recheckingWorkId === work.id ? '確認中...' : '🔍 再確認'}
+                      </button>
+                    )}
+                    {work.tmdbId && (
+                      <button
+                        onClick={() => handlePriorityToggle(work.id, work.priorityRecheck ?? false)}
+                        title={work.priorityRecheck ? '優先再確認フラグを解除' : 'Cronで優先的にAI再確認するフラグを設定'}
+                        className={`text-xs px-2 py-1 rounded transition-colors ${
+                          work.priorityRecheck
+                            ? 'bg-red-100 hover:bg-red-200 text-red-600'
+                            : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
+                        }`}
+                      >
+                        {work.priorityRecheck ? '🚨 優先解除' : '優先設定'}
+                      </button>
+                    )}
                     {debugMode && (
                       <button
                         onClick={() => handleTestJudge(work)}
@@ -978,6 +1117,15 @@ export default function PersonWorks({ personName, group, counts }: Props) {
             </div>
           )}
         </div>
+      )}
+
+      {/* 重点配信確認モーダル */}
+      {intensiveModalOpen && (
+        <VodIntensiveModal
+          personName={personName}
+          onClose={() => setIntensiveModalOpen(false)}
+          onDone={() => loadWorks()}
+        />
       )}
     </div>
   );

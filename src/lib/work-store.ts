@@ -93,7 +93,7 @@ export async function updateWorkVod(
   workId: string,
   providers: VodProvider[],
   options?: {
-    replaceSources?: Array<'tmdb_watch_provider' | 'openai_supplement' | 'openai_web_search' | 'manual_csv'>;
+    replaceSources?: Array<'tmdb_watch_provider' | 'openai_supplement' | 'openai_web_search' | 'manual_csv' | 'ai_recheck'>;
     vodAiCheckedAt?: number;
     vodStatus?: 'found' | 'not_found';
     nextVodCheckAt?: number;
@@ -222,6 +222,53 @@ export async function removeManualVodProvider(
       (p) => !(p.providerId === providerId && p.source === 'manual'),
     );
     work.vodUpdatedAt = Date.now();
+    work.updatedAt = Date.now();
+    await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+  } catch { /* skip */ }
+}
+
+// 配信情報再確認ステータスを更新（vod-recheck Cron 用）
+export async function updateWorkVodCheckStatus(
+  personName: string,
+  workId: string,
+  status: WorkRecord['vodCheckStatus'],
+  opts?: {
+    source?: WorkRecord['vodCheckSource'];
+    error?: string;
+    lastVodCheckAt?: number;
+  },
+): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  const raw = await redis.hget(hashKey(personName), workId);
+  if (!raw) return;
+  try {
+    const work = (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
+    work.vodCheckStatus = status;
+    if (opts?.source !== undefined) work.vodCheckSource = opts.source;
+    if (opts?.error !== undefined) work.vodCheckError = opts.error;
+    if (opts?.lastVodCheckAt !== undefined) work.lastVodCheckAt = opts.lastVodCheckAt;
+    work.updatedAt = Date.now();
+    await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+  } catch { /* skip */ }
+}
+
+// 優先再確認フラグを設定（管理画面から）
+export async function setPriorityRecheck(
+  personName: string,
+  workId: string,
+  priority: boolean,
+): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  const raw = await redis.hget(hashKey(personName), workId);
+  if (!raw) return;
+  try {
+    const work = (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
+    work.priorityRecheck = priority;
+    if (priority && work.vodCheckStatus !== 'checking') {
+      work.vodCheckStatus = 'needs_recheck';
+    }
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
   } catch { /* skip */ }

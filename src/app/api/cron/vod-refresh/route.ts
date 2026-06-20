@@ -4,7 +4,7 @@
 // 認証: Authorization: Bearer {CRON_SECRET}
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllPersonsWithConfig } from '@/lib/persons';
+import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, updateWorkVod } from '@/lib/work-store';
 import { getWatchProviders } from '@/lib/tmdb';
 import { supplementVodWithAI } from '@/lib/vod-supplement';
@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
   const TMDB_STALE_MS = TMDB_STALE_DAYS * 24 * 60 * 60 * 1000;
   const AI_STALE_MS = AI_STALE_DAYS * 24 * 60 * 60 * 1000;
 
-  const persons = getAllPersonsWithConfig();
+  const persons = await getAllPersonsMerged();
   let totalTmdb = 0;
   let totalAi = 0;
   let totalSkip = 0;

@@ -2,6 +2,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks } from '@/lib/work-store';
 import PersonWorks from './PersonWorks';
 import CsvSection from './CsvSection';
+import VodRecheckSection from './VodRecheckSection';
 
 export const dynamic = 'force-dynamic';
 
@@ -103,6 +104,9 @@ export default async function WorkCheckPage() {
 
       {/* CSV出力 / VOD調査インポート */}
       <CsvSection persons={persons.map((p) => p.name)} />
+
+      {/* 配信情報再確認対象一覧 */}
+      <VodRecheckSection />
 
       {/* 人物リスト */}
       <div className="space-y-3">

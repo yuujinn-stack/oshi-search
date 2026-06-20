@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/vod-refresh",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/vod-recheck",
+      "schedule": "0 5 * * *"
     }
   ]
 }

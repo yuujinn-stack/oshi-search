@@ -37,6 +37,12 @@ export interface WorkRecord {
   vodAiCheckedAt?: number;    // 最後に OpenAI 補完を実行した日時
   vodStatus?: 'found' | 'not_found'; // AI補完の最終結果（not_found = 調査したが配信なし）
   nextVodCheckAt?: number;    // 次回VODチェックを許可する日時（not_found 時に30日後を設定）
+  // 配信情報条件付き再確認（vod-recheck Cron 機能用）
+  lastVodCheckAt?: number;         // AI再確認Cronによる最終確認日時
+  vodCheckSource?: 'csv' | 'ai' | 'tmdb' | 'manual'; // 最終確認ソース
+  vodCheckStatus?: 'fresh' | 'needs_recheck' | 'checking' | 'checked' | 'failed';
+  vodCheckError?: string;
+  priorityRecheck?: boolean;       // 管理者が設定した優先再確認フラグ
   createdAt: number;
   updatedAt: number;
 }
