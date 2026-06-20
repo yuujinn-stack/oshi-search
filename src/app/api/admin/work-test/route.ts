@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getPersonWithConfig } from '@/lib/persons';
+import { getPersonWithConfigMerged } from '@/lib/persons';
 import { judgeWork } from '@/lib/work-processor';
 import type { TmdbWorkCandidate } from '@/lib/tmdb';
 
@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'personName, work が必要です' }, { status: 400 });
   }
 
-  const person = getPersonWithConfig(personName);
+  const person = await getPersonWithConfigMerged(personName);
   if (!person) {
     return NextResponse.json({ error: '人物が見つかりません' }, { status: 404 });
   }

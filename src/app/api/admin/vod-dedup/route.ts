@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllPersonsWithConfig } from '@/lib/persons';
+import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, saveWork } from '@/lib/work-store';
 import { deduplicateProviders, hasDuplicateProviders } from '@/lib/vod-dedup';
 
@@ -14,7 +14,7 @@ import { deduplicateProviders, hasDuplicateProviders } from '@/lib/vod-dedup';
 export async function POST(req: NextRequest) {
   const { personName: filterPerson = '' } = await req.json().catch(() => ({}));
 
-  const allPersons = getAllPersonsWithConfig();
+  const allPersons = await getAllPersonsMerged();
   const targets = filterPerson
     ? allPersons.filter((p) => p.name === filterPerson)
     : allPersons;

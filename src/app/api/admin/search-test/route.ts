@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getPersonWithConfig } from '@/lib/persons';
+import { getPersonWithConfigMerged } from '@/lib/persons';
 
 // GET /api/admin/search-test?person=筒井あやめ
 // 実際の楽天API検索を複数キーワードで実行し、取得漏れの診断に使用
@@ -173,7 +173,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: '楽天APIキーが設定されていません' }, { status: 503 });
   }
 
-  const person = getPersonWithConfig(personName);
+  const person = await getPersonWithConfigMerged(personName);
   if (!person) {
     return NextResponse.json({ error: '人物が見つかりません' }, { status: 404 });
   }

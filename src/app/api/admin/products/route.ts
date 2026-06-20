@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getPersonWithConfig } from '@/lib/persons';
+import { getPersonWithConfigMerged } from '@/lib/persons';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 
@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   const name = req.nextUrl.searchParams.get('person');
   if (!name) return NextResponse.json({ error: 'person パラメータが必要です' }, { status: 400 });
 
-  const person = getPersonWithConfig(name);
+  const person = await getPersonWithConfigMerged(name);
   if (!person) return NextResponse.json({ error: '人物が見つかりません' }, { status: 404 });
 
   // Redis から保存済みデータを取得

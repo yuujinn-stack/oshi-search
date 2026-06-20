@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllPersonsWithConfig } from '@/lib/persons';
+import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks } from '@/lib/work-store';
 import type { WorkRecord } from '@/types/work';
 
@@ -128,7 +128,7 @@ export async function GET(req: NextRequest) {
   const personParam = searchParams.get('person') ?? '';   // personId === personName
   const mode = searchParams.get('mode') ?? 'csv';         // 'preview' | 'csv'
 
-  const allPersons = getAllPersonsWithConfig();
+  const allPersons = await getAllPersonsMerged();
 
   // ── 人物絞り込み: personId（= personName）で照合 ──
   // personParam が空なら全人物が対象

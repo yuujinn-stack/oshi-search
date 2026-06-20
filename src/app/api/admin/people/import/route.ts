@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllPersons } from '@/lib/persons';
+import { getAllPersonsMerged } from '@/lib/persons';
 import {
   getAllImportedPersons,
   saveImportedPersonsBatch,
@@ -109,10 +109,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 既存人物セット（persons_master.json + imported:persons）
+    // 既存人物セット（persons_master.json + persons:published + imported:persons）
+    const [mergedPersons, importedPersons] = await Promise.all([
+      getAllPersonsMerged(),
+      getAllImportedPersons(),
+    ]);
     const existingNames = new Set<string>([
-      ...getAllPersons().map((p) => p.name),
-      ...(await getAllImportedPersons()).map((p) => p.name),
+      ...mergedPersons.map((p) => p.name),
+      ...importedPersons.map((p) => p.name),
     ]);
 
     const get = (row: string[], c: number) => (c >= 0 ? (row[c] ?? '').trim() : '');

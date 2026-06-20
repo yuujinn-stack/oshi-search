@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllPersonsWithConfig } from '@/lib/persons';
+import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 import type { RakutenItem } from '@/types/rakuten';
@@ -14,7 +14,7 @@ export interface UncertainItem {
 // GET /api/admin/uncertain
 // AI が uncertain と判定した商品を全人物分まとめて返す
 export async function GET() {
-  const persons = getAllPersonsWithConfig();
+  const persons = await getAllPersonsMerged();
 
   const items: UncertainItem[] = [];
 

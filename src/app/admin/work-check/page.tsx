@@ -1,4 +1,4 @@
-import { getAllPersonsWithConfig } from '@/lib/persons';
+import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks } from '@/lib/work-store';
 import PersonWorks from './PersonWorks';
 import CsvSection from './CsvSection';
@@ -6,7 +6,7 @@ import CsvSection from './CsvSection';
 export const dynamic = 'force-dynamic';
 
 export default async function WorkCheckPage() {
-  const persons = getAllPersonsWithConfig();
+  const persons = await getAllPersonsMerged();
 
   // 全人物の作品件数を並列取得
   const countResults = await Promise.all(

@@ -1,4 +1,4 @@
-import { getAllPersonsWithConfig } from '@/lib/persons';
+import { getAllPersonsMerged } from '@/lib/persons';
 import { getBatchMeta, getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 import BatchButton from './BatchButton';
@@ -29,14 +29,14 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default async function AdminProductCheckPage() {
   // エラーを画面に表示して本番クラッシュの原因を特定する（診断用）
-  let persons: Awaited<ReturnType<typeof getAllPersonsWithConfig>>;
+  let persons: Awaited<ReturnType<typeof getAllPersonsMerged>>;
   let batchMeta: Awaited<ReturnType<typeof getBatchMeta>>;
   try {
-    persons = getAllPersonsWithConfig();
+    persons = await getAllPersonsMerged();
   } catch (err) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-16 text-center">
-        <p className="text-red-600 font-bold text-lg mb-2">getAllPersonsWithConfig エラー</p>
+        <p className="text-red-600 font-bold text-lg mb-2">getAllPersonsMerged エラー</p>
         <pre className="text-left bg-red-50 p-4 rounded text-xs overflow-auto">{String(err)}</pre>
       </div>
     );

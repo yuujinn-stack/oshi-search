@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllPersonsWithConfig } from '@/lib/persons';
+import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, upsertManualCsvVodProviders, syncManualCsvVodProviders } from '@/lib/work-store';
 import { normalizeProviderName, VOD_SOURCE_PRIORITY, VOD_SOURCE_LABEL } from '@/lib/vod-dedup';
 import type { VodProvider, VodProviderType } from '@/types/vod';
@@ -204,7 +204,7 @@ export async function POST(req: NextRequest) {
 
   // ── 全作品を (personName + workId) → WorkRecord でインデックス化 ──
   // キー: "${personName}:${workId}"（同一 workId でも人物が異なれば別エントリ）
-  const persons = getAllPersonsWithConfig();
+  const persons = await getAllPersonsMerged();
   const workMap = new Map<string, WorkRecord>();
   for (const person of persons) {
     const works = await getAllWorks(person.name);

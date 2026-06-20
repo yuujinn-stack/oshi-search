@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getPersonWithConfig } from '@/lib/persons';
+import { getPersonWithConfigMerged } from '@/lib/persons';
 import { processPersonWorks } from '@/lib/work-processor';
 
 // POST /api/admin/work-process
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'personName が必要です' }, { status: 400 });
   }
 
-  const person = getPersonWithConfig(personName);
+  const person = await getPersonWithConfigMerged(personName);
   if (!person) {
     return NextResponse.json({ error: '人物が見つかりません' }, { status: 404 });
   }
