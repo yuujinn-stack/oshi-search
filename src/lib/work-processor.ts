@@ -42,8 +42,8 @@ interface JudgeResult {
   usedAi: boolean;
 }
 
-// AI補完の作品候補（内部型）
-interface AiWorkSuggestion {
+// AI補完の作品候補
+export interface AiWorkSuggestion {
   title: string;
   type: 'movie' | 'tv';
   releaseYear?: number;
@@ -345,6 +345,16 @@ ${personLines}
     console.error(`[work-supplement] OpenAIエラー: "${person.name}"`, err);
     return [];
   }
+}
+
+// AI補完候補を取得する（DBへの保存なし・ドライラン用）
+// work-ai-supplement API から呼ぶ。既存作品は除外済みで返す。
+export async function fetchAiWorkSuggestions(
+  person: PersonWithConfig,
+): Promise<AiWorkSuggestion[]> {
+  const existing = await getAllWorks(person.name);
+  const existingNormalized = new Set(existing.map((w) => normalizeWorkTitle(w.title)));
+  return supplementWithOpenAI(person, existingNormalized);
 }
 
 // 人物の出演作品を処理する（TMDb取得・AI補完・AI判定・Redis保存）

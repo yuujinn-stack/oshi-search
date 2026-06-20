@@ -33,7 +33,9 @@ function csvEscape(val: string): string {
 const WORK_SOURCE_LABEL: Record<string, string> = {
   tmdb: 'TMDb',
   openai_suggestion: 'AI補完（作品）',
+  ai_supplement: 'AI補完確定',
   manual: '手動',
+  manual_csv: 'CSV手動',
 };
 
 const STATUS_LABEL: Record<string, string> = {
