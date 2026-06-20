@@ -12,8 +12,23 @@ import type { WorkRecord, WorkType } from '@/types/work';
 // }
 //
 // CSVフォーマット（列順自由・余分な列可）:
-//   必須: workTitle, workType
-//   任意: personId（またはpersonName）, releaseYear, roleName
+//   必須: workTitle（または title）, workType（または type）
+//   任意: personId / personName, releaseYear, roleName,
+//         vodService, availabilityType, sourceUrl, confidence, note（すべて無視）
+//
+// 列名エイリアス:
+//   title   → workTitle として認識（16列フルCSVとの互換）
+//   type    → workType  として認識（16列フルCSVとの互換）
+//
+// workType 正規化:
+//   movie / 映画 / film                                      → 'movie'
+//   tv / drama / variety / web / documentary / special / ... → 'tv'
+//   （DBの WorkType は 'movie' | 'tv' のみ。インポート時に正規化する）
+//
+// source の使い分け:
+//   CSVに source 列があっても無視する。
+//   work-csv-import で追加した作品は常に source = 'manual_csv'。
+//   （VOD情報の source は VOD CSVインポート / TMDb / AI が設定する。ここでは登録しない）
 //
 // 動作:
 //   - personName + normalizedTitle が一致する既存作品はスキップ（重複）
@@ -41,18 +56,62 @@ export interface WorkImportPreviewRow {
 // ─────────────────────────────────────────
 
 // workType の正規化マップ
+// DBの WorkType は 'movie' | 'tv' のみ。すべての値をどちらかに正規化する。
+// ChatGPT が返す英語値・日本語値・表記ゆれをすべて網羅する。
 const TYPE_MAP: Record<string, WorkType> = {
-  movie: 'movie', 映画: 'movie', film: 'movie',
-  tv: 'tv', ドラマ: 'tv', テレビ: 'tv', series: 'tv', 番組: 'tv',
-  バラエティ: 'tv', 特番: 'tv', 舞台映像: 'tv', 舞台: 'tv',
-  アニメ: 'tv', 配信: 'tv', 配信番組: 'tv',
+  // ── movie ──
+  movie: 'movie', 映画: 'movie', film: 'movie', motion_picture: 'movie',
+
+  // ── tv（catch-all） ──
+  tv: 'tv',
+  // ドラマ系
+  drama: 'tv', ドラマ: 'tv', drama_series: 'tv', tv_drama: 'tv',
+  series: 'tv', テレビ: 'tv', television: 'tv',
+  // バラエティ系
+  variety: 'tv', バラエティ: 'tv', variety_show: 'tv',
+  // 配信・Web系
+  web: 'tv', web_series: 'tv', web_drama: 'tv', ott: 'tv', streaming: 'tv',
+  配信: 'tv', 配信番組: 'tv', 配信限定: 'tv', web番組: 'tv',
+  // ドキュメンタリー系
+  documentary: 'tv', ドキュメンタリー: 'tv', documentary_series: 'tv',
+  // 特番・スペシャル系
+  special: 'tv', 特番: 'tv', スペシャル: 'tv', tv_special: 'tv',
+  // 番組全般
+  番組: 'tv', テレビ番組: 'tv', バラエティ番組: 'tv', 情報番組: 'tv', トーク番組: 'tv',
+  // 舞台・映像系
+  stage: 'tv', 舞台: 'tv', 舞台映像: 'tv', stage_play: 'tv', musical: 'tv',
+  // アニメ系
+  animation: 'tv', anime: 'tv', アニメ: 'tv', animated_series: 'tv',
+  // リアリティ・ゲーム系
+  reality: 'tv', reality_show: 'tv', game_show: 'tv',
+  // トーク・音楽系
+  talk: 'tv', talk_show: 'tv', music: 'tv', music_video: 'tv',
+  // その他
+  miniseries: 'tv', limited_series: 'tv', short: 'tv',
 };
 
-const REQUIRED_COLS = ['worktitle', 'worktype'] as const;
+// 列名エイリアス: 正規列名 → 受け入れる列名の候補（優先順）
+// フルCSV互換のため title/type を workTitle/workType の別名として扱う
+const COL_ALIASES: Record<string, string[]> = {
+  worktitle: ['worktitle', 'title'],
+  worktype:  ['worktype', 'type'],
+};
+
+function findColIndex(header: string[], candidates: string[]): number {
+  for (const c of candidates) {
+    const idx = header.indexOf(c);
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
 
 const EXAMPLE_CSV = `personName,workTitle,workType,releaseYear,roleName
 賀喜遥香,ドラマタイトル,tv,2023,主人公
-賀喜遥香,映画タイトル,movie,2022,`;
+賀喜遥香,映画タイトル,movie,2022,
+賀喜遥香,バラエティ番組,variety,2023,
+
+# ChatGPT調査返却CSVそのままもOK:
+# personName,workTitle,workType,releaseYear,roleName,vodService,availabilityType,sourceUrl,confidence,note`;
 
 // ─────────────────────────────────────────
 // CSV パーサー（RFC 4180・BOM対応）
@@ -125,20 +184,22 @@ export async function POST(req: NextRequest) {
   const rawHeader = rows[0];
   const header = rawHeader.map((h) => h.trim().toLowerCase().replace(/\s+/g, ''));
 
-  // 必須列チェック
-  const missingCols = REQUIRED_COLS.filter((col) => !header.includes(col));
-  if (missingCols.length > 0) {
+  // 必須列チェック（エイリアス対応: worktitle or title, worktype or type）
+  const hasWorkTitle = COL_ALIASES['worktitle'].some((c) => header.includes(c));
+  const hasWorkType  = COL_ALIASES['worktype'].some((c)  => header.includes(c));
+  const missing: string[] = [
+    ...(!hasWorkTitle ? ['workTitle（またはtitle）'] : []),
+    ...(!hasWorkType  ? ['workType（またはtype）'] : []),
+  ];
+  if (missing.length > 0) {
     const foundDisplay = rawHeader.map((h) => h.trim()).join(', ') || '（列が見つかりません）';
-    const missingDisplay = missingCols
-      .map((c) => (c === 'worktitle' ? 'workTitle' : 'workType'))
-      .join(', ');
     return NextResponse.json(
       {
         error: '必須列が不足しています',
         details: {
           foundColumns: foundDisplay,
-          missingColumns: missingDisplay,
-          fix: `CSVに ${missingDisplay} 列を追加してください。列順・余分な列は自由です。`,
+          missingColumns: missing.join(', '),
+          fix: `CSVに ${missing.join(', ')} 列を追加してください。列順・余分な列は自由です。`,
           example: EXAMPLE_CSV,
         },
       },
@@ -146,11 +207,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 列インデックス（personid / personname 両方認識）
+  // 列インデックス
+  // personid / personname 両方認識
+  // worktitle / title 両方認識（フルCSVとの互換）
+  // worktype  / type  両方認識（フルCSVとの互換）
   const COL = {
-    personId:    Math.max(header.indexOf('personid'), header.indexOf('personname')),
-    workTitle:   header.indexOf('worktitle'),
-    workType:    header.indexOf('worktype'),
+    personId:    findColIndex(header, ['personid', 'personname']),
+    workTitle:   findColIndex(header, COL_ALIASES['worktitle']),
+    workType:    findColIndex(header, COL_ALIASES['worktype']),
     releaseYear: header.indexOf('releaseyear'),
     roleName:    header.indexOf('rolename'),
   };
@@ -216,12 +280,12 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const workType = TYPE_MAP[workTypeRaw.toLowerCase()] ?? TYPE_MAP[workTypeRaw];
+    const workType = TYPE_MAP[workTypeRaw.toLowerCase()];
     if (!workType) {
       previewRows.push({
         rowNum: i + 2, personName: effectivePersonName, workTitle, workType: workTypeRaw, releaseYear, roleName,
         action: 'error',
-        reason: `workType "${workTypeRaw}" は無効です（movie / tv / 映画 / ドラマ 等を指定してください）`,
+        reason: `workType "${workTypeRaw}" は未対応です（movie / tv / variety / documentary / web / drama / special / stage 等を指定してください）`,
       });
       continue;
     }
@@ -270,7 +334,7 @@ export async function POST(req: NextRequest) {
   const errors: string[] = [];
 
   for (const row of addRows) {
-    const workType = (TYPE_MAP[row.workType.toLowerCase()] ?? TYPE_MAP[row.workType]) as WorkType;
+    const workType = TYPE_MAP[row.workType.toLowerCase()] as WorkType;
     const normalizedTitle = normalizeWorkTitle(row.workTitle);
     const workId = generateWorkCsvId(workType, normalizedTitle);
 

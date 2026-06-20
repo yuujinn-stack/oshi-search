@@ -1208,13 +1208,16 @@ export default function CsvSection({ persons }: { persons: PersonInfo[] }) {
           </p>
           <div className="mt-1 bg-gray-50 rounded-lg px-3 py-2 space-y-1">
             <p className="text-[10px] text-gray-500 font-semibold">
-              必須列: <span className="font-mono">workTitle, workType</span>
+              必須列: <span className="font-mono">workTitle（またはtitle）, workType（またはtype）</span>
             </p>
             <p className="text-[10px] text-gray-500">
-              任意列: <span className="font-mono">personId（またはpersonName）, releaseYear, roleName</span>
+              任意列: <span className="font-mono">personId / personName, releaseYear, roleName</span>（vodService等の余分な列は無視）
             </p>
             <p className="text-[10px] text-gray-500">
-              workType: <span className="font-mono">movie / 映画 / tv / ドラマ / バラエティ / 特番 / 舞台</span> 等
+              workType: <span className="font-mono">movie / tv / variety / documentary / web / drama / special / stage</span> 等（日本語も可）
+            </p>
+            <p className="text-[10px] text-gray-400">
+              ※ 補完CSVダウンロード（16列）・ChatGPT調査返却CSVそのまま使用可
             </p>
             <p className="text-[10px] text-orange-500 font-medium">
               ※ CSVにpersonId/personName列がない場合は、下の「対象人物」を必ず選択してください
