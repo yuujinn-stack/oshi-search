@@ -22,6 +22,8 @@ const STATUS_BADGE: Record<PersonJobStatus, string> = {
 const STEP_LABEL = { pending: '待機', done: '完了', failed: '失敗' };
 const STEP_COLOR = { pending: 'text-gray-400', done: 'text-green-600', failed: 'text-red-500' };
 
+const MAX_SELECTABLE = 3;
+
 type FilterKey = 'all' | PersonJobStatus;
 
 export default function JobQueuePanel() {
@@ -30,6 +32,9 @@ export default function JobQueuePanel() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [processNowLoading, setProcessNowLoading] = useState(false);
+  const [processNowError, setProcessNowError] = useState<string | null>(null);
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     try {
@@ -38,6 +43,15 @@ export default function JobQueuePanel() {
       const data = await res.json();
       setJobs(data.jobs ?? []);
       setQueueLength(data.queueLength ?? 0);
+      // 選択中のジョブが処理済みになっていたら選択解除
+      setSelectedJobIds((prev) => {
+        const next = new Set<string>();
+        for (const id of prev) {
+          const job = (data.jobs ?? []).find((j: PersonJob) => j.jobId === id);
+          if (job?.status === 'queued') next.add(id);
+        }
+        return next;
+      });
     } catch {
       // noop
     } finally {
@@ -65,6 +79,42 @@ export default function JobQueuePanel() {
     }
   }
 
+  async function handleProcessNow(jobIds?: string[]) {
+    setProcessNowLoading(true);
+    setProcessNowError(null);
+    try {
+      const res = await fetch('/api/admin/person-jobs/process-now', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(jobIds && jobIds.length > 0 ? { jobIds } : {}),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setProcessNowError(data.error ?? '処理に失敗しました');
+      } else if (data.processed === 0) {
+        setProcessNowError('処理できるキュー待機ジョブがありませんでした');
+      }
+      setSelectedJobIds(new Set());
+      await refresh();
+    } catch (err) {
+      setProcessNowError(String(err));
+    } finally {
+      setProcessNowLoading(false);
+    }
+  }
+
+  function toggleSelect(jobId: string) {
+    setSelectedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) {
+        next.delete(jobId);
+      } else if (next.size < MAX_SELECTABLE) {
+        next.add(jobId);
+      }
+      return next;
+    });
+  }
+
   const counts: Partial<Record<FilterKey, number>> = { all: jobs.length };
   for (const j of jobs) {
     counts[j.status] = (counts[j.status] ?? 0) + 1;
@@ -74,6 +124,7 @@ export default function JobQueuePanel() {
 
   const activeJobs = (counts.queued ?? 0) + (counts.processing ?? 0);
   const failedJobs = (counts.failed ?? 0) + (counts.partial_error ?? 0);
+  const queuedJobs = counts.queued ?? 0;
 
   if (loading) {
     return (
@@ -102,11 +153,54 @@ export default function JobQueuePanel() {
         ))}
       </div>
 
-      {/* 実行中バナー */}
-      {activeJobs > 0 && (
+      {/* 今すぐ処理バナー */}
+      {queuedJobs > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-3 flex items-center gap-3 flex-wrap text-sm text-amber-800">
+          <span className="font-medium">
+            {queuedJobs}件がキュー待機中（次回Cron: 09:00 UTC）
+          </span>
+          <div className="flex items-center gap-2 ml-auto flex-wrap">
+            {selectedJobIds.size > 0 && (
+              <button
+                onClick={() => handleProcessNow([...selectedJobIds])}
+                disabled={processNowLoading}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {processNowLoading ? '処理中...' : `選択した${selectedJobIds.size}件を処理`}
+              </button>
+            )}
+            <button
+              onClick={() => handleProcessNow()}
+              disabled={processNowLoading || queuedJobs === 0}
+              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {processNowLoading ? '処理中...' : '今すぐ処理'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 処理中バナー（Cronまたは手動実行中） */}
+      {processNowLoading && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-3 flex items-center gap-2 text-sm text-blue-700">
+          <span className="animate-spin">⟳</span>
+          <span>処理中です。完了まで数十秒かかります...</span>
+        </div>
+      )}
+
+      {/* エラー表示 */}
+      {processNowError && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-3 flex items-center justify-between text-sm text-red-700">
+          <span>{processNowError}</span>
+          <button onClick={() => setProcessNowError(null)} className="text-red-400 hover:text-red-600 ml-4 text-xs">✕</button>
+        </div>
+      )}
+
+      {/* 処理中Cron実行バナー */}
+      {!processNowLoading && activeJobs > 0 && (counts.processing ?? 0) > 0 && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-3 flex items-center gap-2 text-sm text-blue-700">
           <span className="animate-pulse">●</span>
-          <span>Cronが順次処理中です（毎分実行・{activeJobs}件待機）。ブラウザを閉じても継続します。</span>
+          <span>処理実行中（{activeJobs}件待機）。完了までしばらくお待ちください。</span>
           <button onClick={refresh} className="ml-auto text-xs text-blue-500 hover:underline">更新</button>
         </div>
       )}
@@ -118,9 +212,16 @@ export default function JobQueuePanel() {
             ジョブキュー
             <span className="ml-1.5 text-gray-400 font-normal text-xs">{jobs.length}件</span>
           </h3>
-          <button onClick={refresh} className="text-xs text-indigo-500 hover:underline">
-            更新
-          </button>
+          <div className="flex items-center gap-2">
+            {selectedJobIds.size > 0 && (
+              <span className="text-xs text-indigo-600 font-medium">
+                {selectedJobIds.size}件選択中（最大{MAX_SELECTABLE}件）
+              </span>
+            )}
+            <button onClick={refresh} className="text-xs text-indigo-500 hover:underline">
+              更新
+            </button>
+          </div>
         </div>
 
         {/* フィルタータブ */}
@@ -160,6 +261,7 @@ export default function JobQueuePanel() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-gray-50 text-left text-gray-500">
+                  <th className="px-3 py-2 font-medium w-8"></th>
                   <th className="px-4 py-2 font-medium">人物名</th>
                   <th className="px-4 py-2 font-medium">状態</th>
                   <th className="px-4 py-2 font-medium">楽天</th>
@@ -172,10 +274,25 @@ export default function JobQueuePanel() {
                 {filtered.map((job) => {
                   const isActing = actionLoading === job.jobId;
                   const canRequeue = ['failed', 'partial_error', 'cancelled'].includes(job.status);
-                  const canCancel = ['queued'].includes(job.status);
+                  const canCancel = job.status === 'queued';
+                  const isQueued = job.status === 'queued';
+                  const isSelected = selectedJobIds.has(job.jobId);
+                  const isMaxSelected = selectedJobIds.size >= MAX_SELECTABLE && !isSelected;
 
                   return (
-                    <tr key={job.jobId} className="hover:bg-gray-50">
+                    <tr key={job.jobId} className={`hover:bg-gray-50 ${isSelected ? 'bg-indigo-50' : ''}`}>
+                      <td className="px-3 py-2.5">
+                        {isQueued && (
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(job.jobId)}
+                            disabled={isMaxSelected || processNowLoading}
+                            className="w-3.5 h-3.5 rounded accent-indigo-600 disabled:opacity-30"
+                            title={isMaxSelected ? `最大${MAX_SELECTABLE}件まで選択できます` : '選択して今すぐ処理'}
+                          />
+                        )}
+                      </td>
                       <td className="px-4 py-2.5 font-medium text-slate-800">{job.personName}</td>
                       <td className="px-4 py-2.5">
                         <span className={`px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[job.status]}`}>
@@ -217,7 +334,7 @@ export default function JobQueuePanel() {
                           {canCancel && (
                             <button
                               onClick={() => handleAction(job.jobId, 'cancel')}
-                              disabled={isActing}
+                              disabled={isActing || processNowLoading}
                               className="px-2 py-1 rounded text-xs bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-200 disabled:opacity-40"
                             >
                               キャンセル
@@ -232,6 +349,11 @@ export default function JobQueuePanel() {
             </table>
           </div>
         )}
+
+        {/* 注意事項 */}
+        <div className="px-5 py-2.5 border-t border-gray-100 text-xs text-gray-400">
+          ※「今すぐ処理」は1回の実行で最大{MAX_SELECTABLE}件処理します。Vercel Functionのタイムアウト（300秒）内で完了します。
+        </div>
       </div>
     </div>
   );
