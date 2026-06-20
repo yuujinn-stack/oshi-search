@@ -130,6 +130,42 @@ const ACTION_LABEL: Record<ImportPreviewRow['action'], string> = {
 // コンポーネント
 // ─────────────────────────────────────────
 
+// ChatGPT調査用プロンプトを生成
+function buildChatGptPrompt(csv: string): string {
+  return `━━━━━━━━━━━━━━━━━━
+調査依頼
+━━━━━━━━━━━━━━━━━━
+
+以下のCSVに含まれる作品について調査してください。
+
+条件
+
+・TMDbに存在しない作品も調査対象
+・ドラマ
+・映画
+・バラエティ
+・配信限定番組
+・アイドル番組
+・特番
+・舞台映像作品
+
+を含めて調査
+
+推測禁止
+
+確認できた情報のみ記載
+
+出力は以下のCSV形式
+
+personName,workTitle,workType,releaseYear,roleName,vodService,availabilityType,sourceUrl,confidence,note
+
+CSV:
+
+${csv}
+
+━━━━━━━━━━━━━━━━━━`;
+}
+
 export default function CsvSection({ persons }: { persons: string[] }) {
   // ── エクスポート状態 ──
   const [exportFilter, setExportFilter] = useState<ExportFilter>('all');
@@ -137,6 +173,9 @@ export default function CsvSection({ persons }: { persons: string[] }) {
   const [exportPreview, setExportPreview] = useState<ExportPreviewResult | null>(null);
   const [exportPreviewLoading, setExportPreviewLoading] = useState(false);
   const [exportPreviewError, setExportPreviewError] = useState('');
+  const [csvText, setCsvText] = useState<string | null>(null);
+  const [copyLoading, setCopyLoading] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'csv' | 'prompt'>('idle');
 
   // ── インポート状態 ──
   const [importMode, setImportMode] = useState<'upsert' | 'sync'>('upsert');
@@ -178,6 +217,8 @@ export default function CsvSection({ persons }: { persons: string[] }) {
   function resetExportPreview() {
     setExportPreview(null);
     setExportPreviewError('');
+    setCsvText(null);
+    setCopyStatus('idle');
   }
 
   async function handleExportPreview() {
@@ -205,7 +246,9 @@ export default function CsvSection({ persons }: { persons: string[] }) {
         setExportPreviewError('CSV取得に失敗しました');
         return;
       }
-      const blob = await res.blob();
+      const text = await res.text();
+      setCsvText(text);
+      const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -219,6 +262,47 @@ export default function CsvSection({ persons }: { persons: string[] }) {
       URL.revokeObjectURL(url);
     } catch {
       setExportPreviewError('ダウンロードに失敗しました');
+    }
+  }
+
+  async function fetchCsvAsText(): Promise<string | null> {
+    if (csvText !== null) return csvText;
+    const res = await fetch(buildExportUrl());
+    if (!res.ok) return null;
+    const text = await res.text();
+    setCsvText(text);
+    return text;
+  }
+
+  async function handleCopyCsv() {
+    if (!exportPreview || exportPreview.count === 0) return;
+    setCopyLoading(true);
+    try {
+      const text = await fetchCsvAsText();
+      if (!text) { setExportPreviewError('CSV取得に失敗しました'); return; }
+      await navigator.clipboard.writeText(text);
+      setCopyStatus('csv');
+      setTimeout(() => setCopyStatus('idle'), 2000);
+    } catch {
+      setExportPreviewError('クリップボードへのコピーに失敗しました');
+    } finally {
+      setCopyLoading(false);
+    }
+  }
+
+  async function handleCopyPrompt() {
+    if (!exportPreview || exportPreview.count === 0) return;
+    setCopyLoading(true);
+    try {
+      const text = await fetchCsvAsText();
+      if (!text) { setExportPreviewError('CSV取得に失敗しました'); return; }
+      await navigator.clipboard.writeText(buildChatGptPrompt(text));
+      setCopyStatus('prompt');
+      setTimeout(() => setCopyStatus('idle'), 2000);
+    } catch {
+      setExportPreviewError('クリップボードへのコピーに失敗しました');
+    } finally {
+      setCopyLoading(false);
     }
   }
 
@@ -399,7 +483,7 @@ export default function CsvSection({ persons }: { persons: string[] }) {
               </div>
             ) : (
               <>
-                <div className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
+                <div className="bg-slate-50 rounded-lg px-3 py-2 space-y-2">
                   <div>
                     <span className="text-xs font-semibold text-slate-700">
                       {exportPreview.personName} / {FILTER_LABELS[exportPreview.filter as ExportFilter] ?? exportPreview.filter}
@@ -408,12 +492,47 @@ export default function CsvSection({ persons }: { persons: string[] }) {
                       {exportPreview.count}件
                     </span>
                   </div>
-                  <button
-                    onClick={handleCsvDownload}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors font-bold"
-                  >
-                    📄 CSVダウンロード（{exportPreview.count}件）
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    {/* ① 補完CSVダウンロード */}
+                    <button
+                      onClick={handleCsvDownload}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors font-bold"
+                    >
+                      📄 補完CSVダウンロード
+                    </button>
+                    {/* ② ChatGPT調査用コピー */}
+                    <button
+                      onClick={handleCopyPrompt}
+                      disabled={copyLoading}
+                      className={`text-xs px-3 py-1.5 rounded-lg font-bold transition-colors disabled:opacity-50 ${
+                        copyStatus === 'prompt'
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-violet-600 text-white hover:bg-violet-700'
+                      }`}
+                    >
+                      {copyLoading && copyStatus !== 'csv'
+                        ? '取得中...'
+                        : copyStatus === 'prompt'
+                        ? 'コピー済み!'
+                        : '🤖 ChatGPT調査用コピー'}
+                    </button>
+                    {/* ③ CSVをクリップボードへコピー */}
+                    <button
+                      onClick={handleCopyCsv}
+                      disabled={copyLoading}
+                      className={`text-xs px-3 py-1.5 rounded-lg font-bold transition-colors disabled:opacity-50 ${
+                        copyStatus === 'csv'
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-slate-500 text-white hover:bg-slate-600'
+                      }`}
+                    >
+                      {copyLoading && copyStatus !== 'prompt'
+                        ? '取得中...'
+                        : copyStatus === 'csv'
+                        ? 'コピー済み!'
+                        : '📋 CSVをクリップボードへコピー'}
+                    </button>
+                  </div>
                 </div>
 
                 {/* 作品リスト */}
