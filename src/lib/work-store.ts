@@ -46,6 +46,16 @@ export async function saveWork(work: WorkRecord): Promise<void> {
   await redis.hset(hashKey(work.personName), { [work.id]: JSON.stringify(work) });
 }
 
+// 作品が存在しない場合のみ保存（統合CSVインポートでの重複防止）
+export async function saveWorkIfAbsent(work: WorkRecord): Promise<'created' | 'skipped'> {
+  const redis = getRedis();
+  if (!redis) return 'skipped';
+  const existing = await redis.hget(hashKey(work.personName), work.id);
+  if (existing) return 'skipped';
+  await redis.hset(hashKey(work.personName), { [work.id]: JSON.stringify(work) });
+  return 'created';
+}
+
 // ステータスのみ更新（管理画面からの手動判定）
 export async function updateWorkStatus(
   personName: string,

@@ -39,6 +39,9 @@ export default async function PeopleImportPage() {
           <a href="/admin/providers" className="text-xs text-indigo-600 hover:underline">
             配信サービス →
           </a>
+          <a href="/admin/work-import" className="text-xs text-indigo-600 hover:underline">
+            作品・配信統合CSV →
+          </a>
           <a href="/api/admin/logout" className="text-xs text-gray-400 hover:text-red-500">
             ログアウト
           </a>

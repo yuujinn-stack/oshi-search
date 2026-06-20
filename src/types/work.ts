@@ -1,6 +1,6 @@
 export type WorkStatus = 'auto_published' | 'needs_review' | 'hidden';
 export type WorkType = 'movie' | 'tv';
-export type WorkSource = 'tmdb' | 'openai_suggestion' | 'manual';
+export type WorkSource = 'tmdb' | 'openai_suggestion' | 'manual' | 'manual_csv';
 
 export type { VodProvider, VodProviderType, VodSource } from './vod';
 

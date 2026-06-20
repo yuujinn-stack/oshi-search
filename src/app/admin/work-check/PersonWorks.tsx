@@ -68,16 +68,18 @@ const STATUS_BADGE: Record<WorkStatus, string> = {
   hidden: 'bg-gray-100 text-gray-500',
 };
 
-// source バッジ（青=TMDb、紫=AI補完、緑=手動）
+// source バッジ（青=TMDb、紫=AI補完、緑=手動、橙=CSV手動）
 const SOURCE_BADGE: Record<WorkSource, string> = {
   tmdb: 'bg-blue-100 text-blue-700',
   openai_suggestion: 'bg-purple-100 text-purple-700',
   manual: 'bg-green-100 text-green-700',
+  manual_csv: 'bg-orange-100 text-orange-700',
 };
 const SOURCE_LABEL: Record<WorkSource, string> = {
   tmdb: 'TMDb',
   openai_suggestion: 'AI補完',
   manual: '手動',
+  manual_csv: 'CSV手動',
 };
 
 export default function PersonWorks({ personName, group, counts }: Props) {
@@ -541,6 +543,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                   { key: 'tmdb', label: 'TMDb' },
                   { key: 'openai_suggestion', label: 'AI補完' },
                   { key: 'manual', label: '手動' },
+                  { key: 'manual_csv', label: 'CSV手動' },
                 ] as { key: SourceFilter; label: string }[]
               ).map(({ key, label }) => (
                 <button
