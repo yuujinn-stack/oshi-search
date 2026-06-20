@@ -15,10 +15,10 @@ export default function WorkImportPage() {
         </div>
         <div className="flex items-center gap-3 mt-1 flex-wrap text-xs">
           <a href="/admin/work-check" className="text-indigo-600 hover:underline">
-            作品管理 →
+            ← 作品管理
           </a>
-          <a href="/admin/people/import" className="text-indigo-600 hover:underline">
-            人物CSV登録 →
+          <a href="/admin/people/import" className="text-gray-400 hover:underline">
+            人物登録
           </a>
           <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">
             ログアウト
@@ -26,7 +26,20 @@ export default function WorkImportPage() {
         </div>
       </div>
 
-      {/* 動作フロー説明 */}
+      {/* ステップ位置表示 */}
+      <div className="flex items-center gap-2 text-xs text-gray-500 mb-8 flex-wrap">
+        <span className="px-3 py-1.5 bg-gray-100 text-gray-400 rounded-full">① 人物CSV登録</span>
+        <span className="text-gray-300">→</span>
+        <span className="px-3 py-1.5 bg-gray-100 text-gray-400 rounded-full">② 作品確認</span>
+        <span className="text-gray-300">→</span>
+        <span className="px-3 py-1.5 bg-gray-100 text-gray-400 rounded-full">③ 補完用CSV出力</span>
+        <span className="text-gray-300">→</span>
+        <span className="px-3 py-1.5 bg-violet-600 text-white rounded-full font-semibold">④ 作品・配信情報追加</span>
+        <span className="text-gray-300">→</span>
+        <span className="px-3 py-1.5 bg-gray-100 text-gray-400 rounded-full">⑤ 公開</span>
+      </div>
+
+      {/* 処理フロー説明 */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-8 text-xs text-center">
         {[
           {
@@ -45,7 +58,7 @@ export default function WorkImportPage() {
             step: '③',
             title: '作品なしなら新規作成',
             desc: '既存作品が見つからない場合は「確認待ち」で新規作成し、配信情報を追加。',
-            color: 'bg-blue-50 border-blue-200 text-blue-800',
+            color: 'bg-violet-50 border-violet-200 text-violet-800',
           },
         ].map((s) => (
           <div key={s.step} className={`border rounded-xl p-4 ${s.color}`}>
@@ -54,24 +67,6 @@ export default function WorkImportPage() {
             <div className="opacity-80">{s.desc}</div>
           </div>
         ))}
-      </div>
-
-      {/* 既存機能との違い */}
-      <div className="bg-gray-50 border border-gray-200 rounded-xl px-5 py-4 mb-8 text-xs text-gray-600 space-y-1">
-        <p className="font-semibold text-slate-700 mb-2">既存機能との違い</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
-          <div>
-            <span className="font-medium text-slate-600">配信情報CSV（既存）</span>
-            <span className="ml-2 text-gray-400">→ TMDb取得済み作品への配信情報追加のみ</span>
-          </div>
-          <div>
-            <span className="font-medium text-indigo-600">統合CSV（本機能）</span>
-            <span className="ml-2 text-gray-400">→ 作品の新規作成 ＋ 配信情報追加を同時実行</span>
-          </div>
-        </div>
-        <p className="text-gray-400 text-[10px] mt-2">
-          ※ TMDbにない作品（バラエティ・アイドル番組等）をChatGPTで調査してCSV化し、そのまま投入できます。
-        </p>
       </div>
 
       {/* フォーム */}

@@ -40,41 +40,36 @@ export default async function WorkCheckPage() {
             全{persons.length}人 ／ 確認待ち {totalReview}件
           </p>
         </div>
-        <div className="flex items-center gap-4">
-          <a href="/admin/product-check" className="text-xs text-indigo-600 hover:underline">
-            ← 商品確認
+        <div className="flex items-center gap-3 flex-wrap text-xs">
+          <a href="/admin/people/import" className="text-indigo-600 hover:underline">
+            ← 人物登録
           </a>
-          <a href="/admin/providers" className="text-xs text-indigo-600 hover:underline">
-            配信サービス管理 →
+          <a href="/admin/work-import" className="text-indigo-600 hover:underline font-medium">
+            作品・配信追加 →
           </a>
-          <a href="/admin/people/import" className="text-xs text-indigo-600 hover:underline">
-            人物CSV登録 →
+          <a href="/admin/providers" className="text-gray-400 hover:underline">
+            配信サービス
           </a>
-          <a href="/admin/work-import" className="text-xs text-indigo-600 hover:underline">
-            作品・配信統合CSV →
+          <a href="/admin/product-check" className="text-gray-400 hover:underline">
+            商品確認
           </a>
-          <a
-            href="/api/admin/logout"
-            className="text-xs text-gray-400 hover:text-red-500 transition-colors"
-          >
+          <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500 transition-colors">
             ログアウト
           </a>
         </div>
       </div>
 
-      {/* フロー説明 */}
-      <div className="grid grid-cols-3 gap-3 mb-8 text-center text-xs">
-        {[
-          { icon: '🎬', label: 'TMDb取得', desc: '人物名で出演作品を自動取得' },
-          { icon: '🤖', label: 'AI判定', desc: 'スコアで3段階に自動分類' },
-          { icon: '✅', label: '曖昧作品を確認', desc: '確認待ちのみ管理画面で判断' },
-        ].map((s) => (
-          <div key={s.label} className="bg-gray-50 rounded-xl p-3">
-            <div className="text-2xl mb-1">{s.icon}</div>
-            <div className="font-bold text-slate-700">{s.label}</div>
-            <div className="text-gray-500 mt-0.5">{s.desc}</div>
-          </div>
-        ))}
+      {/* ステップ位置表示 */}
+      <div className="flex items-center gap-2 text-xs text-gray-500 mb-6 flex-wrap">
+        <span className="px-3 py-1.5 bg-gray-100 text-gray-400 rounded-full">① 人物CSV登録</span>
+        <span className="text-gray-300">→</span>
+        <span className="px-3 py-1.5 bg-indigo-600 text-white rounded-full font-semibold">② 作品確認・TMDb取得</span>
+        <span className="text-gray-300">→</span>
+        <span className="px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-full font-medium">③ 補完用CSV出力</span>
+        <span className="text-gray-300">→</span>
+        <span className="px-3 py-1.5 bg-gray-100 text-gray-400 rounded-full">④ 作品・配信追加</span>
+        <span className="text-gray-300">→</span>
+        <span className="px-3 py-1.5 bg-gray-100 text-gray-400 rounded-full">⑤ 公開</span>
       </div>
 
       {/* スコア基準 */}
