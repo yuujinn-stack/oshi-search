@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/person-fetch",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/refresh",
       "schedule": "0 3 * * *"
     },

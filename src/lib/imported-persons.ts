@@ -9,6 +9,7 @@ const HASH_KEY = 'imported:persons';
 
 export type DataFetchStatus =
   | 'not_started'   // 未取得
+  | 'queued'        // キュー待機中
   | 'processing'    // 取得中
   | 'completed'     // 取得完了
   | 'partial_error' // 一部失敗
@@ -85,7 +86,7 @@ export async function updateImportedPersonStatus(
   const updated: ImportedPerson = {
     ...person,
     dataFetchStatus,
-    lastDataFetchedAt: dataFetchStatus !== 'not_started' && dataFetchStatus !== 'processing'
+    lastDataFetchedAt: dataFetchStatus !== 'not_started' && dataFetchStatus !== 'queued' && dataFetchStatus !== 'processing'
       ? Date.now()
       : person.lastDataFetchedAt,
     dataFetchErrorMessage: errorMessage ?? undefined,

@@ -2,6 +2,7 @@ import { getAllImportedPersons } from '@/lib/imported-persons';
 import { getPublishedPersonNames } from '@/lib/published-persons';
 import ImportForm from './ImportForm';
 import PersonList from './PersonList';
+import JobQueuePanel from './JobQueuePanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,6 +62,9 @@ export default async function PeopleImportPage() {
       <div className="mb-8">
         <ImportForm initialCount={imported.length} />
       </div>
+
+      {/* ジョブキュー状況 */}
+      <JobQueuePanel />
 
       {/* 人物一覧・データ取得・公開反映 */}
       <PersonList

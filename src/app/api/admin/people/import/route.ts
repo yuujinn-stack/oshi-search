@@ -3,8 +3,10 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import {
   getAllImportedPersons,
   saveImportedPersonsBatch,
+  updateImportedPersonStatus,
   type ImportedPerson,
 } from '@/lib/imported-persons';
+import { enqueuePersonJob } from '@/lib/person-job-queue';
 import type { Genre } from '@/types/person';
 
 export const dynamic = 'force-dynamic';
@@ -191,7 +193,7 @@ export async function POST(req: NextRequest) {
         description:      r.description || undefined,
         status:           'imported' as const,
         importedAt:       Date.now(),
-        dataFetchStatus:  'not_started' as const,
+        dataFetchStatus:  'queued' as const,
       }));
 
     const errors: string[] = [];
@@ -201,10 +203,25 @@ export async function POST(req: NextRequest) {
       errors.push(String(err));
     }
 
+    // 登録成功した人物をキューに追加
+    const queued: string[] = [];
+    const queueErrors: string[] = [];
+    for (const p of toAdd) {
+      try {
+        await enqueuePersonJob(p.name);
+        queued.push(p.name);
+      } catch (err) {
+        queueErrors.push(`${p.name}: ${String(err)}`);
+        // キュー追加失敗時はステータスを not_started に戻す
+        await updateImportedPersonStatus(p.name, 'not_started').catch(() => {});
+      }
+    }
+
     return NextResponse.json({
-      added:   toAdd.map((p) => p.name),
-      skipped: previewRows.filter((r) => r.action === 'skip').map((r) => r.name),
-      errors,
+      added:       toAdd.map((p) => p.name),
+      skipped:     previewRows.filter((r) => r.action === 'skip').map((r) => r.name),
+      errors:      [...errors, ...queueErrors],
+      queued,
     });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });

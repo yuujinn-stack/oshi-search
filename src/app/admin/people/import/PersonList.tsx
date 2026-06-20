@@ -7,6 +7,7 @@ const BULK_MAX = 20;
 
 const STATUS_LABEL: Record<DataFetchStatus, string> = {
   not_started:   '未取得',
+  queued:        'キュー待機',
   processing:    '取得中',
   completed:     '取得完了',
   partial_error: '一部失敗',
@@ -14,6 +15,7 @@ const STATUS_LABEL: Record<DataFetchStatus, string> = {
 };
 const STATUS_BADGE: Record<DataFetchStatus, string> = {
   not_started:   'bg-gray-100 text-gray-500',
+  queued:        'bg-sky-100 text-sky-700',
   processing:    'bg-blue-100 text-blue-600',
   completed:     'bg-green-100 text-green-700',
   partial_error: 'bg-amber-100 text-amber-700',
@@ -47,6 +49,7 @@ export default function PersonList({ initialPersons, initialPublishedNames }: Pr
     all:           persons.length,
     unpublished:   persons.filter((p) => !publishedNames.has(p.name)).length,
     not_started:   persons.filter((p) => p.dataFetchStatus === 'not_started').length,
+    queued:        persons.filter((p) => p.dataFetchStatus === 'queued').length,
     processing:    persons.filter((p) => p.dataFetchStatus === 'processing').length,
     completed:     persons.filter((p) => p.dataFetchStatus === 'completed').length,
     partial_error: persons.filter((p) => p.dataFetchStatus === 'partial_error').length,
@@ -224,6 +227,7 @@ export default function PersonList({ initialPersons, initialPublishedNames }: Pr
               { key: 'all' as FilterKey,           label: 'すべて' },
               { key: 'unpublished' as FilterKey,   label: '未公開' },
               { key: 'not_started' as FilterKey,   label: '未取得' },
+              { key: 'queued' as FilterKey,        label: 'キュー待機' },
               { key: 'completed' as FilterKey,     label: '取得完了' },
               { key: 'partial_error' as FilterKey, label: '一部失敗' },
               { key: 'failed' as FilterKey,        label: '失敗' },
