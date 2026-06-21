@@ -24,7 +24,7 @@ export default async function WorkCheckPage() {
             published: works.filter((w) => w.status === 'auto_published').length,
             review: works.filter((w) => w.status === 'needs_review').length,
             hidden: works.filter((w) => w.status === 'hidden').length,
-            noVod: works.filter((w) => !w.vodProviders || w.vodProviders.length === 0).length,
+            noVod: works.filter((w) => (w.vodProviders ?? []).filter((p) => p.providerName !== 'unknown').length === 0).length,
             noTmdbId: works.filter((w) => !w.tmdbId).length,
             manualCsv: works.filter((w) => w.source === 'manual_csv').length,
             aiSupplement: works.filter((w) => w.source === 'openai_suggestion' || w.source === 'ai_supplement').length,

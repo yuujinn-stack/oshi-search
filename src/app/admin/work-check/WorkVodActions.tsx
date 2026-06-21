@@ -39,7 +39,10 @@ export default function WorkVodActions({
   onManualVodAdd,
   onManualVodRemove,
 }: WorkVodActionsProps) {
-  const hasProviders = (work.vodProviders?.length ?? 0) > 0;
+  const visibleProviders = deduplicateProviders(work.vodProviders ?? []).filter(
+    (p) => p.providerName !== 'unknown',
+  );
+  const hasProviders = visibleProviders.length > 0;
 
   return (
     <>
@@ -47,7 +50,7 @@ export default function WorkVodActions({
       {hasProviders ? (
         <div className="mt-2 flex flex-wrap gap-1 items-center">
           <span className="text-[10px] text-teal-600 font-medium">📺</span>
-          {deduplicateProviders(work.vodProviders!).map((p, pi) => (
+          {visibleProviders.map((p, pi) => (
             <span
               key={`${p.providerId}-${p.type}-${pi}`}
               className={`flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border ${
