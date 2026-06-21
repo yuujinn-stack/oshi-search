@@ -4,6 +4,7 @@ import PersonWorks from './PersonWorks';
 import CsvSection from './CsvSection';
 import VodRecheckSection from './VodRecheckSection';
 import AiSupplementSection from './AiSupplementSection';
+import ChatGptPromptSection from './ChatGptPromptSection';
 
 export const dynamic = 'force-dynamic';
 
@@ -101,11 +102,14 @@ export default async function WorkCheckPage() {
         </div>
       )}
 
-      {/* AI補完候補 → 作品として追加 */}
-      <AiSupplementSection persons={persons.map((p) => ({ name: p.name, group: p.group ?? '' }))} />
+      {/* ChatGPT調査プロンプト生成 */}
+      <ChatGptPromptSection persons={persons.map((p) => ({ name: p.name, group: p.group ?? '' }))} />
 
       {/* CSV出力 / VOD調査インポート */}
       <CsvSection persons={persons.map((p) => ({ name: p.name, group: p.group ?? '' }))} />
+
+      {/* AI補完候補 → 作品として追加 */}
+      <AiSupplementSection persons={persons.map((p) => ({ name: p.name, group: p.group ?? '' }))} />
 
       {/* 配信情報再確認対象一覧 */}
       <VodRecheckSection />
