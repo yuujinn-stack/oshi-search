@@ -162,6 +162,15 @@ export default function PersonWorks({ personName, group, counts }: Props) {
     await loadWorks();
   }
 
+  async function handleOgImageFetch(workId: string) {
+    await fetch('/api/admin/og-image-fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, workId }),
+    });
+    await loadWorks();
+  }
+
   async function handleIntensiveCronToggle() {
     setIntensiveCronLoading(true);
     const newVal = !intensiveCronEnabled;
@@ -441,6 +450,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                   onManualVodRemove={handleManualVodRemove}
                   onOpenVodResearch={(w) => setVodResearchWork(w)}
                   onTestJudge={handleTestJudge}
+                  onOgImageFetch={handleOgImageFetch}
                 />
               ))}
             </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import type { WorkRecord, WorkStatus } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 import type { VodFetchDebugItem } from './work-check-types';
@@ -52,6 +52,7 @@ interface WorkCardProps {
   onManualVodRemove: (workId: string, provider: VodProvider) => void;
   onOpenVodResearch: (work: WorkRecord) => void;
   onTestJudge: (work: WorkRecord) => void;
+  onOgImageFetch: (workId: string) => Promise<void>;
 }
 
 export default function WorkCard({
@@ -70,11 +71,21 @@ export default function WorkCard({
   onManualVodRemove,
   onOpenVodResearch,
   onTestJudge,
+  onOgImageFetch,
 }: WorkCardProps) {
   const [manualVodWorkId, setManualVodWorkId] = useState<string | null>(null);
   const [manualVodName, setManualVodName] = useState('');
   const [manualVodLink, setManualVodLink] = useState('');
   const [expandedVodDebug, setExpandedVodDebug] = useState(false);
+  const [ogFetching, setOgFetching] = useState(false);
+  const [ogTried, setOgTried] = useState(false);
+
+  const handleOgFetch = useCallback(async () => {
+    setOgFetching(true);
+    await onOgImageFetch(work.id);
+    setOgFetching(false);
+    setOgTried(true);
+  }, [onOgImageFetch, work.id]);
 
   async function handleManualVodAddLocal(workId: string) {
     await onManualVodAdd(workId, manualVodName, manualVodLink);
@@ -94,17 +105,32 @@ export default function WorkCard({
       }`}
     >
       {/* ポスター */}
-      {work.posterUrl ? (
-        <img
-          src={work.posterUrl}
-          alt=""
-          className="w-10 h-14 object-cover rounded flex-shrink-0"
-        />
-      ) : (
-        <div className="w-10 h-14 bg-gray-100 rounded flex-shrink-0 flex items-center justify-center text-gray-300 text-lg">
-          🎬
-        </div>
-      )}
+      <div className="flex flex-col items-center gap-1 flex-shrink-0">
+        {work.posterUrl ? (
+          <img
+            src={work.posterUrl}
+            alt=""
+            className="w-10 h-14 object-cover rounded"
+          />
+        ) : (
+          <div className="w-10 h-14 bg-gray-100 rounded flex items-center justify-center text-gray-300 text-lg">
+            🎬
+          </div>
+        )}
+        {!work.posterUrl && (
+          <button
+            onClick={handleOgFetch}
+            disabled={ogFetching}
+            title="vodProviders の officialUrl/sourceUrl からOG画像を取得"
+            className="text-[9px] text-teal-500 hover:text-teal-700 disabled:opacity-40 whitespace-nowrap"
+          >
+            {ogFetching ? '取得中' : 'OG取得'}
+          </button>
+        )}
+        {!work.posterUrl && ogTried && !ogFetching && (
+          <span className="text-[9px] text-gray-300 whitespace-nowrap">なし</span>
+        )}
+      </div>
 
       {/* 情報 */}
       <div className="flex-1 min-w-0">
