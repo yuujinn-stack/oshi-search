@@ -5,6 +5,7 @@ import type { WorkRecord, WorkStatus, WorkSource } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 import { deduplicateProviders } from '@/lib/vod-dedup';
 import VodIntensiveModal from './VodIntensiveModal';
+import VodResearchModal from './VodResearchModal';
 
 // vod-fetch API のデバッグ型（route.ts の VodFetchDebugItem と同一）
 interface VodFetchDebugItem {
@@ -115,6 +116,7 @@ export default function PersonWorks({ personName, group, counts }: Props) {
   const [intensiveModalOpen, setIntensiveModalOpen] = useState(false);
   const [intensiveCronEnabled, setIntensiveCronEnabled] = useState<boolean | null>(null);
   const [intensiveCronLoading, setIntensiveCronLoading] = useState(false);
+  const [vodResearchWork, setVodResearchWork] = useState<WorkRecord | null>(null);
 
   async function loadWorks() {
     setLoading(true);
@@ -836,6 +838,13 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                             🔄
                           </button>
                         )}
+                        <button
+                          onClick={() => setVodResearchWork(work)}
+                          className="text-[10px] text-amber-500 hover:text-amber-700 ml-1"
+                          title="ChatGPT配信再調査プロンプトを生成"
+                        >
+                          📋
+                        </button>
                         {work.vodUpdatedAt && (
                           <span className="text-[9px] text-gray-300 ml-1">
                             {new Date(work.vodUpdatedAt).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })}確認
@@ -867,9 +876,25 @@ export default function PersonWorks({ personName, group, counts }: Props) {
                           >
                             AI補完
                           </button>
+                          <button
+                            onClick={() => setVodResearchWork(work)}
+                            className="text-[10px] text-amber-500 hover:text-amber-700"
+                            title="ChatGPT配信再調査プロンプトを生成"
+                          >
+                            📋 ChatGPT調査
+                          </button>
                         </div>
                       ) : (
-                        <p className="mt-2 text-[10px] text-gray-300">📺 配信情報取得不可（tmdbIdなし）</p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-[10px] text-gray-300">📺 tmdbIdなし</span>
+                          <button
+                            onClick={() => setVodResearchWork(work)}
+                            className="text-[10px] text-amber-500 hover:text-amber-700"
+                            title="ChatGPT配信再調査プロンプトを生成"
+                          >
+                            📋 ChatGPT調査
+                          </button>
+                        </div>
                       )
                     )}
 
@@ -1130,6 +1155,13 @@ export default function PersonWorks({ personName, group, counts }: Props) {
           personName={personName}
           onClose={() => setIntensiveModalOpen(false)}
           onDone={() => loadWorks()}
+        />
+      )}
+
+      {vodResearchWork && (
+        <VodResearchModal
+          work={vodResearchWork}
+          onClose={() => setVodResearchWork(null)}
         />
       )}
     </div>
