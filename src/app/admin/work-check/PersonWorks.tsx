@@ -43,6 +43,12 @@ export default function PersonWorks({ personName, group, counts }: Props) {
   const [vodDebugMap, setVodDebugMap] = useState<Record<string, VodFetchDebugItem>>({});
   const [recheckingWorkId, setRecheckingWorkId] = useState<string | null>(null);
   const [recheckMessage, setRecheckMessage] = useState('');
+  const [ogBulkRunning, setOgBulkRunning] = useState(false);
+  const [ogBulkProgress, setOgBulkProgress] = useState<{ current: number; total: number } | null>(null);
+  const [ogBulkResult, setOgBulkResult] = useState<{
+    total: number; success: number; failed: number; skipped: number;
+    failures: { title: string; reason: string }[];
+  } | null>(null);
   const [intensiveModalOpen, setIntensiveModalOpen] = useState(false);
   const [intensiveCronEnabled, setIntensiveCronEnabled] = useState<boolean | null>(null);
   const [intensiveCronLoading, setIntensiveCronLoading] = useState(false);
@@ -159,6 +165,70 @@ export default function PersonWorks({ personName, group, counts }: Props) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ personName, workId, priority: !current }),
     });
+    await loadWorks();
+  }
+
+  async function handleBulkOgFetch() {
+    const eligible = (works ?? []).filter((w) => {
+      if (w.posterUrl) return false;
+      return (w.vodProviders ?? []).some((p) => p.officialUrl || p.sourceUrl);
+    });
+
+    if (eligible.length === 0) {
+      setOgBulkResult({ total: 0, success: 0, failed: 0, skipped: 0, failures: [] });
+      return;
+    }
+
+    setOgBulkRunning(true);
+    setOgBulkResult(null);
+    setOgBulkProgress({ current: 0, total: eligible.length });
+
+    let success = 0;
+    let failed = 0;
+    let skipped = 0;
+    const failures: { title: string; reason: string }[] = [];
+
+    for (let i = 0; i < eligible.length; i++) {
+      const work = eligible[i];
+      setOgBulkProgress({ current: i + 1, total: eligible.length });
+      try {
+        const res = await fetch('/api/admin/og-image-fetch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ personName, workId: work.id }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as {
+            ok: boolean; skipped?: boolean; posterUrl?: string; reason?: string;
+          };
+          if (data.skipped) {
+            const reason = data.reason ?? '';
+            if (reason.includes('URLなし') || reason.includes('officialUrl')) {
+              skipped++;
+              failures.push({ title: work.title, reason: 'URLなし' });
+            } else {
+              failed++;
+              failures.push({ title: work.title, reason: 'OGなし' });
+            }
+          } else {
+            success++;
+          }
+        } else {
+          failed++;
+          failures.push({ title: work.title, reason: '取得エラー' });
+        }
+      } catch {
+        failed++;
+        failures.push({ title: work.title, reason: 'ネットワークエラー' });
+      }
+      if (i < eligible.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+
+    setOgBulkRunning(false);
+    setOgBulkProgress(null);
+    setOgBulkResult({ total: eligible.length, success, failed, skipped, failures });
     await loadWorks();
   }
 
@@ -326,6 +396,8 @@ export default function PersonWorks({ personName, group, counts }: Props) {
             onToggleDebug={() => setDebugMode((v) => !v)}
             onOpenIntensiveModal={() => setIntensiveModalOpen(true)}
             onIntensiveCronToggle={handleIntensiveCronToggle}
+            ogBulkRunning={ogBulkRunning}
+            onBulkOgFetch={handleBulkOgFetch}
           />
 
           <WorkFilters
@@ -367,6 +439,34 @@ export default function PersonWorks({ personName, group, counts }: Props) {
             >
               🔍 {recheckMessage}
             </p>
+          )}
+
+          {/* OG画像一括取得 進捗・結果 */}
+          {ogBulkRunning && ogBulkProgress && (
+            <div className="text-xs px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700">
+              <p className="font-medium">🖼 OG画像取得中...</p>
+              <p className="mt-0.5 text-indigo-500">
+                {ogBulkProgress.current} / {ogBulkProgress.total} 件完了
+              </p>
+            </div>
+          )}
+          {!ogBulkRunning && ogBulkResult && (
+            <div className="text-xs px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700 space-y-1">
+              <p className="font-medium">🖼 OG画像取得完了</p>
+              <div className="flex gap-3">
+                <span>対象: {ogBulkResult.total}件</span>
+                <span>成功: {ogBulkResult.success}件</span>
+                <span>失敗: {ogBulkResult.failed}件</span>
+                <span>スキップ: {ogBulkResult.skipped}件</span>
+              </div>
+              {ogBulkResult.failures.length > 0 && (
+                <ul className="text-indigo-400 space-y-0.5 mt-1">
+                  {ogBulkResult.failures.map((f, i) => (
+                    <li key={i}>・ {f.title}（{f.reason}）</li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
 
           {/* マッチした TMDb 人物情報 */}

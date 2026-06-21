@@ -20,6 +20,8 @@ interface PersonActionBarProps {
   onToggleDebug: () => void;
   onOpenIntensiveModal: () => void;
   onIntensiveCronToggle: () => void;
+  ogBulkRunning: boolean;
+  onBulkOgFetch: () => void;
 }
 
 export default function PersonActionBar({
@@ -37,6 +39,8 @@ export default function PersonActionBar({
   onToggleDebug,
   onOpenIntensiveModal,
   onIntensiveCronToggle,
+  ogBulkRunning,
+  onBulkOgFetch,
 }: PersonActionBarProps) {
   const [detailOpen, setDetailOpen] = useState(false);
 
@@ -152,6 +156,14 @@ export default function PersonActionBar({
             }`}
           >
             {intensiveCronLoading ? '...' : intensiveCronEnabled ? '🔄 Cron重点 ON' : 'Cron重点設定'}
+          </button>
+          <button
+            onClick={onBulkOgFetch}
+            disabled={ogBulkRunning || isProcessing || vodFetching}
+            title="posterUrlがない作品のOG画像をofficialUrl/sourceUrlから一括取得"
+            className="text-xs px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors disabled:opacity-50"
+          >
+            {ogBulkRunning ? '取得中...' : '🖼 OG画像一括取得'}
           </button>
           <button
             onClick={onToggleDebug}
