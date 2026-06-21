@@ -1,10 +1,11 @@
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks } from '@/lib/work-store';
 import PersonWorks from './PersonWorks';
-import CsvSection from './CsvSection';
-import VodRecheckSection from './VodRecheckSection';
 import AiSupplementSection from './AiSupplementSection';
 import ChatGptPromptSection from './ChatGptPromptSection';
+import WorksImportSection from './WorksImportSection';
+import VodImportSection from './VodImportSection';
+import ToolsSection from './ToolsSection';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +31,8 @@ export default async function WorkCheckPage() {
 
   const countMap = Object.fromEntries(countResults.map((c) => [c.name, c]));
   const totalReview = countResults.reduce((sum, c) => sum + c.review, 0);
+
+  const personInfos = persons.map((p) => ({ name: p.name, group: p.group ?? '' }));
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -68,9 +71,9 @@ export default async function WorkCheckPage() {
         <span className="text-gray-300">→</span>
         <span className="px-2.5 py-1 bg-indigo-100 text-indigo-700 rounded-full">Step3 作品補完</span>
         <span className="text-gray-300">→</span>
-        <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full">Step4 配信調査</span>
+        <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full">Step4 配信取込</span>
         <span className="text-gray-300">→</span>
-        <span className="px-2.5 py-1 bg-teal-100 text-teal-700 rounded-full">Step5 配信取込</span>
+        <span className="px-2.5 py-1 bg-teal-100 text-teal-700 rounded-full">Step5 ツール</span>
         <span className="text-gray-300">→</span>
         <span className="px-2.5 py-1 bg-emerald-100 text-emerald-700 rounded-full">Step6 公開管理</span>
       </div>
@@ -142,27 +145,42 @@ export default async function WorkCheckPage() {
       </section>
 
       {/* ════════════════════════════════════
-          Step 3: 作品補完 / Step 4: 配信調査
+          Step 3: 作品補完
       ════════════════════════════════════ */}
       <section className="mb-10">
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-[10px] font-bold px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full">Step 3–4</span>
-          <h2 className="text-sm font-bold text-slate-700">作品補完・配信調査</h2>
-          <span className="text-[11px] text-gray-400">①出演作品探しがStep3、②配信再調査（一括）がStep4に対応</span>
+          <span className="text-[10px] font-bold px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full">Step 3</span>
+          <h2 className="text-sm font-bold text-slate-700">作品補完</h2>
+          <span className="text-[11px] text-gray-400">ChatGPTで出演作品を調査 → CSVで取込</span>
         </div>
-        <ChatGptPromptSection persons={persons.map((p) => ({ name: p.name, group: p.group ?? '' }))} />
+        <div className="space-y-4">
+          <ChatGptPromptSection persons={personInfos} />
+          <WorksImportSection persons={personInfos} />
+        </div>
       </section>
 
       {/* ════════════════════════════════════
-          Step 5: 配信取込
+          Step 4: 配信取込
+      ════════════════════════════════════ */}
+      <section className="mb-10">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-[10px] font-bold px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">Step 4</span>
+          <h2 className="text-sm font-bold text-slate-700">配信取込</h2>
+          <span className="text-[11px] text-gray-400">ChatGPT配信再調査の結果CSVを取り込みます</span>
+        </div>
+        <VodImportSection persons={personInfos} />
+      </section>
+
+      {/* ════════════════════════════════════
+          Step 5: ツール
       ════════════════════════════════════ */}
       <section className="mb-10">
         <div className="flex items-center gap-2 mb-3">
           <span className="text-[10px] font-bold px-2 py-0.5 bg-teal-100 text-teal-700 rounded-full">Step 5</span>
-          <h2 className="text-sm font-bold text-slate-700">配信取込</h2>
-          <span className="text-[11px] text-gray-400">ChatGPTから返却されたCSVを取り込みます</span>
+          <h2 className="text-sm font-bold text-slate-700">ツール</h2>
+          <span className="text-[11px] text-gray-400">補完CSV出力・重複整理・配信再確認リスト</span>
         </div>
-        <CsvSection persons={persons.map((p) => ({ name: p.name, group: p.group ?? '' }))} />
+        <ToolsSection persons={personInfos} />
       </section>
 
       {/* ════════════════════════════════════
@@ -186,12 +204,9 @@ export default async function WorkCheckPage() {
         <div className="flex items-center gap-2 mb-3">
           <span className="text-[10px] font-bold px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">補助ツール</span>
           <h2 className="text-sm font-bold text-slate-600">補助ツール</h2>
-          <span className="text-[11px] text-gray-400">AI補完候補・配信再確認リスト</span>
+          <span className="text-[11px] text-gray-400">AI補完候補</span>
         </div>
-        <div className="space-y-4">
-          <AiSupplementSection persons={persons.map((p) => ({ name: p.name, group: p.group ?? '' }))} />
-          <VodRecheckSection />
-        </div>
+        <AiSupplementSection persons={personInfos} />
       </section>
     </div>
   );
