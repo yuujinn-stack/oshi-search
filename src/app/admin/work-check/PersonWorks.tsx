@@ -288,14 +288,6 @@ export default function PersonWorks({ personName, group, counts }: Props) {
         .sort((a, b) => b.confidenceScore - a.confidenceScore)
     : [];
 
-  const reviewCount = works
-    ? works.filter((w) => w.status === 'needs_review').length
-    : counts.review;
-
-  const supplementCount = works
-    ? works.filter((w) => w.source === 'openai_suggestion').length
-    : 0;
-
   const isProcessing = processing !== null;
 
   return (
@@ -304,8 +296,6 @@ export default function PersonWorks({ personName, group, counts }: Props) {
         personName={personName}
         group={group}
         counts={counts}
-        reviewCount={reviewCount}
-        supplementCount={supplementCount}
         open={open}
         onClick={handleOpen}
       />

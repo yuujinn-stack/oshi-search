@@ -1,6 +1,6 @@
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks } from '@/lib/work-store';
-import PersonWorks from './PersonWorks';
+import WorkCheckPersonSection from './WorkCheckPersonSection';
 import AiSupplementSection from './AiSupplementSection';
 import ChatGptPromptSection from './ChatGptPromptSection';
 import WorksImportSection from './WorksImportSection';
@@ -18,21 +18,41 @@ export default async function WorkCheckPage() {
         const works = await getAllWorks(p.name);
         return {
           name: p.name,
-          total: works.length,
-          published: works.filter((w) => w.status === 'auto_published').length,
-          review: works.filter((w) => w.status === 'needs_review').length,
-          hidden: works.filter((w) => w.status === 'hidden').length,
+          group: p.group ?? '',
+          counts: {
+            total: works.length,
+            published: works.filter((w) => w.status === 'auto_published').length,
+            review: works.filter((w) => w.status === 'needs_review').length,
+            hidden: works.filter((w) => w.status === 'hidden').length,
+            noVod: works.filter((w) => !w.vodProviders || w.vodProviders.length === 0).length,
+            noTmdbId: works.filter((w) => !w.tmdbId).length,
+            manualCsv: works.filter((w) => w.source === 'manual_csv').length,
+            aiSupplement: works.filter((w) => w.source === 'openai_suggestion' || w.source === 'ai_supplement').length,
+          },
         };
       } catch {
-        return { name: p.name, total: 0, published: 0, review: 0, hidden: 0 };
+        return {
+          name: p.name,
+          group: p.group ?? '',
+          counts: { total: 0, published: 0, review: 0, hidden: 0, noVod: 0, noTmdbId: 0, manualCsv: 0, aiSupplement: 0 },
+        };
       }
     }),
   );
 
-  const countMap = Object.fromEntries(countResults.map((c) => [c.name, c]));
-  const totalReview = countResults.reduce((sum, c) => sum + c.review, 0);
+  const dashboardStats = {
+    personCount: persons.length,
+    totalWorks: countResults.reduce((sum, c) => sum + c.counts.total, 0),
+    published: countResults.reduce((sum, c) => sum + c.counts.published, 0),
+    review: countResults.reduce((sum, c) => sum + c.counts.review, 0),
+    hidden: countResults.reduce((sum, c) => sum + c.counts.hidden, 0),
+    noVod: countResults.reduce((sum, c) => sum + c.counts.noVod, 0),
+    noTmdbId: countResults.reduce((sum, c) => sum + c.counts.noTmdbId, 0),
+    manualCsv: countResults.reduce((sum, c) => sum + c.counts.manualCsv, 0),
+    aiSupplement: countResults.reduce((sum, c) => sum + c.counts.aiSupplement, 0),
+  };
 
-  const personInfos = persons.map((p) => ({ name: p.name, group: p.group ?? '' }));
+  const personInfos = countResults.map((c) => ({ name: c.name, group: c.group }));
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -41,7 +61,7 @@ export default async function WorkCheckPage() {
         <div>
           <h1 className="text-2xl font-black text-slate-800">出演作品 管理画面</h1>
           <p className="text-sm text-gray-500 mt-1">
-            全{persons.length}人 ／ 確認待ち {totalReview}件
+            全{persons.length}人 ／ 確認待ち {dashboardStats.review}件
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap text-xs">
@@ -132,16 +152,7 @@ export default async function WorkCheckPage() {
           <h2 className="text-sm font-bold text-slate-700">作品収集</h2>
           <span className="text-[11px] text-gray-400">TMDb取得・ステータス管理・個別配信調査はこのカードから</span>
         </div>
-        <div className="space-y-3">
-          {persons.map((p) => (
-            <PersonWorks
-              key={p.name}
-              personName={p.name}
-              group={p.group ?? ''}
-              counts={countMap[p.name] ?? { total: 0, published: 0, review: 0, hidden: 0 }}
-            />
-          ))}
-        </div>
+        <WorkCheckPersonSection persons={countResults} stats={dashboardStats} />
       </section>
 
       {/* ════════════════════════════════════

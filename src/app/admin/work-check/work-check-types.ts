@@ -34,4 +34,26 @@ export interface Counts {
   published: number;
   review: number;
   hidden: number;
+  noVod: number;
+  noTmdbId: number;
+  manualCsv: number;
+  aiSupplement: number;
+}
+
+export interface DashboardStats {
+  personCount: number;
+  totalWorks: number;
+  published: number;
+  review: number;
+  hidden: number;
+  noVod: number;
+  noTmdbId: number;
+  manualCsv: number;
+  aiSupplement: number;
+}
+
+export interface PersonWithCounts {
+  name: string;
+  group: string;
+  counts: Counts;
 }
