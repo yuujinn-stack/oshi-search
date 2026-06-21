@@ -1,40 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsMerged } from '@/lib/persons';
-import { getAllWorks, saveWork } from '@/lib/work-store';
+import { getAllWorks, saveWork, upsertManualCsvVodProviders } from '@/lib/work-store';
 import { normalizeWorkTitle } from '@/lib/work-processor';
 import type { WorkRecord, WorkType } from '@/types/work';
+import type { VodProvider, VodProviderType } from '@/types/vod';
 
 // POST /api/admin/work-csv-import
-// body: {
-//   csvContent: string,
-//   commit?: boolean,
-//   personName?: string,   // CSVにpersonId/personName列がない場合のUI選択フォールバック
-// }
+// body: { csvContent: string, commit?: boolean, personName?: string }
 //
 // CSVフォーマット（列順自由・余分な列可）:
 //   必須: workTitle（または title）, workType（または type）
 //   任意: personId / personName, releaseYear, roleName,
-//         vodService, availabilityType, sourceUrl, confidence, note（すべて無視）
+//         vodService, availabilityType, sourceUrl, confidence, note
 //
-// 列名エイリアス:
-//   title   → workTitle として認識（16列フルCSVとの互換）
-//   type    → workType  として認識（16列フルCSVとの互換）
+// 同一人物・同一タイトルの行が複数ある場合 → 1作品に複数の配信サービスを追加
+// vodService が空または "unknown" の行 → 作品は追加するが配信情報はスキップ
+// 配信情報の重複（同一作品・同一vodService で source=manual_csv）はスキップ
 //
-// workType 正規化:
-//   movie / 映画 / film                                      → 'movie'
-//   tv / drama / variety / web / documentary / special / ... → 'tv'
-//   （DBの WorkType は 'movie' | 'tv' のみ。インポート時に正規化する）
-//
-// source の使い分け:
-//   CSVに source 列があっても無視する。
-//   work-csv-import で追加した作品は常に source = 'manual_csv'。
-//   （VOD情報の source は VOD CSVインポート / TMDb / AI が設定する。ここでは登録しない）
-//
-// 動作:
-//   - personName + normalizedTitle が一致する既存作品はスキップ（重複）
-//   - 新規作品のみ追加（source=manual_csv, status=auto_published）
-//   - workId は自動採番（csv-{type}-{normalizedTitle.slice(0,32)}）
-//   - VOD情報はこの機能では登録しない
+// source = manual_csv / status = auto_published で登録
 
 // ─────────────────────────────────────────
 // 型
@@ -47,51 +30,60 @@ export interface WorkImportPreviewRow {
   workType: string;
   releaseYear: string;
   roleName: string;
-  action: 'add' | 'skip' | 'error';
+  // 作品操作
+  action: 'add' | 'existing' | 'error';
   reason: string;
+  // VOD 情報
+  vodService: string;
+  availabilityType: string;
+  sourceUrl: string;
+  confidence: string;
+  note: string;
+  vodAction: 'add' | 'skip' | 'none';
+  vodSkipReason?: string;
 }
 
 // ─────────────────────────────────────────
 // 定数
 // ─────────────────────────────────────────
 
-// workType の正規化マップ
-// DBの WorkType は 'movie' | 'tv' のみ。すべての値をどちらかに正規化する。
-// ChatGPT が返す英語値・日本語値・表記ゆれをすべて網羅する。
 const TYPE_MAP: Record<string, WorkType> = {
   // ── movie ──
   movie: 'movie', 映画: 'movie', film: 'movie', motion_picture: 'movie',
 
   // ── tv（catch-all） ──
   tv: 'tv',
-  // ドラマ系
   drama: 'tv', ドラマ: 'tv', drama_series: 'tv', tv_drama: 'tv',
   series: 'tv', テレビ: 'tv', television: 'tv',
-  // バラエティ系
   variety: 'tv', バラエティ: 'tv', variety_show: 'tv',
-  // 配信・Web系
   web: 'tv', web_series: 'tv', web_drama: 'tv', ott: 'tv', streaming: 'tv',
   配信: 'tv', 配信番組: 'tv', 配信限定: 'tv', web番組: 'tv',
-  // ドキュメンタリー系
   documentary: 'tv', ドキュメンタリー: 'tv', documentary_series: 'tv',
-  // 特番・スペシャル系
   special: 'tv', 特番: 'tv', スペシャル: 'tv', tv_special: 'tv',
-  // 番組全般
   番組: 'tv', テレビ番組: 'tv', バラエティ番組: 'tv', 情報番組: 'tv', トーク番組: 'tv',
-  // 舞台・映像系
   stage: 'tv', 舞台: 'tv', 舞台映像: 'tv', stage_play: 'tv', musical: 'tv',
-  // アニメ系
   animation: 'tv', anime: 'tv', アニメ: 'tv', animated_series: 'tv',
-  // リアリティ・ゲーム系
   reality: 'tv', reality_show: 'tv', game_show: 'tv',
-  // トーク・音楽系
   talk: 'tv', talk_show: 'tv', music: 'tv', music_video: 'tv',
-  // その他
   miniseries: 'tv', limited_series: 'tv', short: 'tv',
 };
 
-// 列名エイリアス: 正規列名 → 受け入れる列名の候補（優先順）
-// フルCSV互換のため title/type を workTitle/workType の別名として扱う
+const AVAILABILITY_TYPE_MAP: Record<string, VodProviderType> = {
+  flatrate: 'flatrate', 見放題: 'flatrate', subscription: 'flatrate',
+  buy: 'buy', purchase: 'buy', 購入: 'buy',
+  rent: 'rent', rental: 'rent', レンタル: 'rent',
+  free: 'free', 無料: 'free',
+  ads: 'ads', ad: 'ads', 広告: 'ads', 広告付き: 'ads', avod: 'ads',
+  unknown: 'unknown', '': 'unknown',
+};
+
+const CONFIDENCE_MAP: Record<string, 'high' | 'medium' | 'low'> = {
+  high: 'high', 高: 'high',
+  medium: 'medium', mid: 'medium', 中: 'medium',
+  low: 'low', 低: 'low',
+};
+
+// 列名エイリアス
 const COL_ALIASES: Record<string, string[]> = {
   worktitle: ['worktitle', 'title'],
   worktype:  ['worktype', 'type'],
@@ -105,13 +97,11 @@ function findColIndex(header: string[], candidates: string[]): number {
   return -1;
 }
 
-const EXAMPLE_CSV = `personName,workTitle,workType,releaseYear,roleName
-賀喜遥香,ドラマタイトル,tv,2023,主人公
-賀喜遥香,映画タイトル,movie,2022,
-賀喜遥香,バラエティ番組,variety,2023,
-
-# ChatGPT調査返却CSVそのままもOK:
-# personName,workTitle,workType,releaseYear,roleName,vodService,availabilityType,sourceUrl,confidence,note`;
+const EXAMPLE_CSV = `personName,workTitle,workType,releaseYear,roleName,vodService,availabilityType,sourceUrl,confidence,note
+賀喜遥香,ドラマタイトル,drama,2023,主人公,Netflix,flatrate,,high,
+賀喜遥香,ドラマタイトル,drama,2023,主人公,Hulu,flatrate,,medium,
+賀喜遥香,映画タイトル,movie,2022,,,,,,
+賀喜遥香,バラエティ番組,variety,2023,,,,,, `;
 
 // ─────────────────────────────────────────
 // CSV パーサー（RFC 4180・BOM対応）
@@ -184,7 +174,7 @@ export async function POST(req: NextRequest) {
   const rawHeader = rows[0];
   const header = rawHeader.map((h) => h.trim().toLowerCase().replace(/\s+/g, ''));
 
-  // 必須列チェック（エイリアス対応: worktitle or title, worktype or type）
+  // 必須列チェック
   const hasWorkTitle = COL_ALIASES['worktitle'].some((c) => header.includes(c));
   const hasWorkType  = COL_ALIASES['worktype'].some((c)  => header.includes(c));
   const missing: string[] = [
@@ -208,142 +198,194 @@ export async function POST(req: NextRequest) {
   }
 
   // 列インデックス
-  // personid / personname 両方認識
-  // worktitle / title 両方認識（フルCSVとの互換）
-  // worktype  / type  両方認識（フルCSVとの互換）
   const COL = {
-    personId:    findColIndex(header, ['personid', 'personname']),
-    workTitle:   findColIndex(header, COL_ALIASES['worktitle']),
-    workType:    findColIndex(header, COL_ALIASES['worktype']),
-    releaseYear: header.indexOf('releaseyear'),
-    roleName:    header.indexOf('rolename'),
+    personId:         findColIndex(header, ['personid', 'personname']),
+    workTitle:        findColIndex(header, COL_ALIASES['worktitle']),
+    workType:         findColIndex(header, COL_ALIASES['worktype']),
+    releaseYear:      header.indexOf('releaseyear'),
+    roleName:         header.indexOf('rolename'),
+    vodService:       header.indexOf('vodservice'),
+    availabilityType: header.indexOf('availabilitytype'),
+    sourceUrl:        header.indexOf('sourceurl'),
+    confidence:       header.indexOf('confidence'),
+    note:             header.indexOf('note'),
   };
 
   // ── 人物名セット・既存作品をロード ──
   const allPersons = await getAllPersonsMerged();
   const personNameSet = new Set(allPersons.map((p) => p.name));
 
-  // personName → normalizedTitle set のキャッシュ
-  const existingTitleMap = new Map<string, Set<string>>();
+  // personName → normalizedTitle → WorkRecord のキャッシュ
+  const personWorkCache = new Map<string, Map<string, WorkRecord>>();
 
-  async function getExistingTitles(personName: string): Promise<Set<string>> {
-    if (!existingTitleMap.has(personName)) {
+  async function getPersonWorkMap(personName: string): Promise<Map<string, WorkRecord>> {
+    if (!personWorkCache.has(personName)) {
       const works = await getAllWorks(personName);
-      existingTitleMap.set(personName, new Set(works.map((w) => normalizeWorkTitle(w.title))));
+      const m = new Map<string, WorkRecord>();
+      for (const w of works) m.set(normalizeWorkTitle(w.title), w);
+      personWorkCache.set(personName, m);
     }
-    return existingTitleMap.get(personName)!;
+    return personWorkCache.get(personName)!;
   }
 
   // ── データ行をパース・バリデーション ──
   const previewRows: WorkImportPreviewRow[] = [];
-  // CSV内重複チェック用: personName + normalizedTitle
-  const seenInCsv = new Set<string>();
+
+  // CSV内重複チェック用
+  const seenWorksInCsv  = new Set<string>();  // personName:normalizedTitle
+  const seenVodInCsv    = new Set<string>();  // personName:normalizedTitle:vodService
 
   const dataRows = rows.slice(1);
   for (let i = 0; i < dataRows.length; i++) {
     const row = dataRows[i];
     const get = (col: number) => (col >= 0 ? (row[col] ?? '').trim() : '');
 
-    const csvPersonId  = get(COL.personId);
-    const workTitle    = get(COL.workTitle);
-    const workTypeRaw  = get(COL.workType);
-    const releaseYear  = get(COL.releaseYear);
-    const roleName     = get(COL.roleName);
+    const csvPersonId        = get(COL.personId);
+    const workTitle          = get(COL.workTitle);
+    const workTypeRaw        = get(COL.workType);
+    const releaseYear        = get(COL.releaseYear);
+    const roleName           = get(COL.roleName);
+    const vodService         = get(COL.vodService);
+    const availabilityType   = get(COL.availabilityType);
+    const sourceUrl          = get(COL.sourceUrl);
+    const confidence         = get(COL.confidence);
+    const note               = get(COL.note);
 
     const effectivePersonName = csvPersonId || bodyPersonName;
 
-    // ── バリデーション ──
+    const baseRow = {
+      rowNum: i + 2,
+      personName: effectivePersonName,
+      workTitle,
+      workType: workTypeRaw,
+      releaseYear,
+      roleName,
+      vodService,
+      availabilityType,
+      sourceUrl,
+      confidence,
+      note,
+    };
 
+    // ── 人物バリデーション ──
     if (!effectivePersonName) {
-      previewRows.push({
-        rowNum: i + 2, personName: '', workTitle, workType: workTypeRaw, releaseYear, roleName,
-        action: 'error',
-        reason: 'personId列がなく対象人物も未選択です。インポート対象の人物をセレクターで選択してください。',
-      });
+      previewRows.push({ ...baseRow, action: 'error', reason: 'personId列がなく対象人物も未選択です', vodAction: 'none' });
       continue;
     }
-
     if (!personNameSet.has(effectivePersonName)) {
-      previewRows.push({
-        rowNum: i + 2, personName: effectivePersonName, workTitle, workType: workTypeRaw, releaseYear, roleName,
-        action: 'error',
-        reason: `"${effectivePersonName}" は登録されていない人物です`,
-      });
+      previewRows.push({ ...baseRow, action: 'error', reason: `"${effectivePersonName}" は登録されていない人物です`, vodAction: 'none' });
       continue;
     }
-
     if (!workTitle) {
-      previewRows.push({
-        rowNum: i + 2, personName: effectivePersonName, workTitle: '', workType: workTypeRaw, releaseYear, roleName,
-        action: 'error', reason: 'workTitle が空です',
-      });
+      previewRows.push({ ...baseRow, action: 'error', reason: 'workTitle が空です', vodAction: 'none' });
       continue;
     }
-
     const workType = TYPE_MAP[workTypeRaw.toLowerCase()];
     if (!workType) {
-      previewRows.push({
-        rowNum: i + 2, personName: effectivePersonName, workTitle, workType: workTypeRaw, releaseYear, roleName,
-        action: 'error',
-        reason: `workType "${workTypeRaw}" は未対応です（movie / tv / variety / documentary / web / drama / special / stage 等を指定してください）`,
-      });
+      previewRows.push({ ...baseRow, action: 'error', reason: `workType "${workTypeRaw}" は未対応です（movie / drama / variety / documentary / web / special / stage 等を指定）`, vodAction: 'none' });
       continue;
     }
 
     const normalizedTitle = normalizeWorkTitle(workTitle);
+    const workKey = `${effectivePersonName}:${normalizedTitle}`;
 
-    // CSV内重複チェック
-    const csvDedupKey = `${effectivePersonName}:${normalizedTitle}`;
-    if (seenInCsv.has(csvDedupKey)) {
-      previewRows.push({
-        rowNum: i + 2, personName: effectivePersonName, workTitle, workType: workTypeRaw, releaseYear, roleName,
-        action: 'skip', reason: 'このCSV内で同じ人物の同タイトルが既出のためスキップ',
-      });
-      continue;
+    // ── 作品の存在確認 ──
+    const workMap = await getPersonWorkMap(effectivePersonName);
+    const existingWork = workMap.get(normalizedTitle);
+
+    let workAction: 'add' | 'existing';
+    let workReason: string;
+
+    if (existingWork) {
+      workAction = 'existing';
+      workReason = '既存作品に紐付け';
+    } else if (seenWorksInCsv.has(workKey)) {
+      workAction = 'existing';
+      workReason = 'このCSVの前の行で追加済み';
+    } else {
+      workAction = 'add';
+      workReason = '新規追加';
+      seenWorksInCsv.add(workKey);
     }
-    seenInCsv.add(csvDedupKey);
 
-    // 既存作品との重複チェック（normalizedTitle 一致）
-    const existingTitles = await getExistingTitles(effectivePersonName);
-    if (existingTitles.has(normalizedTitle)) {
-      previewRows.push({
-        rowNum: i + 2, personName: effectivePersonName, workTitle, workType: workTypeRaw, releaseYear, roleName,
-        action: 'skip', reason: '同タイトルの作品が既に登録されています',
-      });
-      continue;
+    // ── VOD 判定 ──
+    const vodServiceTrimmed = vodService.trim();
+    let vodAction: 'add' | 'skip' | 'none';
+    let vodSkipReason: string | undefined;
+
+    if (!vodServiceTrimmed || vodServiceTrimmed.toLowerCase() === 'unknown') {
+      vodAction = 'none';
+    } else {
+      const vodKey = `${effectivePersonName}:${normalizedTitle}:${vodServiceTrimmed.toLowerCase()}`;
+      if (seenVodInCsv.has(vodKey)) {
+        vodAction = 'skip';
+        vodSkipReason = 'CSV内で同一作品・同一サービスが重複';
+      } else if (existingWork) {
+        const alreadyHas = (existingWork.vodProviders ?? []).some(
+          (p) => p.source === 'manual_csv' &&
+                 p.providerName.toLowerCase() === vodServiceTrimmed.toLowerCase(),
+        );
+        if (alreadyHas) {
+          vodAction = 'skip';
+          vodSkipReason = '同一サービスのVOD情報が既に登録済み';
+        } else {
+          vodAction = 'add';
+          seenVodInCsv.add(vodKey);
+        }
+      } else {
+        vodAction = 'add';
+        seenVodInCsv.add(vodKey);
+      }
     }
 
-    previewRows.push({
-      rowNum: i + 2, personName: effectivePersonName, workTitle, workType: workTypeRaw, releaseYear, roleName,
-      action: 'add', reason: '新規追加',
-    });
+    previewRows.push({ ...baseRow, action: workAction, reason: workReason, vodAction, vodSkipReason });
   }
 
-  const addCount   = previewRows.filter((r) => r.action === 'add').length;
-  const skipCount  = previewRows.filter((r) => r.action === 'skip').length;
-  const errorCount = previewRows.filter((r) => r.action === 'error').length;
+  const addCount      = previewRows.filter((r) => r.action === 'add').length;
+  const existingCount = previewRows.filter((r) => r.action === 'existing').length;
+  const errorCount    = previewRows.filter((r) => r.action === 'error').length;
+  const vodAddCount   = previewRows.filter((r) => r.vodAction === 'add').length;
+  const vodSkipCount  = previewRows.filter((r) => r.vodAction === 'skip').length;
 
   if (!commit) {
-    return NextResponse.json({ addCount, skipCount, errorCount, previewRows });
+    return NextResponse.json({ addCount, existingCount, errorCount, vodAddCount, vodSkipCount, previewRows });
   }
 
   // ── コミット ──
-  const addRows = previewRows.filter((r) => r.action === 'add');
   const now = Date.now();
-  let savedCount = 0;
+  let savedCount   = 0;
+  let vodSavedCount = 0;
+  let skipCount    = 0;
+  let vodSkippedCount = 0;
   const errors: string[] = [];
 
-  for (const row of addRows) {
-    const workType = TYPE_MAP[row.workType.toLowerCase()] as WorkType;
-    const normalizedTitle = normalizeWorkTitle(row.workTitle);
-    const workId = generateWorkCsvId(workType, normalizedTitle);
+  // Phase 1: 新規作品を作成（重複は一度のみ）
+  const createdWorkIds = new Map<string, string>();  // workKey → workId
 
-    const yearNum = parseInt(row.releaseYear, 10);
+  for (const row of previewRows) {
+    if (row.action !== 'add') continue;
+    const workKey = `${row.personName}:${normalizeWorkTitle(row.workTitle)}`;
+    if (createdWorkIds.has(workKey)) continue;  // 同一キーは1回のみ
+
+    const workType    = TYPE_MAP[row.workType.toLowerCase()] as WorkType;
+    const nt          = normalizeWorkTitle(row.workTitle);
+    const workId      = generateWorkCsvId(workType, nt);
+    const yearNum     = parseInt(row.releaseYear, 10);
+
+    // Phase1では seenWorksInCsv を使わず workMap を再チェック（コミット間に他が追加された場合の保護）
+    const workMap = await getPersonWorkMap(row.personName);
+    if (workMap.get(nt)) {
+      // プレビュー取得後に追加されていた場合は既存扱い
+      createdWorkIds.set(workKey, workMap.get(nt)!.id);
+      skipCount++;
+      continue;
+    }
+
     const work: WorkRecord = {
       id: workId,
       personName: row.personName,
       title: row.workTitle,
-      normalizedTitle,
+      normalizedTitle: nt,
       type: workType,
       source: 'manual_csv',
       releaseYear: isNaN(yearNum) ? undefined : yearNum,
@@ -357,14 +399,71 @@ export async function POST(req: NextRequest) {
 
     try {
       await saveWork(work);
-      // 次行の重複チェック用にキャッシュを更新
-      existingTitleMap.get(row.personName)?.add(normalizedTitle);
+      // キャッシュを更新（Phase2でVODを追加できるように）
+      workMap.set(nt, work);
+      createdWorkIds.set(workKey, workId);
       savedCount++;
     } catch (err) {
-      errors.push(`${row.personName}「${row.workTitle}」: ${String(err)}`);
+      errors.push(`${row.personName}「${row.workTitle}」作品作成: ${String(err)}`);
     }
   }
 
-  const failedCount = addRows.length - savedCount;
-  return NextResponse.json({ savedCount, skipCount, failedCount, errors });
+  // Phase 2: VOD情報を追加
+  for (const row of previewRows) {
+    if (row.vodAction !== 'add') {
+      if (row.vodAction === 'skip') vodSkippedCount++;
+      continue;
+    }
+
+    const nt = normalizeWorkTitle(row.workTitle);
+    const workMap = await getPersonWorkMap(row.personName);
+    const work    = workMap.get(nt);
+
+    if (!work) {
+      errors.push(`${row.personName}「${row.workTitle}」VOD追加: 対象作品が見つかりません`);
+      continue;
+    }
+
+    const availType  = AVAILABILITY_TYPE_MAP[row.availabilityType.toLowerCase()] ?? 'unknown';
+    const confVal    = CONFIDENCE_MAP[row.confidence.toLowerCase()] ?? undefined;
+
+    const provider: VodProvider = {
+      providerId:       0,
+      providerName:     row.vodService,
+      type:             availType,
+      countryCode:      'JP',
+      source:           'manual_csv',
+      sourceUrl:        row.sourceUrl || undefined,
+      confidence:       confVal,
+      note:             row.note || undefined,
+      checkedDate:      new Date(now).toISOString().slice(0, 10),
+      createdAt:        now,
+      updatedAt:        now,
+    };
+
+    try {
+      const result = await upsertManualCsvVodProviders(row.personName, work.id, [provider]);
+      if (result.added > 0 || result.updated > 0) {
+        vodSavedCount++;
+      } else {
+        vodSkippedCount++;
+      }
+      // キャッシュ内の vodProviders を更新
+      const cached = workMap.get(nt);
+      if (cached) {
+        const existing = cached.vodProviders ?? [];
+        const idx = existing.findIndex(
+          (p) => p.source === 'manual_csv' && p.providerName.toLowerCase() === row.vodService.toLowerCase(),
+        );
+        if (idx >= 0) existing[idx] = provider;
+        else existing.push(provider);
+        cached.vodProviders = existing;
+      }
+    } catch (err) {
+      errors.push(`${row.personName}「${row.workTitle}」VOD(${row.vodService}): ${String(err)}`);
+    }
+  }
+
+  const failedCount = previewRows.filter((r) => r.action === 'add').length - savedCount - skipCount;
+  return NextResponse.json({ savedCount, existingCount, skipCount, vodSavedCount, vodSkippedCount, failedCount, errors });
 }

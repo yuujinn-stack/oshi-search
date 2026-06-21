@@ -100,20 +100,32 @@ interface WorkImportPreviewRow {
   workType: string;
   releaseYear: string;
   roleName: string;
-  action: 'add' | 'skip' | 'error';
+  action: 'add' | 'existing' | 'error';
   reason: string;
+  vodService: string;
+  availabilityType: string;
+  sourceUrl: string;
+  confidence: string;
+  note: string;
+  vodAction: 'add' | 'skip' | 'none';
+  vodSkipReason?: string;
 }
 
 interface WorkImportPreviewResult {
   addCount: number;
-  skipCount: number;
+  existingCount: number;
   errorCount: number;
+  vodAddCount: number;
+  vodSkipCount: number;
   previewRows: WorkImportPreviewRow[];
 }
 
 interface WorkImportCommitResult {
   savedCount: number;
+  existingCount: number;
   skipCount: number;
+  vodSavedCount: number;
+  vodSkippedCount: number;
   failedCount: number;
   errors: string[];
 }
@@ -1303,10 +1315,16 @@ export default function CsvSection({ persons }: { persons: PersonInfo[] }) {
         {workImportCommitResult && (
           <div className="text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2 space-y-0.5">
             <p className="font-semibold">
-              作品インポート完了: {workImportCommitResult.savedCount}件追加
+              インポート完了: 作品 {workImportCommitResult.savedCount}件追加
+              {(workImportCommitResult.vodSavedCount ?? 0) > 0 && (
+                <span className="ml-2">/ VOD {workImportCommitResult.vodSavedCount}件追加</span>
+              )}
             </p>
             <p className="text-gray-500">
-              重複スキップ: {workImportCommitResult.skipCount}件
+              {(workImportCommitResult.skipCount ?? 0) > 0 && `作品スキップ: ${workImportCommitResult.skipCount}件`}
+              {(workImportCommitResult.vodSkippedCount ?? 0) > 0 && (
+                <span className="ml-2">VOD重複スキップ: {workImportCommitResult.vodSkippedCount}件</span>
+              )}
               {workImportCommitResult.failedCount > 0 && (
                 <span className="text-red-600 ml-2">失敗: {workImportCommitResult.failedCount}件</span>
               )}
@@ -1325,9 +1343,19 @@ export default function CsvSection({ persons }: { persons: PersonInfo[] }) {
             {/* サマリー */}
             <div className="flex flex-wrap gap-2 text-xs items-center">
               <span className="font-semibold text-slate-600">作品インポート:</span>
-              <span className="bg-green-100 text-green-700 px-2 py-1 rounded-lg font-medium">追加 {workImportPreview.addCount}件</span>
-              <span className="bg-sky-100 text-sky-700 px-2 py-1 rounded-lg font-medium">重複スキップ {workImportPreview.skipCount}件</span>
-              <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded-lg font-medium">エラー {workImportPreview.errorCount}件</span>
+              <span className="bg-green-100 text-green-700 px-2 py-1 rounded-lg font-medium">新規作品 {workImportPreview.addCount}件</span>
+              {(workImportPreview.existingCount ?? 0) > 0 && (
+                <span className="bg-sky-100 text-sky-700 px-2 py-1 rounded-lg font-medium">既存作品に紐付け {workImportPreview.existingCount}件</span>
+              )}
+              {workImportPreview.vodAddCount > 0 && (
+                <span className="bg-teal-100 text-teal-700 px-2 py-1 rounded-lg font-medium">VOD追加 {workImportPreview.vodAddCount}件</span>
+              )}
+              {(workImportPreview.vodSkipCount ?? 0) > 0 && (
+                <span className="bg-gray-100 text-gray-500 px-2 py-1 rounded-lg font-medium">VOD重複スキップ {workImportPreview.vodSkipCount}件</span>
+              )}
+              {workImportPreview.errorCount > 0 && (
+                <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded-lg font-medium">エラー {workImportPreview.errorCount}件</span>
+              )}
             </div>
 
             {/* プレビューテーブル */}
@@ -1337,12 +1365,12 @@ export default function CsvSection({ persons }: { persons: PersonInfo[] }) {
                   <thead className="sticky top-0 bg-gray-50">
                     <tr className="text-gray-500">
                       <th className="text-left p-1.5 border-b border-gray-200 w-8">行</th>
-                      <th className="text-left p-1.5 border-b border-gray-200 w-12">操作</th>
+                      <th className="text-left p-1.5 border-b border-gray-200 w-12">作品</th>
                       <th className="text-left p-1.5 border-b border-gray-200">人物</th>
                       <th className="text-left p-1.5 border-b border-gray-200">タイトル</th>
-                      <th className="text-left p-1.5 border-b border-gray-200">種別</th>
-                      <th className="text-left p-1.5 border-b border-gray-200">年</th>
-                      <th className="text-left p-1.5 border-b border-gray-200">役名</th>
+                      <th className="text-left p-1.5 border-b border-gray-200">種別/年</th>
+                      <th className="text-left p-1.5 border-b border-gray-200 w-12">VOD</th>
+                      <th className="text-left p-1.5 border-b border-gray-200">配信サービス</th>
                       <th className="text-left p-1.5 border-b border-gray-200">備考</th>
                     </tr>
                   </thead>
@@ -1351,26 +1379,45 @@ export default function CsvSection({ persons }: { persons: PersonInfo[] }) {
                       <tr
                         key={i}
                         className={`border-b border-gray-100 last:border-0 ${
-                          row.action === 'error' ? 'bg-orange-50' :
-                          row.action === 'skip'  ? 'opacity-50' : ''
+                          row.action === 'error' ? 'bg-orange-50' : ''
                         }`}
                       >
                         <td className="p-1.5 text-gray-400">{row.rowNum}</td>
                         <td className="p-1.5">
                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
-                            row.action === 'add'   ? 'bg-green-100 text-green-700' :
-                            row.action === 'skip'  ? 'bg-sky-100 text-sky-700' :
-                                                     'bg-orange-100 text-orange-700'
+                            row.action === 'add'      ? 'bg-green-100 text-green-700' :
+                            row.action === 'existing' ? 'bg-sky-100 text-sky-700' :
+                                                        'bg-orange-100 text-orange-700'
                           }`}>
-                            {row.action === 'add' ? '追加' : row.action === 'skip' ? 'スキップ' : 'エラー'}
+                            {row.action === 'add' ? '新規' : row.action === 'existing' ? '既存' : 'ERR'}
                           </span>
                         </td>
                         <td className="p-1.5 text-gray-600">{row.personName || '—'}</td>
-                        <td className="p-1.5 text-slate-700 max-w-[140px] truncate" title={row.workTitle}>{row.workTitle || '—'}</td>
-                        <td className="p-1.5 text-gray-500">{row.workType}</td>
-                        <td className="p-1.5 text-gray-400">{row.releaseYear || '—'}</td>
-                        <td className="p-1.5 text-gray-500 max-w-[80px] truncate">{row.roleName || '—'}</td>
-                        <td className="p-1.5 text-gray-400 max-w-[160px] truncate" title={row.reason}>{row.reason}</td>
+                        <td className="p-1.5 text-slate-700 max-w-[120px] truncate" title={row.workTitle}>
+                          {row.workTitle || '—'}
+                        </td>
+                        <td className="p-1.5 text-gray-400 whitespace-nowrap">
+                          {row.workType}{row.releaseYear ? ` ${row.releaseYear}` : ''}
+                        </td>
+                        <td className="p-1.5">
+                          {row.vodAction === 'none' ? (
+                            <span className="text-gray-300 text-[9px]">—</span>
+                          ) : (
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                              row.vodAction === 'add'  ? 'bg-teal-100 text-teal-700' :
+                                                         'bg-gray-100 text-gray-400'
+                            }`}>
+                              {row.vodAction === 'add' ? 'VOD' : 'dup'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-1.5 text-slate-600 max-w-[100px] truncate" title={row.vodService}>
+                          {row.vodService || '—'}
+                          {row.availabilityType ? <span className="text-gray-400 ml-1">({row.availabilityType})</span> : null}
+                        </td>
+                        <td className="p-1.5 text-gray-400 max-w-[140px] truncate" title={row.vodSkipReason ?? row.reason}>
+                          {row.vodSkipReason ?? row.reason}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1385,13 +1432,19 @@ export default function CsvSection({ persons }: { persons: PersonInfo[] }) {
 
             {/* 実行ボタン */}
             <div className="flex items-center gap-3">
-              {workImportPreview.addCount > 0 ? (
+              {(workImportPreview.addCount > 0 || workImportPreview.vodAddCount > 0) ? (
                 <button
                   onClick={handleWorkImportCommit}
                   disabled={workImporting}
                   className="text-xs px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-bold transition-colors disabled:opacity-50"
                 >
-                  {workImporting ? '保存中...' : `作品インポート実行（${workImportPreview.addCount}件追加）`}
+                  {workImporting
+                    ? '保存中...'
+                    : [
+                        workImportPreview.addCount > 0 ? `作品${workImportPreview.addCount}件追加` : '',
+                        workImportPreview.vodAddCount > 0 ? `VOD${workImportPreview.vodAddCount}件追加` : '',
+                      ].filter(Boolean).join(' + ') + ' 実行'
+                  }
                 </button>
               ) : (
                 <p className="text-xs text-gray-500">追加対象がありません（スキップ・エラーのみ）</p>
