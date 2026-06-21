@@ -19,6 +19,14 @@ const VOD_SOURCE_BADGE: Record<string, string> = {
   manual_csv: 'bg-orange-50 border-orange-200 text-orange-700',
 };
 
+function WorkTypeIcon({ type }: { type: string }) {
+  if (type === 'movie') return <span className="text-3xl">🎬</span>;
+  if (type === 'documentary') return <span className="text-3xl">🎥</span>;
+  if (type === 'stage') return <span className="text-3xl">🎭</span>;
+  if (type === 'web') return <span className="text-3xl">🌐</span>;
+  return <span className="text-3xl">📺</span>;
+}
+
 export default function WorkCard({ work }: { work: WorkRecord }) {
   const workDetailUrl = `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
 
@@ -70,39 +78,55 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
     <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden hover:shadow-lg transition-all duration-200 flex flex-col h-full">
       {/* ポスター（クリックで作品詳細へ） */}
       <Link href={workDetailUrl} className="block">
-        <div className="relative aspect-[2/3] bg-gray-100 overflow-hidden flex-shrink-0">
-          {work.posterUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
+        {work.posterUrl ? (
+          <div className="relative aspect-[2/3] bg-gray-100 overflow-hidden flex-shrink-0">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={work.posterUrl}
               alt={work.title}
               className="w-full h-full object-cover"
               loading="lazy"
             />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-gray-200 text-4xl">
-              🎬
+            {/* 種別バッジ（ポスター上） */}
+            <div className="absolute top-2 left-2">
+              <span className="text-xs bg-black/60 text-white px-1.5 py-0.5 rounded-full backdrop-blur-sm">
+                {work.type === 'movie' ? '映画' : 'ドラマ・TV'}
+              </span>
             </div>
-          )}
-          {/* 種別バッジ（ポスター上） */}
-          <div className="absolute top-2 left-2">
-            <span className="text-xs bg-black/60 text-white px-1.5 py-0.5 rounded-full backdrop-blur-sm">
-              {work.type === 'movie' ? '映画' : 'ドラマ・TV'}
-            </span>
+            {/* 配信中バッジ */}
+            {streamingProviders.length > 0 && (
+              <div className="absolute top-2 right-2">
+                <span
+                  className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
+                    hasAiOnly ? 'bg-purple-500 text-white' : 'bg-green-500 text-white'
+                  }`}
+                >
+                  配信中
+                </span>
+              </div>
+            )}
           </div>
-          {/* 配信中バッジ */}
-          {streamingProviders.length > 0 && (
-            <div className="absolute top-2 right-2">
+        ) : (
+          /* 画像なし用コンパクトヘッダー */
+          <div className="relative h-20 bg-gradient-to-br from-slate-100 via-indigo-50 to-slate-100 overflow-hidden flex-shrink-0 flex items-center px-4 gap-3">
+            <WorkTypeIcon type={work.type} />
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <span className="text-[10px] text-slate-400 font-medium">画像なし</span>
+              <span className="text-xs bg-black/20 text-slate-600 px-1.5 py-0.5 rounded-full self-start">
+                {work.type === 'movie' ? '映画' : 'ドラマ・TV'}
+              </span>
+            </div>
+            {streamingProviders.length > 0 && (
               <span
-                className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
+                className={`absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded-full font-bold ${
                   hasAiOnly ? 'bg-purple-500 text-white' : 'bg-green-500 text-white'
                 }`}
               >
                 配信中
               </span>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </Link>
 
       {/* テキスト情報 */}
