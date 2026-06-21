@@ -31,6 +31,7 @@ export interface WorkProcessOptions {
   forceRejudge?: boolean;                  // 手動確認済み以外を再判定
   deleteSupplementFirst?: boolean;         // AI補完作品を削除してから再補完
   includeVod?: boolean;                    // 配信情報取得まで含める（新規セットアップ向け）
+  skipWorkAi?: boolean;                    // TMDb作品のAI判定をスキップしルールベース判定のみ使用（初回取得向け）
 }
 
 // AI判定の詳細結果（内部型）
@@ -362,7 +363,7 @@ export async function processPersonWorks(
   person: PersonWithConfig,
   options: WorkProcessOptions = {},
 ): Promise<WorkProcessResult> {
-  const { action = 'tmdb', forceRejudge = false, deleteSupplementFirst = false, includeVod = false } = options;
+  const { action = 'tmdb', forceRejudge = false, deleteSupplementFirst = false, includeVod = false, skipWorkAi = false } = options;
 
   const result: WorkProcessResult = {
     newCount: 0,
@@ -418,7 +419,10 @@ export async function processPersonWorks(
         }
 
         // AI判定 → 安全ルール適用（voice役・Animation人物対策）
-        const rawJudgment = await judgeWork(candidate, person, tmdbMatch);
+        // skipWorkAi=true（初回取得時）はOpenAIを呼ばずルールベース判定のみ使用
+        const rawJudgment = skipWorkAi
+          ? ruleBasedDecision(candidate)
+          : await judgeWork(candidate, person, tmdbMatch);
         const judgment = applySafetyOverride(candidate, person, tmdbMatch, rawJudgment);
         if (judgment.usedAi) result.aiJudgedCount++;
         else result.ruleBasedCount++;

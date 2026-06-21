@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
 
   // 2. TMDb 出演作品取得
   try {
-    const result = await processPersonWorks(personWithConfig, { action: 'tmdb', includeVod: false });
+    const result = await processPersonWorks(personWithConfig, { action: 'tmdb', includeVod: false, skipWorkAi: true });
     if (result.error) {
       errors.push(`作品情報: ${result.error}`);
     } else {
