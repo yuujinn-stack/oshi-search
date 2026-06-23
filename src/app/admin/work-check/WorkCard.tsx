@@ -95,6 +95,9 @@ export default function WorkCard({
     (p) => p.officialUrl || p.sourceUrl,
   );
 
+  // img.youtube.com/vi/videoseries/... のような壊れたposterUrlを検出
+  const isPosterBroken = !!work.posterUrl && /\/vi\/videoseries\//.test(work.posterUrl);
+
   const handleOgFetch = useCallback(async () => {
     setOgFetching(true);
     setOgFailReason(null);
@@ -147,7 +150,7 @@ export default function WorkCard({
     >
       {/* ポスター */}
       <div className="flex flex-col items-center gap-1 flex-shrink-0">
-        {work.posterUrl ? (
+        {work.posterUrl && !isPosterBroken ? (
           <img
             src={work.posterUrl}
             alt=""
@@ -179,21 +182,30 @@ export default function WorkCard({
           </span>
         )}
 
-        {/* posterUrl あり: 再取得ボタン */}
+        {/* posterUrl あり（壊れを含む）: 再取得ボタン */}
         {work.posterUrl && (
-          <button
-            onClick={handleOgForceFetch}
-            disabled={ogForceFetching}
-            title="posterUrl を上書きして画像を再取得"
-            className="text-[9px] text-gray-400 hover:text-teal-600 disabled:opacity-40 whitespace-nowrap"
-          >
-            {ogForceFetching ? '取得中' : '🔄'}
-          </button>
-        )}
-        {work.posterUrl && ogForceResult && !ogForceFetching && (
-          <span className={`text-[9px] whitespace-nowrap ${ogForceResult === '取得済' ? 'text-teal-500' : 'text-red-400'}`}>
-            {ogForceResult}
-          </span>
+          <>
+            {isPosterBroken && !ogForceFetching && !ogForceResult && (
+              <span className="text-[9px] text-red-400 whitespace-nowrap">URL壊れています</span>
+            )}
+            <button
+              onClick={handleOgForceFetch}
+              disabled={ogForceFetching}
+              title="posterUrl を上書きして画像を再取得"
+              className={`text-[9px] disabled:opacity-40 whitespace-nowrap ${
+                isPosterBroken
+                  ? 'text-red-400 hover:text-teal-600 font-medium'
+                  : 'text-gray-400 hover:text-teal-600'
+              }`}
+            >
+              {ogForceFetching ? '取得中' : '🔄'}
+            </button>
+            {ogForceResult && !ogForceFetching && (
+              <span className={`text-[9px] whitespace-nowrap ${ogForceResult === '取得済' ? 'text-teal-500' : 'text-red-400'}`}>
+                {ogForceResult}
+              </span>
+            )}
+          </>
         )}
 
         {/* URL候補なし かつ posterUrl なし: sourceUrl 入力欄 */}

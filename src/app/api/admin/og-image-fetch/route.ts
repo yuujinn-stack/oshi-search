@@ -11,26 +11,59 @@ import { getWork, saveWork } from '@/lib/work-store';
 //   取得不要: { ok: true, skipped: true, reason: 'posterUrl既存' }
 //   失敗:   { ok: false, reason: string }
 
+// ─── YouTube 動画ID バリデーション ───────────────────────────────────────────────
+// 有効なYouTube動画IDは11文字の [A-Za-z0-9_-]。
+// "videoseries" はプレイリスト埋め込みキーワードであり動画IDではない（11文字未満）。
+function isValidYouTubeVideoId(id: string | null | undefined): id is string {
+  return !!id && /^[A-Za-z0-9_-]{11}$/.test(id);
+}
+
+// ─── YouTube URL 判定 ─────────────────────────────────────────────────────────
+function isYouTubeUrl(url: string): boolean {
+  try {
+    const h = new URL(url).hostname;
+    return h === 'youtu.be' || h.includes('youtube.com');
+  } catch { return false; }
+}
+
 // ─── URL から YouTube 動画ID を抽出（URL自体がYouTubeの場合）────────────────────
 // 対応形式:
 //   youtube.com/watch?v=ID
 //   youtu.be/ID
 //   youtube.com/shorts/ID
 //   youtube.com/live/ID
-//   youtube.com/embed/ID
+//   youtube.com/embed/ID   ※ embed/videoseries（プレイリスト）は除外
 //   youtube.com/v/ID
+// null を返すケース:
+//   youtube.com/embed/videoseries?list=...  （プレイリスト埋め込み）
+//   youtube.com/playlist?list=...
+//   youtube.com/channel/...  youtube.com/c/...  youtube.com/@...
 function extractYouTubeVideoId(url: string): string | null {
   try {
     const u = new URL(url);
     if (u.hostname === 'youtu.be') {
-      return u.pathname.slice(1).split('?')[0] || null;
+      const id = u.pathname.slice(1).split('?')[0];
+      return isValidYouTubeVideoId(id) ? id : null;
     }
     if (u.hostname.includes('youtube.com')) {
-      return (
-        u.searchParams.get('v') ??
-        u.pathname.match(/\/(shorts|live|embed|v)\/([^/?]+)/)?.[2] ??
-        null
-      );
+      const path = u.pathname;
+      // チャンネル・プレイリストページは動画IDを持たない
+      if (
+        path.startsWith('/channel/') ||
+        path.startsWith('/c/') ||
+        path.startsWith('/@') ||
+        path === '/playlist'
+      ) return null;
+
+      // watch?v= が最優先（v パラメータがない場合は null = プレイリストのみ等）
+      const v = u.searchParams.get('v');
+      if (v !== null) return isValidYouTubeVideoId(v) ? v : null;
+
+      // shorts/live/embed/v パスから抽出（embed/videoseries は11文字チェックで除外される）
+      const m = path.match(/\/(shorts|live|embed|v)\/([^/?]+)/);
+      if (m?.[2]) return isValidYouTubeVideoId(m[2]) ? m[2] : null;
+
+      return null;
     }
     return null;
   } catch {
@@ -39,23 +72,21 @@ function extractYouTubeVideoId(url: string): string | null {
 }
 
 // ─── HTML 内から YouTube 動画ID を抽出（公式記事の埋め込みURL対応）──────────────
-// 対応パターン:
-//   <iframe src="https://www.youtube.com/embed/ID">
-//   youtube.com/watch?v=ID  （リンクテキスト内）
-//   youtu.be/ID
-//   youtube.com/shorts/ID
-//   youtube.com/live/ID
+// グローバルマッチで複数候補を試し、最初に有効な11文字IDを返す。
+// "videoseries" などはバリデーションで除外されるため、次の候補に自動で進む。
 function extractYouTubeIdFromHtml(html: string): string | null {
   const patterns = [
-    /youtube\.com\/embed\/([^"'/?&\s]+)/,
-    /youtube\.com\/watch\?v=([^"'&\s]+)/,
-    /youtu\.be\/([^"'/?&\s]+)/,
-    /youtube\.com\/shorts\/([^"'/?&\s]+)/,
-    /youtube\.com\/live\/([^"'/?&\s]+)/,
+    /youtube\.com\/embed\/([^"'/?&\s]+)/g,
+    /youtube\.com\/watch\?v=([^"'&\s]+)/g,
+    /youtu\.be\/([^"'/?&\s]+)/g,
+    /youtube\.com\/shorts\/([^"'/?&\s]+)/g,
+    /youtube\.com\/live\/([^"'/?&\s]+)/g,
   ];
   for (const pattern of patterns) {
-    const m = html.match(pattern);
-    if (m?.[1]) return m[1];
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(html)) !== null) {
+      if (isValidYouTubeVideoId(m[1])) return m[1];
+    }
   }
   return null;
 }
@@ -233,6 +264,14 @@ export async function POST(req: NextRequest) {
       };
       if (debug) response.log = log;
       return NextResponse.json(response);
+    }
+
+    // ─ パスA': YouTube URLだが有効な動画IDが取れなかった（プレイリスト/チャンネル等）─
+    // YouTubeページのOG画像はチャンネルバナー等になるため、HTMLフェッチは行わない
+    if (isYouTubeUrl(url)) {
+      lastFailReason = 'プレイリスト/チャンネルURLのため動画サムネイル取得不可';
+      log.push(`[yt] YouTube URLだが有効なvideo IDなし（プレイリスト/チャンネル）→ スキップ`);
+      continue;
     }
 
     // ─ パスB: 非YouTube URL → ページHTMLをフェッチして探す ─
