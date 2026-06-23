@@ -1,0 +1,55 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { getRedis } from '@/lib/redis';
+import type { PersonPriority } from '@/app/admin/work-check/work-check-types';
+
+const META_KEY = 'admin:person-meta';
+
+export interface PersonMeta {
+  memo?: string;
+  priority?: PersonPriority;
+  updatedAt?: number;
+}
+
+export async function GET() {
+  const redis = getRedis();
+  if (!redis) return NextResponse.json({});
+  try {
+    const raw = await redis.hgetall(META_KEY);
+    if (!raw) return NextResponse.json({});
+    const result: Record<string, PersonMeta> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      try {
+        result[k] = (typeof v === 'string' ? JSON.parse(v) : v) as PersonMeta;
+      } catch { /* skip */ }
+    }
+    return NextResponse.json(result);
+  } catch {
+    return NextResponse.json({});
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const body = (await req.json()) as { personName: string; memo?: string; priority?: PersonPriority };
+  const { personName, memo, priority } = body;
+  if (!personName) {
+    return NextResponse.json({ error: 'personName required' }, { status: 400 });
+  }
+
+  const redis = getRedis();
+  if (!redis) return NextResponse.json({ error: 'Redis not available' }, { status: 503 });
+
+  const existing = await redis.hget<string>(META_KEY, personName);
+  const current: PersonMeta = existing
+    ? ((typeof existing === 'string' ? JSON.parse(existing) : existing) as PersonMeta)
+    : {};
+
+  const updated: PersonMeta = {
+    ...current,
+    ...(memo !== undefined ? { memo } : {}),
+    ...(priority !== undefined ? { priority } : {}),
+    updatedAt: Date.now(),
+  };
+
+  await redis.hset(META_KEY, { [personName]: JSON.stringify(updated) });
+  return NextResponse.json({ ok: true });
+}

@@ -52,8 +52,18 @@ export interface DashboardStats {
   aiSupplement: number;
 }
 
+export type PersonPriority = 'high' | 'normal' | 'low';
+
 export interface PersonWithCounts {
   name: string;
   group: string;
+  genre?: string;
+  aliases?: string[];
+  importedAt?: number;
+  dataFetchStatus?: string;
+  totalProducts?: number;
+  lastUpdatedAt?: number;
+  memo?: string;
+  priority?: PersonPriority;
   counts: Counts;
 }

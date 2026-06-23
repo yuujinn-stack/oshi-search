@@ -1,39 +1,92 @@
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks } from '@/lib/work-store';
+import { getAllImportedPersons } from '@/lib/imported-persons';
+import { getAllStoredProducts } from '@/lib/product-store';
+import { getRedis } from '@/lib/redis';
 import WorkCheckPersonSection from './WorkCheckPersonSection';
 import AiSupplementSection from './AiSupplementSection';
 import ChatGptPromptSection from './ChatGptPromptSection';
 import WorksImportSection from './WorksImportSection';
 import VodImportSection from './VodImportSection';
 import ToolsSection from './ToolsSection';
+import type { PersonMeta } from '@/app/api/admin/person-meta/route';
+import type { PersonPriority } from './work-check-types';
 
 export const dynamic = 'force-dynamic';
 
 export default async function WorkCheckPage() {
-  const persons = await getAllPersonsMerged();
+  const [persons, importedPersons] = await Promise.all([
+    getAllPersonsMerged(),
+    getAllImportedPersons(),
+  ]);
+
+  const importedMap = new Map(importedPersons.map((p) => [p.name, p]));
+
+  let personMetaMap: Record<string, PersonMeta> = {};
+  try {
+    const redis = getRedis();
+    if (redis) {
+      const raw = await redis.hgetall('admin:person-meta');
+      if (raw) {
+        for (const [k, v] of Object.entries(raw)) {
+          try {
+            personMetaMap[k] = (typeof v === 'string' ? JSON.parse(v) : v) as PersonMeta;
+          } catch { /* skip */ }
+        }
+      }
+    }
+  } catch { /* ignore */ }
 
   const countResults = await Promise.all(
     persons.map(async (p) => {
       try {
-        const works = await getAllWorks(p.name);
+        const [works, products] = await Promise.all([
+          getAllWorks(p.name),
+          getAllStoredProducts(p.name),
+        ]);
+        const totalProducts = Object.values(products).reduce(
+          (sum, cat) => sum + (cat?.products.length ?? 0),
+          0,
+        );
+        const lastUpdatedAt =
+          works.reduce((max, w) => Math.max(max, w.updatedAt ?? 0), 0) || undefined;
+        const imported = importedMap.get(p.name);
+        const meta = personMetaMap[p.name];
         return {
           name: p.name,
           group: p.group ?? '',
+          genre: p.genre,
+          aliases: imported?.aliases ?? p.config.aliases ?? [],
+          importedAt: imported?.importedAt,
+          dataFetchStatus: imported?.dataFetchStatus,
+          totalProducts,
+          lastUpdatedAt,
+          memo: meta?.memo,
+          priority: meta?.priority as PersonPriority | undefined,
           counts: {
             total: works.length,
             published: works.filter((w) => w.status === 'auto_published').length,
             review: works.filter((w) => w.status === 'needs_review').length,
             hidden: works.filter((w) => w.status === 'hidden').length,
-            noVod: works.filter((w) => (w.vodProviders ?? []).filter((p) => p.providerName !== 'unknown').length === 0).length,
+            noVod: works.filter((w) => (w.vodProviders ?? []).filter((vp) => vp.providerName !== 'unknown').length === 0).length,
             noTmdbId: works.filter((w) => !w.tmdbId).length,
             manualCsv: works.filter((w) => w.source === 'manual_csv').length,
             aiSupplement: works.filter((w) => w.source === 'openai_suggestion' || w.source === 'ai_supplement').length,
           },
         };
       } catch {
+        const meta = personMetaMap[p.name];
         return {
           name: p.name,
           group: p.group ?? '',
+          genre: p.genre,
+          aliases: p.config.aliases ?? [],
+          importedAt: importedMap.get(p.name)?.importedAt,
+          dataFetchStatus: importedMap.get(p.name)?.dataFetchStatus,
+          totalProducts: 0,
+          lastUpdatedAt: undefined,
+          memo: meta?.memo,
+          priority: meta?.priority as PersonPriority | undefined,
           counts: { total: 0, published: 0, review: 0, hidden: 0, noVod: 0, noTmdbId: 0, manualCsv: 0, aiSupplement: 0 },
         };
       }
@@ -70,6 +123,9 @@ export default async function WorkCheckPage() {
           </a>
           <a href="/admin/work-import" className="text-indigo-600 hover:underline font-medium">
             作品・配信追加 →
+          </a>
+          <a href="/admin/people-progress" className="text-indigo-600 hover:underline font-medium">
+            人物進捗 →
           </a>
           <a href="/admin/providers" className="text-gray-400 hover:underline">
             配信サービス

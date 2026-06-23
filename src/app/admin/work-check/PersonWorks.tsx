@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { WorkRecord, WorkStatus, WorkSource } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
-import type { VodFetchDebugItem, Counts } from './work-check-types';
+import type { VodFetchDebugItem, Counts, PersonPriority } from './work-check-types';
 import PersonCard from './PersonCard';
 import PersonActionBar from './PersonActionBar';
 import WorkFilters from './WorkFilters';
@@ -15,12 +15,15 @@ interface Props {
   personName: string;
   group: string;
   counts: Counts;
+  priority?: PersonPriority;
+  memo?: string;
+  dataFetchStatus?: string;
 }
 
 type StatusFilter = WorkStatus | 'all';
 type SourceFilter = WorkSource | 'all';
 
-export default function PersonWorks({ personName, group, counts }: Props) {
+export default function PersonWorks({ personName, group, counts, priority, memo, dataFetchStatus }: Props) {
   const [open, setOpen] = useState(false);
   const [works, setWorks] = useState<WorkRecord[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -53,6 +56,30 @@ export default function PersonWorks({ personName, group, counts }: Props) {
   const [intensiveCronEnabled, setIntensiveCronEnabled] = useState<boolean | null>(null);
   const [intensiveCronLoading, setIntensiveCronLoading] = useState(false);
   const [vodResearchWork, setVodResearchWork] = useState<WorkRecord | null>(null);
+
+  // メモ・優先度編集
+  const [metaOpen, setMetaOpen] = useState(false);
+  const [editMemo, setEditMemo] = useState(memo ?? '');
+  const [editPriority, setEditPriority] = useState<PersonPriority>(priority ?? 'normal');
+  const [currentMemo, setCurrentMemo] = useState(memo ?? '');
+  const [currentPriority, setCurrentPriority] = useState<PersonPriority>(priority ?? 'normal');
+  const [metaSaving, setMetaSaving] = useState(false);
+
+  async function handleMetaSave() {
+    setMetaSaving(true);
+    try {
+      await fetch('/api/admin/person-meta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personName, memo: editMemo, priority: editPriority }),
+      });
+      setCurrentMemo(editMemo);
+      setCurrentPriority(editPriority);
+      setMetaOpen(false);
+    } finally {
+      setMetaSaving(false);
+    }
+  }
 
   async function loadWorks() {
     setLoading(true);
@@ -371,13 +398,73 @@ export default function PersonWorks({ personName, group, counts }: Props) {
 
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden">
-      <PersonCard
-        personName={personName}
-        group={group}
-        counts={counts}
-        open={open}
-        onClick={handleOpen}
-      />
+      {/* ヘッダー行: カード + 📝 ボタン */}
+      <div className="flex items-stretch divide-x divide-gray-200">
+        <div className="flex-1 min-w-0">
+          <PersonCard
+            personName={personName}
+            group={group}
+            counts={counts}
+            open={open}
+            onClick={handleOpen}
+            priority={currentPriority !== 'normal' ? currentPriority : undefined}
+            memo={currentMemo || undefined}
+            dataFetchStatus={dataFetchStatus}
+          />
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); setMetaOpen((v) => !v); }}
+          className={`px-3 text-sm transition-colors shrink-0 ${
+            metaOpen
+              ? 'bg-amber-50 text-amber-600'
+              : 'bg-gray-50 hover:bg-gray-100 text-gray-400 hover:text-gray-600'
+          }`}
+          title="メモ・優先度を編集"
+        >
+          📝
+        </button>
+      </div>
+
+      {/* メタ編集パネル */}
+      {metaOpen && (
+        <div className="px-4 py-3 bg-amber-50/60 border-t border-amber-100">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <label className="text-xs text-gray-500 whitespace-nowrap">優先度:</label>
+              <select
+                value={editPriority}
+                onChange={(e) => setEditPriority(e.target.value as PersonPriority)}
+                className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+              >
+                <option value="high">★ 優先</option>
+                <option value="normal">通常</option>
+                <option value="low">↓ 後回し</option>
+              </select>
+            </div>
+            <input
+              type="text"
+              value={editMemo}
+              onChange={(e) => setEditMemo(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void handleMetaSave(); }}
+              placeholder="メモ（例: 配信確認済み、CSV出力待ち）"
+              className="flex-1 min-w-40 text-xs border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+            />
+            <button
+              onClick={() => void handleMetaSave()}
+              disabled={metaSaving}
+              className="text-xs px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
+            >
+              {metaSaving ? '保存中...' : '保存'}
+            </button>
+            <button
+              onClick={() => setMetaOpen(false)}
+              className="text-xs text-gray-400 hover:text-gray-600"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {open && (
         <div className="p-4 space-y-4 bg-white">
