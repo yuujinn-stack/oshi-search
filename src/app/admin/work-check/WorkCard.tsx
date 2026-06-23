@@ -52,7 +52,7 @@ interface WorkCardProps {
   onManualVodRemove: (workId: string, provider: VodProvider) => void;
   onOpenVodResearch: (work: WorkRecord) => void;
   onTestJudge: (work: WorkRecord) => void;
-  onOgImageFetch: (workId: string) => Promise<void>;
+  onOgImageFetch: (workId: string) => Promise<{ ok: boolean; reason?: string } | null>;
 }
 
 export default function WorkCard({
@@ -79,12 +79,17 @@ export default function WorkCard({
   const [expandedVodDebug, setExpandedVodDebug] = useState(false);
   const [ogFetching, setOgFetching] = useState(false);
   const [ogTried, setOgTried] = useState(false);
+  const [ogFailReason, setOgFailReason] = useState<string | null>(null);
 
   const handleOgFetch = useCallback(async () => {
     setOgFetching(true);
-    await onOgImageFetch(work.id);
+    setOgFailReason(null);
+    const result = await onOgImageFetch(work.id);
     setOgFetching(false);
     setOgTried(true);
+    if (result && result.ok === false) {
+      setOgFailReason(result.reason ?? '取得失敗');
+    }
   }, [onOgImageFetch, work.id]);
 
   async function handleManualVodAddLocal(workId: string) {
@@ -128,7 +133,12 @@ export default function WorkCard({
           </button>
         )}
         {!work.posterUrl && ogTried && !ogFetching && (
-          <span className="text-[9px] text-gray-300 whitespace-nowrap">なし</span>
+          <span
+            className="text-[9px] text-gray-400 whitespace-nowrap text-center leading-tight"
+            title={ogFailReason ?? undefined}
+          >
+            {ogFailReason ?? 'なし'}
+          </span>
         )}
       </div>
 

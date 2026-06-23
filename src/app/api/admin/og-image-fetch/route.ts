@@ -5,6 +5,11 @@ import { getWork, saveWork } from '@/lib/work-store';
 // body: { personName, workId, debug? }
 // posterUrl が空の作品に対して vodProviders の officialUrl / sourceUrl から
 // OG画像を取得して posterUrl に保存する。管理画面ボタン押下時のみ実行。
+//
+// レスポンス:
+//   成功:   { ok: true, posterUrl, source, videoId? }
+//   取得不要: { ok: true, skipped: true, reason: 'posterUrl既存' }
+//   失敗:   { ok: false, reason: string }
 
 // ─── URL から YouTube 動画ID を抽出（URL自体がYouTubeの場合）────────────────────
 // 対応形式:
@@ -77,19 +82,15 @@ function resolveUrl(imageUrl: string, baseUrl: string): string {
 // 優先順位:
 //   1. HTML内の YouTube 埋め込みURL → hqdefault.jpg を返す
 //   2. og:image / twitter:image メタタグ
-//
-// 戻り値:
-//   { source: 'youtube_embed', posterUrl: string } → YouTube埋め込みから取得
-//   { source: 'og', posterUrl: string }            → OGタグから取得
-//   null                                           → 取得できず
 type PageExtractResult =
-  | { source: 'youtube_embed'; posterUrl: string; videoId: string }
-  | { source: 'og'; posterUrl: string };
+  | { ok: true; source: 'youtube_embed'; posterUrl: string; videoId: string }
+  | { ok: true; source: 'og'; posterUrl: string }
+  | { ok: false; reason: 'HTML取得失敗' | 'YouTube IDなし・OG画像なし' };
 
 async function fetchPageAndExtract(
   url: string,
   log: string[],
-): Promise<PageExtractResult | null> {
+): Promise<PageExtractResult> {
   log.push(`[page] フェッチ: ${url}`);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
@@ -104,7 +105,10 @@ async function fetchPageAndExtract(
       },
     });
     log.push(`[page] status=${res.status}`);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      log.push(`[page] 非200 → HTML取得失敗`);
+      return { ok: false, reason: 'HTML取得失敗' };
+    }
 
     const html = (await res.text()).slice(0, 100_000);
 
@@ -114,7 +118,7 @@ async function fetchPageAndExtract(
     if (ytId) {
       const posterUrl = youTubeThumbnailUrl(ytId);
       log.push(`[page] YouTube埋め込み発見 videoId=${ytId} → ${posterUrl}`);
-      return { source: 'youtube_embed', posterUrl, videoId: ytId };
+      return { ok: true, source: 'youtube_embed', posterUrl, videoId: ytId };
     }
     log.push(`[page] YouTube埋め込みなし → OGタグを検索`);
 
@@ -128,7 +132,7 @@ async function fetchPageAndExtract(
       if (m?.[1]) {
         const posterUrl = resolveUrl(m[1], url);
         log.push(`[page] og:image=${posterUrl}`);
-        return { source: 'og', posterUrl };
+        return { ok: true, source: 'og', posterUrl };
       }
     }
 
@@ -142,15 +146,15 @@ async function fetchPageAndExtract(
       if (m?.[1]) {
         const posterUrl = resolveUrl(m[1], url);
         log.push(`[page] twitter:image=${posterUrl}`);
-        return { source: 'og', posterUrl };
+        return { ok: true, source: 'og', posterUrl };
       }
     }
 
-    log.push(`[page] OGタグなし`);
-    return null;
+    log.push(`[page] YouTube埋め込みなし・OGタグなし`);
+    return { ok: false, reason: 'YouTube IDなし・OG画像なし' };
   } catch (e) {
     log.push(`[page] 例外=${String(e)}`);
-    return null;
+    return { ok: false, reason: 'HTML取得失敗' };
   } finally {
     clearTimeout(timer);
   }
@@ -197,10 +201,16 @@ export async function POST(req: NextRequest) {
   }
 
   if (urlCandidates.length === 0) {
-    return NextResponse.json({ ok: true, skipped: true, reason: 'officialUrl/sourceUrlなし' });
+    log.push(`URL候補なし`);
+    const res: Record<string, unknown> = { ok: false, reason: 'URL候補なし' };
+    if (debug) res.log = log;
+    return NextResponse.json(res);
   }
 
   log.push(`candidates=${urlCandidates.length}`);
+
+  // 最後の失敗理由を保持（全URL試行後も成功しなかった場合に返す）
+  let lastFailReason = 'YouTube IDなし・OG画像なし';
 
   for (const url of urlCandidates) {
     log.push(`url=${url}`);
@@ -227,7 +237,7 @@ export async function POST(req: NextRequest) {
     //   B-1. HTML内YouTube埋め込み → hqdefault
     //   B-2. og:image / twitter:image → OG画像
     const result = await fetchPageAndExtract(url, log);
-    if (result) {
+    if (result.ok) {
       work.posterUrl = result.posterUrl;
       work.updatedAt = Date.now();
       await saveWork(work);
@@ -240,13 +250,12 @@ export async function POST(req: NextRequest) {
       if (debug) response.log = log;
       return NextResponse.json(response);
     }
+
+    // 失敗理由を更新（複数URLがある場合は最後の理由を使う）
+    lastFailReason = result.reason;
   }
 
-  const response: Record<string, unknown> = {
-    ok: true,
-    skipped: true,
-    reason: `${urlCandidates.length}件のURLからOG画像を取得できませんでした`,
-  };
+  const response: Record<string, unknown> = { ok: false, reason: lastFailReason };
   if (debug) response.log = log;
   return NextResponse.json(response);
 }

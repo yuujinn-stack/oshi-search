@@ -228,21 +228,17 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
           const data = (await res.json()) as {
             ok: boolean; skipped?: boolean; posterUrl?: string; reason?: string;
           };
-          if (data.skipped) {
-            const reason = data.reason ?? '';
-            if (reason.includes('URLなし') || reason.includes('officialUrl')) {
-              skipped++;
-              failures.push({ title: work.title, reason: 'URLなし' });
-            } else {
-              failed++;
-              failures.push({ title: work.title, reason: 'OGなし' });
-            }
+          if (data.ok === false) {
+            failed++;
+            failures.push({ title: work.title, reason: data.reason ?? '取得失敗' });
+          } else if (data.skipped) {
+            skipped++;
           } else {
             success++;
           }
         } else {
           failed++;
-          failures.push({ title: work.title, reason: '取得エラー' });
+          failures.push({ title: work.title, reason: 'HTTPエラー' });
         }
       } catch {
         failed++;
@@ -259,13 +255,19 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
     await loadWorks();
   }
 
-  async function handleOgImageFetch(workId: string) {
-    await fetch('/api/admin/og-image-fetch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ personName, workId }),
-    });
-    await loadWorks();
+  async function handleOgImageFetch(workId: string): Promise<{ ok: boolean; reason?: string } | null> {
+    try {
+      const res = await fetch('/api/admin/og-image-fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personName, workId }),
+      });
+      const data = (await res.json()) as { ok: boolean; reason?: string; skipped?: boolean };
+      await loadWorks();
+      return data;
+    } catch {
+      return null;
+    }
   }
 
   async function handleIntensiveCronToggle() {
