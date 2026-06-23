@@ -1,11 +1,10 @@
 import type { MetadataRoute } from 'next';
-import { getAllPersons, getAllGroups, ALL_GENRES } from '@/lib/persons';
+import { getAllPersonsMerged, getAllGroupsMerged, ALL_GENRES } from '@/lib/persons';
 
 const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.vercel.app';
 
-export default function sitemap(): MetadataRoute.Sitemap {
-  const persons = getAllPersons();
-  const groups = getAllGroups();
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const [persons, groups] = await Promise.all([getAllPersonsMerged(), getAllGroupsMerged()]);
 
   return [
     {

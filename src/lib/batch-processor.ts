@@ -2,7 +2,7 @@
 // 呼び出し元: /api/admin/batch (管理画面から手動) / /api/cron/refresh (Vercel Cron)
 // ユーザーのページアクセス時には絶対に呼ばない
 
-import { getAllPersonsWithConfig } from './persons';
+import { getAllPersonsWithConfig, getAllPersonsMerged } from './persons';
 import { getProductsByCategory } from './rakuten';
 import { storeProducts, saveBatchMeta, CATEGORIES } from './product-store';
 import { getAllVerdicts, saveVerdict } from './judgment-store';
@@ -258,13 +258,15 @@ export async function processPerson(
 
 // 全人物を処理（Cron/管理画面から呼ぶ）
 export async function processAllPersons(): Promise<BatchSummary> {
-  const persons = getAllPersonsWithConfig();
+  const persons = await getAllPersonsMerged();
   const startedAt = Date.now();
   const results: PersonBatchResult[] = [];
 
   for (const person of persons) {
     try {
-      const result = await processPerson(person.name);
+      // configOverride で渡すことで processPerson 内の JSON-only 検索を回避し、
+      // Redis管理人物（CSVインポート組）も正しく処理できる
+      const result = await processPerson(person.name, false, person);
       results.push(result);
     } catch (err) {
       results.push({

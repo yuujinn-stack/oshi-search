@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getPersonWithConfig, getAllPersons } from '@/lib/persons';
+import { getPersonWithConfigMerged, getAllPersonsMerged } from '@/lib/persons';
 import { getWork, getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
@@ -42,7 +42,7 @@ async function getCoStars(
   workId: string,
   excludePerson: string,
 ): Promise<Array<{ name: string; group: string; roleName?: string }>> {
-  const persons = getAllPersons().filter((p) => p.name !== excludePerson);
+  const persons = (await getAllPersonsMerged()).filter((p) => p.name !== excludePerson);
   const works = await Promise.all(persons.map((p) => getWork(p.name, workId)));
   return persons
     .map((p, i) => ({ ...p, work: works[i] }))
@@ -161,7 +161,7 @@ function formatDate(ts?: number): string {
 export default async function WorkDetailPage({ params }: Props) {
   const { slug, workId } = await params;
   const personName = decodeURIComponent(slug);
-  const person = getPersonWithConfig(personName);
+  const person = await getPersonWithConfigMerged(personName);
   if (!person) notFound();
 
   const work = await getWork(personName, workId);
