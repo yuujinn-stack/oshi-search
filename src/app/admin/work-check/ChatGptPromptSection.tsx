@@ -2,11 +2,8 @@
 
 import { useState } from 'react';
 import type { WorkRecord } from '@/types/work';
-
-interface PersonInfo {
-  name: string;
-  group: string;
-}
+import type { PersonWithCounts } from './work-check-types';
+import SearchablePersonSelect from './SearchablePersonSelect';
 
 interface WorkPreview {
   title: string;
@@ -77,7 +74,7 @@ function workToBatchRow(w: WorkRecord): string {
 // コンポーネント
 // ─────────────────────────────────────────
 
-export default function ChatGptPromptSection({ persons }: { persons: PersonInfo[] }) {
+export default function ChatGptPromptSection({ persons }: { persons: PersonWithCounts[] }) {
   const [selectedPerson, setSelectedPerson] = useState('');
 
   // ── 作品探しプロンプト（既存） ──
@@ -165,16 +162,11 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonInfo[
       </div>
 
       {/* 人物選択（共通） */}
-      <select
+      <SearchablePersonSelect
+        persons={persons}
         value={selectedPerson}
-        onChange={(e) => { setSelectedPerson(e.target.value); resetAll(); }}
-        className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
-      >
-        <option value="">人物を選択してください</option>
-        {persons.map((p) => (
-          <option key={p.name} value={p.name}>{p.name}</option>
-        ))}
-      </select>
+        onChange={(name) => { setSelectedPerson(name); resetAll(); }}
+      />
 
       {/* ══════════════════════════════
           作品探しプロンプト（既存機能）

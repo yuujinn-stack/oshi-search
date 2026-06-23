@@ -221,7 +221,7 @@ export default async function WorkCheckPage() {
           <span className="text-[11px] text-gray-400">ChatGPTで出演作品を調査 → CSVで取込</span>
         </div>
         <div className="space-y-4">
-          <ChatGptPromptSection persons={personInfos} />
+          <ChatGptPromptSection persons={countResults} />
           <WorksImportSection persons={personInfos} />
         </div>
       </section>
