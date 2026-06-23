@@ -48,6 +48,7 @@ export async function processPerson(
   personName: string,
   forceRejudge = false,
   configOverride?: PersonWithConfig,
+  aiLimit?: number,
 ): Promise<PersonBatchResult> {
   const all = getAllPersonsWithConfig();
   const person = configOverride ?? all.find((p) => p.name === personName);
@@ -207,10 +208,11 @@ export async function processPerson(
   } else if (!process.env.OPENAI_API_KEY) {
     console.log(`[batch] ★AI判定スキップ: OPENAI_API_KEY が未設定★`);
   } else {
-    const batch = toJudge.slice(0, MAX_AI_PER_PERSON);
+    const effectiveLimit = Math.min(MAX_AI_PER_PERSON, aiLimit ?? MAX_AI_PER_PERSON);
+    const batch = toJudge.slice(0, effectiveLimit);
     aiQueued = batch.length;
-    if (toJudge.length > MAX_AI_PER_PERSON) {
-      console.log(`[batch] AI判定上限により ${toJudge.length - MAX_AI_PER_PERSON}件をスキップ（次回バッチで処理）`);
+    if (toJudge.length > effectiveLimit) {
+      console.log(`[batch] AI判定上限により ${toJudge.length - effectiveLimit}件をスキップ（次回バッチで処理）`);
     }
     console.log(`[batch] AI判定開始: ${batch.length}件を送信`);
 

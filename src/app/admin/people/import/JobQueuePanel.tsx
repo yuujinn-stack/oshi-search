@@ -19,8 +19,17 @@ const STATUS_BADGE: Record<PersonJobStatus, string> = {
   failed:        'bg-red-100 text-red-700',
   cancelled:     'bg-gray-100 text-gray-500',
 };
-const STEP_LABEL = { pending: '待機', done: '完了', failed: '失敗' };
-const STEP_COLOR = { pending: 'text-gray-400', done: 'text-green-600', failed: 'text-red-500' };
+const STEP_LABEL = { pending: '待機', running: '実行中', done: '完了', failed: '失敗' };
+const STEP_COLOR = { pending: 'text-gray-400', running: 'text-blue-500 animate-pulse', done: 'text-green-600', failed: 'text-red-500' };
+
+const STUCK_MINUTES = 15;
+function isStuck(job: PersonJob): boolean {
+  return (
+    job.status === 'processing' &&
+    !!job.startedAt &&
+    Date.now() - job.startedAt > STUCK_MINUTES * 60 * 1000
+  );
+}
 
 const MAX_SELECTABLE = 3;
 
@@ -205,6 +214,19 @@ export default function JobQueuePanel() {
         </div>
       )}
 
+      {/* スタックジョブ警告バナー */}
+      {jobs.some(isStuck) && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 mb-3 flex items-center gap-2 text-sm text-amber-800">
+          <span>⚠️</span>
+          <span>
+            {STUCK_MINUTES}分以上 processing のジョブがあります。
+            Vercel Functionタイムアウトの可能性があります。
+            一覧の「再キュー投入」ボタンで手動復旧できます。
+          </span>
+          <button onClick={refresh} className="ml-auto text-xs text-amber-600 hover:underline">更新</button>
+        </div>
+      )}
+
       {/* テーブル */}
       <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-2 flex-wrap">
@@ -273,7 +295,8 @@ export default function JobQueuePanel() {
               <tbody className="divide-y divide-gray-100">
                 {filtered.map((job) => {
                   const isActing = actionLoading === job.jobId;
-                  const canRequeue = ['failed', 'partial_error', 'cancelled'].includes(job.status);
+                  const stuck = isStuck(job);
+                  const canRequeue = ['failed', 'partial_error', 'cancelled'].includes(job.status) || stuck;
                   const canCancel = job.status === 'queued';
                   const isQueued = job.status === 'queued';
                   const isSelected = selectedJobIds.has(job.jobId);
@@ -326,9 +349,13 @@ export default function JobQueuePanel() {
                             <button
                               onClick={() => handleAction(job.jobId, 'requeue')}
                               disabled={isActing}
-                              className="px-2 py-1 rounded text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 disabled:opacity-40"
+                              className={`px-2 py-1 rounded text-xs border disabled:opacity-40 ${
+                                stuck
+                                  ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-300'
+                                  : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border-indigo-200'
+                              }`}
                             >
-                              再実行
+                              {stuck ? '再キュー投入' : '再実行'}
                             </button>
                           )}
                           {canCancel && (

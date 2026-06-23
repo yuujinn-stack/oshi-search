@@ -5,6 +5,7 @@ import {
   dequeuePersonJob,
   getJob,
   updateJob,
+  resetStuckJobs,
   type PersonJob,
 } from './person-job-queue';
 import { getAllImportedPersons, updateImportedPersonStatus } from './imported-persons';
@@ -53,10 +54,12 @@ export async function processPersonJobById(
   const steps: PersonJob['steps'] = { tmdb: { status: 'pending' }, rakuten: { status: 'pending' } };
   const errors: string[] = [];
   let successCount = 0;
+  const aiLimit = parseInt(process.env.PERSON_JOB_AI_LIMIT ?? '30', 10);
 
-  // 楽天商品取得 + AI判定（変更禁止ロジック）
+  // 楽天商品取得 + AI判定
+  await updateJob(jobId, { steps: { tmdb: { status: 'pending' }, rakuten: { status: 'running' } } });
   try {
-    const result = await processPerson(job.personName, false, personWithConfig);
+    const result = await processPerson(job.personName, false, personWithConfig, aiLimit);
     if (result.error) {
       errors.push(`楽天商品: ${result.error}`);
       steps.rakuten = { status: 'failed', error: result.error };
@@ -69,8 +72,11 @@ export async function processPersonJobById(
     errors.push(`楽天商品: ${msg}`);
     steps.rakuten = { status: 'failed', error: msg };
   }
+  // 楽天完了時点で中間保存（タイムアウト後でも楽天結果が残る）
+  await updateJob(jobId, { steps });
 
   // TMDb出演作品取得
+  await updateJob(jobId, { steps: { ...steps, tmdb: { status: 'running' } } });
   try {
     const result = await processPersonWorks(personWithConfig, { action: 'tmdb', includeVod: false });
     if (result.error) {
@@ -102,7 +108,13 @@ export async function processPersonJobById(
 export async function processQueuedPersonJobs(options?: {
   jobIds?: string[];
   batchSize?: number;
-}): Promise<{ processed: number; results: JobProcessResult[] }> {
+}): Promise<{ processed: number; results: JobProcessResult[]; resetStuck: number }> {
+  // タイムアウト等で processing のまま残ったジョブを自動復旧してからキュー処理
+  const stuckReset = await resetStuckJobs();
+  if (stuckReset.length > 0) {
+    console.log(`[processor] スタックジョブ ${stuckReset.length} 件を自動再キュー: ${stuckReset.join(', ')}`);
+  }
+
   const MAX_BATCH = 3;
   const allImported = await getAllImportedPersons();
   const results: JobProcessResult[] = [];
@@ -126,5 +138,5 @@ export async function processQueuedPersonJobs(options?: {
     }
   }
 
-  return { processed: results.length, results };
+  return { processed: results.length, results, resetStuck: stuckReset.length };
 }

@@ -14,7 +14,7 @@ export type PersonJobStatus =
   | 'cancelled';
 
 export interface PersonJobStep {
-  status: 'pending' | 'done' | 'failed';
+  status: 'pending' | 'running' | 'done' | 'failed';
   error?: string;
 }
 
@@ -114,6 +114,31 @@ export async function getAllJobs(limit = 200): Promise<PersonJob[]> {
   return (jobs.filter(Boolean) as PersonJob[])
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, limit);
+}
+
+// status=processing かつ startedAt が一定時間以上前のジョブを検出し queued にリセット
+// Vercel Function タイムアウト時に processing のまま残るジョブを自動復旧するために使用
+export async function resetStuckJobs(): Promise<string[]> {
+  const redis = getRedis();
+  if (!redis) return [];
+
+  const stuckMinutes = parseInt(process.env.PERSON_JOB_STUCK_MINUTES ?? '15', 10);
+  const threshold = Date.now() - stuckMinutes * 60 * 1000;
+
+  const byPerson = await redis.hgetall(BY_PERSON_KEY);
+  if (!byPerson) return [];
+
+  const jobIds = Object.values(byPerson) as string[];
+  const jobs = await Promise.all(jobIds.map((id) => getJob(id)));
+
+  const reset: string[] = [];
+  for (const job of jobs) {
+    if (!job || job.status !== 'processing') continue;
+    if (!job.startedAt || job.startedAt >= threshold) continue;
+    await requeueJob(job.jobId);
+    reset.push(job.jobId);
+  }
+  return reset;
 }
 
 export async function requeueJob(jobId: string): Promise<void> {
