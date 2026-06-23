@@ -6,17 +6,61 @@ import { getWork, saveWork } from '@/lib/work-store';
 // posterUrl が空の作品に対して vodProviders の officialUrl / sourceUrl から
 // OG画像を取得して posterUrl に保存する。管理画面ボタン押下時のみ実行。
 
+// ─── YouTube 動画ID抽出 ────────────────────────────────────────────────────────
+// 対応形式:
+//   youtube.com/watch?v=ID
+//   youtu.be/ID
+//   youtube.com/shorts/ID
+//   youtube.com/live/ID
+//   youtube.com/embed/ID
+//   youtube.com/v/ID
 function extractYouTubeVideoId(url: string): string | null {
   try {
     const u = new URL(url);
-    if (u.hostname === 'youtu.be') return u.pathname.slice(1).split('?')[0] || null;
-    if (u.hostname.includes('youtube.com')) return u.searchParams.get('v');
+    if (u.hostname === 'youtu.be') {
+      return u.pathname.slice(1).split('?')[0] || null;
+    }
+    if (u.hostname.includes('youtube.com')) {
+      return (
+        u.searchParams.get('v') ??
+        u.pathname.match(/\/(shorts|live|embed|v)\/([^/?]+)/)?.[2] ??
+        null
+      );
+    }
     return null;
   } catch {
     return null;
   }
 }
 
+// ─── YouTube サムネイルURL解決 ─────────────────────────────────────────────────
+// maxresdefault.jpg が存在しない動画では 120×90 の空プレースホルダーが返る。
+// HEAD リクエストでサイズを確認し、極端に小さければ hqdefault.jpg へ切り替える。
+const YT_PLACEHOLDER_MAX_BYTES = 5_000;
+
+async function resolveYouTubeThumbnail(videoId: string): Promise<string> {
+  const maxres = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+  const hq = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      const res = await fetch(maxres, { method: 'HEAD', signal: controller.signal });
+      if (!res.ok) return hq;
+      const len = parseInt(res.headers.get('content-length') ?? '0', 10);
+      // content-length が取れてプレースホルダーサイズ以下なら hqdefault を使う
+      if (len > 0 && len < YT_PLACEHOLDER_MAX_BYTES) return hq;
+      return maxres;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    // タイムアウト・ネットワークエラー時は hqdefault にフォールバック
+    return hq;
+  }
+}
+
+// ─── 相対URL解決 ───────────────────────────────────────────────────────────────
 function resolveUrl(imageUrl: string, baseUrl: string): string {
   if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) return imageUrl;
   try {
@@ -26,6 +70,7 @@ function resolveUrl(imageUrl: string, baseUrl: string): string {
   }
 }
 
+// ─── OGタグからの画像取得 ──────────────────────────────────────────────────────
 async function fetchOgImage(url: string): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
@@ -73,6 +118,7 @@ async function fetchOgImage(url: string): Promise<string | null> {
   }
 }
 
+// ─── ハンドラー ────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const { personName, workId } = body as { personName?: string; workId?: string };
@@ -112,14 +158,14 @@ export async function POST(req: NextRequest) {
   }
 
   for (const url of urlCandidates) {
-    // YouTube: 動画IDからサムネイルURLを生成
+    // YouTube: 動画IDからサムネイルURLを生成（maxresdefault → hqdefault フォールバックあり）
     const ytId = extractYouTubeVideoId(url);
     if (ytId) {
-      const posterUrl = `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`;
+      const posterUrl = await resolveYouTubeThumbnail(ytId);
       work.posterUrl = posterUrl;
       work.updatedAt = Date.now();
       await saveWork(work);
-      return NextResponse.json({ ok: true, posterUrl, source: 'youtube' });
+      return NextResponse.json({ ok: true, posterUrl, source: 'youtube', videoId: ytId });
     }
 
     // OG画像取得
