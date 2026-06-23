@@ -196,10 +196,38 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
   }
 
   async function handleBulkOgFetch() {
-    const eligible = (works ?? []).filter((w) => {
-      if (w.posterUrl) return false;
-      return (w.vodProviders ?? []).some((p) => p.officialUrl || p.sourceUrl);
+    const allWorks = works ?? [];
+
+    // ── デバッグ: 対象・除外の分類をコンソールに出力 ──
+    const excluded: { title: string; reason: string }[] = [];
+    const eligible = allWorks.filter((w) => {
+      if (w.posterUrl) {
+        excluded.push({ title: w.title, reason: `posterUrl既存(${w.posterUrl.slice(0, 40)}...)` });
+        return false;
+      }
+      const hasUrl = (w.vodProviders ?? []).some((p) => p.officialUrl || p.sourceUrl);
+      if (!hasUrl) {
+        const provSummary = (w.vodProviders ?? [])
+          .map((p) => `${p.providerName}[src:${p.sourceUrl ?? ''}][off:${p.officialUrl ?? ''}]`)
+          .join(', ') || 'providers=none';
+        excluded.push({ title: w.title, reason: `URL候補なし (${provSummary})` });
+        return false;
+      }
+      return true;
     });
+
+    console.group('[OG一括取得] 対象判定');
+    console.log(`総作品数: ${allWorks.length}`);
+    console.log(`対象(eligible): ${eligible.length}件`);
+    eligible.forEach((w) => {
+      const urls = (w.vodProviders ?? [])
+        .flatMap((p) => [p.officialUrl, p.sourceUrl].filter(Boolean))
+        .join(', ');
+      console.log(`  ✅ ${w.title} | posterUrl=${w.posterUrl ?? 'なし'} | urls=${urls}`);
+    });
+    console.log(`除外: ${excluded.length}件`);
+    excluded.forEach((e) => console.log(`  ❌ ${e.title}（${e.reason}）`));
+    console.groupEnd();
 
     if (eligible.length === 0) {
       setOgBulkResult({ total: 0, success: 0, failed: 0, skipped: 0, failures: [] });
