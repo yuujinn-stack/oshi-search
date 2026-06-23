@@ -19,6 +19,20 @@ const VOD_SOURCE_BADGE: Record<string, string> = {
   manual_csv: 'bg-orange-50 border-orange-200 text-orange-700',
 };
 
+function getPosterLayout(url: string): { container: string; img: string } {
+  if (url.includes('image.tmdb.org')) {
+    return {
+      container: 'relative aspect-[2/3] bg-gray-100 overflow-hidden flex-shrink-0',
+      img: 'w-full h-full object-cover',
+    };
+  }
+  // YouTube サムネイル・OG 画像は横長として扱う
+  return {
+    container: 'relative aspect-video bg-gray-900 overflow-hidden flex-shrink-0',
+    img: 'w-full h-full object-cover object-center',
+  };
+}
+
 function WorkTypeIcon({ type }: { type: string }) {
   if (type === 'movie') return <span className="text-3xl">🎬</span>;
   if (type === 'documentary') return <span className="text-3xl">🎥</span>;
@@ -29,6 +43,7 @@ function WorkTypeIcon({ type }: { type: string }) {
 
 export default function WorkCard({ work }: { work: WorkRecord }) {
   const workDetailUrl = `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
+  const posterLayout = work.posterUrl ? getPosterLayout(work.posterUrl) : null;
 
   // 公開ページ用フィルタ:
   //   confidence=low の AI ソースは非表示
@@ -78,13 +93,13 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
     <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden hover:shadow-lg transition-all duration-200 flex flex-col h-full">
       {/* ポスター（クリックで作品詳細へ） */}
       <Link href={workDetailUrl} className="block">
-        {work.posterUrl ? (
-          <div className="relative aspect-[2/3] bg-gray-100 overflow-hidden flex-shrink-0">
+        {work.posterUrl && posterLayout ? (
+          <div className={posterLayout.container}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={work.posterUrl}
               alt={work.title}
-              className="w-full h-full object-cover"
+              className={posterLayout.img}
               loading="lazy"
             />
             {/* 種別バッジ（ポスター上） */}
