@@ -73,8 +73,9 @@ async function getRelatedProducts(
 
 // ─── メタデータ ────────────────────────────────────────────────────────────────
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { slug, workId } = await params;
+  const { slug, workId: rawWorkId } = await params;
   const personName = decodeURIComponent(slug);
+  const workId = decodeURIComponent(rawWorkId);
   const work = await getWork(personName, workId);
   if (!work) return {};
   const year = work.releaseYear ? `${work.releaseYear}年` : '';
@@ -159,8 +160,9 @@ function formatDate(ts?: number): string {
 
 // ─── ページ本体 ────────────────────────────────────────────────────────────────
 export default async function WorkDetailPage({ params }: Props) {
-  const { slug, workId } = await params;
+  const { slug, workId: rawWorkId } = await params;
   const personName = decodeURIComponent(slug);
+  const workId = decodeURIComponent(rawWorkId);
   const person = await getPersonWithConfigMerged(personName);
   if (!person) notFound();
 
