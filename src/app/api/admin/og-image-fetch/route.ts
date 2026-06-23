@@ -163,10 +163,11 @@ async function fetchPageAndExtract(
 // ─── ハンドラー ────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const { personName, workId, debug } = body as {
+  const { personName, workId, debug, force } = body as {
     personName?: string;
     workId?: string;
     debug?: boolean;
+    force?: boolean;
   };
 
   if (!personName || !workId) {
@@ -180,7 +181,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '作品が見つかりません' }, { status: 404 });
   }
 
-  if (work.posterUrl) {
+  // force=true の場合は posterUrl 既存でも再取得して上書き
+  if (work.posterUrl && !force) {
     return NextResponse.json({ ok: true, skipped: true, reason: 'posterUrl既存' });
   }
 

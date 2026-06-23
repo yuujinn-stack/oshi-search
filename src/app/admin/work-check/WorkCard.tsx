@@ -53,6 +53,8 @@ interface WorkCardProps {
   onOpenVodResearch: (work: WorkRecord) => void;
   onTestJudge: (work: WorkRecord) => void;
   onOgImageFetch: (workId: string) => Promise<{ ok: boolean; reason?: string } | null>;
+  onOgImageForceFetch: (workId: string) => Promise<{ ok: boolean; reason?: string } | null>;
+  onSetSourceUrl: (workId: string, sourceUrl: string) => Promise<{ ok: boolean; reason?: string } | null>;
 }
 
 export default function WorkCard({
@@ -72,6 +74,8 @@ export default function WorkCard({
   onOpenVodResearch,
   onTestJudge,
   onOgImageFetch,
+  onOgImageForceFetch,
+  onSetSourceUrl,
 }: WorkCardProps) {
   const [manualVodWorkId, setManualVodWorkId] = useState<string | null>(null);
   const [manualVodName, setManualVodName] = useState('');
@@ -80,6 +84,16 @@ export default function WorkCard({
   const [ogFetching, setOgFetching] = useState(false);
   const [ogTried, setOgTried] = useState(false);
   const [ogFailReason, setOgFailReason] = useState<string | null>(null);
+  const [ogForceFetching, setOgForceFetching] = useState(false);
+  const [ogForceResult, setOgForceResult] = useState<string | null>(null);
+  const [sourceUrlInput, setSourceUrlInput] = useState('');
+  const [sourceUrlSaving, setSourceUrlSaving] = useState(false);
+  const [sourceUrlResult, setSourceUrlResult] = useState<string | null>(null);
+
+  // URL候補がひとつもないか判定（sourceUrl入力欄の表示条件）
+  const hasUrlCandidates = (work.vodProviders ?? []).some(
+    (p) => p.officialUrl || p.sourceUrl,
+  );
 
   const handleOgFetch = useCallback(async () => {
     setOgFetching(true);
@@ -91,6 +105,28 @@ export default function WorkCard({
       setOgFailReason(result.reason ?? '取得失敗');
     }
   }, [onOgImageFetch, work.id]);
+
+  const handleOgForceFetch = useCallback(async () => {
+    setOgForceFetching(true);
+    setOgForceResult(null);
+    const result = await onOgImageForceFetch(work.id);
+    setOgForceFetching(false);
+    if (result) {
+      setOgForceResult(result.ok ? '取得済' : (result.reason ?? '失敗'));
+    }
+  }, [onOgImageForceFetch, work.id]);
+
+  const handleSourceUrlSave = useCallback(async () => {
+    if (!sourceUrlInput.trim()) return;
+    setSourceUrlSaving(true);
+    setSourceUrlResult(null);
+    const result = await onSetSourceUrl(work.id, sourceUrlInput.trim());
+    setSourceUrlSaving(false);
+    if (result) {
+      setSourceUrlResult(result.ok ? '取得済' : (result.reason ?? '失敗'));
+      if (result.ok) setSourceUrlInput('');
+    }
+  }, [onSetSourceUrl, work.id, sourceUrlInput]);
 
   async function handleManualVodAddLocal(workId: string) {
     await onManualVodAdd(workId, manualVodName, manualVodLink);
@@ -122,6 +158,8 @@ export default function WorkCard({
             🎬
           </div>
         )}
+
+        {/* posterUrl なし: OG取得ボタン */}
         {!work.posterUrl && (
           <button
             onClick={handleOgFetch}
@@ -139,6 +177,49 @@ export default function WorkCard({
           >
             {ogFailReason ?? 'なし'}
           </span>
+        )}
+
+        {/* posterUrl あり: 再取得ボタン */}
+        {work.posterUrl && (
+          <button
+            onClick={handleOgForceFetch}
+            disabled={ogForceFetching}
+            title="posterUrl を上書きして画像を再取得"
+            className="text-[9px] text-gray-400 hover:text-teal-600 disabled:opacity-40 whitespace-nowrap"
+          >
+            {ogForceFetching ? '取得中' : '🔄'}
+          </button>
+        )}
+        {work.posterUrl && ogForceResult && !ogForceFetching && (
+          <span className={`text-[9px] whitespace-nowrap ${ogForceResult === '取得済' ? 'text-teal-500' : 'text-red-400'}`}>
+            {ogForceResult}
+          </span>
+        )}
+
+        {/* URL候補なし かつ posterUrl なし: sourceUrl 入力欄 */}
+        {!work.posterUrl && !hasUrlCandidates && (
+          <div className="flex flex-col items-center gap-0.5 mt-0.5">
+            <input
+              type="text"
+              value={sourceUrlInput}
+              onChange={(e) => setSourceUrlInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSourceUrlSave(); }}
+              placeholder="YouTube/記事URL"
+              className="text-[8px] border border-gray-200 rounded px-1 py-0.5 w-20 text-center focus:outline-none focus:ring-1 focus:ring-teal-300"
+            />
+            <button
+              onClick={handleSourceUrlSave}
+              disabled={sourceUrlSaving || !sourceUrlInput.trim()}
+              className="text-[8px] text-teal-500 hover:text-teal-700 disabled:opacity-40 whitespace-nowrap"
+            >
+              {sourceUrlSaving ? '保存中' : '保存して取得'}
+            </button>
+            {sourceUrlResult && (
+              <span className={`text-[8px] whitespace-nowrap ${sourceUrlResult === '取得済' ? 'text-teal-500' : 'text-red-400'}`}>
+                {sourceUrlResult}
+              </span>
+            )}
+          </div>
         )}
       </div>
 

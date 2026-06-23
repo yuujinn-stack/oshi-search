@@ -298,6 +298,46 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
     }
   }
 
+  // force=true で posterUrl 上書き再取得
+  async function handleOgImageForceFetch(workId: string): Promise<{ ok: boolean; reason?: string } | null> {
+    try {
+      const res = await fetch('/api/admin/og-image-fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personName, workId, force: true }),
+      });
+      const data = (await res.json()) as { ok: boolean; reason?: string; skipped?: boolean };
+      await loadWorks();
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  // sourceUrl を保存してからOG取得
+  async function handleSetSourceUrl(workId: string, sourceUrl: string): Promise<{ ok: boolean; reason?: string } | null> {
+    try {
+      const saveRes = await fetch('/api/admin/work-og-source', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personName, workId, sourceUrl }),
+      });
+      if (!saveRes.ok) return { ok: false, reason: 'URL保存失敗' };
+
+      // URL保存後に即OG取得
+      const ogRes = await fetch('/api/admin/og-image-fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personName, workId }),
+      });
+      const data = (await ogRes.json()) as { ok: boolean; reason?: string; skipped?: boolean };
+      await loadWorks();
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
   async function handleIntensiveCronToggle() {
     setIntensiveCronLoading(true);
     const newVal = !intensiveCronEnabled;
@@ -668,6 +708,8 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
                   onOpenVodResearch={(w) => setVodResearchWork(w)}
                   onTestJudge={handleTestJudge}
                   onOgImageFetch={handleOgImageFetch}
+                  onOgImageForceFetch={handleOgImageForceFetch}
+                  onSetSourceUrl={handleSetSourceUrl}
                 />
               ))}
             </div>
