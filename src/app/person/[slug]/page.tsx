@@ -95,6 +95,26 @@ export default async function PersonPage({ params }: Props) {
     getPublishedWorks(person.name),
   ]);
 
+  // ━━━ デバッグログ（武元唯衣専用 / 原因調査後に削除） ━━━
+  const DEBUG = name === '武元唯衣';
+  if (DEBUG) {
+    const catCounts = Object.entries(storedData).map(([cat, d]) => `${cat}:${d?.products.length ?? 0}`);
+    console.log(`[DEBUG:${name}] ストア商品数 → ${catCounts.join(' / ')}`);
+    const relatedVerdicts = Object.entries(verdicts).filter(([, v]) => v.verdict === 'related');
+    console.log(`[DEBUG:${name}] related件数=${relatedVerdicts.length} / 全verdict=${Object.keys(verdicts).length}`);
+    for (const [id, v] of relatedVerdicts) {
+      // どのカテゴリのどの商品かを特定
+      let foundCat = '?';
+      let foundTitle = '?';
+      for (const [cat, d] of Object.entries(storedData)) {
+        const hit = d?.products.find((p) => p.id === id);
+        if (hit) { foundCat = cat; foundTitle = hit.title; break; }
+      }
+      console.log(`[DEBUG:${name}] related商品 id=${id} cat=${foundCat} score=${v.score} source=${v.source} title="${foundTitle.slice(0,60)}"`);
+    }
+  }
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
   // 中古カテゴリの関連済み商品を取得（全セクションで共有）
   const usedCatData = storedData['中古'];
   const usedProducts: RakutenItem[] = [];
@@ -106,6 +126,9 @@ export default async function PersonPage({ params }: Props) {
       usedSeen.add(p.id);
       usedProducts.push(p);
     }
+  }
+  if (DEBUG) {
+    console.log(`[DEBUG:${name}] 中古カテゴリ related件数=${usedProducts.length}`);
   }
 
   // 表示セクションごとに「relevant」判定済み商品を統合して抽出
@@ -123,6 +146,19 @@ export default async function PersonPage({ params }: Props) {
         if (!v || v.verdict !== 'related') continue;
         newSeen.add(p.id);
         newProducts.push(p);
+      }
+    }
+    if (DEBUG) {
+      console.log(`[DEBUG:${name}] セクション「${label}」sources=${sources.join(',')} hasData=${hasAnyData} newProducts=${newProducts.length}`);
+      // related なのにこのセクションに入っていない related 商品を探す
+      for (const [cat, d] of Object.entries(storedData)) {
+        if (!sources.includes(cat as never)) continue;
+        for (const p of (d?.products ?? [])) {
+          const v = verdicts[p.id];
+          if (v?.verdict === 'related' && !newSeen.has(p.id)) {
+            console.log(`[DEBUG:${name}]   → 除外: id=${p.id} reason=重複 title="${p.title.slice(0,50)}"`);
+          }
+        }
       }
     }
 
