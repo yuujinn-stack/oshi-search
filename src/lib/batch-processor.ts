@@ -13,6 +13,14 @@ import type { PersonWithConfig } from '@/types/person';
 // 1人あたりの AI 呼び出し上限（Vercel の 300s タイムアウト対策）
 const MAX_AI_PER_PERSON = 150;
 
+// 中古商品の保存上限（新品が多い場合に中古で埋め尽くされるのを防ぐ）
+const MAX_USED_ITEMS_STORED = 50;
+
+// 中古タイトル正規化（新品との重複チェック用: 【中古】プレフィックスを除去してから比較）
+function normalizeForUsedDedup(title: string): string {
+  return title.replace(/^【中古】\s*/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 // 問題商品追跡キーワード（Vercelログで各ステップを追跡する）
 const TRACK_TITLE_TERMS = ['感情の隙間', '1st写真集', '2nd写真集', '3rd写真集'];
 
@@ -72,12 +80,29 @@ export async function processPerson(
   console.log(`[batch] ===== 開始: ${personName} (OPENAI_API_KEY=${apiKeyStatus}) =====`);
   console.log(`[batch] 既存verdicts: ${Object.keys(existingVerdicts).length}件 (ai=${Object.values(existingVerdicts).filter(v=>v.source==='ai').length}, manual=${Object.values(existingVerdicts).filter(v=>v.source==='manual').length}, auto=${Object.values(existingVerdicts).filter(v=>v.source==='auto').length})`);
 
+  // 新品商品タイトルセット（中古カテゴリでの重複抑制に使用）
+  const newTitleSet = new Set<string>();
+
   // カテゴリ毎に楽天API取得 → Redis保存 → 判定分類
   for (const cat of CATEGORIES) {
     const result = await getProductsByCategory(
       person.name, person.group, cat, person.config, 'no-store'
     );
-    const products = result.status === 'ok' ? result.products : [];
+    let products = result.status === 'ok' ? result.products : [];
+
+    // 中古カテゴリ: 同一タイトルの新品が既に取得済みなら除外し、保存件数を上限内に制限
+    if (cat === '中古' && products.length > 0) {
+      const beforeDedup = products.length;
+      products = products.filter((p) => !newTitleSet.has(normalizeForUsedDedup(p.title)));
+      const suppressed = beforeDedup - products.length;
+      if (suppressed > 0) {
+        console.log(`[batch] 中古dedup: 新品と重複する${suppressed}件を除外 (残=${products.length}件)`);
+      }
+      if (products.length > MAX_USED_ITEMS_STORED) {
+        console.log(`[batch] 中古上限: ${products.length}件 → ${MAX_USED_ITEMS_STORED}件に制限`);
+        products = products.slice(0, MAX_USED_ITEMS_STORED);
+      }
+    }
 
     console.log(`[batch] ${cat}: ${products.length}件取得 (API status=${result.status})`);
 
@@ -198,6 +223,13 @@ export async function processPerson(
     }
 
     console.log(`[batch] ${cat} 集計: 新規=${catNew} スキップ(判定済)=${catSkipped} 除外KW=${catExcluded}`);
+
+    // 新品カテゴリのタイトルを収集（後続の中古dedup用: 中古カテゴリ自体は対象外）
+    if (cat !== '中古') {
+      for (const p of products) {
+        newTitleSet.add(p.title.replace(/\s+/g, ' ').trim().toLowerCase());
+      }
+    }
   }
 
   console.log(`[batch] --- 全カテゴリ集計: 取得=${stored} 新規(AI対象)=${toJudge.length} スキップ=${skipped} 除外=${excluded} ---`);

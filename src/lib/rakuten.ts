@@ -470,24 +470,28 @@ async function fetchIchiba(
       const total = data.count ?? 0;
       console.log(`[rakuten] Ichiba取得: ${returned}件 (総数=${total}) keyword="${keyword}" page=${page}`);
 
-      items.push(...data.Items.map(({ Item }) => ({
-        id: stableId('ic', Item.itemUrl ?? ''),
-        title: Item.itemName ?? '',
-        shopName: Item.shopName ?? '',
-        catchcopy: Item.catchcopy ?? '',
-        description: (Item.itemCaption ?? '').replace(/<[^>]+>/g, '').slice(0, 200),
-        price: Number(Item.itemPrice ?? 0),
-        reviewCount: Number(Item.reviewCount ?? 0),
-        reviewAverage: Number(Item.reviewAverage ?? 0),
-        imageUrl: upgradeIchibaImageUrl(Item.mediumImageUrls?.[0]?.imageUrl ?? ''),
-        itemUrl: Item.itemUrl ?? '',
-        affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
-        category: 'グッズ' as const,
-        relevanceScore: calcScore(
-          { title: Item.itemName ?? '' },
-          { name, group, excludeKeywords }
-        ),
-      })));
+      items.push(...data.Items.map(({ Item }) => {
+        const title = Item.itemName ?? '';
+        return {
+          id: stableId('ic', Item.itemUrl ?? ''),
+          title,
+          shopName: Item.shopName ?? '',
+          catchcopy: Item.catchcopy ?? '',
+          description: (Item.itemCaption ?? '').replace(/<[^>]+>/g, '').slice(0, 200),
+          price: Number(Item.itemPrice ?? 0),
+          reviewCount: Number(Item.reviewCount ?? 0),
+          reviewAverage: Number(Item.reviewAverage ?? 0),
+          imageUrl: upgradeIchibaImageUrl(Item.mediumImageUrls?.[0]?.imageUrl ?? ''),
+          itemUrl: Item.itemUrl ?? '',
+          affiliateUrl: affiliateLink(Item.affiliateUrl ?? '', Item.itemUrl ?? ''),
+          category: 'グッズ' as const,
+          isUsed: title.includes('中古'),
+          relevanceScore: calcScore(
+            { title },
+            { name, group, excludeKeywords }
+          ),
+        };
+      }));
 
       if (returned < 30) break;
     }
@@ -518,22 +522,13 @@ async function fetchUsed(
   const excludeKeywords = config.excludeKeywords ?? [];
 
   const kwSet = new Set<string>();
-  // 写真集系
+  // 人物名を含むキーワードのみ（グループ単独キーワードは取得量が膨大になるため省略）
   kwSet.add(`${name} 写真集 中古`);
+  kwSet.add(`${name} CD 中古`);
   if (group) {
     kwSet.add(`${group} ${name} 写真集 中古`);
-    kwSet.add(`${group} 写真集 中古`);
-    // CD系
-    kwSet.add(`${group} CD 中古`);
-    kwSet.add(`${group} シングル 中古`);
-    kwSet.add(`${group} アルバム 中古`);
-    // DVD系
-    kwSet.add(`${group} DVD 中古`);
-    kwSet.add(`${group} Blu-ray 中古`);
   }
-  kwSet.add(`${name} CD 中古`);
   for (const alias of config.aliases ?? []) {
-    kwSet.add(`${alias} 写真集 中古`);
     kwSet.add(`${alias} 中古`);
   }
   for (const ckw of config.customKeywords ?? []) {
@@ -542,7 +537,7 @@ async function fetchUsed(
 
   async function fetchKw(keyword: string): Promise<RakutenItem[]> {
     const items: RakutenItem[] = [];
-    for (let page = 1; page <= 2; page++) {
+    for (let page = 1; page <= 1; page++) {
       console.log(`[rakuten] 中古検索: keyword="${keyword}" page=${page}`);
       const res = await fetch(
         ichibaUrl('IchibaItem/Search/20260401', {
