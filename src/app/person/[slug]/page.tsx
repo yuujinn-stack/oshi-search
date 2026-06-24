@@ -103,7 +103,6 @@ export default async function PersonPage({ params }: Props) {
     for (const p of usedCatData.products) {
       const v = verdicts[p.id];
       if (!v || v.verdict !== 'related') continue;
-      if (v.source !== 'manual' && v.score < 70) continue;
       usedSeen.add(p.id);
       usedProducts.push(p);
     }
@@ -122,7 +121,6 @@ export default async function PersonPage({ params }: Props) {
         if (newSeen.has(p.id)) continue;
         const v = verdicts[p.id];
         if (!v || v.verdict !== 'related') continue;
-        if (v.source !== 'manual' && v.score < 70) continue;
         newSeen.add(p.id);
         newProducts.push(p);
       }
