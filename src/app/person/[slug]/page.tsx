@@ -40,6 +40,31 @@ const GENRE_BADGE: Record<string, string> = {
   '俳優': 'bg-green-100 text-green-700',
 };
 
+// ─── 商品ソート ─────────────────────────────────────────────────────────────
+// 中古判定: isUsed フラグまたはタイトルに含まれる中古キーワードで判定
+const USED_TITLE_PATTERNS = [
+  '中古', 'used', '古本', '中古品',
+  '目立った傷や汚れ', '傷や汚れあり', 'やや傷や汚れ',
+];
+
+function isUsedByTitle(title: string): boolean {
+  const t = title.toLowerCase();
+  return USED_TITLE_PATTERNS.some((pat) => t.includes(pat.toLowerCase()));
+}
+
+// 並び順: ①新品 → ②画像あり → ③人気順（レビュー数×評価）
+function sortProducts(products: RakutenItem[]): RakutenItem[] {
+  return [...products].sort((a, b) => {
+    const aUsed = (a.isUsed || isUsedByTitle(a.title)) ? 1 : 0;
+    const bUsed = (b.isUsed || isUsedByTitle(b.title)) ? 1 : 0;
+    if (aUsed !== bUsed) return aUsed - bUsed;
+    const aImg = a.imageUrl ? 0 : 1;
+    const bImg = b.imageUrl ? 0 : 1;
+    if (aImg !== bImg) return aImg - bImg;
+    return (b.reviewCount * (b.reviewAverage || 0)) - (a.reviewCount * (a.reviewAverage || 0));
+  });
+}
+
 // 表示セクション定義
 // usedKeywords: 中古カテゴリの商品をこのセクションに分類するタイトルキーワード
 const DISPLAY_SECTIONS: Array<{
@@ -110,13 +135,18 @@ export default async function PersonPage({ params }: Props) {
       return usedKeywords.some((kw) => title.includes(kw));
     });
 
+    // 新品リスト内に混入した中古表記を後ろに下げ、人気順で並び替え
+    const sortedNew = sortProducts(newProducts);
+    // 中古リストも人気順で並び替え
+    const sortedUsed = sortProducts(sectionUsed);
+
     const newResult: ApiResult = !hasAnyData
       ? { status: 'no_data' as const }
-      : newProducts.length > 0
-      ? { status: 'ok' as const, products: newProducts }
+      : sortedNew.length > 0
+      ? { status: 'ok' as const, products: sortedNew }
       : { status: 'empty' as const };
 
-    return { label, newResult, usedProducts: sectionUsed };
+    return { label, newResult, usedProducts: sortedUsed };
   });
 
   return (
