@@ -96,22 +96,24 @@ export default async function PersonPage({ params }: Props) {
   ]);
 
   // ━━━ デバッグログ（武元唯衣専用 / 原因調査後に削除） ━━━
+  // Vercel のログ断片化を避けるため全情報を1行に収める
   const DEBUG = name === '武元唯衣';
+  const dbg: Record<string, unknown> = {};
   if (DEBUG) {
-    const catCounts = Object.entries(storedData).map(([cat, d]) => `${cat}:${d?.products.length ?? 0}`);
-    console.log(`[DEBUG:${name}] ストア商品数 → ${catCounts.join(' / ')}`);
-    const relatedVerdicts = Object.entries(verdicts).filter(([, v]) => v.verdict === 'related');
-    console.log(`[DEBUG:${name}] related件数=${relatedVerdicts.length} / 全verdict=${Object.keys(verdicts).length}`);
-    for (const [id, v] of relatedVerdicts) {
-      // どのカテゴリのどの商品かを特定
-      let foundCat = '?';
-      let foundTitle = '?';
-      for (const [cat, d] of Object.entries(storedData)) {
+    dbg.catCounts = Object.fromEntries(
+      Object.entries(storedData).map(([cat, d]) => [cat, d?.products.length ?? 0])
+    );
+    dbg.totalVerdicts = Object.keys(verdicts).length;
+    const relatedEntries = Object.entries(verdicts).filter(([, v]) => v.verdict === 'related');
+    dbg.relatedCount = relatedEntries.length;
+    dbg.relatedItems = relatedEntries.map(([id, v]) => {
+      let cat = '?'; let title = '?';
+      for (const [c, d] of Object.entries(storedData)) {
         const hit = d?.products.find((p) => p.id === id);
-        if (hit) { foundCat = cat; foundTitle = hit.title; break; }
+        if (hit) { cat = c; title = hit.title.slice(0, 60); break; }
       }
-      console.log(`[DEBUG:${name}] related商品 id=${id} cat=${foundCat} score=${v.score} source=${v.source} title="${foundTitle.slice(0,60)}"`);
-    }
+      return { id, cat, score: v.score, source: v.source, title };
+    });
   }
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -127,11 +129,9 @@ export default async function PersonPage({ params }: Props) {
       usedProducts.push(p);
     }
   }
-  if (DEBUG) {
-    console.log(`[DEBUG:${name}] 中古カテゴリ related件数=${usedProducts.length}`);
-  }
 
   // 表示セクションごとに「relevant」判定済み商品を統合して抽出
+  const dbgSections: Record<string, unknown>[] = [];
   const sectionResults = DISPLAY_SECTIONS.map(({ label, sources, usedKeywords }) => {
     // 新品商品: 各ソースカテゴリから判定済み商品を取得
     const hasAnyData = sources.some((cat) => !!storedData[cat]);
@@ -149,17 +149,7 @@ export default async function PersonPage({ params }: Props) {
       }
     }
     if (DEBUG) {
-      console.log(`[DEBUG:${name}] セクション「${label}」sources=${sources.join(',')} hasData=${hasAnyData} newProducts=${newProducts.length}`);
-      // related なのにこのセクションに入っていない related 商品を探す
-      for (const [cat, d] of Object.entries(storedData)) {
-        if (!sources.includes(cat as never)) continue;
-        for (const p of (d?.products ?? [])) {
-          const v = verdicts[p.id];
-          if (v?.verdict === 'related' && !newSeen.has(p.id)) {
-            console.log(`[DEBUG:${name}]   → 除外: id=${p.id} reason=重複 title="${p.title.slice(0,50)}"`);
-          }
-        }
-      }
+      dbgSections.push({ label, sources, hasAnyData, newCount: newProducts.length, usedBefore: usedProducts.length });
     }
 
     // 中古商品: 中古カテゴリからこのセクションに該当するものを抽出
@@ -182,6 +172,13 @@ export default async function PersonPage({ params }: Props) {
 
     return { label, newResult, usedProducts: sortedUsed };
   });
+
+  // ━━━ デバッグログ1行出力 ━━━
+  if (DEBUG) {
+    dbg.usedRelatedCount = usedProducts.length;
+    dbg.sections = dbgSections;
+    console.log(`[DEBUG:${name}] ` + JSON.stringify(dbg));
+  }
 
   return (
     <div>
