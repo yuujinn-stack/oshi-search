@@ -3,6 +3,7 @@
 import { useMemo, useState, useCallback } from 'react';
 import PersonProducts from './PersonProducts';
 import PersonAiJudgeButton from './PersonAiJudgeButton';
+import PersonRakutenFetchButton from './PersonRakutenFetchButton';
 import type { PersonPriority } from '@/app/admin/work-check/work-check-types';
 
 export interface PersonWithProductStats {
@@ -186,6 +187,7 @@ function PersonProductCard({ p }: { p: PersonWithProductStats }) {
               {metaOpen ? '▲' : 'メモ/優先'}
             </button>
 
+            <PersonRakutenFetchButton personName={p.name} />
             <PersonAiJudgeButton personName={p.name} />
             <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_BADGE[status]}`}>
               {STATUS_LABEL[status]}
