@@ -85,6 +85,9 @@ export async function processPerson(
   // 新品商品タイトルセット（中古カテゴリでの重複抑制に使用）
   const newTitleSet = new Set<string>();
 
+  // verdict 済み商品 ID セット（storeProducts で保持対象を特定するために使用）
+  const existingVerdictIds = new Set(Object.keys(existingVerdicts));
+
   // カテゴリ毎に楽天API取得 → Redis保存 → 判定分類
   for (const cat of CATEGORIES) {
     const result = await getProductsByCategory(
@@ -119,7 +122,7 @@ export async function processPerson(
       }
     }
 
-    await storeProducts(person.name, cat, products);
+    await storeProducts(person.name, cat, products, existingVerdictIds);
     stored += products.length;
 
     // storeProducts 完了後ログ（ステップ2）

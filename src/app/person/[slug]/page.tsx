@@ -95,28 +95,6 @@ export default async function PersonPage({ params }: Props) {
     getPublishedWorks(person.name),
   ]);
 
-  // ━━━ デバッグログ（武元唯衣専用 / 原因調査後に削除） ━━━
-  // Vercel のログ断片化を避けるため全情報を1行に収める
-  const DEBUG = name === '武元唯衣';
-  const dbg: Record<string, unknown> = {};
-  if (DEBUG) {
-    dbg.catCounts = Object.fromEntries(
-      Object.entries(storedData).map(([cat, d]) => [cat, d?.products.length ?? 0])
-    );
-    dbg.totalVerdicts = Object.keys(verdicts).length;
-    const relatedEntries = Object.entries(verdicts).filter(([, v]) => v.verdict === 'related');
-    dbg.relatedCount = relatedEntries.length;
-    dbg.relatedItems = relatedEntries.map(([id, v]) => {
-      let cat = '?'; let title = '?';
-      for (const [c, d] of Object.entries(storedData)) {
-        const hit = d?.products.find((p) => p.id === id);
-        if (hit) { cat = c; title = hit.title.slice(0, 60); break; }
-      }
-      return { id, cat, score: v.score, source: v.source, title };
-    });
-  }
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
   // 中古カテゴリの関連済み商品を取得（全セクションで共有）
   const usedCatData = storedData['中古'];
   const usedProducts: RakutenItem[] = [];
@@ -131,7 +109,6 @@ export default async function PersonPage({ params }: Props) {
   }
 
   // 表示セクションごとに「relevant」判定済み商品を統合して抽出
-  const dbgSections: Record<string, unknown>[] = [];
   const sectionResults = DISPLAY_SECTIONS.map(({ label, sources, usedKeywords }) => {
     // 新品商品: 各ソースカテゴリから判定済み商品を取得
     const hasAnyData = sources.some((cat) => !!storedData[cat]);
@@ -148,10 +125,6 @@ export default async function PersonPage({ params }: Props) {
         newProducts.push(p);
       }
     }
-    if (DEBUG) {
-      dbgSections.push({ label, sources, hasAnyData, newCount: newProducts.length, usedBefore: usedProducts.length });
-    }
-
     // 中古商品: 中古カテゴリからこのセクションに該当するものを抽出
     const sectionUsed = usedProducts.filter((p) => {
       if (newSeen.has(p.id)) return false; // 新品と重複するものは除外
@@ -172,13 +145,6 @@ export default async function PersonPage({ params }: Props) {
 
     return { label, newResult, usedProducts: sortedUsed };
   });
-
-  // ━━━ デバッグログ1行出力 ━━━
-  if (DEBUG) {
-    dbg.usedRelatedCount = usedProducts.length;
-    dbg.sections = dbgSections;
-    console.log(`[DEBUG:${name}] ` + JSON.stringify(dbg));
-  }
 
   return (
     <div>

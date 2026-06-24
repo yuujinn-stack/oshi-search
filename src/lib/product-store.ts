@@ -18,14 +18,37 @@ function hashKey(personName: string): string {
 }
 
 // カテゴリ単位で商品を保存（バッチ処理から呼ぶ）
+// verdictIds を渡すと、新規フェッチに含まれなかった verdict 済み商品を既存データから保持する。
+// これにより「手動採用した商品が楽天再取得で消える」問題を防ぐ。
 export async function storeProducts(
   personName: string,
   category: ProductCategory,
-  products: RakutenItem[]
+  products: RakutenItem[],
+  verdictIds?: Set<string>,
 ): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
-  const data: StoredCategoryData = { products, fetchedAt: Date.now() };
+
+  let finalProducts = products;
+
+  if (verdictIds && verdictIds.size > 0) {
+    const raw = await redis.hget(hashKey(personName), category);
+    if (raw) {
+      try {
+        const existing: StoredCategoryData = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const newIds = new Set(products.map((p) => p.id));
+        const preserved = (existing.products ?? []).filter(
+          (p) => !newIds.has(p.id) && verdictIds.has(p.id),
+        );
+        if (preserved.length > 0) {
+          console.log(`[store] ${personName}/${category}: verdict済み${preserved.length}件を保持`);
+          finalProducts = [...products, ...preserved];
+        }
+      } catch { /* 既存データ取得失敗時はそのまま上書き */ }
+    }
+  }
+
+  const data: StoredCategoryData = { products: finalProducts, fetchedAt: Date.now() };
   await redis.hset(hashKey(personName), { [category]: JSON.stringify(data) });
 }
 
