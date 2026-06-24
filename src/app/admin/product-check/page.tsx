@@ -1,31 +1,16 @@
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getBatchMeta, getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
+import { getAllImportedPersons } from '@/lib/imported-persons';
+import { getRedis } from '@/lib/redis';
 import BatchButton from './BatchButton';
-import PersonProducts from './PersonProducts';
+import ProductCheckPersonSection from './ProductCheckPersonSection';
 import UncertainQueue from './UncertainQueue';
-import PersonAiJudgeButton from './PersonAiJudgeButton';
-
-interface PersonStats {
-  total: number;
-  related: number;
-  uncertain: number;
-  unrelated: number;
-  unclassified: number;
-}
+import type { PersonMeta } from '@/app/api/admin/person-meta/route';
+import type { PersonPriority } from '@/app/admin/work-check/work-check-types';
+import type { PersonWithProductStats } from './ProductCheckPersonSection';
 
 export const dynamic = 'force-dynamic';
-
-const STATUS_BADGE: Record<string, string> = {
-  ok: 'bg-green-100 text-green-700',
-  needs_fix: 'bg-red-100 text-red-700',
-  unchecked: 'bg-gray-100 text-gray-500',
-};
-const STATUS_LABEL: Record<string, string> = {
-  ok: 'OK',
-  needs_fix: '要修正',
-  unchecked: '未確認',
-};
 
 export default async function AdminProductCheckPage() {
   // エラーを画面に表示して本番クラッシュの原因を特定する（診断用）
@@ -53,13 +38,36 @@ export default async function AdminProductCheckPage() {
     );
   }
 
-  const sorted = [...persons].sort((a, b) => {
-    const order: Record<string, number> = { needs_fix: 0, unchecked: 1, ok: 2 };
-    return (order[a.config.checkStatus ?? 'unchecked'] ?? 1) -
-           (order[b.config.checkStatus ?? 'unchecked'] ?? 1);
-  });
+  // importedPersons（aliases/importedAt/dataFetchStatus） + personMetaMap（memo/priority）を並列取得
+  let importedPersons: Awaited<ReturnType<typeof getAllImportedPersons>> = [];
+  let personMetaMap: Record<string, PersonMeta> = {};
+  try {
+    [importedPersons] = await Promise.all([getAllImportedPersons()]);
+  } catch { /* 取得失敗時は空配列のまま */ }
+  try {
+    const redis = getRedis();
+    if (redis) {
+      const raw = await redis.hgetall('admin:person-meta');
+      if (raw) {
+        for (const [k, v] of Object.entries(raw)) {
+          try {
+            personMetaMap[k] = (typeof v === 'string' ? JSON.parse(v) : v) as PersonMeta;
+          } catch { /* skip */ }
+        }
+      }
+    }
+  } catch { /* 取得失敗時は空のまま */ }
 
-  // 全人物の判定統計を並列取得（取得漏れ vs AI除外を診断するため）
+  const importedMap = new Map(importedPersons.map((p) => [p.name, p]));
+
+  // 全人物の判定統計を並列取得
+  interface PersonStats {
+    total: number;
+    related: number;
+    uncertain: number;
+    unrelated: number;
+    unclassified: number;
+  }
   const statsMap: Record<string, PersonStats> = {};
   try {
     const statsArr = await Promise.all(
@@ -85,6 +93,26 @@ export default async function AdminProductCheckPage() {
     for (const s of statsArr) statsMap[s.name] = s;
   } catch { /* 統計取得失敗時は表示なし */ }
 
+  // enrichedPersons: 全人物情報を統合
+  const enrichedPersons: PersonWithProductStats[] = persons.map((p) => {
+    const imported = importedMap.get(p.name);
+    const meta = personMetaMap[p.name];
+    return {
+      name: p.name,
+      group: p.group ?? '',
+      genre: p.genre,
+      aliases: imported?.aliases ?? p.config.aliases ?? [],
+      importedAt: imported?.importedAt,
+      dataFetchStatus: imported?.dataFetchStatus,
+      checkStatus: (p.config.checkStatus ?? 'unchecked') as 'ok' | 'needs_fix' | 'unchecked',
+      strictMode: p.config.strictMode,
+      customKeywords: p.config.customKeywords,
+      stats: statsMap[p.name] ?? { total: 0, related: 0, uncertain: 0, unrelated: 0, unclassified: 0 },
+      memo: meta?.memo,
+      priority: meta?.priority as PersonPriority | undefined,
+    };
+  });
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* ヘッダー */}
@@ -93,17 +121,20 @@ export default async function AdminProductCheckPage() {
           <h1 className="text-2xl font-black text-slate-800">商品確認 管理画面</h1>
           <p className="text-sm text-gray-500 mt-1">全{persons.length}件の登録人物</p>
         </div>
-        <div className="flex items-center gap-4 mt-1">
-          <a href="/admin/work-check" className="text-xs text-indigo-600 hover:underline">
+        <div className="flex items-center gap-4 mt-1 flex-wrap text-xs">
+          <a href="/admin/work-check" className="text-indigo-600 hover:underline">
             出演作品管理 →
           </a>
-          <a href="/admin/providers" className="text-xs text-indigo-600 hover:underline">
-            配信サービス管理 →
+          <a href="/admin/people-progress" className="text-indigo-600 hover:underline">
+            人物進捗 →
           </a>
-          <a href="/admin/people/import" className="text-xs text-indigo-600 hover:underline">
-            人物CSV登録 →
+          <a href="/admin/providers" className="text-gray-400 hover:underline">
+            配信サービス管理
           </a>
-          <a href="/api/admin/logout" className="text-xs text-gray-400 hover:text-red-500">
+          <a href="/admin/people/import" className="text-gray-400 hover:underline">
+            人物CSV登録
+          </a>
+          <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">
             ログアウト
           </a>
         </div>
@@ -151,56 +182,8 @@ export default async function AdminProductCheckPage() {
       {/* AI判定待ちキュー */}
       <UncertainQueue />
 
-      {/* 人物リスト */}
-      <div className="space-y-3">
-        {sorted.map((p) => {
-          const status = p.config.checkStatus ?? 'unchecked';
-          return (
-            <div key={p.name}>
-              {/* 人物ヘッダー */}
-              <div className="px-4 py-2 bg-gray-50 border border-b-0 border-gray-200 rounded-t-xl">
-                <div className="flex items-center gap-3">
-                  <span className="font-medium text-slate-800 text-sm">{p.name}</span>
-                  {p.group && <span className="text-xs text-gray-400">{p.group}</span>}
-                  {p.config.strictMode && (
-                    <span className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded-full">
-                      strict
-                    </span>
-                  )}
-                  {p.config.customKeywords && p.config.customKeywords.length > 0 && (
-                    <span className="text-xs text-indigo-500 truncate max-w-[120px]">
-                      +{p.config.customKeywords.join(', ')}
-                    </span>
-                  )}
-                  <div className="ml-auto flex items-center gap-2 flex-shrink-0">
-                    <PersonAiJudgeButton personName={p.name} />
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_BADGE[status]}`}>
-                      {STATUS_LABEL[status]}
-                    </span>
-                  </div>
-                </div>
-                {/* 取得・判定統計（取得漏れ vs AI除外の診断用） */}
-                {(() => {
-                  const s = statsMap[p.name];
-                  if (!s || s.total === 0) return null;
-                  return (
-                    <div className="flex gap-3 mt-1 text-xs">
-                      <span className="text-gray-500">取得 {s.total}件</span>
-                      <span className="text-green-600">related {s.related}</span>
-                      <span className="text-yellow-600">uncertain {s.uncertain}</span>
-                      <span className="text-red-500">unrelated {s.unrelated}</span>
-                      {s.unclassified > 0 && (
-                        <span className="text-gray-400">未判定 {s.unclassified}</span>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-              <PersonProducts personName={p.name} />
-            </div>
-          );
-        })}
-      </div>
+      {/* 人物リスト（検索・フィルター付き） */}
+      <ProductCheckPersonSection persons={enrichedPersons} />
     </div>
   );
 }
