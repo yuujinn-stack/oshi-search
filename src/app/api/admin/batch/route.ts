@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { processAllPersons, processPerson } from '@/lib/batch-processor';
+import { getAllPersonsMerged } from '@/lib/persons';
 import { getRedis } from '@/lib/redis';
 
 // POST /api/admin/batch
@@ -29,8 +30,16 @@ export async function POST(req: NextRequest) {
 
   try {
     if (body.personName) {
-      // 1人だけ処理（クライアントが1人ずつ呼ぶ方式）
-      const result = await processPerson(body.personName);
+      // 1人だけ処理: getAllPersonsMerged() で configOverride を渡し、CSVインポート人物も正しく処理する
+      const persons = await getAllPersonsMerged();
+      const personConfig = persons.find((p) => p.name === body.personName);
+      if (!personConfig) {
+        return NextResponse.json(
+          { error: `人物が見つかりません: ${body.personName}` },
+          { status: 404 },
+        );
+      }
+      const result = await processPerson(body.personName, false, personConfig);
       revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
       return NextResponse.json({ ok: true, person: result });
     }

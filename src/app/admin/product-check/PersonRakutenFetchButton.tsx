@@ -10,6 +10,7 @@ interface FetchResult {
   aiQueued: number;
   skipped: number;
   excluded: number;
+  usedSuppressed: number;
 }
 
 export default function PersonRakutenFetchButton({ personName }: { personName: string }) {
@@ -38,12 +39,20 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
         return;
       }
 
+      // person.error は processPerson 内で人物が見つからなかった場合にセットされる
+      if (data.person?.error) {
+        setErrorMsg(data.person.error);
+        setStatus('error');
+        return;
+      }
+
       setResult({
         stored: data.person.stored ?? 0,
         aiJudged: data.person.aiJudged ?? 0,
         aiQueued: data.person.aiQueued ?? 0,
         skipped: data.person.skipped ?? 0,
         excluded: data.person.excluded ?? 0,
+        usedSuppressed: data.person.usedSuppressed ?? 0,
       });
       setStatus('done');
     } catch (err) {
@@ -64,20 +73,23 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
       </button>
 
       {status === 'done' && result && (
-        <span className="text-xs whitespace-nowrap space-x-1.5">
+        <span className="text-xs whitespace-nowrap flex items-center gap-1.5">
           <span className="text-teal-600 font-medium">取得{result.stored}</span>
-          <span className="text-gray-400">skip{result.skipped}</span>
-          {result.excluded > 0 && <span className="text-orange-500">除外{result.excluded}</span>}
-          {result.aiQueued > 0 && (
+          {result.skipped > 0 && <span className="text-gray-400">判定済skip{result.skipped}</span>}
+          {result.excluded > 0 && <span className="text-orange-500">除外KW{result.excluded}</span>}
+          {result.usedSuppressed > 0 && <span className="text-blue-500">中古抑制{result.usedSuppressed}</span>}
+          {result.aiQueued > 0 ? (
             <span className={result.aiJudged < result.aiQueued ? 'text-red-500' : 'text-green-600'}>
-              AI{result.aiJudged}/{result.aiQueued}
+              AI判定{result.aiJudged}/{result.aiQueued}
             </span>
-          )}
+          ) : result.stored > 0 ? (
+            <span className="text-gray-400">AI対象なし</span>
+          ) : null}
         </span>
       )}
       {status === 'error' && (
-        <span className="text-xs text-red-500 max-w-[120px] truncate" title={errorMsg}>
-          失敗: {errorMsg.slice(0, 30)}
+        <span className="text-xs text-red-500 max-w-[160px] truncate" title={errorMsg}>
+          失敗: {errorMsg.slice(0, 40)}
         </span>
       )}
     </div>

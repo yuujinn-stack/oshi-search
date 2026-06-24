@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { processPerson } from '@/lib/batch-processor';
+import { getAllPersonsMerged } from '@/lib/persons';
 import { getRedis } from '@/lib/redis';
 
 // POST /api/admin/ai-judge
-// body: { personName: "..." }
+// body: { personName: "..." , forceRejudge?: boolean }
 // 1人分の楽天商品取得 + AI判定を実行する個別エンドポイント
-// 既存の一括処理 /api/admin/batch とは独立して動作する
+// processAllPersons() と同様に getAllPersonsMerged() から configOverride を取得し、
+// JSON ファイル管理・CSV インポート（Redis 管理）どちらの人物でも正しく動作する
 export async function POST(req: NextRequest) {
   const redis = getRedis();
   if (!redis) {
@@ -22,7 +24,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'personName が必要です' }, { status: 400 });
   }
 
-  const result = await processPerson(body.personName, body.forceRejudge ?? false);
+  // getAllPersonsMerged() で検索することで CSVインポート人物も configOverride で渡せる
+  // これにより processPerson 内の「人物が見つかりません」早期リターンを回避する
+  const persons = await getAllPersonsMerged();
+  const personConfig = persons.find((p) => p.name === body.personName);
+  if (!personConfig) {
+    return NextResponse.json(
+      { error: `人物が見つかりません: ${body.personName}` },
+      { status: 404 },
+    );
+  }
+
+  const result = await processPerson(body.personName, body.forceRejudge ?? false, personConfig);
   revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
   return NextResponse.json({ ok: true, person: result });
 }

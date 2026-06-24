@@ -34,11 +34,12 @@ function trackLog(msg: string): void {
 
 export interface PersonBatchResult {
   personName: string;
-  stored: number;       // 今回取得・保存した商品数
-  aiJudged: number;     // AI判定結果を保存した商品数
-  aiQueued: number;     // AI判定に送った商品数（aiJudged と差がある場合はAPIエラー）
-  skipped: number;      // 既存判定(ai/manual)があるためスキップした商品数
-  excluded: number;     // 除外キーワード一致でスキップした商品数
+  stored: number;          // 今回楽天APIから取得・保存した商品数（カテゴリ合計）
+  aiJudged: number;        // AI判定結果を保存した商品数
+  aiQueued: number;        // AI判定に送った商品数（aiJudged と差がある場合はAPIエラー）
+  skipped: number;         // 既存判定(ai/manual)があるためスキップした商品数
+  excluded: number;        // 除外キーワード一致でスキップした商品数
+  usedSuppressed: number;  // 中古dedup: 新品と重複して除外した商品数
   error?: string;
 }
 
@@ -61,7 +62,7 @@ export async function processPerson(
   const all = getAllPersonsWithConfig();
   const person = configOverride ?? all.find((p) => p.name === personName);
   if (!person) {
-    return { personName, stored: 0, aiJudged: 0, aiQueued: 0, skipped: 0, excluded: 0, error: '人物が見つかりません' };
+    return { personName, stored: 0, aiJudged: 0, aiQueued: 0, skipped: 0, excluded: 0, usedSuppressed: 0, error: '人物が見つかりません' };
   }
 
   const excludeKeywords = person.config.excludeKeywords ?? [];
@@ -72,6 +73,7 @@ export async function processPerson(
   let aiQueued = 0;
   let skipped = 0;
   let excluded = 0;
+  let usedSuppressed = 0;
   const toJudge: RakutenItem[] = [];
 
   const apiKeyStatus = process.env.OPENAI_API_KEY
@@ -95,6 +97,7 @@ export async function processPerson(
       const beforeDedup = products.length;
       products = products.filter((p) => !newTitleSet.has(normalizeForUsedDedup(p.title)));
       const suppressed = beforeDedup - products.length;
+      usedSuppressed += suppressed;
       if (suppressed > 0) {
         console.log(`[batch] 中古dedup: 新品と重複する${suppressed}件を除外 (残=${products.length}件)`);
       }
@@ -284,8 +287,8 @@ export async function processPerson(
     }
   }
 
-  console.log(`[batch] ===== 完了: ${personName} 取得=${stored} AI対象=${aiQueued} AI完了=${aiJudged} スキップ=${skipped} 除外=${excluded} =====`);
-  return { personName, stored, aiJudged, aiQueued, skipped, excluded };
+  console.log(`[batch] ===== 完了: ${personName} 取得=${stored} AI対象=${aiQueued} AI完了=${aiJudged} スキップ=${skipped} 除外=${excluded} 中古抑制=${usedSuppressed} =====`);
+  return { personName, stored, aiJudged, aiQueued, skipped, excluded, usedSuppressed };
 }
 
 // 全人物を処理（Cron/管理画面から呼ぶ）
@@ -308,6 +311,7 @@ export async function processAllPersons(): Promise<BatchSummary> {
         aiQueued: 0,
         skipped: 0,
         excluded: 0,
+        usedSuppressed: 0,
         error: String(err),
       });
     }
