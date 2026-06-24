@@ -324,11 +324,11 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
       });
       if (!saveRes.ok) return { ok: false, reason: 'URL保存失敗' };
 
-      // URL保存後に即OG取得
+      // URL保存後に即OG取得（posterUrl が既存でも上書き）
       const ogRes = await fetch('/api/admin/og-image-fetch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personName, workId }),
+        body: JSON.stringify({ personName, workId, force: true }),
       });
       const data = (await ogRes.json()) as { ok: boolean; reason?: string; skipped?: boolean };
       await loadWorks();

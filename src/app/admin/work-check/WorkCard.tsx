@@ -89,11 +89,7 @@ export default function WorkCard({
   const [sourceUrlInput, setSourceUrlInput] = useState('');
   const [sourceUrlSaving, setSourceUrlSaving] = useState(false);
   const [sourceUrlResult, setSourceUrlResult] = useState<string | null>(null);
-
-  // URL候補がひとつもないか判定（sourceUrl入力欄の表示条件）
-  const hasUrlCandidates = (work.vodProviders ?? []).some(
-    (p) => p.officialUrl || p.sourceUrl,
-  );
+  const [showUrlEdit, setShowUrlEdit] = useState(false);
 
   // img.youtube.com/vi/videoseries/... のような壊れたposterUrlを検出
   const isPosterBroken = !!work.posterUrl && /\/vi\/videoseries\//.test(work.posterUrl);
@@ -127,7 +123,10 @@ export default function WorkCard({
     setSourceUrlSaving(false);
     if (result) {
       setSourceUrlResult(result.ok ? '取得済' : (result.reason ?? '失敗'));
-      if (result.ok) setSourceUrlInput('');
+      if (result.ok) {
+        setSourceUrlInput('');
+        setShowUrlEdit(false);
+      }
     }
   }, [onSetSourceUrl, work.id, sourceUrlInput]);
 
@@ -208,9 +207,18 @@ export default function WorkCard({
           </>
         )}
 
-        {/* URL候補なし かつ posterUrl なし: sourceUrl 入力欄 */}
-        {!work.posterUrl && !hasUrlCandidates && (
-          <div className="flex flex-col items-center gap-0.5 mt-0.5">
+        {/* URL編集ボタン（全作品共通）*/}
+        <button
+          onClick={() => { setShowUrlEdit((v) => !v); setSourceUrlResult(null); }}
+          className="text-[8px] text-gray-300 hover:text-gray-500 whitespace-nowrap leading-none"
+          title="YouTube/記事URLを手動で入力して画像を取得"
+        >
+          {showUrlEdit ? '▲' : 'URL編集'}
+        </button>
+
+        {/* sourceUrl 入力フォーム */}
+        {showUrlEdit && (
+          <div className="flex flex-col items-center gap-0.5">
             <input
               type="text"
               value={sourceUrlInput}
