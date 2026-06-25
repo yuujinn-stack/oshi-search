@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import './globals.css';
 import Header from '@/components/Header';
-import { DesignProvider } from '@/components/site/DesignProvider';
 import DesignPreviewToggle from '@/components/site/DesignPreviewToggle';
 
 export const metadata: Metadata = {
@@ -18,19 +17,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ja" data-design="standard">
       <body>
+        {/* サーバーレンダリングされるコンテンツ — Suspense不要 */}
+        <Header />
+        <main>{children}</main>
+        <footer className="bg-white border-t border-gray-200 mt-16 py-8 text-center text-sm text-gray-500 space-y-1">
+          <p className="font-bold text-primary">推しサーチ</p>
+          <p>© 2026 推しサーチ. All rights reserved.</p>
+          <p className="text-xs text-gray-400">
+            本サイトはアフィリエイト広告（楽天市場・楽天ブックス）を掲載しています。
+          </p>
+        </footer>
+
+        {/* クライアント専用UIは独立した Suspense に隔離 */}
         <Suspense fallback={null}>
-          <DesignProvider>
-            <Header />
-            <main>{children}</main>
-            <footer className="bg-white border-t border-gray-200 mt-16 py-8 text-center text-sm text-gray-500 space-y-1">
-              <p className="font-bold text-primary">推しサーチ</p>
-              <p>© 2026 推しサーチ. All rights reserved.</p>
-              <p className="text-xs text-gray-400">
-                本サイトはアフィリエイト広告（楽天市場・楽天ブックス）を掲載しています。
-              </p>
-            </footer>
-            <DesignPreviewToggle />
-          </DesignProvider>
+          <DesignPreviewToggle />
         </Suspense>
       </body>
     </html>
