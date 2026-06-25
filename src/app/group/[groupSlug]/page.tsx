@@ -6,13 +6,16 @@ import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts, CATEGORIES } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 import { deduplicateProviders } from '@/lib/vod-dedup';
+import { getRedis } from '@/lib/redis';
 import PersonCard from '@/components/PersonCard';
 import WorkCard from '@/components/WorkCard';
 import ProviderLogo from '@/components/ProviderLogo';
 import type { WorkRecord } from '@/types/work';
 import type { RakutenItem } from '@/types/rakuten';
-import type { ProductCategory } from '@/types/person';
+import type { ProductCategory, ActivityStatus } from '@/types/person';
 import type { VodProvider } from '@/types/vod';
+import type { PersonMeta } from '@/app/api/admin/person-meta/route';
+import type { PersonWithConfig } from '@/types/person';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,6 +26,54 @@ interface Props {
 // ─── 定数 ──────────────────────────────────────────────────────────────────────
 const MAX_PRODUCTS_PER_SECTION = 12;
 const MAX_WORKS_PER_PROVIDER = 6;
+
+// ─── 活動状態 ──────────────────────────────────────────────────────────────────
+const ACTIVITY_LABEL: Record<ActivityStatus, string> = {
+  active: '現役',
+  graduated: '卒業',
+  withdrawn: '脱退',
+  hiatus: '休止中',
+  retired: '引退',
+  unknown: '不明',
+};
+const ACTIVITY_BADGE_CLS: Record<ActivityStatus, string> = {
+  active: 'bg-green-100 text-green-700',
+  graduated: 'bg-blue-100 text-blue-700',
+  withdrawn: 'bg-red-100 text-red-600',
+  hiatus: 'bg-amber-100 text-amber-700',
+  retired: 'bg-gray-200 text-gray-500',
+  unknown: 'bg-gray-100 text-gray-400',
+};
+
+type EnrichedMember = PersonWithConfig & {
+  meta: PersonMeta;
+  effectiveStatus: ActivityStatus;
+};
+
+// ─── 卒業・脱退メンバー用コンパクトカード ─────────────────────────────────────
+function FormerMemberChip({ member }: { member: EnrichedMember }) {
+  const { meta, effectiveStatus } = member;
+  return (
+    <Link href={`/person/${encodeURIComponent(member.name)}`}>
+      <div className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-100 rounded-xl hover:border-gray-300 transition-colors group">
+        <span className="text-sm font-medium text-slate-600 group-hover:text-indigo-600 transition-colors">
+          {member.name}
+        </span>
+        {meta.generation && (
+          <span className="text-[10px] text-gray-400">{meta.generation}</span>
+        )}
+        {effectiveStatus !== 'active' && (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${ACTIVITY_BADGE_CLS[effectiveStatus]}`}>
+            {ACTIVITY_LABEL[effectiveStatus]}
+          </span>
+        )}
+        {meta.leftAt && (
+          <span className="text-[10px] text-gray-300">{meta.leftAt.slice(0, 7)}</span>
+        )}
+      </div>
+    </Link>
+  );
+}
 
 const GENRE_GRADIENT: Record<string, string> = {
   '坂道':       'from-pink-500 to-rose-600',
@@ -159,17 +210,78 @@ export default async function GroupPage({ params }: Props) {
 
   const genre = members[0]?.genre;
 
-  // ── 全メンバーのデータを並列取得 ──
-  const memberDataList = await Promise.all(
-    members.map(async (m) => {
-      const [works, storedProducts, verdicts] = await Promise.all([
-        getPublishedWorks(m.name),
-        getAllStoredProducts(m.name),
-        getAllVerdicts(m.name),
-      ]);
-      return { member: m, works, storedProducts, verdicts };
-    }),
+  // ── 全メンバーのデータ + PersonMeta を並列取得 ──
+  const [memberDataList, personMetaMap] = await Promise.all([
+    Promise.all(
+      members.map(async (m) => {
+        const [works, storedProducts, verdicts] = await Promise.all([
+          getPublishedWorks(m.name),
+          getAllStoredProducts(m.name),
+          getAllVerdicts(m.name),
+        ]);
+        return { member: m, works, storedProducts, verdicts };
+      }),
+    ),
+    (async (): Promise<Record<string, PersonMeta>> => {
+      try {
+        const redis = getRedis();
+        if (!redis) return {};
+        const raw = await redis.hgetall('admin:person-meta');
+        if (!raw) return {};
+        const map: Record<string, PersonMeta> = {};
+        for (const [k, v] of Object.entries(raw)) {
+          try { map[k] = (typeof v === 'string' ? JSON.parse(v) : v) as PersonMeta; } catch { /* skip */ }
+        }
+        return map;
+      } catch { return {}; }
+    })(),
+  ]);
+
+  // ── メンバー分類 ──────────────────────────────────────────────────────────────
+  const enrichedMembers: EnrichedMember[] = members.map((m) => {
+    const meta = personMetaMap[m.name] ?? {};
+    const effectiveStatus: ActivityStatus = meta.activityStatus ?? 'active';
+    return { ...m, meta, effectiveStatus };
+  });
+
+  // 別グループ所属だが formerGroupNames にこのグループが含まれる元メンバー
+  const formerMembersFromOther: EnrichedMember[] = allPersons
+    .filter((p) => p.group !== groupName)
+    .filter((p) => (personMetaMap[p.name]?.formerGroupNames ?? []).includes(groupName))
+    .map((p) => ({
+      ...p,
+      meta: personMetaMap[p.name] ?? {},
+      effectiveStatus: (personMetaMap[p.name]?.activityStatus ?? 'unknown') as ActivityStatus,
+    }));
+
+  const activeMembers = enrichedMembers.filter(
+    (m) => m.effectiveStatus === 'active' || m.effectiveStatus === 'hiatus',
   );
+  const formerMembersInGroup = enrichedMembers.filter((m) =>
+    ['graduated', 'withdrawn', 'retired'].includes(m.effectiveStatus),
+  );
+  const allFormerMembers: EnrichedMember[] = [...formerMembersInGroup, ...formerMembersFromOther];
+
+  const hasStatusData = enrichedMembers.some((m) => m.meta.activityStatus);
+  const hasGenerationData = [...enrichedMembers, ...formerMembersFromOther].some(
+    (m) => m.meta.generation,
+  );
+
+  // 期別グループ（数値キー順 → 未設定を末尾）
+  const generationMap = new Map<string, EnrichedMember[]>();
+  for (const m of [...enrichedMembers, ...formerMembersFromOther]) {
+    const gen = m.meta.generation ?? '未設定';
+    if (!generationMap.has(gen)) generationMap.set(gen, []);
+    generationMap.get(gen)!.push(m);
+  }
+  const generationGroups = [...generationMap.entries()].sort(([a], [b]) => {
+    if (a === '未設定') return 1;
+    if (b === '未設定') return -1;
+    return parseInt(a) - parseInt(b);
+  });
+
+  // 歴代メンバー（現役 + 卒業/脱退 = 全員）
+  const allTimeMembers: EnrichedMember[] = [...enrichedMembers, ...formerMembersFromOther];
 
   // ── 作品を workId で重複排除（最初の出現を保持）──
   const workMap = new Map<string, WorkRecord>();
@@ -340,11 +452,18 @@ export default async function GroupPage({ params }: Props) {
             {/* 統計バー */}
             <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               {[
-                { label: 'メンバー', value: members.length, unit: '人' },
+                {
+                  label: hasStatusData ? '現役メンバー' : 'メンバー',
+                  value: hasStatusData ? activeMembers.length : members.length,
+                  unit: '人',
+                  sub: hasStatusData && allFormerMembers.length > 0
+                    ? `歴代 ${allTimeMembers.length}人`
+                    : undefined,
+                },
                 { label: '出演作品', value: allWorks.length, unit: '件' },
                 { label: '配信中',   value: streamingWorks.length, unit: '件' },
                 { label: '関連商品', value: totalProductCount, unit: '件' },
-              ].map(({ label, value, unit }) => (
+              ].map(({ label, value, unit, sub }) => (
                 <div key={label} className="bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 text-center">
                   <p className="text-white/70 text-[11px]">{label}</p>
                   {value > 0 ? (
@@ -355,6 +474,9 @@ export default async function GroupPage({ params }: Props) {
                   ) : (
                     <p className="text-white/50 text-sm mt-1">確認中</p>
                   )}
+                  {sub && (
+                    <p className="text-white/50 text-[10px] mt-0.5">{sub}</p>
+                  )}
                 </div>
               ))}
             </div>
@@ -363,17 +485,109 @@ export default async function GroupPage({ params }: Props) {
 
         <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
 
-          {/* ━━━ 1. メンバー一覧 ━━━ */}
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-bold text-slate-800">メンバー一覧</h2>
-              <span className="text-xs text-gray-400">{members.length}人</span>
+          {/* ━━━ 1. メンバー ━━━ */}
+          <section className="space-y-5">
+
+            {/* 現役メンバー（または全メンバー一覧） */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-base font-bold text-slate-800">
+                  {hasStatusData && allFormerMembers.length > 0 ? '現役メンバー' : 'メンバー一覧'}
+                </h2>
+                <span className="text-xs text-gray-400">
+                  {hasStatusData && allFormerMembers.length > 0 ? activeMembers.length : members.length}人
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {(hasStatusData && allFormerMembers.length > 0 ? activeMembers : members).map((m) => (
+                  <PersonCard key={m.name} person={m} />
+                ))}
+              </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {members.map((m) => (
-                <PersonCard key={m.name} person={m} />
-              ))}
-            </div>
+
+            {/* 卒業・脱退メンバー */}
+            {allFormerMembers.length > 0 && (
+              <details className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                <summary className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
+                  <span className="font-semibold text-slate-700 text-sm">卒業・脱退メンバー</span>
+                  <span className="text-xs text-gray-400">{allFormerMembers.length}人</span>
+                </summary>
+                <div className="border-t border-gray-50 p-4">
+                  <div className="flex flex-wrap gap-2">
+                    {allFormerMembers.map((m) => (
+                      <FormerMemberChip key={m.name} member={m} />
+                    ))}
+                  </div>
+                </div>
+              </details>
+            )}
+
+            {/* 期別メンバー */}
+            {hasGenerationData && (
+              <details className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                <summary className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
+                  <span className="font-semibold text-slate-700 text-sm">期別メンバー</span>
+                  <span className="text-xs text-gray-400">{generationGroups.length}期</span>
+                </summary>
+                <div className="border-t border-gray-50 p-4 space-y-4">
+                  {generationGroups.map(([gen, genMembers]) => (
+                    <div key={gen}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                          {gen}
+                        </span>
+                        <span className="text-xs text-gray-400">{genMembers.length}人</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {genMembers.map((m) => (
+                          <Link
+                            key={m.name}
+                            href={`/person/${encodeURIComponent(m.name)}`}
+                            className="flex items-center gap-1 px-2.5 py-1 bg-gray-50 hover:bg-indigo-50 border border-gray-100 hover:border-indigo-200 rounded-lg text-xs font-medium text-slate-700 hover:text-indigo-600 transition-colors"
+                          >
+                            {m.name}
+                            {m.effectiveStatus !== 'active' && (
+                              <span className={`text-[9px] px-1 py-0.5 rounded-full ${ACTIVITY_BADGE_CLS[m.effectiveStatus]}`}>
+                                {ACTIVITY_LABEL[m.effectiveStatus]}
+                              </span>
+                            )}
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {/* 歴代メンバー（卒業/脱退メンバーが存在する場合のみ） */}
+            {allFormerMembers.length > 0 && (
+              <details className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                <summary className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
+                  <span className="font-semibold text-slate-700 text-sm">歴代メンバー</span>
+                  <span className="text-xs text-gray-400">全{allTimeMembers.length}人</span>
+                </summary>
+                <div className="border-t border-gray-50 p-4">
+                  <div className="flex flex-wrap gap-1.5">
+                    {allTimeMembers.map((m) => (
+                      <Link
+                        key={m.name}
+                        href={`/person/${encodeURIComponent(m.name)}`}
+                        className="flex items-center gap-1 px-2.5 py-1 bg-gray-50 hover:bg-indigo-50 border border-gray-100 hover:border-indigo-200 rounded-lg text-xs font-medium text-slate-700 hover:text-indigo-600 transition-colors"
+                      >
+                        {m.name}
+                        {m.effectiveStatus !== 'active' && (
+                          <span className={`text-[9px] px-1 py-0.5 rounded-full ${ACTIVITY_BADGE_CLS[m.effectiveStatus]}`}>
+                            {ACTIVITY_LABEL[m.effectiveStatus]}
+                          </span>
+                        )}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              </details>
+            )}
+
           </section>
 
           {/* ━━━ 2. 配信中の出演作品 ━━━ */}

@@ -5,10 +5,30 @@ import { getPersonWithConfigMerged, getPersonsByGroupMerged } from '@/lib/person
 import { getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 import { getPublishedWorks } from '@/lib/work-store';
+import { getRedis } from '@/lib/redis';
 import ProductSectionList from '@/components/ProductSectionList';
 import PersonCard from '@/components/PersonCard';
 import WorkCard from '@/components/WorkCard';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
+import type { ActivityStatus } from '@/types/person';
+import type { PersonMeta } from '@/app/api/admin/person-meta/route';
+
+const ACTIVITY_LABEL: Record<ActivityStatus, string> = {
+  active: '現役',
+  graduated: '卒業',
+  withdrawn: '脱退',
+  hiatus: '活動休止',
+  retired: '引退',
+  unknown: '不明',
+};
+const ACTIVITY_BADGE_CLS: Record<ActivityStatus, string> = {
+  active: 'bg-white/20 text-white',
+  graduated: 'bg-white/20 text-white',
+  withdrawn: 'bg-white/20 text-white',
+  hiatus: 'bg-white/20 text-white',
+  retired: 'bg-white/20 text-white',
+  unknown: 'bg-white/10 text-white/60',
+};
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -87,12 +107,20 @@ export default async function PersonPage({ params }: Props) {
   const groupMembers = person.group ? await getPersonsByGroupMerged(person.group) : [];
   const related = groupMembers.filter((p) => p.name !== person.name).slice(0, 4);
 
-  // Redis から保存済み商品・判定結果・出演作品を並列取得
-  // ユーザーページでは楽天 API / OpenAI API / TMDb API を一切呼ばない
-  const [storedData, verdicts, publishedWorks] = await Promise.all([
+  // Redis から保存済み商品・判定結果・出演作品 + PersonMeta を並列取得
+  const [storedData, verdicts, publishedWorks, personMeta] = await Promise.all([
     getAllStoredProducts(person.name),
     getAllVerdicts(person.name),
     getPublishedWorks(person.name),
+    (async (): Promise<PersonMeta | null> => {
+      try {
+        const redis = getRedis();
+        if (!redis) return null;
+        const raw = await redis.hget<string>('admin:person-meta', person.name);
+        if (!raw) return null;
+        return (typeof raw === 'string' ? JSON.parse(raw) : raw) as PersonMeta;
+      } catch { return null; }
+    })(),
   ]);
 
   // 中古カテゴリの関連済み商品を取得（全セクションで共有）
@@ -177,9 +205,31 @@ export default async function PersonPage({ params }: Props) {
               ) : (
                 <p className="text-indigo-300 mt-1 text-sm">ソロ活動</p>
               )}
-              <span className={`inline-block mt-2 text-xs px-3 py-1 rounded-full font-bold ${GENRE_BADGE[person.genre] ?? 'bg-gray-100 text-gray-600'}`}>
-                {person.genre}
-              </span>
+              <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                <span className={`text-xs px-3 py-1 rounded-full font-bold ${GENRE_BADGE[person.genre] ?? 'bg-gray-100 text-gray-600'}`}>
+                  {person.genre}
+                </span>
+                {personMeta?.activityStatus && personMeta.activityStatus !== 'unknown' && (
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${ACTIVITY_BADGE_CLS[personMeta.activityStatus]}`}>
+                    {ACTIVITY_LABEL[personMeta.activityStatus]}
+                  </span>
+                )}
+                {personMeta?.generation && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/15 text-indigo-100 font-medium">
+                    {personMeta.generation}
+                  </span>
+                )}
+              </div>
+              {((personMeta?.formerGroupNames?.length ?? 0) > 0 || personMeta?.membershipNote) && (
+                <div className="flex flex-wrap items-center gap-2 mt-1">
+                  {personMeta?.formerGroupNames?.map((g) => (
+                    <span key={g} className="text-[11px] text-indigo-200/80">元{g}</span>
+                  ))}
+                  {personMeta?.membershipNote && (
+                    <span className="text-[11px] text-indigo-200/70">{personMeta.membershipNote}</span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
