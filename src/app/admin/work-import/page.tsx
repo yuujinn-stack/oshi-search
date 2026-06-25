@@ -23,6 +23,9 @@ export default function WorkImportPage() {
           <a href="/admin/import-history" className="text-gray-400 hover:underline">
             インポート履歴
           </a>
+          <a href="/admin/groups" className="text-gray-400 hover:underline">
+            グループ管理
+          </a>
           <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">
             ログアウト
           </a>

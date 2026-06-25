@@ -141,6 +141,9 @@ export default async function AdminProductCheckPage() {
           <a href="/admin/people/import" className="text-gray-400 hover:underline">
             人物CSV登録
           </a>
+          <a href="/admin/groups" className="text-gray-400 hover:underline">
+            グループ管理
+          </a>
           <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">
             ログアウト
           </a>

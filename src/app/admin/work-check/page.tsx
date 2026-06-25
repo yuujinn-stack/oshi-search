@@ -147,6 +147,9 @@ export default async function WorkCheckPage() {
           <a href="/admin/product-check" className="text-gray-400 hover:underline">
             商品確認
           </a>
+          <a href="/admin/groups" className="text-gray-400 hover:underline">
+            グループ管理
+          </a>
           <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500 transition-colors">
             ログアウト
           </a>
