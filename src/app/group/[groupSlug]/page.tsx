@@ -7,6 +7,7 @@ import { getAllStoredProducts, CATEGORIES } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 import { deduplicateProviders } from '@/lib/vod-dedup';
 import { getRedis } from '@/lib/redis';
+import { getAllGroupMetas } from '@/lib/group-meta';
 import PersonCard from '@/components/PersonCard';
 import WorkCard from '@/components/WorkCard';
 import ProviderLogo from '@/components/ProviderLogo';
@@ -16,6 +17,7 @@ import type { ProductCategory, ActivityStatus } from '@/types/person';
 import type { VodProvider } from '@/types/vod';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import type { PersonWithConfig } from '@/types/person';
+import type { GroupMeta } from '@/types/group';
 
 export const dynamic = 'force-dynamic';
 
@@ -200,13 +202,62 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
+// ─── 改名リダイレクトページ ────────────────────────────────────────────────────
+function RenameNoticePage({
+  groupName,
+  renamedTo,
+  endedAt,
+}: {
+  groupName: string;
+  renamedTo: string;
+  endedAt?: string;
+}) {
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+      <div className="max-w-md w-full text-center">
+        <div className="text-5xl mb-4">→</div>
+        <h1 className="text-xl font-bold text-slate-800 mb-2">{groupName}</h1>
+        <p className="text-gray-500 mb-1">
+          このグループは <strong className="text-slate-700">{renamedTo}</strong> に改名されました
+        </p>
+        {endedAt && (
+          <p className="text-sm text-gray-400 mb-6">{endedAt}</p>
+        )}
+        <Link
+          href={`/group/${encodeURIComponent(renamedTo)}`}
+          className="inline-block px-6 py-3 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-colors"
+        >
+          {renamedTo} のページへ →
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 // ─── ページ ────────────────────────────────────────────────────────────────────
 export default async function GroupPage({ params }: Props) {
   const { groupSlug } = await params;
   const groupName  = decodeURIComponent(groupSlug);
   const allPersons = await getAllPersonsMerged();
   const members    = allPersons.filter((p) => p.group === groupName);
-  if (members.length === 0) notFound();
+
+  // GroupMeta を先に取得（改名/解散リダイレクトの判定に使用）
+  const allGroupMetas = await getAllGroupMetas();
+  const groupMeta: GroupMeta | null = allGroupMetas.find((g) => g.groupName === groupName) ?? null;
+
+  if (members.length === 0) {
+    // このグループ名が別グループの旧名として登録されているか確認
+    const successorGroup = allGroupMetas.find(
+      (g) => (g.formerNames ?? []).includes(groupName) || g.renamedFrom === groupName,
+    );
+    if (groupMeta?.activityStatus === 'renamed' && groupMeta.renamedTo) {
+      return <RenameNoticePage groupName={groupName} renamedTo={groupMeta.renamedTo} endedAt={groupMeta.endedAt} />;
+    }
+    if (successorGroup) {
+      return <RenameNoticePage groupName={groupName} renamedTo={successorGroup.groupName} />;
+    }
+    notFound();
+  }
 
   const genre = members[0]?.genre;
 
@@ -484,6 +535,42 @@ export default async function GroupPage({ params }: Props) {
         </div>
 
         <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
+
+          {/* ━━━ 改名・解散バナー ━━━ */}
+          {groupMeta?.activityStatus === 'renamed' && groupMeta.renamedTo && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap">
+              <span className="text-blue-700 text-sm">
+                このグループは <strong>{groupMeta.renamedTo}</strong> に改名されました
+                {groupMeta.endedAt && ` （${groupMeta.endedAt}）`}
+              </span>
+              <Link
+                href={`/group/${encodeURIComponent(groupMeta.renamedTo)}`}
+                className="text-sm font-semibold text-blue-600 hover:underline ml-auto"
+              >
+                {groupMeta.renamedTo} のページへ →
+              </Link>
+            </div>
+          )}
+          {groupMeta?.activityStatus === 'disbanded' && (
+            <div className="bg-gray-100 border border-gray-200 rounded-xl px-4 py-3">
+              <span className="text-gray-600 text-sm">
+                このグループは解散しました
+                {groupMeta.endedAt && ` （${groupMeta.endedAt}）`}
+              </span>
+              {groupMeta.note && (
+                <span className="text-gray-400 text-xs ml-2">{groupMeta.note}</span>
+              )}
+            </div>
+          )}
+          {groupMeta?.renamedFrom && (
+            <div className="bg-white border border-gray-100 rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm text-gray-500">
+              <span className="text-gray-400 text-xs">旧グループ名:</span>
+              <span className="font-medium text-slate-600">{groupMeta.renamedFrom}</span>
+              {(groupMeta.formerNames ?? []).filter((n) => n !== groupMeta.renamedFrom).map((n) => (
+                <span key={n} className="font-medium text-slate-600">/ {n}</span>
+              ))}
+            </div>
+          )}
 
           {/* ━━━ 1. メンバー ━━━ */}
           <section className="space-y-5">

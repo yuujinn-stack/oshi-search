@@ -6,6 +6,7 @@ import { getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getRedis } from '@/lib/redis';
+import { getGroupMeta } from '@/lib/group-meta';
 import ProductSectionList from '@/components/ProductSectionList';
 import PersonCard from '@/components/PersonCard';
 import WorkCard from '@/components/WorkCard';
@@ -107,8 +108,8 @@ export default async function PersonPage({ params }: Props) {
   const groupMembers = person.group ? await getPersonsByGroupMerged(person.group) : [];
   const related = groupMembers.filter((p) => p.name !== person.name).slice(0, 4);
 
-  // Redis から保存済み商品・判定結果・出演作品 + PersonMeta を並列取得
-  const [storedData, verdicts, publishedWorks, personMeta] = await Promise.all([
+  // Redis から保存済み商品・判定結果・出演作品 + PersonMeta + GroupMeta を並列取得
+  const [storedData, verdicts, publishedWorks, personMeta, groupMeta] = await Promise.all([
     getAllStoredProducts(person.name),
     getAllVerdicts(person.name),
     getPublishedWorks(person.name),
@@ -121,6 +122,7 @@ export default async function PersonPage({ params }: Props) {
         return (typeof raw === 'string' ? JSON.parse(raw) : raw) as PersonMeta;
       } catch { return null; }
     })(),
+    person.group ? getGroupMeta(person.group) : Promise.resolve(null),
   ]);
 
   // 中古カテゴリの関連済み商品を取得（全セクションで共有）
@@ -196,12 +198,22 @@ export default async function PersonPage({ params }: Props) {
             <div>
               <h1 className="text-3xl font-black text-white">{person.name}</h1>
               {person.group ? (
-                <Link
-                  href={`/group/${encodeURIComponent(person.group)}`}
-                  className="text-indigo-200 hover:text-white mt-1 block text-sm transition-colors"
-                >
-                  {person.group} →
-                </Link>
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <Link
+                    href={`/group/${encodeURIComponent(person.group)}`}
+                    className="text-indigo-200 hover:text-white text-sm transition-colors"
+                  >
+                    {person.group} →
+                  </Link>
+                  {groupMeta?.activityStatus === 'renamed' && groupMeta.renamedTo && (
+                    <Link
+                      href={`/group/${encodeURIComponent(groupMeta.renamedTo)}`}
+                      className="text-[11px] text-indigo-300 hover:text-white transition-colors"
+                    >
+                      （現: {groupMeta.renamedTo}）
+                    </Link>
+                  )}
+                </div>
               ) : (
                 <p className="text-indigo-300 mt-1 text-sm">ソロ活動</p>
               )}
