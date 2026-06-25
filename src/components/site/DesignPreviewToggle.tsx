@@ -5,18 +5,20 @@ import { usePathname } from 'next/navigation';
 import { DESIGN_THEMES, THEME_LABEL, THEME_ACCENT } from '@/lib/designTheme';
 import { useDesignTheme } from './DesignProvider';
 
-const ENABLED = process.env.NEXT_PUBLIC_ENABLE_DESIGN_PREVIEW === 'true';
+// opt-out モデル: NEXT_PUBLIC_ENABLE_DESIGN_PREVIEW='false' のときのみ非表示
+// 未設定・'true' はすべて表示（.env.local がVercelに渡らないため opt-out で運用）
+const DISABLED = process.env.NEXT_PUBLIC_ENABLE_DESIGN_PREVIEW === 'false';
 
 export default function DesignPreviewToggle() {
   const pathname = usePathname();
   const { theme, setTheme } = useDesignTheme();
   const [open, setOpen] = useState(false);
 
-  // 管理画面では非表示 / 環境変数で無効化
-  if (!ENABLED || pathname.startsWith('/admin')) return null;
+  // 管理画面では非表示 / 環境変数で明示的に無効化
+  if (DISABLED || pathname.startsWith('/admin')) return null;
 
   return (
-    <div className="fixed bottom-5 right-5 z-[9999] flex flex-col items-end gap-2">
+    <div className="fixed bottom-16 right-4 z-[9999] flex flex-col items-end gap-2">
       {/* テーマ選択パネル */}
       {open && (
         <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-3 flex flex-col gap-1.5 min-w-[140px]">
