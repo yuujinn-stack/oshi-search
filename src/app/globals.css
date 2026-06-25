@@ -2,10 +2,99 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── デザインテーマ CSS変数 ────────────────────────────────────────────────── */
+
+/* Standard（デフォルト・管理画面も常にこれを使用） */
+:root,
+[data-design="standard"] {
+  --ds-bg:           #F9FAFB;   /* bg-gray-50 と同色 */
+  --ds-surface:      #FFFFFF;
+  --ds-primary:      #4F46E5;   /* indigo-600 */
+  --ds-primary-soft: #EEF2FF;   /* indigo-50 */
+  --ds-accent:       #EC4899;   /* pink-500 */
+  --ds-accent-soft:  #FDF2F8;
+  --ds-text:         #1E293B;
+  --ds-muted:        #94A3B8;
+  --ds-border:       #E2E8F0;
+  --ds-cta:          #4F46E5;
+  --ds-cta-text:     #FFFFFF;
+  --ds-radius:       1rem;
+  --ds-hero-from:    #4F46E5;
+  --ds-hero-to:      #3730A3;
+}
+
+/* Oshi Pop */
+[data-design="oshi-pop"] {
+  --ds-bg:           #FFF0F8;
+  --ds-surface:      #FFFFFF;
+  --ds-primary:      #E91E8C;
+  --ds-primary-soft: #FCE7F3;
+  --ds-accent:       #7C3AED;
+  --ds-accent-soft:  #F3E8FF;
+  --ds-text:         #1A1A2E;
+  --ds-muted:        #C084FC;
+  --ds-border:       #F9A8D4;
+  --ds-cta:          #E91E8C;
+  --ds-cta-text:     #FFFFFF;
+  --ds-radius:       1.5rem;
+  --ds-hero-from:    #E91E8C;
+  --ds-hero-to:      #7C3AED;
+}
+
+/* Premium */
+[data-design="premium"] {
+  --ds-bg:           #0F172A;
+  --ds-surface:      #1E293B;
+  --ds-primary:      #F59E0B;
+  --ds-primary-soft: #292115;
+  --ds-accent:       #FBBF24;
+  --ds-accent-soft:  #1C1810;
+  --ds-text:         #F1F5F9;
+  --ds-muted:        #94A3B8;
+  --ds-border:       #334155;
+  --ds-cta:          #F59E0B;
+  --ds-cta-text:     #0F172A;
+  --ds-radius:       0.75rem;
+  --ds-hero-from:    #1E293B;
+  --ds-hero-to:      #0F172A;
+}
+
+/* ─── 公開サイト共通スタイル（管理画面は[data-design="standard"]固定のため安全） */
+
+/* ページ背景 */
 body {
-  color: #1E293B;
+  background-color: var(--ds-bg);
+  color: var(--ds-text);
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Premium テーマ: 白背景カード・ボーダーの上書き（公開ページのみ影響） */
+[data-design="premium"] .bg-white {
+  background-color: var(--ds-surface) !important;
+  color: var(--ds-text);
+}
+[data-design="premium"] .border-gray-200,
+[data-design="premium"] .border-gray-100 {
+  border-color: var(--ds-border) !important;
+}
+[data-design="premium"] .text-slate-800,
+[data-design="premium"] .text-slate-700,
+[data-design="premium"] .text-slate-600 {
+  color: var(--ds-text) !important;
+}
+[data-design="premium"] .text-gray-500,
+[data-design="premium"] .text-gray-400 {
+  color: var(--ds-muted) !important;
+}
+[data-design="premium"] .bg-gray-50,
+[data-design="premium"] .bg-gray-100 {
+  background-color: #162032 !important;
+}
+
+/* Oshi Pop テーマ: ページ背景のみ変更（カードは白のまま） */
+[data-design="oshi-pop"] .bg-gray-50 {
+  background-color: #FFF5FB !important;
 }
 
 * {
