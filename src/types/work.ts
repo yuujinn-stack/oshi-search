@@ -1,6 +1,13 @@
 export type WorkStatus = 'auto_published' | 'needs_review' | 'hidden';
-export type WorkType = 'movie' | 'tv';
+export type WorkType = 'movie' | 'tv' | 'variety' | 'anime';
 export type WorkSource = 'tmdb' | 'openai_suggestion' | 'ai_supplement' | 'manual' | 'manual_csv';
+
+export const WORK_TYPE_LABEL: Record<WorkType, string> = {
+  movie: '映画',
+  tv: 'ドラマ',
+  variety: 'バラエティ',
+  anime: 'アニメ',
+};
 
 export type { VodProvider, VodProviderType, VodSource } from './vod';
 

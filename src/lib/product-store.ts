@@ -52,6 +52,54 @@ export async function storeProducts(
   await redis.hset(hashKey(personName), { [category]: JSON.stringify(data) });
 }
 
+// 手動追加: カテゴリに商品を1件追加（既存商品は保持）
+// 同じ id または itemUrl が既にある場合は 'duplicate' を返す
+export async function appendProductToCategory(
+  personName: string,
+  category: ProductCategory,
+  product: RakutenItem,
+): Promise<'created' | 'duplicate'> {
+  const redis = getRedis();
+  if (!redis) return 'duplicate';
+  const raw = await redis.hget(hashKey(personName), category);
+  let existing: StoredCategoryData = { products: [], fetchedAt: Date.now() };
+  if (raw) {
+    try {
+      existing = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch { /* use default */ }
+  }
+  const dup = existing.products.some(
+    (p) => p.id === product.id || p.itemUrl === product.itemUrl,
+  );
+  if (dup) return 'duplicate';
+  existing.products = [...existing.products, product];
+  await redis.hset(hashKey(personName), { [category]: JSON.stringify(existing) });
+  return 'created';
+}
+
+// 手動追加商品の更新（フィールドを部分更新）
+export async function updateProductInCategory(
+  personName: string,
+  category: ProductCategory,
+  productId: string,
+  updates: Partial<RakutenItem>,
+): Promise<boolean> {
+  const redis = getRedis();
+  if (!redis) return false;
+  const raw = await redis.hget(hashKey(personName), category);
+  if (!raw) return false;
+  try {
+    const existing: StoredCategoryData = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const idx = existing.products.findIndex((p) => p.id === productId);
+    if (idx === -1) return false;
+    existing.products[idx] = { ...existing.products[idx], ...updates };
+    await redis.hset(hashKey(personName), { [category]: JSON.stringify(existing) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // 人物の全カテゴリを一括取得（人物ページレンダリング時）
 export async function getAllStoredProducts(
   personName: string

@@ -528,7 +528,7 @@ export async function processPersonWorks(
 
     for (const work of vodTargets) {
       try {
-        const { providers: tmdbProviders } = await getWatchProviders(work.tmdbId!, work.type);
+        const { providers: tmdbProviders } = await getWatchProviders(work.tmdbId!, work.type as 'movie' | 'tv');
         let finalProviders: VodProvider[] = tmdbProviders;
         let vodAiCheckedAt: number | undefined;
 

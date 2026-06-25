@@ -171,7 +171,7 @@ export default async function WorkDetailPage({ params }: Props) {
 
   // 並列データ取得
   const [tmdbDetails, coStars, allWorks, relatedProducts] = await Promise.all([
-    work.tmdbId ? fetchTmdbDetails(work.tmdbId, work.type) : Promise.resolve({ genres: [] }),
+    work.tmdbId ? fetchTmdbDetails(work.tmdbId, work.type as 'movie' | 'tv') : Promise.resolve({ genres: [] }),
     getCoStars(workId, personName),
     getPublishedWorks(personName),
     getRelatedProducts(personName, work.title),

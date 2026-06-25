@@ -44,6 +44,7 @@ interface WorkCardProps {
   testingWorkId: string | null;
   vodDebugItem?: VodFetchDebugItem;
   isSelected?: boolean;
+  onEdit?: () => void;
   onVodFetch: (workId?: string, opts?: { forceAi?: boolean; skipAi?: boolean }) => void;
   onVodRecheck: (workId: string) => void;
   onPriorityToggle: (workId: string, current: boolean) => void;
@@ -66,6 +67,7 @@ export default function WorkCard({
   testingWorkId,
   vodDebugItem,
   isSelected,
+  onEdit,
   onVodFetch,
   onVodRecheck,
   onPriorityToggle,
@@ -375,17 +377,27 @@ export default function WorkCard({
         )}
       </div>
 
-      <WorkStatusButtons
-        work={work}
-        debugMode={debugMode}
-        recheckingWorkId={recheckingWorkId}
-        testingWorkId={testingWorkId}
-        onVerdict={onVerdict}
-        onVodRecheck={onVodRecheck}
-        onPriorityToggle={onPriorityToggle}
-        onTestJudge={onTestJudge}
-        onDelete={onDelete}
-      />
+      <div className="flex flex-col gap-1 flex-shrink-0">
+        {onEdit && (
+          <button
+            onClick={onEdit}
+            className="text-xs px-2 py-1 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-700"
+          >
+            編集
+          </button>
+        )}
+        <WorkStatusButtons
+          work={work}
+          debugMode={debugMode}
+          recheckingWorkId={recheckingWorkId}
+          testingWorkId={testingWorkId}
+          onVerdict={onVerdict}
+          onVodRecheck={onVodRecheck}
+          onPriorityToggle={onPriorityToggle}
+          onTestJudge={onTestJudge}
+          onDelete={onDelete}
+        />
+      </div>
     </div>
   );
 }

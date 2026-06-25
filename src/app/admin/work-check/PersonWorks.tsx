@@ -11,6 +11,7 @@ import WorkCard from './WorkCard';
 import VodIntensiveModal from './VodIntensiveModal';
 import VodResearchModal from './VodResearchModal';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
+import ManualWorkModal from './ManualWorkModal';
 
 interface Props {
   personName: string;
@@ -58,6 +59,8 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
   const [intensiveCronLoading, setIntensiveCronLoading] = useState(false);
   const [vodResearchWork, setVodResearchWork] = useState<WorkRecord | null>(null);
   const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [manualWorkModalOpen, setManualWorkModalOpen] = useState(false);
+  const [editingWork, setEditingWork] = useState<WorkRecord | null>(null);
 
   // メモ・優先度編集
   const [metaOpen, setMetaOpen] = useState(false);
@@ -604,6 +607,16 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
             onBulkOgFetch={handleBulkOgFetch}
           />
 
+          {/* 手動追加ボタン */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setEditingWork(null); setManualWorkModalOpen(true); }}
+              className="text-xs px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-medium transition-colors"
+            >
+              ＋ 作品を追加
+            </button>
+          </div>
+
           <WorkFilters
             statusFilter={statusFilter}
             sourceFilter={sourceFilter}
@@ -773,6 +786,7 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
                       testingWorkId={testingWorkId}
                       vodDebugItem={vodDebugMap[work.id]}
                       isSelected={selectedIds.has(work.id)}
+                      onEdit={work.source === 'manual' ? () => { setEditingWork(work); setManualWorkModalOpen(true); } : undefined}
                       onVodFetch={handleVodFetch}
                       onVodRecheck={handleVodRecheck}
                       onPriorityToggle={handlePriorityToggle}
@@ -807,6 +821,16 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
         <VodResearchModal
           work={vodResearchWork}
           onClose={() => setVodResearchWork(null)}
+        />
+      )}
+
+      {/* 手動追加・編集モーダル */}
+      {manualWorkModalOpen && (
+        <ManualWorkModal
+          personName={personName}
+          editWork={editingWork ?? undefined}
+          onClose={() => { setManualWorkModalOpen(false); setEditingWork(null); }}
+          onSaved={loadWorks}
         />
       )}
 

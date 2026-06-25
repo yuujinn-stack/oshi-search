@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { RakutenItem } from '@/types/rakuten';
 import type { JudgmentRecord, Verdict } from '@/lib/judgment-store';
+import type { ProductCategory } from '@/types/person';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
+import ManualProductModal from './ManualProductModal';
 
 interface ProductData {
   status: string;
@@ -75,6 +77,8 @@ export default function PersonProducts({ personName }: { personName: string }) {
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [manualModalOpen, setManualModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<(RakutenItem & { catLabel: ProductCategory }) | null>(null);
 
   // ─── フィルター済み商品リスト ────────────────────────────────────────────────
   const filteredProductList = useMemo(() => {
@@ -259,6 +263,12 @@ export default function PersonProducts({ personName }: { personName: string }) {
             >
               {searchTestLoading ? '検索中...' : '🔍 検索テスト'}
             </button>
+            <button
+              onClick={() => { setEditingProduct(null); setManualModalOpen(true); }}
+              className="text-xs px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors font-medium"
+            >
+              ＋ 商品を追加
+            </button>
             <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs ml-auto">
               <button
                 onClick={() => setFilter('uncertain')}
@@ -422,6 +432,14 @@ export default function PersonProducts({ personName }: { personName: string }) {
                         </div>
                         {/* 判定ボタン */}
                         <div className="flex flex-col gap-1 flex-shrink-0">
+                          {p.id.startsWith('mn-') && (
+                            <button
+                              onClick={() => { setEditingProduct(p as RakutenItem & { catLabel: ProductCategory }); setManualModalOpen(true); }}
+                              className="text-xs px-2 py-1 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-700"
+                            >
+                              編集
+                            </button>
+                          )}
                           <button
                             onClick={() => handleVerdict(p.id, 'related', p.relevanceScore)}
                             disabled={p.judgment?.verdict === 'related'}
@@ -489,6 +507,16 @@ export default function PersonProducts({ personName }: { personName: string }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 手動追加・編集モーダル */}
+      {manualModalOpen && (
+        <ManualProductModal
+          personName={personName}
+          editProduct={editingProduct ?? undefined}
+          onClose={() => { setManualModalOpen(false); setEditingProduct(null); }}
+          onSaved={load}
+        />
       )}
 
       {/* Sticky一括操作バー */}

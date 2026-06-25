@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
   for (const work of targets) {
     try {
       // 1. TMDb Watch Providers
-      const { providers: tmdbProviders, debug } = await getWatchProviders(work.tmdbId!, work.type);
+      const { providers: tmdbProviders, debug } = await getWatchProviders(work.tmdbId!, work.type as 'movie' | 'tv');
       let finalProviders: VodProvider[] = tmdbProviders;
       let aiCalled = false;
       let aiCallReason = '';
@@ -243,7 +243,7 @@ export async function POST(req: NextRequest) {
         title: work.title,
         workId: work.id,
         tmdbId: work.tmdbId,
-        workType: work.type,
+        workType: work.type as 'movie' | 'tv',
         jpExists: debug.jpExists,
         tmdbProviderCount: tmdbProviders.length,
         tmdbFlatrateCount: debug.jpFlatrate.length,
