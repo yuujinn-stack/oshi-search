@@ -426,6 +426,13 @@ export default function WorkCheckPersonSection({ persons, stats }: Props) {
               priority={p.priority}
               memo={p.memo}
               dataFetchStatus={p.dataFetchStatus}
+              activityStatus={p.activityStatus}
+              generation={p.generation}
+              joinedAt={p.joinedAt}
+              leftAt={p.leftAt}
+              currentGroupName={p.currentGroupName}
+              formerGroupNames={p.formerGroupNames}
+              membershipNote={p.membershipNote}
             />
           ))
         )}

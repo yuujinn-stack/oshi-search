@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { WorkRecord, WorkStatus, WorkSource } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
-import type { VodFetchDebugItem, Counts, PersonPriority } from './work-check-types';
+import type { VodFetchDebugItem, Counts, PersonPriority, ActivityStatus } from './work-check-types';
 import PersonCard from './PersonCard';
 import PersonActionBar from './PersonActionBar';
 import WorkFilters from './WorkFilters';
@@ -20,12 +20,23 @@ interface Props {
   priority?: PersonPriority;
   memo?: string;
   dataFetchStatus?: string;
+  activityStatus?: ActivityStatus;
+  generation?: string;
+  joinedAt?: string;
+  leftAt?: string;
+  currentGroupName?: string;
+  formerGroupNames?: string[];
+  membershipNote?: string;
 }
 
 type StatusFilter = WorkStatus | 'all';
 type SourceFilter = WorkSource | 'all';
 
-export default function PersonWorks({ personName, group, counts, priority, memo, dataFetchStatus }: Props) {
+export default function PersonWorks({
+  personName, group, counts, priority, memo, dataFetchStatus,
+  activityStatus, generation, joinedAt, leftAt,
+  currentGroupName, formerGroupNames, membershipNote,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [works, setWorks] = useState<WorkRecord[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -69,17 +80,44 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
   const [currentMemo, setCurrentMemo] = useState(memo ?? '');
   const [currentPriority, setCurrentPriority] = useState<PersonPriority>(priority ?? 'normal');
   const [metaSaving, setMetaSaving] = useState(false);
+  // 活動状態・所属情報
+  const [editActivityStatus, setEditActivityStatus] = useState<ActivityStatus | ''>(activityStatus ?? '');
+  const [editGeneration, setEditGeneration] = useState(generation ?? '');
+  const [editJoinedAt, setEditJoinedAt] = useState(joinedAt ?? '');
+  const [editLeftAt, setEditLeftAt] = useState(leftAt ?? '');
+  const [editCurrentGroupName, setEditCurrentGroupName] = useState(currentGroupName ?? '');
+  const [editFormerGroupNames, setEditFormerGroupNames] = useState((formerGroupNames ?? []).join(', '));
+  const [editMembershipNote, setEditMembershipNote] = useState(membershipNote ?? '');
+  const [currentActivityStatus, setCurrentActivityStatus] = useState<ActivityStatus | ''>(activityStatus ?? '');
+  const [currentGeneration, setCurrentGeneration] = useState(generation ?? '');
 
   async function handleMetaSave() {
     setMetaSaving(true);
     try {
+      const formerArr = editFormerGroupNames
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
       await fetch('/api/admin/person-meta', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personName, memo: editMemo, priority: editPriority }),
+        body: JSON.stringify({
+          personName,
+          memo: editMemo,
+          priority: editPriority,
+          activityStatus: editActivityStatus || undefined,
+          generation: editGeneration || undefined,
+          joinedAt: editJoinedAt || undefined,
+          leftAt: editLeftAt || undefined,
+          currentGroupName: editCurrentGroupName || undefined,
+          formerGroupNames: formerArr.length > 0 ? formerArr : undefined,
+          membershipNote: editMembershipNote || undefined,
+        }),
       });
       setCurrentMemo(editMemo);
       setCurrentPriority(editPriority);
+      setCurrentActivityStatus(editActivityStatus);
+      setCurrentGeneration(editGeneration);
       setMetaOpen(false);
     } finally {
       setMetaSaving(false);
@@ -530,6 +568,8 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
             priority={currentPriority !== 'normal' ? currentPriority : undefined}
             memo={currentMemo || undefined}
             dataFetchStatus={dataFetchStatus}
+            activityStatus={currentActivityStatus || undefined}
+            generation={currentGeneration || undefined}
           />
         </div>
         <button
@@ -547,7 +587,8 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
 
       {/* メタ編集パネル */}
       {metaOpen && (
-        <div className="px-4 py-3 bg-amber-50/60 border-t border-amber-100">
+        <div className="px-4 py-3 bg-amber-50/60 border-t border-amber-100 space-y-2">
+          {/* 行1: 優先度・メモ */}
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-gray-500 whitespace-nowrap">優先度:</label>
@@ -565,9 +606,87 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
               type="text"
               value={editMemo}
               onChange={(e) => setEditMemo(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void handleMetaSave(); }}
-              placeholder="メモ（例: 配信確認済み、CSV出力待ち）"
+              placeholder="管理メモ..."
               className="flex-1 min-w-40 text-xs border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+            />
+          </div>
+          {/* 行2: 活動状態・期別・加入日・卒業日 */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500 whitespace-nowrap">活動状態:</label>
+              <select
+                value={editActivityStatus}
+                onChange={(e) => setEditActivityStatus(e.target.value as ActivityStatus | '')}
+                className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+              >
+                <option value="">-</option>
+                <option value="active">現役</option>
+                <option value="graduated">卒業</option>
+                <option value="withdrawn">脱退</option>
+                <option value="hiatus">休止中</option>
+                <option value="retired">引退</option>
+                <option value="unknown">不明</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500 whitespace-nowrap">期別:</label>
+              <input
+                type="text"
+                value={editGeneration}
+                onChange={(e) => setEditGeneration(e.target.value)}
+                placeholder="例: 1期生"
+                className="w-20 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500 whitespace-nowrap">加入日:</label>
+              <input
+                type="text"
+                value={editJoinedAt}
+                onChange={(e) => setEditJoinedAt(e.target.value)}
+                placeholder="YYYY-MM-DD"
+                className="w-28 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500 whitespace-nowrap">卒業日:</label>
+              <input
+                type="text"
+                value={editLeftAt}
+                onChange={(e) => setEditLeftAt(e.target.value)}
+                placeholder="YYYY-MM-DD"
+                className="w-28 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+              />
+            </div>
+          </div>
+          {/* 行3: グループ・備考 */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500 whitespace-nowrap">現在G:</label>
+              <input
+                type="text"
+                value={editCurrentGroupName}
+                onChange={(e) => setEditCurrentGroupName(e.target.value)}
+                placeholder="現在のグループ名"
+                className="w-32 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500 whitespace-nowrap">過去G:</label>
+              <input
+                type="text"
+                value={editFormerGroupNames}
+                onChange={(e) => setEditFormerGroupNames(e.target.value)}
+                placeholder="カンマ区切り"
+                className="w-36 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+              />
+            </div>
+            <input
+              type="text"
+              value={editMembershipNote}
+              onChange={(e) => setEditMembershipNote(e.target.value)}
+              placeholder="備考（例: 卒業予定、元欅坂46）"
+              className="flex-1 min-w-36 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
             />
             <button
               onClick={() => void handleMetaSave()}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedis } from '@/lib/redis';
 import type { PersonPriority } from '@/app/admin/work-check/work-check-types';
+import type { ActivityStatus } from '@/types/person';
 
 const META_KEY = 'admin:person-meta';
 
@@ -8,6 +9,13 @@ export interface PersonMeta {
   memo?: string;
   priority?: PersonPriority;
   updatedAt?: number;
+  activityStatus?: ActivityStatus;
+  generation?: string;
+  joinedAt?: string;
+  leftAt?: string;
+  currentGroupName?: string;
+  formerGroupNames?: string[];
+  membershipNote?: string;
 }
 
 export async function GET() {
@@ -29,8 +37,23 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as { personName: string; memo?: string; priority?: PersonPriority };
-  const { personName, memo, priority } = body;
+  const body = (await req.json()) as {
+    personName: string;
+    memo?: string;
+    priority?: PersonPriority;
+    activityStatus?: ActivityStatus;
+    generation?: string;
+    joinedAt?: string;
+    leftAt?: string;
+    currentGroupName?: string;
+    formerGroupNames?: string[];
+    membershipNote?: string;
+  };
+  const {
+    personName, memo, priority,
+    activityStatus, generation, joinedAt, leftAt,
+    currentGroupName, formerGroupNames, membershipNote,
+  } = body;
   if (!personName) {
     return NextResponse.json({ error: 'personName required' }, { status: 400 });
   }
@@ -47,6 +70,13 @@ export async function POST(req: NextRequest) {
     ...current,
     ...(memo !== undefined ? { memo } : {}),
     ...(priority !== undefined ? { priority } : {}),
+    ...(activityStatus !== undefined ? { activityStatus } : {}),
+    ...(generation !== undefined ? { generation } : {}),
+    ...(joinedAt !== undefined ? { joinedAt } : {}),
+    ...(leftAt !== undefined ? { leftAt } : {}),
+    ...(currentGroupName !== undefined ? { currentGroupName } : {}),
+    ...(formerGroupNames !== undefined ? { formerGroupNames } : {}),
+    ...(membershipNote !== undefined ? { membershipNote } : {}),
     updatedAt: Date.now(),
   };
 

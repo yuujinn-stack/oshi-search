@@ -4,7 +4,16 @@ import { useMemo, useState, useCallback } from 'react';
 import PersonProducts from './PersonProducts';
 import PersonAiJudgeButton from './PersonAiJudgeButton';
 import PersonRakutenFetchButton from './PersonRakutenFetchButton';
-import type { PersonPriority } from '@/app/admin/work-check/work-check-types';
+import type { PersonPriority, ActivityStatus } from '@/app/admin/work-check/work-check-types';
+
+const ACTIVITY_BADGE: Record<ActivityStatus, { label: string; cls: string }> = {
+  active:    { label: '現役',   cls: 'bg-green-100 text-green-700' },
+  graduated: { label: '卒業',   cls: 'bg-blue-100 text-blue-700' },
+  withdrawn: { label: '脱退',   cls: 'bg-red-100 text-red-600' },
+  hiatus:    { label: '休止中', cls: 'bg-amber-100 text-amber-700' },
+  retired:   { label: '引退',   cls: 'bg-gray-200 text-gray-500' },
+  unknown:   { label: '不明',   cls: 'bg-gray-100 text-gray-400' },
+};
 
 export interface PersonWithProductStats {
   name: string;
@@ -25,6 +34,13 @@ export interface PersonWithProductStats {
   };
   memo?: string;
   priority?: PersonPriority;
+  activityStatus?: ActivityStatus;
+  generation?: string;
+  joinedAt?: string;
+  leftAt?: string;
+  currentGroupName?: string;
+  formerGroupNames?: string[];
+  membershipNote?: string;
 }
 
 const STATUS_BADGE: Record<string, string> = {
@@ -100,7 +116,7 @@ function sortPersons(list: PersonWithProductStats[], sort: SortKey): PersonWithP
 
 const RECENT_DAYS = 30;
 
-// ─── 人物カード（メモ・優先度編集含む）────────────────────────────────────────
+// ─── 人物カード（メモ・優先度・活動状態編集含む）──────────────────────────────
 function PersonProductCard({ p }: { p: PersonWithProductStats }) {
   const [metaOpen, setMetaOpen] = useState(false);
   const [editMemo, setEditMemo] = useState(p.memo ?? '');
@@ -108,22 +124,51 @@ function PersonProductCard({ p }: { p: PersonWithProductStats }) {
   const [currentMemo, setCurrentMemo] = useState(p.memo ?? '');
   const [currentPriority, setCurrentPriority] = useState<PersonPriority>(p.priority ?? 'normal');
   const [metaSaving, setMetaSaving] = useState(false);
+  const [editActivityStatus, setEditActivityStatus] = useState<ActivityStatus | ''>(p.activityStatus ?? '');
+  const [editGeneration, setEditGeneration] = useState(p.generation ?? '');
+  const [editJoinedAt, setEditJoinedAt] = useState(p.joinedAt ?? '');
+  const [editLeftAt, setEditLeftAt] = useState(p.leftAt ?? '');
+  const [editCurrentGroupName, setEditCurrentGroupName] = useState(p.currentGroupName ?? '');
+  const [editFormerGroupNames, setEditFormerGroupNames] = useState((p.formerGroupNames ?? []).join(', '));
+  const [editMembershipNote, setEditMembershipNote] = useState(p.membershipNote ?? '');
+  const [currentActivityStatus, setCurrentActivityStatus] = useState<ActivityStatus | ''>(p.activityStatus ?? '');
+  const [currentGeneration, setCurrentGeneration] = useState(p.generation ?? '');
 
   const handleMetaSave = useCallback(async () => {
     setMetaSaving(true);
     try {
+      const formerArr = editFormerGroupNames
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
       await fetch('/api/admin/person-meta', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personName: p.name, memo: editMemo, priority: editPriority }),
+        body: JSON.stringify({
+          personName: p.name,
+          memo: editMemo,
+          priority: editPriority,
+          activityStatus: editActivityStatus || undefined,
+          generation: editGeneration || undefined,
+          joinedAt: editJoinedAt || undefined,
+          leftAt: editLeftAt || undefined,
+          currentGroupName: editCurrentGroupName || undefined,
+          formerGroupNames: formerArr.length > 0 ? formerArr : undefined,
+          membershipNote: editMembershipNote || undefined,
+        }),
       });
       setCurrentMemo(editMemo);
       setCurrentPriority(editPriority);
+      setCurrentActivityStatus(editActivityStatus);
+      setCurrentGeneration(editGeneration);
       setMetaOpen(false);
     } finally {
       setMetaSaving(false);
     }
-  }, [p.name, editMemo, editPriority]);
+  }, [
+    p.name, editMemo, editPriority, editActivityStatus, editGeneration,
+    editJoinedAt, editLeftAt, editCurrentGroupName, editFormerGroupNames, editMembershipNote,
+  ]);
 
   const status = p.checkStatus ?? 'unchecked';
 
@@ -141,6 +186,18 @@ function PersonProductCard({ p }: { p: PersonWithProductStats }) {
             </span>
           )}
 
+          {/* 活動状態バッジ */}
+          {currentActivityStatus && currentActivityStatus !== 'unknown' && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${ACTIVITY_BADGE[currentActivityStatus].cls}`}>
+              {ACTIVITY_BADGE[currentActivityStatus].label}
+            </span>
+          )}
+          {/* 期別バッジ */}
+          {currentGeneration && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-500 font-medium">
+              {currentGeneration}
+            </span>
+          )}
           {/* 優先度バッジ */}
           {currentPriority !== 'normal' && (
             <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_BADGE[currentPriority]}`}>
@@ -213,39 +270,120 @@ function PersonProductCard({ p }: { p: PersonWithProductStats }) {
           <p className="text-[11px] text-gray-400 mt-0.5 truncate max-w-sm">{currentMemo}</p>
         )}
 
-        {/* メモ・優先度編集フォーム */}
+        {/* メモ・優先度・活動状態 編集フォーム */}
         {metaOpen && (
-          <div className="mt-2 flex items-center gap-2 flex-wrap">
-            <select
-              value={editPriority}
-              onChange={(e) => setEditPriority(e.target.value as PersonPriority)}
-              className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-slate-300"
-            >
-              <option value="high">★ 優先</option>
-              <option value="normal">通常</option>
-              <option value="low">↓ 後回し</option>
-            </select>
-            <input
-              type="text"
-              value={editMemo}
-              onChange={(e) => setEditMemo(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleMetaSave(); }}
-              placeholder="メモを入力..."
-              className="flex-1 min-w-[140px] text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-slate-300"
-            />
-            <button
-              onClick={handleMetaSave}
-              disabled={metaSaving}
-              className="text-xs px-3 py-1 bg-slate-700 text-white rounded hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap"
-            >
-              {metaSaving ? '保存中' : '保存'}
-            </button>
-            <button
-              onClick={() => setMetaOpen(false)}
-              className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded hover:bg-gray-200"
-            >
-              キャンセル
-            </button>
+          <div className="mt-2 space-y-1.5">
+            {/* 行1: 優先度・メモ */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={editPriority}
+                onChange={(e) => setEditPriority(e.target.value as PersonPriority)}
+                className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-slate-300"
+              >
+                <option value="high">★ 優先</option>
+                <option value="normal">通常</option>
+                <option value="low">↓ 後回し</option>
+              </select>
+              <input
+                type="text"
+                value={editMemo}
+                onChange={(e) => setEditMemo(e.target.value)}
+                placeholder="管理メモ..."
+                className="flex-1 min-w-[140px] text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-slate-300"
+              />
+            </div>
+            {/* 行2: 活動状態・期別・加入日・卒業日 */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1">
+                <label className="text-xs text-gray-500 whitespace-nowrap">活動状態:</label>
+                <select
+                  value={editActivityStatus}
+                  onChange={(e) => setEditActivityStatus(e.target.value as ActivityStatus | '')}
+                  className="text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                >
+                  <option value="">-</option>
+                  <option value="active">現役</option>
+                  <option value="graduated">卒業</option>
+                  <option value="withdrawn">脱退</option>
+                  <option value="hiatus">休止中</option>
+                  <option value="retired">引退</option>
+                  <option value="unknown">不明</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-1">
+                <label className="text-xs text-gray-500 whitespace-nowrap">期別:</label>
+                <input
+                  type="text"
+                  value={editGeneration}
+                  onChange={(e) => setEditGeneration(e.target.value)}
+                  placeholder="1期生"
+                  className="w-20 text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <label className="text-xs text-gray-500 whitespace-nowrap">加入日:</label>
+                <input
+                  type="text"
+                  value={editJoinedAt}
+                  onChange={(e) => setEditJoinedAt(e.target.value)}
+                  placeholder="YYYY-MM-DD"
+                  className="w-28 text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <label className="text-xs text-gray-500 whitespace-nowrap">卒業日:</label>
+                <input
+                  type="text"
+                  value={editLeftAt}
+                  onChange={(e) => setEditLeftAt(e.target.value)}
+                  placeholder="YYYY-MM-DD"
+                  className="w-28 text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                />
+              </div>
+            </div>
+            {/* 行3: グループ・備考・保存 */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1">
+                <label className="text-xs text-gray-500 whitespace-nowrap">現在G:</label>
+                <input
+                  type="text"
+                  value={editCurrentGroupName}
+                  onChange={(e) => setEditCurrentGroupName(e.target.value)}
+                  placeholder="現在グループ名"
+                  className="w-28 text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <label className="text-xs text-gray-500 whitespace-nowrap">過去G:</label>
+                <input
+                  type="text"
+                  value={editFormerGroupNames}
+                  onChange={(e) => setEditFormerGroupNames(e.target.value)}
+                  placeholder="カンマ区切り"
+                  className="w-32 text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                />
+              </div>
+              <input
+                type="text"
+                value={editMembershipNote}
+                onChange={(e) => setEditMembershipNote(e.target.value)}
+                placeholder="備考（例: 卒業予定、元欅坂46）"
+                className="flex-1 min-w-32 text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-slate-300"
+              />
+              <button
+                onClick={handleMetaSave}
+                disabled={metaSaving}
+                className="text-xs px-3 py-1 bg-slate-700 text-white rounded hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap"
+              >
+                {metaSaving ? '保存中' : '保存'}
+              </button>
+              <button
+                onClick={() => setMetaOpen(false)}
+                className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded hover:bg-gray-200"
+              >
+                キャンセル
+              </button>
+            </div>
           </div>
         )}
       </div>

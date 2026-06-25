@@ -63,6 +63,13 @@ export default async function WorkCheckPage() {
           lastUpdatedAt,
           memo: meta?.memo,
           priority: meta?.priority as PersonPriority | undefined,
+          activityStatus: meta?.activityStatus,
+          generation: meta?.generation,
+          joinedAt: meta?.joinedAt,
+          leftAt: meta?.leftAt,
+          currentGroupName: meta?.currentGroupName,
+          formerGroupNames: meta?.formerGroupNames,
+          membershipNote: meta?.membershipNote,
           counts: {
             total: works.length,
             published: works.filter((w) => w.status === 'auto_published').length,
@@ -87,6 +94,13 @@ export default async function WorkCheckPage() {
           lastUpdatedAt: undefined,
           memo: meta?.memo,
           priority: meta?.priority as PersonPriority | undefined,
+          activityStatus: meta?.activityStatus,
+          generation: meta?.generation,
+          joinedAt: meta?.joinedAt,
+          leftAt: meta?.leftAt,
+          currentGroupName: meta?.currentGroupName,
+          formerGroupNames: meta?.formerGroupNames,
+          membershipNote: meta?.membershipNote,
           counts: { total: 0, published: 0, review: 0, hidden: 0, noVod: 0, noTmdbId: 0, manualCsv: 0, aiSupplement: 0 },
         };
       }

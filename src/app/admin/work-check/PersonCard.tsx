@@ -1,6 +1,15 @@
 'use client';
 
-import type { Counts, PersonPriority } from './work-check-types';
+import type { Counts, PersonPriority, ActivityStatus } from './work-check-types';
+
+const ACTIVITY_BADGE: Record<ActivityStatus, { label: string; cls: string }> = {
+  active:    { label: '現役',   cls: 'bg-green-100 text-green-700' },
+  graduated: { label: '卒業',   cls: 'bg-blue-100 text-blue-700' },
+  withdrawn: { label: '脱退',   cls: 'bg-red-100 text-red-600' },
+  hiatus:    { label: '休止中', cls: 'bg-amber-100 text-amber-700' },
+  retired:   { label: '引退',   cls: 'bg-gray-200 text-gray-500' },
+  unknown:   { label: '不明',   cls: 'bg-gray-100 text-gray-400' },
+};
 
 const PRIORITY_BADGE: Record<PersonPriority, string> = {
   high: '★ 優先',
@@ -31,6 +40,8 @@ interface PersonCardProps {
   priority?: PersonPriority;
   memo?: string;
   dataFetchStatus?: string;
+  activityStatus?: ActivityStatus;
+  generation?: string;
 }
 
 export default function PersonCard({
@@ -42,9 +53,12 @@ export default function PersonCard({
   priority,
   memo,
   dataFetchStatus,
+  activityStatus,
+  generation,
 }: PersonCardProps) {
   const priorityLabel = priority ? PRIORITY_BADGE[priority] : '';
   const dotClass = dataFetchStatus ? (STATUS_DOT[dataFetchStatus] ?? 'bg-gray-300') : '';
+  const activityBadge = activityStatus && activityStatus !== 'unknown' ? ACTIVITY_BADGE[activityStatus] : null;
 
   return (
     <button
@@ -66,6 +80,18 @@ export default function PersonCard({
             <span className="text-sm font-medium text-slate-700">{personName}</span>
             {group && <span className="text-xs text-gray-400">{group}</span>}
 
+            {/* 活動状態 */}
+            {activityBadge && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${activityBadge.cls}`}>
+                {activityBadge.label}
+              </span>
+            )}
+            {/* 期別 */}
+            {generation && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-500 font-medium">
+                {generation}
+              </span>
+            )}
             {/* 優先度 */}
             {priority && priority !== 'normal' && priorityLabel && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_COLOR[priority]}`}>

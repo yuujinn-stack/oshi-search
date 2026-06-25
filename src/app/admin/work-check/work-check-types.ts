@@ -1,3 +1,6 @@
+import type { ActivityStatus } from '@/types/person';
+export type { ActivityStatus };
+
 export interface VodFetchDebugItem {
   title: string;
   workId: string;
@@ -66,4 +69,11 @@ export interface PersonWithCounts {
   memo?: string;
   priority?: PersonPriority;
   counts: Counts;
+  activityStatus?: ActivityStatus;
+  generation?: string;
+  joinedAt?: string;
+  leftAt?: string;
+  currentGroupName?: string;
+  formerGroupNames?: string[];
+  membershipNote?: string;
 }

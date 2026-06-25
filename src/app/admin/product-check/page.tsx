@@ -110,6 +110,13 @@ export default async function AdminProductCheckPage() {
       stats: statsMap[p.name] ?? { total: 0, related: 0, uncertain: 0, unrelated: 0, unclassified: 0 },
       memo: meta?.memo,
       priority: meta?.priority as PersonPriority | undefined,
+      activityStatus: meta?.activityStatus,
+      generation: meta?.generation,
+      joinedAt: meta?.joinedAt,
+      leftAt: meta?.leftAt,
+      currentGroupName: meta?.currentGroupName,
+      formerGroupNames: meta?.formerGroupNames,
+      membershipNote: meta?.membershipNote,
     };
   });
 
