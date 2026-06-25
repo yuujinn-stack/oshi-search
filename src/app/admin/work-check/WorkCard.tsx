@@ -43,6 +43,7 @@ interface WorkCardProps {
   recheckingWorkId: string | null;
   testingWorkId: string | null;
   vodDebugItem?: VodFetchDebugItem;
+  isSelected?: boolean;
   onVodFetch: (workId?: string, opts?: { forceAi?: boolean; skipAi?: boolean }) => void;
   onVodRecheck: (workId: string) => void;
   onPriorityToggle: (workId: string, current: boolean) => void;
@@ -64,6 +65,7 @@ export default function WorkCard({
   recheckingWorkId,
   testingWorkId,
   vodDebugItem,
+  isSelected,
   onVodFetch,
   onVodRecheck,
   onPriorityToggle,
@@ -140,13 +142,25 @@ export default function WorkCard({
   return (
     <div
       className={`flex items-start gap-3 p-3 rounded-lg text-xs border ${
-        work.status === 'auto_published'
-          ? 'border-green-100 bg-green-50/50'
-          : work.status === 'hidden'
-            ? 'border-red-100 bg-red-50/30 opacity-70'
-            : 'border-yellow-100 bg-yellow-50/50'
+        isSelected
+          ? 'border-slate-400 bg-slate-50 ring-1 ring-slate-300'
+          : work.status === 'auto_published'
+            ? 'border-green-100 bg-green-50/50'
+            : work.status === 'hidden'
+              ? 'border-red-100 bg-red-50/30 opacity-70'
+              : 'border-yellow-100 bg-yellow-50/50'
       }`}
     >
+      {/* 選択チェックボックス（isSelected が渡された場合のみ） */}
+      {isSelected !== undefined && (
+        <input
+          type="checkbox"
+          readOnly
+          checked={isSelected}
+          className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 accent-slate-600"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
       {/* ポスター */}
       <div className="flex flex-col items-center gap-1 flex-shrink-0">
         {work.posterUrl && !isPosterBroken ? (

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { WorkRecord, WorkStatus, WorkSource } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 import type { VodFetchDebugItem, Counts, PersonPriority } from './work-check-types';
@@ -10,6 +10,7 @@ import WorkFilters from './WorkFilters';
 import WorkCard from './WorkCard';
 import VodIntensiveModal from './VodIntensiveModal';
 import VodResearchModal from './VodResearchModal';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
 
 interface Props {
   personName: string;
@@ -56,6 +57,7 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
   const [intensiveCronEnabled, setIntensiveCronEnabled] = useState<boolean | null>(null);
   const [intensiveCronLoading, setIntensiveCronLoading] = useState(false);
   const [vodResearchWork, setVodResearchWork] = useState<WorkRecord | null>(null);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
 
   // メモ・優先度編集
   const [metaOpen, setMetaOpen] = useState(false);
@@ -457,12 +459,57 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
     setTestingWorkId(null);
   }
 
-  const filteredWorks = works
-    ? works
-        .filter((w) => statusFilter === 'all' || w.status === statusFilter)
-        .filter((w) => sourceFilter === 'all' || w.source === sourceFilter)
-        .sort((a, b) => b.confidenceScore - a.confidenceScore)
-    : [];
+  const filteredWorks = useMemo(
+    () =>
+      works
+        ? works
+            .filter((w) => statusFilter === 'all' || w.status === statusFilter)
+            .filter((w) => sourceFilter === 'all' || w.source === sourceFilter)
+            .sort((a, b) => b.confidenceScore - a.confidenceScore)
+        : [],
+    [works, statusFilter, sourceFilter],
+  );
+
+  const filteredWorkIds = useMemo(() => filteredWorks.map((w) => w.id), [filteredWorks]);
+
+  // ─── 一括選択 ────────────────────────────────────────────────────────────────
+  const {
+    selectedIds,
+    isDragging,
+    handleCardMouseDown,
+    handleCardMouseEnter,
+    toggleSelectAll,
+    clearSelection,
+  } = useBulkSelection(filteredWorkIds);
+
+  // フィルター変更時に選択クリア
+  useEffect(() => { clearSelection(); }, [statusFilter, sourceFilter, clearSelection]);
+
+  const selectedInView = filteredWorkIds.filter((id) => selectedIds.has(id));
+
+  // ─── 一括ステータス変更 ───────────────────────────────────────────────────────
+  async function handleBulkWorkVerdict(status: WorkStatus) {
+    if (selectedInView.length === 0 || bulkProcessing) return;
+    setBulkProcessing(true);
+    setMessage('');
+    const res = await fetch('/api/admin/work-verdict-bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, workIds: selectedInView, status }),
+    });
+    if (res.ok) {
+      const label = status === 'auto_published' ? '公開' : status === 'needs_review' ? '確認待ち' : '非表示';
+      setMessage(`${selectedInView.length}件を${label}にしました`);
+      clearSelection();
+      await loadWorks();
+    } else {
+      setMessage('一括処理に失敗しました');
+    }
+    setBulkProcessing(false);
+  }
+
+  const allWorksSelected =
+    filteredWorkIds.length > 0 && filteredWorkIds.every((id) => selectedIds.has(id));
 
   const isProcessing = processing !== null;
 
@@ -688,31 +735,61 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
                   : 'このフィルタに該当する作品はありません'}
             </p>
           ) : (
-            <div className="space-y-2">
-              {filteredWorks.map((work) => (
-                <WorkCard
-                  key={work.id}
-                  work={work}
-                  debugMode={debugMode}
-                  vodFetching={vodFetching}
-                  recheckingWorkId={recheckingWorkId}
-                  testingWorkId={testingWorkId}
-                  vodDebugItem={vodDebugMap[work.id]}
-                  onVodFetch={handleVodFetch}
-                  onVodRecheck={handleVodRecheck}
-                  onPriorityToggle={handlePriorityToggle}
-                  onVerdict={handleVerdict}
-                  onDelete={handleDelete}
-                  onManualVodAdd={handleManualVodAdd}
-                  onManualVodRemove={handleManualVodRemove}
-                  onOpenVodResearch={(w) => setVodResearchWork(w)}
-                  onTestJudge={handleTestJudge}
-                  onOgImageFetch={handleOgImageFetch}
-                  onOgImageForceFetch={handleOgImageForceFetch}
-                  onSetSourceUrl={handleSetSourceUrl}
-                />
-              ))}
-            </div>
+            <>
+              {/* 全選択 */}
+              <div className="flex items-center gap-2 px-1">
+                <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={allWorksSelected}
+                    onChange={toggleSelectAll}
+                    className="w-3.5 h-3.5 accent-slate-600"
+                  />
+                  全選択（{filteredWorks.length}件）
+                </label>
+                {selectedInView.length > 0 && (
+                  <span className="text-xs text-slate-600 font-medium">
+                    選択中: {selectedInView.length}件
+                  </span>
+                )}
+              </div>
+
+              <div
+                className="space-y-2"
+                style={{ userSelect: isDragging ? 'none' : undefined }}
+              >
+                {filteredWorks.map((work) => (
+                  <div
+                    key={work.id}
+                    onMouseDown={(e) => handleCardMouseDown(work.id, e)}
+                    onMouseEnter={() => handleCardMouseEnter(work.id)}
+                    className="cursor-default"
+                  >
+                    <WorkCard
+                      work={work}
+                      debugMode={debugMode}
+                      vodFetching={vodFetching}
+                      recheckingWorkId={recheckingWorkId}
+                      testingWorkId={testingWorkId}
+                      vodDebugItem={vodDebugMap[work.id]}
+                      isSelected={selectedIds.has(work.id)}
+                      onVodFetch={handleVodFetch}
+                      onVodRecheck={handleVodRecheck}
+                      onPriorityToggle={handlePriorityToggle}
+                      onVerdict={handleVerdict}
+                      onDelete={handleDelete}
+                      onManualVodAdd={handleManualVodAdd}
+                      onManualVodRemove={handleManualVodRemove}
+                      onOpenVodResearch={(w) => setVodResearchWork(w)}
+                      onTestJudge={handleTestJudge}
+                      onOgImageFetch={handleOgImageFetch}
+                      onOgImageForceFetch={handleOgImageForceFetch}
+                      onSetSourceUrl={handleSetSourceUrl}
+                    />
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -731,6 +808,40 @@ export default function PersonWorks({ personName, group, counts, priority, memo,
           work={vodResearchWork}
           onClose={() => setVodResearchWork(null)}
         />
+      )}
+
+      {/* Sticky一括操作バー */}
+      {selectedInView.length > 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white rounded-2xl shadow-2xl text-xs whitespace-nowrap">
+          <span className="font-medium mr-1">選択中: {selectedInView.length}件</span>
+          <button
+            onClick={() => handleBulkWorkVerdict('auto_published')}
+            disabled={bulkProcessing}
+            className="px-3 py-1.5 bg-green-500 hover:bg-green-400 rounded-lg font-medium disabled:opacity-50 transition-colors"
+          >
+            公開
+          </button>
+          <button
+            onClick={() => handleBulkWorkVerdict('needs_review')}
+            disabled={bulkProcessing}
+            className="px-3 py-1.5 bg-yellow-500 hover:bg-yellow-400 rounded-lg font-medium disabled:opacity-50 transition-colors"
+          >
+            確認待ち
+          </button>
+          <button
+            onClick={() => handleBulkWorkVerdict('hidden')}
+            disabled={bulkProcessing}
+            className="px-3 py-1.5 bg-orange-500 hover:bg-orange-400 rounded-lg font-medium disabled:opacity-50 transition-colors"
+          >
+            非表示
+          </button>
+          <button
+            onClick={clearSelection}
+            className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded-lg transition-colors"
+          >
+            選択解除
+          </button>
+        </div>
       )}
     </div>
   );

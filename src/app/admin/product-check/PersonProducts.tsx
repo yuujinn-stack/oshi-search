@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { RakutenItem } from '@/types/rakuten';
 import type { JudgmentRecord, Verdict } from '@/lib/judgment-store';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
 
 interface ProductData {
   status: string;
@@ -68,13 +69,52 @@ export default function PersonProducts({ personName }: { personName: string }) {
   const [message, setMessage] = useState('');
   const [searchTest, setSearchTest] = useState<SearchTestData | null>(null);
   const [searchTestLoading, setSearchTestLoading] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<{
     type: 'single' | 'selected' | 'hidden';
     ids: string[];
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
 
+  // ─── フィルター済み商品リスト ────────────────────────────────────────────────
+  const filteredProductList = useMemo(() => {
+    if (!data) return [];
+    return CATEGORIES.flatMap((cat) => {
+      const catData = data.categories[cat];
+      if (!catData || catData.status !== 'ok') return [];
+      return catData.products
+        .map((p) => ({ ...p, catLabel: cat, judgment: data.verdicts[p.id] }))
+        .filter((p) => {
+          if (p.judgment?.verdict === 'deleted') return false;
+          if (filter === 'uncertain') return p.judgment?.verdict === 'uncertain';
+          if (filter === 'unrelated') return p.judgment?.verdict === 'unrelated';
+          return true;
+        });
+    });
+  }, [data, filter]);
+
+  const filteredProductIds = useMemo(
+    () => filteredProductList.map((p) => p.id),
+    [filteredProductList],
+  );
+
+  // ─── 一括選択 ────────────────────────────────────────────────────────────────
+  const {
+    selectedIds,
+    isDragging,
+    handleCardMouseDown,
+    handleCardMouseEnter,
+    toggleSelectAll,
+    clearSelection,
+  } = useBulkSelection(filteredProductIds);
+
+  // フィルター変更時に選択クリア
+  useEffect(() => { clearSelection(); }, [filter, clearSelection]);
+
+  // 現在のフィルタービュー内で選択中のID
+  const selectedInView = filteredProductIds.filter((id) => selectedIds.has(id));
+
+  // ─── データ取得 ──────────────────────────────────────────────────────────────
   async function load() {
     setLoading(true);
     setMessage('');
@@ -92,6 +132,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
     setOpen((v) => !v);
   }
 
+  // ─── 個別判定 ────────────────────────────────────────────────────────────────
   async function handleVerdict(productId: string, verdict: Verdict, score: number) {
     const res = await fetch('/api/admin/verdict', {
       method: 'POST',
@@ -110,6 +151,28 @@ export default function PersonProducts({ personName }: { personName: string }) {
     if (res.ok) await load();
   }
 
+  // ─── 一括判定 ────────────────────────────────────────────────────────────────
+  async function handleBulkVerdict(verdict: 'related' | 'unrelated') {
+    if (selectedInView.length === 0 || bulkProcessing) return;
+    setBulkProcessing(true);
+    setMessage('');
+    const res = await fetch('/api/admin/verdict-bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, productIds: selectedInView, verdict, score: 0 }),
+    });
+    if (res.ok) {
+      const label = verdict === 'related' ? '採用' : '非表示';
+      setMessage(`${selectedInView.length}件を${label}にしました`);
+      clearSelection();
+      await load();
+    } else {
+      setMessage('一括判定に失敗しました');
+    }
+    setBulkProcessing(false);
+  }
+
+  // ─── 検索テスト ──────────────────────────────────────────────────────────────
   async function handleSearchTest() {
     setSearchTestLoading(true);
     setSearchTest(null);
@@ -122,34 +185,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
     setSearchTestLoading(false);
   }
 
-  // フィルタ適用（deleted は全フィルタで除外）
-  const filteredProducts = (d: AdminData) =>
-    CATEGORIES.flatMap((cat) => {
-      const catData = d.categories[cat];
-      if (!catData || catData.status !== 'ok') return [];
-      return catData.products
-        .map((p) => ({ ...p, catLabel: cat, judgment: d.verdicts[p.id] }))
-        .filter((p) => {
-          if (p.judgment?.verdict === 'deleted') return false;
-          if (filter === 'uncertain') return p.judgment?.verdict === 'uncertain';
-          if (filter === 'unrelated') return p.judgment?.verdict === 'unrelated';
-          return true;
-        });
-    });
-
-  function toggleSelect(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
-
-  function toggleSelectAll(productIds: string[]) {
-    const allSelected = productIds.length > 0 && productIds.every((id) => selectedIds.has(id));
-    setSelectedIds(allSelected ? new Set() : new Set(productIds));
-  }
-
+  // ─── 削除 ────────────────────────────────────────────────────────────────────
   async function executeDelete() {
     if (!confirmDelete) return;
     setDeleting(true);
@@ -161,7 +197,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
       });
       if (res.ok) {
         setConfirmDelete(null);
-        setSelectedIds(new Set());
+        clearSelection();
         await load();
       } else {
         setMessage('削除に失敗しました');
@@ -178,8 +214,15 @@ export default function PersonProducts({ personName }: { personName: string }) {
     ? Object.values(data.verdicts).filter((v) => v.verdict === 'uncertain').length
     : 0;
 
+  const allSelected =
+    filteredProductIds.length > 0 &&
+    filteredProductIds.every((id) => selectedIds.has(id));
+
   return (
-    <div className="border border-gray-200 rounded-xl overflow-hidden">
+    <div
+      className="border border-gray-200 rounded-xl overflow-hidden"
+      style={{ userSelect: isDragging ? 'none' : undefined }}
+    >
       {/* ヘッダー行 */}
       <button
         onClick={handleOpen}
@@ -218,25 +261,25 @@ export default function PersonProducts({ personName }: { personName: string }) {
             </button>
             <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs ml-auto">
               <button
-                onClick={() => { setFilter('uncertain'); setSelectedIds(new Set()); }}
+                onClick={() => setFilter('uncertain')}
                 className={`px-3 py-1.5 ${filter === 'uncertain' ? 'bg-yellow-50 text-yellow-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
               >
                 AI判定待ちのみ
               </button>
               <button
-                onClick={() => { setFilter('unrelated'); setSelectedIds(new Set()); }}
+                onClick={() => setFilter('unrelated')}
                 className={`px-3 py-1.5 border-l border-gray-200 ${filter === 'unrelated' ? 'bg-red-50 text-red-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
               >
                 非表示のみ
               </button>
               <button
-                onClick={() => { setFilter('all'); setSelectedIds(new Set()); }}
+                onClick={() => setFilter('all')}
                 className={`px-3 py-1.5 border-l border-gray-200 ${filter === 'all' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
               >
                 全商品
               </button>
             </div>
-            {message && <span className="text-xs text-red-500">{message}</span>}
+            {message && <span className="text-xs text-green-600">{message}</span>}
           </div>
 
           {/* 検索テスト結果 */}
@@ -292,9 +335,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
 
           {/* 商品リスト */}
           {data && (() => {
-            const products = filteredProducts(data);
-            const productIds = products.map((p) => p.id);
-            const allSelected = productIds.length > 0 && productIds.every((id) => selectedIds.has(id));
+            const products = filteredProductList;
 
             if (products.length === 0) {
               return (
@@ -308,36 +349,25 @@ export default function PersonProducts({ personName }: { personName: string }) {
 
             return (
               <>
-                {/* 一括操作バー */}
+                {/* 全選択 + 非表示一括削除 */}
                 <div className="flex flex-wrap items-center gap-2 px-1">
-                  {/* 全選択チェックボックス */}
                   <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={allSelected}
-                      onChange={() => toggleSelectAll(productIds)}
+                      onChange={toggleSelectAll}
                       className="w-3.5 h-3.5 accent-slate-600"
                     />
                     全選択（{products.length}件）
                   </label>
-
-                  {/* 選択件数 + 削除ボタン */}
-                  {selectedIds.size > 0 && (
-                    <button
-                      onClick={() => setConfirmDelete({
-                        type: 'selected',
-                        ids: [...selectedIds].filter((id) => productIds.includes(id)),
-                      })}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors font-medium"
-                    >
-                      選択した {[...selectedIds].filter((id) => productIds.includes(id)).length}件を削除
-                    </button>
+                  {selectedInView.length > 0 && (
+                    <span className="text-xs text-slate-600 font-medium">
+                      選択中: {selectedInView.length}件
+                    </span>
                   )}
-
-                  {/* 非表示商品の一括削除（非表示フィルタ時のみ） */}
                   {filter === 'unrelated' && (
                     <button
-                      onClick={() => setConfirmDelete({ type: 'hidden', ids: productIds })}
+                      onClick={() => setConfirmDelete({ type: 'hidden', ids: filteredProductIds })}
                       className="text-xs px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition-colors font-medium ml-auto"
                     >
                       🗑 非表示商品を一括削除（{products.length}件）
@@ -353,19 +383,22 @@ export default function PersonProducts({ personName }: { personName: string }) {
                     return (
                       <div
                         key={p.id}
-                        className={`flex items-start gap-2 p-2.5 rounded-lg text-xs border transition-colors ${
-                          isChecked ? 'border-slate-400 bg-slate-50' :
+                        className={`flex items-start gap-2 p-2.5 rounded-lg text-xs border transition-colors cursor-default ${
+                          isChecked ? 'border-slate-400 bg-slate-50 ring-1 ring-slate-300' :
                           isShown ? 'border-green-100 bg-green-50/50' :
                           isHidden ? 'border-red-100 bg-red-50/30 opacity-60' :
                           'border-yellow-100 bg-yellow-50/50'
                         }`}
+                        onMouseDown={(e) => handleCardMouseDown(p.id, e)}
+                        onMouseEnter={() => handleCardMouseEnter(p.id)}
                       >
-                        {/* チェックボックス */}
+                        {/* チェックボックス（視覚的フィードバック / ドラッグ起点外） */}
                         <input
                           type="checkbox"
+                          readOnly
                           checked={isChecked}
-                          onChange={() => toggleSelect(p.id)}
-                          className="mt-1 w-3.5 h-3.5 flex-shrink-0 accent-slate-600 cursor-pointer"
+                          className="mt-1 w-3.5 h-3.5 flex-shrink-0 accent-slate-600"
+                          style={{ pointerEvents: 'none' }}
                         />
                         {/* サムネイル */}
                         {p.imageUrl && (
@@ -455,6 +488,40 @@ export default function PersonProducts({ personName }: { personName: string }) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Sticky一括操作バー */}
+      {selectedInView.length > 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white rounded-2xl shadow-2xl text-xs whitespace-nowrap">
+          <span className="font-medium mr-1">選択中: {selectedInView.length}件</span>
+          <button
+            onClick={() => handleBulkVerdict('related')}
+            disabled={bulkProcessing}
+            className="px-3 py-1.5 bg-green-500 hover:bg-green-400 rounded-lg font-medium disabled:opacity-50 transition-colors"
+          >
+            採用
+          </button>
+          <button
+            onClick={() => handleBulkVerdict('unrelated')}
+            disabled={bulkProcessing}
+            className="px-3 py-1.5 bg-orange-500 hover:bg-orange-400 rounded-lg font-medium disabled:opacity-50 transition-colors"
+          >
+            非表示
+          </button>
+          <button
+            onClick={() => setConfirmDelete({ type: 'selected', ids: selectedInView })}
+            disabled={bulkProcessing}
+            className="px-3 py-1.5 bg-red-500 hover:bg-red-400 rounded-lg font-medium disabled:opacity-50 transition-colors"
+          >
+            削除
+          </button>
+          <button
+            onClick={clearSelection}
+            className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded-lg transition-colors"
+          >
+            選択解除
+          </button>
         </div>
       )}
     </div>
