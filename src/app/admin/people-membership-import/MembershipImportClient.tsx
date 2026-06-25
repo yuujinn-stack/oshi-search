@@ -65,6 +65,55 @@ function useCopy() {
   return { copied, copy };
 }
 
+// ─── ChatGPT送信用テキスト生成 ────────────────────────────────────────────────
+function buildChatGptPrompt(csv: string): string {
+  return `以下のCSVについて、
+所属情報を最新情報で補完してください。
+
+ルール
+
+・推測禁止
+・2026年現在の情報のみ
+・必ず公式発表・公式サイト・公式プロフィールを優先
+・存在しない情報は空欄
+・name列は変更しない
+・CSV以外の文章は出力しない
+
+activityStatusは
+
+active
+graduated
+withdrawn
+hiatus
+retired
+unknown
+
+のみ使用してください。
+
+generationは
+
+1期生
+2期生
+3期生
+
+などで記載してください。
+
+joinedAt
+leftAt
+
+は
+
+YYYY-MM-DD
+
+形式で記載してください。
+
+formerGroupNamesは
+
+カンマ区切りで記載してください。
+
+${csv}`;
+}
+
 // ─── ダウンロード ─────────────────────────────────────────────────────────────
 function downloadCsv(csv: string, filename: string) {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -128,7 +177,8 @@ function TemplateSection({
   const [csv, setCsv] = useState('');
   const [memberCount, setMemberCount] = useState(0);
   const [error, setError] = useState('');
-  const { copied, copy } = useCopy();
+  const { copied: csvCopied, copy: copyCsv } = useCopy();
+  const { copied: promptCopied, copy: copyPrompt } = useCopy();
 
   async function generate() {
     if (!selectedGroup) { setError('グループを選択してください'); return; }
@@ -154,7 +204,7 @@ function TemplateSection({
     <div className="space-y-4">
       <p className="text-xs text-gray-500">
         登録済みの人物データから選択グループのメンバーを抽出し、既存の所属情報を反映したCSVテンプレートを生成します。
-        空欄セルをChatGPTなどで補完してからインポートできます。
+        「ChatGPTに送る」でコピーし、返答CSVをインポート欄に貼り付けてください。
       </p>
 
       <div className="flex gap-3 items-end flex-wrap">
@@ -186,16 +236,22 @@ function TemplateSection({
             <span className="text-xs text-gray-500">{selectedGroup} · {memberCount}人</span>
             <div className="ml-auto flex gap-2 flex-wrap">
               <button
-                onClick={() => copy(csv)}
-                className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-colors"
+                onClick={() => copyCsv(csv)}
+                className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
               >
-                {copied ? 'コピー完了!' : 'CSVをコピー'}
+                {csvCopied ? 'コピー完了!' : 'CSVをコピー'}
               </button>
               <button
                 onClick={() => downloadCsv(csv, `${selectedGroup}_membership.csv`)}
                 className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
               >
-                CSVをダウンロード
+                ダウンロード
+              </button>
+              <button
+                onClick={() => copyPrompt(buildChatGptPrompt(csv))}
+                className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold transition-colors"
+              >
+                {promptCopied ? 'コピー完了!' : 'ChatGPTに送る'}
               </button>
               <button
                 onClick={() => onUseCsv(csv)}
@@ -212,7 +268,7 @@ function TemplateSection({
             className="w-full border border-gray-200 rounded-xl px-4 py-3 text-xs font-mono bg-gray-50 focus:outline-none resize-none"
           />
           <p className="text-xs text-gray-400">
-            ヒント: このCSVをChatGPTに貼り付け、空欄の補完を依頼してから「インポートに使う」でインポートできます
+            ① テンプレートを生成 → ② 「ChatGPTに送る」でコピー → ③ ChatGPTへ貼り付けて補完 → ④ 返答CSVを「インポートに使う」
           </p>
         </div>
       )}
@@ -220,146 +276,7 @@ function TemplateSection({
   );
 }
 
-// ─── ② ChatGPT依頼文セクション ────────────────────────────────────────────
-function PromptSection({ groups }: { groups: string[] }) {
-  const [groupName, setGroupName] = useState('');
-  const [scope, setScope] = useState<'active' | 'all' | 'generation'>('all');
-  const [generationInput, setGenerationInput] = useState('');
-  const [prompt, setPrompt] = useState('');
-  const { copied, copy } = useCopy();
-
-  function generate() {
-    const name = groupName.trim();
-    if (!name) return;
-
-    let scopeLine = '';
-    if (scope === 'active') scopeLine = '・現役メンバーのみ対象';
-    else if (scope === 'all') scopeLine = '・現役・卒業・脱退の全メンバーを対象';
-    else {
-      const gen = generationInput.trim() || '指定期別';
-      scopeLine = `・${gen}のみ対象`;
-    }
-
-    setPrompt(`${name}のメンバー所属情報を調査し、以下のCSV形式で出力してください。
-
-条件：
-・推測禁止
-・確認できた情報のみ記入
-・現役・卒業・脱退を区別する
-・期別（○期生）を記入する
-・加入日・卒業日は確認できる場合のみ記入
-・CSV以外の文章は不要
-${scopeLine}
-
-出力形式：
-${CSV_HEADER}
-
-activityStatus の値：
-active（現役）/ graduated（卒業）/ withdrawn（脱退）/ hiatus（休止中）/ retired（引退）/ unknown（不明）
-
-各列の説明：
-・name: 人物名（日本語）
-・groupName: 所属グループ名（${name}）
-・activityStatus: 上記のいずれか
-・generation: 「1期生」「2期生」などの形式
-・joinedAt: 加入日（YYYY-MM または YYYY）、不明なら空欄
-・leftAt: 卒業/脱退日（YYYY-MM または YYYY）、在籍中なら空欄
-・currentGroupName: 現在の所属グループ名
-・formerGroupNames: グループ改名前の名称（例: 欅坂46）。複数ある場合はカンマ区切り
-・membershipNote: 備考（キャプテン・センター経験など）`);
-  }
-
-  return (
-    <div className="space-y-4">
-      <p className="text-xs text-gray-500">
-        ChatGPTに送る依頼文を生成します。コピーしてChatGPTに貼り付け、返答CSVをインポート欄に貼り付けてください。
-      </p>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">グループ名</label>
-          <input
-            type="text"
-            value={groupName}
-            onChange={(e) => setGroupName(e.target.value)}
-            placeholder="例: 櫻坂46"
-            list="prompt-group-list"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          />
-          <datalist id="prompt-group-list">
-            {groups.map((g) => <option key={g} value={g} />)}
-          </datalist>
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">対象範囲</label>
-          <div className="flex flex-col gap-2 mt-1">
-            {(
-              [
-                { value: 'active', label: '現役のみ' },
-                { value: 'all', label: '卒業メンバー含む（全員）' },
-                { value: 'generation', label: '期別指定' },
-              ] as const
-            ).map((o) => (
-              <label key={o.value} className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="radio"
-                  name="scope"
-                  value={o.value}
-                  checked={scope === o.value}
-                  onChange={() => setScope(o.value)}
-                  className="text-indigo-600 accent-indigo-600"
-                />
-                <span className="text-slate-700">{o.label}</span>
-                {o.value === 'generation' && scope === 'generation' && (
-                  <input
-                    type="text"
-                    value={generationInput}
-                    onChange={(e) => setGenerationInput(e.target.value)}
-                    placeholder="例: 1期生"
-                    className="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 w-24"
-                  />
-                )}
-              </label>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <button
-        onClick={generate}
-        disabled={!groupName.trim()}
-        className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-      >
-        依頼文を生成
-      </button>
-
-      {prompt && (
-        <div className="space-y-2">
-          <div className="flex gap-2">
-            <button
-              onClick={() => copy(prompt)}
-              className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-colors"
-            >
-              {copied ? 'コピー完了!' : 'クリップボードにコピー'}
-            </button>
-          </div>
-          <textarea
-            readOnly
-            value={prompt}
-            rows={18}
-            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-xs bg-gray-50 focus:outline-none leading-relaxed resize-none"
-          />
-          <p className="text-xs text-gray-400">
-            コピー → ChatGPTへ貼り付け → 返答CSVを下の「③ CSVインポート」へ貼り付け
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── ③ CSVインポートセクション ─────────────────────────────────────────────
+// ─── ② CSVインポートセクション ─────────────────────────────────────────────
 const CSV_EXAMPLE = `name,groupName,activityStatus,generation,joinedAt,leftAt,currentGroupName,formerGroupNames,membershipNote
 菅井友香,欅坂46,graduated,1期生,2015-08,2022-09,,欅坂46,
 守屋茜,欅坂46,graduated,2期生,2017-08,2023-03,,欅坂46,
@@ -515,7 +432,7 @@ function ImportSection({
             value={csv}
             onChange={(e) => setCsv(e.target.value)}
             rows={12}
-            placeholder={`name,groupName,activityStatus,...\n（① のテンプレートか、② の依頼文でChatGPTが生成したCSVを貼り付けてください）`}
+            placeholder={`name,groupName,activityStatus,...\n（① でChatGPTに送り、返ってきたCSVをここに貼り付けてください）`}
             className="w-full border border-gray-300 rounded-xl px-4 py-3 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
           />
         </div>
@@ -682,7 +599,6 @@ interface Props {
 
 export default function MembershipImportClient({ groups }: Props) {
   const [templateOpen, setTemplateOpen] = useState(true);
-  const [promptOpen, setPromptOpen] = useState(false);
   const [importCsv, setImportCsv] = useState('');
   const importRef = useRef<HTMLDivElement>(null);
 
@@ -696,32 +612,22 @@ export default function MembershipImportClient({ groups }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* ① テンプレート生成 */}
+      {/* ① テンプレート生成 + ChatGPTに送る */}
       <Accordion
         title="① 登録済み人物からCSVテンプレートを生成"
-        badge="推奨"
         open={templateOpen}
         onToggle={() => setTemplateOpen((v) => !v)}
       >
         <TemplateSection groups={groups} onUseCsv={handleUseCsv} />
       </Accordion>
 
-      {/* ② ChatGPT依頼文 */}
-      <Accordion
-        title="② ChatGPT依頼文を作成"
-        open={promptOpen}
-        onToggle={() => setPromptOpen((v) => !v)}
-      >
-        <PromptSection groups={groups} />
-      </Accordion>
-
-      {/* ③ CSVインポート */}
+      {/* ② CSVインポート */}
       <div ref={importRef}>
         <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-100">
-            <p className="font-bold text-slate-800 text-sm">③ CSVインポート</p>
+            <p className="font-bold text-slate-800 text-sm">② CSVインポート</p>
             <p className="text-xs text-gray-400 mt-0.5">
-              ①でテンプレートを生成・補完したCSV、または②でChatGPTが生成したCSVをここに貼り付けてインポートします
+              ①でテンプレートを生成 → 「ChatGPTに送る」でコピー → ChatGPTへ貼り付けて補完 → 返答CSVをここに貼り付けてインポート
             </p>
           </div>
           <div className="px-5 py-5">
