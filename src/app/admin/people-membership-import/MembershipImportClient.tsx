@@ -66,12 +66,26 @@ function useCopy() {
 }
 
 // ─── ChatGPT送信用テキスト生成 ────────────────────────────────────────────────
-function buildChatGptPrompt(csv: string): string {
-  return `以下のCSVについて、
-所属情報を最新情報で補完してください。
+function buildChatGptPrompt(groupName: string, memberNames: string[], csv: string): string {
+  const memberList = memberNames.map((n) => `・${n}`).join('\n');
+  return `以下の登録済み人物について、所属情報を補完してください。
 
-ルール
+対象グループ：${groupName}
+登録済み人物数：${memberNames.length}人
 
+対象人物一覧：
+${memberList}
+
+補完対象項目：
+・activityStatus
+・generation
+・joinedAt
+・leftAt
+・currentGroupName
+・formerGroupNames
+・membershipNote
+
+厳守ルール：
 ・推測禁止
 ・2026年現在の情報のみ
 ・必ず公式発表・公式サイト・公式プロフィールを優先
@@ -98,18 +112,9 @@ generationは
 
 などで記載してください。
 
-joinedAt
-leftAt
+joinedAt / leftAt は YYYY-MM-DD 形式で記載してください。
 
-は
-
-YYYY-MM-DD
-
-形式で記載してください。
-
-formerGroupNamesは
-
-カンマ区切りで記載してください。
+formerGroupNamesはカンマ区切りで記載してください。
 
 ${csv}`;
 }
@@ -175,14 +180,14 @@ function TemplateSection({
   const [selectedGroup, setSelectedGroup] = useState('');
   const [loading, setLoading] = useState(false);
   const [csv, setCsv] = useState('');
-  const [memberCount, setMemberCount] = useState(0);
+  const [memberNames, setMemberNames] = useState<string[]>([]);
   const [error, setError] = useState('');
   const { copied: csvCopied, copy: copyCsv } = useCopy();
   const { copied: promptCopied, copy: copyPrompt } = useCopy();
 
   async function generate() {
     if (!selectedGroup) { setError('グループを選択してください'); return; }
-    setLoading(true); setError(''); setCsv('');
+    setLoading(true); setError(''); setCsv(''); setMemberNames([]);
     try {
       const res = await fetch(
         `/api/admin/people-membership-import?group=${encodeURIComponent(selectedGroup)}`,
@@ -194,7 +199,7 @@ function TemplateSection({
       if (!res.ok) { setError(data.error ?? 'エラーが発生しました'); return; }
       const members = data.members ?? [];
       if (members.length === 0) { setError('このグループに登録済みのメンバーがいません'); return; }
-      setMemberCount(members.length);
+      setMemberNames(members.map((m) => m.name));
       setCsv(generateCsvFromMembers(members));
     } catch { setError('通信エラーが発生しました'); }
     finally { setLoading(false); }
@@ -233,7 +238,7 @@ function TemplateSection({
       {csv && (
         <div className="space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-gray-500">{selectedGroup} · {memberCount}人</span>
+            <span className="text-xs text-gray-500">{selectedGroup} · {memberNames.length}人</span>
             <div className="ml-auto flex gap-2 flex-wrap">
               <button
                 onClick={() => copyCsv(csv)}
@@ -248,7 +253,7 @@ function TemplateSection({
                 ダウンロード
               </button>
               <button
-                onClick={() => copyPrompt(buildChatGptPrompt(csv))}
+                onClick={() => copyPrompt(buildChatGptPrompt(selectedGroup, memberNames, csv))}
                 className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold transition-colors"
               >
                 {promptCopied ? 'コピー完了!' : 'ChatGPTに送る'}
@@ -264,7 +269,7 @@ function TemplateSection({
           <textarea
             readOnly
             value={csv}
-            rows={Math.min(memberCount + 2, 14)}
+            rows={Math.min(memberNames.length + 2, 14)}
             className="w-full border border-gray-200 rounded-xl px-4 py-3 text-xs font-mono bg-gray-50 focus:outline-none resize-none"
           />
           <p className="text-xs text-gray-400">
