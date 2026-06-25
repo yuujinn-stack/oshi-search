@@ -5,6 +5,45 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import type { ActivityStatus } from '@/types/person';
 
+// ── GET: グループメンバー + 既存メタを返す（テンプレート生成用）────────────
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const group = searchParams.get('group');
+  if (!group) return NextResponse.json({ error: 'group is required' }, { status: 400 });
+
+  try {
+    const allPersons = await getAllPersonsMerged();
+    const members = allPersons.filter((p) => p.group === group);
+    if (members.length === 0) {
+      return NextResponse.json({ members: [] });
+    }
+
+    const redis = getRedis();
+    const metaMap: Record<string, PersonMeta> = {};
+    if (redis) {
+      const rawMetas = await redis.hgetall(META_KEY);
+      if (rawMetas) {
+        for (const m of members) {
+          const raw = rawMetas[m.name];
+          if (raw) {
+            try { metaMap[m.name] = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { /* skip */ }
+          }
+        }
+      }
+    }
+
+    return NextResponse.json({
+      members: members.map((m) => ({
+        name: m.name,
+        group: m.group,
+        meta: metaMap[m.name] ?? null,
+      })),
+    });
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+}
+
 const META_KEY = 'admin:person-meta';
 
 const VALID_STATUSES = new Set<ActivityStatus>([

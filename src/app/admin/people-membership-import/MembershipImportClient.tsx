@@ -1,18 +1,19 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import type { PreviewRow } from '@/app/api/admin/people-membership-import/route';
+import type { PersonMeta } from '@/lib/person-meta';
 
+// ─── フィールドラベル ─────────────────────────────────────────────────────────
 const FIELD_LABEL: Record<string, string> = {
-  activityStatus:  '活動状態',
-  generation:      '期別',
-  joinedAt:        '加入日',
-  leftAt:          '卒業/脱退日',
-  currentGroupName:'現在G',
-  formerGroupNames:'過去G',
-  membershipNote:  '備考',
+  activityStatus:   '活動状態',
+  generation:       '期別',
+  joinedAt:         '加入日',
+  leftAt:           '卒業/脱退日',
+  currentGroupName: '現在G',
+  formerGroupNames: '過去G',
+  membershipNote:   '備考',
 };
-
 const STATUS_LABEL: Record<string, string> = {
   active:    '現役',
   graduated: '卒業',
@@ -22,11 +23,347 @@ const STATUS_LABEL: Record<string, string> = {
   unknown:   '不明',
 };
 
+// ─── CSV 生成ユーティリティ ──────────────────────────────────────────────────
+const CSV_HEADER = 'name,groupName,activityStatus,generation,joinedAt,leftAt,currentGroupName,formerGroupNames,membershipNote';
+
+function buildCsvRow(
+  name: string,
+  group: string,
+  meta: PersonMeta | null,
+): string {
+  const m = meta ?? {};
+  const formerStr = (m.formerGroupNames ?? []).join(',');
+  const formerCell = formerStr.includes(',') ? `"${formerStr}"` : formerStr;
+  return [
+    name,
+    group,
+    m.activityStatus ?? '',
+    m.generation ?? '',
+    m.joinedAt ?? '',
+    m.leftAt ?? '',
+    m.currentGroupName ?? group,
+    formerCell,
+    m.membershipNote ?? '',
+  ].join(',');
+}
+
+function generateCsvFromMembers(
+  members: Array<{ name: string; group: string; meta: PersonMeta | null }>,
+): string {
+  return [CSV_HEADER, ...members.map((m) => buildCsvRow(m.name, m.group, m.meta))].join('\n');
+}
+
+// ─── コピー用フック ───────────────────────────────────────────────────────────
+function useCopy() {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback((text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, []);
+  return { copied, copy };
+}
+
+// ─── ダウンロード ─────────────────────────────────────────────────────────────
+function downloadCsv(csv: string, filename: string) {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── アコーディオン ───────────────────────────────────────────────────────────
+function Accordion({
+  title,
+  badge,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  badge?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-gray-50 transition-colors"
+      >
+        <span className="font-bold text-slate-800 text-sm flex items-center gap-2">
+          {title}
+          {badge && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">
+              {badge}
+            </span>
+          )}
+        </span>
+        <span className="text-gray-400 text-xs">{open ? '▲ 閉じる' : '▼ 開く'}</span>
+      </button>
+      {open && (
+        <div className="border-t border-gray-100 px-5 py-5">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── ① テンプレート生成セクション ────────────────────────────────────────────
+function TemplateSection({
+  groups,
+  onUseCsv,
+}: {
+  groups: string[];
+  onUseCsv: (csv: string) => void;
+}) {
+  const [selectedGroup, setSelectedGroup] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [csv, setCsv] = useState('');
+  const [memberCount, setMemberCount] = useState(0);
+  const [error, setError] = useState('');
+  const { copied, copy } = useCopy();
+
+  async function generate() {
+    if (!selectedGroup) { setError('グループを選択してください'); return; }
+    setLoading(true); setError(''); setCsv('');
+    try {
+      const res = await fetch(
+        `/api/admin/people-membership-import?group=${encodeURIComponent(selectedGroup)}`,
+      );
+      const data = await res.json() as {
+        members?: Array<{ name: string; group: string; meta: PersonMeta | null }>;
+        error?: string;
+      };
+      if (!res.ok) { setError(data.error ?? 'エラーが発生しました'); return; }
+      const members = data.members ?? [];
+      if (members.length === 0) { setError('このグループに登録済みのメンバーがいません'); return; }
+      setMemberCount(members.length);
+      setCsv(generateCsvFromMembers(members));
+    } catch { setError('通信エラーが発生しました'); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-gray-500">
+        登録済みの人物データから選択グループのメンバーを抽出し、既存の所属情報を反映したCSVテンプレートを生成します。
+        空欄セルをChatGPTなどで補完してからインポートできます。
+      </p>
+
+      <div className="flex gap-3 items-end flex-wrap">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">グループを選択</label>
+          <select
+            value={selectedGroup}
+            onChange={(e) => { setSelectedGroup(e.target.value); setCsv(''); setError(''); }}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            <option value="">グループを選択…</option>
+            {groups.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
+        <button
+          onClick={generate}
+          disabled={loading || !selectedGroup}
+          className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+        >
+          {loading ? '生成中…' : 'テンプレートを生成'}
+        </button>
+      </div>
+
+      {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+
+      {csv && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-gray-500">{selectedGroup} · {memberCount}人</span>
+            <div className="ml-auto flex gap-2 flex-wrap">
+              <button
+                onClick={() => copy(csv)}
+                className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-colors"
+              >
+                {copied ? 'コピー完了!' : 'CSVをコピー'}
+              </button>
+              <button
+                onClick={() => downloadCsv(csv, `${selectedGroup}_membership.csv`)}
+                className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                CSVをダウンロード
+              </button>
+              <button
+                onClick={() => onUseCsv(csv)}
+                className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold transition-colors"
+              >
+                インポートに使う →
+              </button>
+            </div>
+          </div>
+          <textarea
+            readOnly
+            value={csv}
+            rows={Math.min(memberCount + 2, 14)}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-xs font-mono bg-gray-50 focus:outline-none resize-none"
+          />
+          <p className="text-xs text-gray-400">
+            ヒント: このCSVをChatGPTに貼り付け、空欄の補完を依頼してから「インポートに使う」でインポートできます
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── ② ChatGPT依頼文セクション ────────────────────────────────────────────
+function PromptSection({ groups }: { groups: string[] }) {
+  const [groupName, setGroupName] = useState('');
+  const [scope, setScope] = useState<'active' | 'all' | 'generation'>('all');
+  const [generationInput, setGenerationInput] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const { copied, copy } = useCopy();
+
+  function generate() {
+    const name = groupName.trim();
+    if (!name) return;
+
+    let scopeLine = '';
+    if (scope === 'active') scopeLine = '・現役メンバーのみ対象';
+    else if (scope === 'all') scopeLine = '・現役・卒業・脱退の全メンバーを対象';
+    else {
+      const gen = generationInput.trim() || '指定期別';
+      scopeLine = `・${gen}のみ対象`;
+    }
+
+    setPrompt(`${name}のメンバー所属情報を調査し、以下のCSV形式で出力してください。
+
+条件：
+・推測禁止
+・確認できた情報のみ記入
+・現役・卒業・脱退を区別する
+・期別（○期生）を記入する
+・加入日・卒業日は確認できる場合のみ記入
+・CSV以外の文章は不要
+${scopeLine}
+
+出力形式：
+${CSV_HEADER}
+
+activityStatus の値：
+active（現役）/ graduated（卒業）/ withdrawn（脱退）/ hiatus（休止中）/ retired（引退）/ unknown（不明）
+
+各列の説明：
+・name: 人物名（日本語）
+・groupName: 所属グループ名（${name}）
+・activityStatus: 上記のいずれか
+・generation: 「1期生」「2期生」などの形式
+・joinedAt: 加入日（YYYY-MM または YYYY）、不明なら空欄
+・leftAt: 卒業/脱退日（YYYY-MM または YYYY）、在籍中なら空欄
+・currentGroupName: 現在の所属グループ名
+・formerGroupNames: グループ改名前の名称（例: 欅坂46）。複数ある場合はカンマ区切り
+・membershipNote: 備考（キャプテン・センター経験など）`);
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-gray-500">
+        ChatGPTに送る依頼文を生成します。コピーしてChatGPTに貼り付け、返答CSVをインポート欄に貼り付けてください。
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">グループ名</label>
+          <input
+            type="text"
+            value={groupName}
+            onChange={(e) => setGroupName(e.target.value)}
+            placeholder="例: 櫻坂46"
+            list="prompt-group-list"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <datalist id="prompt-group-list">
+            {groups.map((g) => <option key={g} value={g} />)}
+          </datalist>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">対象範囲</label>
+          <div className="flex flex-col gap-2 mt-1">
+            {(
+              [
+                { value: 'active', label: '現役のみ' },
+                { value: 'all', label: '卒業メンバー含む（全員）' },
+                { value: 'generation', label: '期別指定' },
+              ] as const
+            ).map((o) => (
+              <label key={o.value} className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="radio"
+                  name="scope"
+                  value={o.value}
+                  checked={scope === o.value}
+                  onChange={() => setScope(o.value)}
+                  className="text-indigo-600 accent-indigo-600"
+                />
+                <span className="text-slate-700">{o.label}</span>
+                {o.value === 'generation' && scope === 'generation' && (
+                  <input
+                    type="text"
+                    value={generationInput}
+                    onChange={(e) => setGenerationInput(e.target.value)}
+                    placeholder="例: 1期生"
+                    className="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 w-24"
+                  />
+                )}
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <button
+        onClick={generate}
+        disabled={!groupName.trim()}
+        className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+      >
+        依頼文を生成
+      </button>
+
+      {prompt && (
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <button
+              onClick={() => copy(prompt)}
+              className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-colors"
+            >
+              {copied ? 'コピー完了!' : 'クリップボードにコピー'}
+            </button>
+          </div>
+          <textarea
+            readOnly
+            value={prompt}
+            rows={18}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-xs bg-gray-50 focus:outline-none leading-relaxed resize-none"
+          />
+          <p className="text-xs text-gray-400">
+            コピー → ChatGPTへ貼り付け → 返答CSVを下の「③ CSVインポート」へ貼り付け
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── ③ CSVインポートセクション ─────────────────────────────────────────────
 const CSV_EXAMPLE = `name,groupName,activityStatus,generation,joinedAt,leftAt,currentGroupName,formerGroupNames,membershipNote
 菅井友香,欅坂46,graduated,1期生,2015-08,2022-09,,欅坂46,
 守屋茜,欅坂46,graduated,2期生,2017-08,2023-03,,欅坂46,
-賀喜遥香,乃木坂46,active,4期生,2020-01-05,,乃木坂46,,
-山下美月,乃木坂46,graduated,3期生,2017-08,2024-03,,乃木坂46,`;
+賀喜遥香,乃木坂46,active,4期生,2020-01-05,,乃木坂46,,`;
 
 interface ApplyResult {
   updated: number;
@@ -42,14 +379,36 @@ interface PreviewData {
 
 type Step = 'input' | 'preview' | 'done';
 
-export default function MembershipImportClient() {
+function ImportSection({
+  externalCsv,
+  onCsvChange,
+}: {
+  externalCsv: string;
+  onCsvChange: (v: string) => void;
+}) {
   const [step, setStep] = useState<Step>('input');
-  const [csv, setCsv] = useState('');
+  const [csv, setCsvLocal] = useState(externalCsv);
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [result, setResult] = useState<ApplyResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // externalCsv が変わったら取り込む
+  useEffect(() => {
+    if (externalCsv) {
+      setCsvLocal(externalCsv);
+      setStep('input');
+      setPreview(null);
+      setResult(null);
+      setError('');
+    }
+  }, [externalCsv]);
+
+  function setCsv(v: string) {
+    setCsvLocal(v);
+    onCsvChange(v);
+  }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -96,14 +455,14 @@ export default function MembershipImportClient() {
     setStep('input'); setCsv(''); setPreview(null); setResult(null); setError('');
   }
 
-  // ── Step 1: 入力 ─────────────────────────────────────────────────────────
+  // ── 入力ステップ ──────────────────────────────────────────────────────────
   if (step === 'input') {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         {/* フォーマット説明 */}
         <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-xs space-y-2">
           <p className="font-semibold text-slate-700">CSVフォーマット</p>
-          <p className="text-gray-500">1行目はヘッダー行（列名）。name をキーに人物を特定します。</p>
+          <p className="text-gray-500">1行目はヘッダー行（列名）。<code className="bg-white px-1 rounded border border-gray-200">name</code> をキーに人物を特定します。</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 mt-2">
             {[
               ['name', '人物名（必須・キー）'],
@@ -129,7 +488,7 @@ export default function MembershipImportClient() {
 
         {/* 入力エリア */}
         <div className="space-y-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <label className="text-sm font-semibold text-slate-700">CSV入力</label>
             <button
               type="button"
@@ -156,32 +515,29 @@ export default function MembershipImportClient() {
             value={csv}
             onChange={(e) => setCsv(e.target.value)}
             rows={12}
-            placeholder="name,groupName,activityStatus,generation,joinedAt,leftAt,currentGroupName,formerGroupNames,membershipNote"
+            placeholder={`name,groupName,activityStatus,...\n（① のテンプレートか、② の依頼文でChatGPTが生成したCSVを貼り付けてください）`}
             className="w-full border border-gray-300 rounded-xl px-4 py-3 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
           />
         </div>
 
         {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
 
-        <div className="flex gap-3">
-          <button
-            onClick={handlePreview}
-            disabled={loading || !csv.trim()}
-            className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-          >
-            {loading ? 'プレビュー中…' : 'プレビュー →'}
-          </button>
-        </div>
+        <button
+          onClick={handlePreview}
+          disabled={loading || !csv.trim()}
+          className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+        >
+          {loading ? 'プレビュー中…' : 'プレビュー →'}
+        </button>
       </div>
     );
   }
 
-  // ── Step 2: プレビュー ────────────────────────────────────────────────────
+  // ── プレビューステップ ────────────────────────────────────────────────────
   if (step === 'preview' && preview) {
     const { rows, summary } = preview;
     return (
       <div className="space-y-5">
-        {/* サマリー */}
         <div className="grid grid-cols-3 gap-3">
           {[
             { label: '合計行数', value: summary.total, cls: 'bg-gray-50 border-gray-200 text-slate-700' },
@@ -195,7 +551,6 @@ export default function MembershipImportClient() {
           ))}
         </div>
 
-        {/* 詳細テーブル */}
         <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -232,7 +587,11 @@ export default function MembershipImportClient() {
                                 <span className="line-through text-red-400">{ch.oldValue}</span>
                               ) : (
                                 <>
-                                  {ch.oldValue && <span className="line-through text-gray-300">{ch.field === 'activityStatus' ? (STATUS_LABEL[ch.oldValue] ?? ch.oldValue) : ch.oldValue}</span>}
+                                  {ch.oldValue && (
+                                    <span className="line-through text-gray-300">
+                                      {ch.field === 'activityStatus' ? (STATUS_LABEL[ch.oldValue] ?? ch.oldValue) : ch.oldValue}
+                                    </span>
+                                  )}
                                   <span className="text-indigo-700 font-medium">
                                     {ch.field === 'activityStatus' ? (STATUS_LABEL[ch.newValue ?? ''] ?? ch.newValue) : ch.newValue}
                                   </span>
@@ -255,12 +614,17 @@ export default function MembershipImportClient() {
         {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
 
         <div className="flex gap-3">
-          <button onClick={handleApply} disabled={loading || summary.toUpdate === 0}
-            className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-            {loading ? '適用中…' : `${summary.toUpdate}件 を適用する`}
+          <button
+            onClick={handleApply}
+            disabled={loading || summary.toUpdate === 0}
+            className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          >
+            {loading ? '適用中…' : `${summary.toUpdate}件を適用する`}
           </button>
-          <button onClick={() => setStep('input')}
-            className="px-4 py-2.5 text-sm text-gray-500 border border-gray-300 rounded-xl hover:bg-gray-50">
+          <button
+            onClick={() => setStep('input')}
+            className="px-4 py-2.5 text-sm text-gray-500 border border-gray-300 rounded-xl hover:bg-gray-50"
+          >
             ← 修正する
           </button>
         </div>
@@ -268,7 +632,7 @@ export default function MembershipImportClient() {
     );
   }
 
-  // ── Step 3: 完了 ─────────────────────────────────────────────────────────
+  // ── 完了ステップ ──────────────────────────────────────────────────────────
   if (step === 'done' && result) {
     return (
       <div className="space-y-5">
@@ -293,17 +657,14 @@ export default function MembershipImportClient() {
           </div>
         )}
 
-        <div className="flex gap-3">
-          <a href="/admin/work-check"
-            className="px-4 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700">
+        <div className="flex gap-3 flex-wrap">
+          <a href="/admin/work-check" className="px-4 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700">
             作品管理で確認 →
           </a>
-          <a href="/admin/groups"
-            className="px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700">
+          <a href="/admin/groups" className="px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700">
             グループ管理 →
           </a>
-          <button onClick={reset}
-            className="px-4 py-2.5 text-sm text-gray-500 border border-gray-300 rounded-xl hover:bg-gray-50">
+          <button onClick={reset} className="px-4 py-2.5 text-sm text-gray-500 border border-gray-300 rounded-xl hover:bg-gray-50">
             もう一度
           </button>
         </div>
@@ -312,4 +673,62 @@ export default function MembershipImportClient() {
   }
 
   return null;
+}
+
+// ─── メインコンポーネント ────────────────────────────────────────────────────
+interface Props {
+  groups: string[];
+}
+
+export default function MembershipImportClient({ groups }: Props) {
+  const [templateOpen, setTemplateOpen] = useState(true);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [importCsv, setImportCsv] = useState('');
+  const importRef = useRef<HTMLDivElement>(null);
+
+  function handleUseCsv(csv: string) {
+    setImportCsv(csv);
+    setTemplateOpen(false);
+    setTimeout(() => {
+      importRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 150);
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* ① テンプレート生成 */}
+      <Accordion
+        title="① 登録済み人物からCSVテンプレートを生成"
+        badge="推奨"
+        open={templateOpen}
+        onToggle={() => setTemplateOpen((v) => !v)}
+      >
+        <TemplateSection groups={groups} onUseCsv={handleUseCsv} />
+      </Accordion>
+
+      {/* ② ChatGPT依頼文 */}
+      <Accordion
+        title="② ChatGPT依頼文を作成"
+        open={promptOpen}
+        onToggle={() => setPromptOpen((v) => !v)}
+      >
+        <PromptSection groups={groups} />
+      </Accordion>
+
+      {/* ③ CSVインポート */}
+      <div ref={importRef}>
+        <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100">
+            <p className="font-bold text-slate-800 text-sm">③ CSVインポート</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              ①でテンプレートを生成・補完したCSV、または②でChatGPTが生成したCSVをここに貼り付けてインポートします
+            </p>
+          </div>
+          <div className="px-5 py-5">
+            <ImportSection externalCsv={importCsv} onCsvChange={setImportCsv} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

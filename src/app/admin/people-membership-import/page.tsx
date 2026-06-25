@@ -1,8 +1,17 @@
+import { getAllPersonsMerged } from '@/lib/persons';
 import MembershipImportClient from './MembershipImportClient';
 
 export const dynamic = 'force-dynamic';
 
-export default function PeopleMembershipImportPage() {
+export default async function PeopleMembershipImportPage() {
+  let groups: string[] = [];
+  try {
+    const allPersons = await getAllPersonsMerged();
+    groups = [...new Set(allPersons.map((p) => p.group).filter(Boolean))].sort((a, b) =>
+      a.localeCompare(b, 'ja'),
+    );
+  } catch { /* Redis 未接続時は空 */ }
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* ヘッダー */}
@@ -22,7 +31,7 @@ export default function PeopleMembershipImportPage() {
         </div>
       </div>
 
-      <MembershipImportClient />
+      <MembershipImportClient groups={groups} />
     </div>
   );
 }
