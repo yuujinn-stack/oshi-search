@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import PersonWorks from './PersonWorks';
-import type { DashboardStats, PersonWithCounts } from './work-check-types';
+import type { DashboardStats, PersonWithCounts, ActivityStatus } from './work-check-types';
 
 type FilterKey = 'noVod' | 'noTmdbId' | 'review' | 'hidden' | 'manualCsv' | 'aiSupplement';
 
@@ -103,11 +103,22 @@ interface Props {
 
 const RECENT_DAYS = 30;
 
+const ACTIVITY_STATUS_OPTIONS: { value: ActivityStatus; label: string }[] = [
+  { value: 'active',    label: '現役' },
+  { value: 'graduated', label: '卒業' },
+  { value: 'withdrawn', label: '脱退' },
+  { value: 'hiatus',    label: '休止中' },
+  { value: 'retired',   label: '引退' },
+  { value: 'unknown',   label: '不明' },
+];
+
 export default function WorkCheckPersonSection({ persons, stats }: Props) {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [searchQuery, setSearchQuery] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
   const [genreFilter, setGenreFilter] = useState('');
+  const [activityStatusFilter, setActivityStatusFilter] = useState<ActivityStatus | ''>('');
+  const [generationFilter, setGenerationFilter] = useState('');
   const [sort, setSort] = useState<SortKey>('importedAt_desc');
   const [recentOpen, setRecentOpen] = useState(true);
 
@@ -117,6 +128,12 @@ export default function WorkCheckPersonSection({ persons, stats }: Props) {
   );
   const genres = useMemo(
     () => Array.from(new Set(persons.map((p) => p.genre).filter(Boolean) as string[])).sort(),
+    [persons],
+  );
+  const generations = useMemo(
+    () => Array.from(new Set(persons.map((p) => p.generation).filter(Boolean) as string[])).sort(
+      (a, b) => parseInt(a) - parseInt(b),
+    ),
     [persons],
   );
 
@@ -130,7 +147,7 @@ export default function WorkCheckPersonSection({ persons, stats }: Props) {
 
   const hasFilter = Object.values(filters).some(Boolean);
   const hasSearch = searchQuery.trim() !== '';
-  const isFiltered = hasFilter || hasSearch || !!groupFilter || !!genreFilter;
+  const isFiltered = hasFilter || hasSearch || !!groupFilter || !!genreFilter || !!activityStatusFilter || !!generationFilter;
 
   function toggleFilter(key: FilterKey) {
     setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -141,6 +158,8 @@ export default function WorkCheckPersonSection({ persons, stats }: Props) {
     setSearchQuery('');
     setGroupFilter('');
     setGenreFilter('');
+    setActivityStatusFilter('');
+    setGenerationFilter('');
   }
 
   const filtered = useMemo(() => {
@@ -152,12 +171,19 @@ export default function WorkCheckPersonSection({ persons, stats }: Props) {
         (p) =>
           p.name.toLowerCase().includes(q) ||
           p.group.toLowerCase().includes(q) ||
-          (p.aliases ?? []).some((a) => a.toLowerCase().includes(q)),
+          (p.aliases ?? []).some((a) => a.toLowerCase().includes(q)) ||
+          p.generation?.toLowerCase().includes(q) ||
+          (p.formerGroupNames ?? []).some((g) => g.toLowerCase().includes(q)),
       );
     }
 
     if (groupFilter) list = list.filter((p) => p.group === groupFilter);
     if (genreFilter) list = list.filter((p) => p.genre === genreFilter);
+    if (activityStatusFilter) list = list.filter((p) => p.activityStatus === activityStatusFilter);
+    if (generationFilter.trim()) {
+      const gq = generationFilter.trim().toLowerCase();
+      list = list.filter((p) => p.generation?.toLowerCase().includes(gq));
+    }
 
     if (filters.noVod) list = list.filter((p) => p.counts.noVod > 0);
     if (filters.noTmdbId) list = list.filter((p) => p.counts.noTmdbId > 0);
@@ -167,7 +193,7 @@ export default function WorkCheckPersonSection({ persons, stats }: Props) {
     if (filters.aiSupplement) list = list.filter((p) => p.counts.aiSupplement > 0);
 
     return sortPersons(list, sort);
-  }, [persons, searchQuery, groupFilter, genreFilter, filters, sort]);
+  }, [persons, searchQuery, groupFilter, genreFilter, activityStatusFilter, generationFilter, filters, sort]);
 
   const statCards: StatCardDef[] = [
     {
@@ -363,6 +389,40 @@ export default function WorkCheckPersonSection({ persons, stats }: Props) {
               </button>
             ))}
           </div>
+
+          {/* 活動状態フィルター */}
+          <select
+            value={activityStatusFilter}
+            onChange={(e) => setActivityStatusFilter(e.target.value as ActivityStatus | '')}
+            className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-slate-300"
+          >
+            <option value="">全活動状態</option>
+            {ACTIVITY_STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+
+          {/* 期別フィルター */}
+          {generations.length > 0 ? (
+            <select
+              value={generationFilter}
+              onChange={(e) => setGenerationFilter(e.target.value)}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-slate-300"
+            >
+              <option value="">全期別</option>
+              {generations.map((g) => (
+                <option key={g} value={g}>{g}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={generationFilter}
+              onChange={(e) => setGenerationFilter(e.target.value)}
+              placeholder="期別で絞り込み"
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 w-28 focus:outline-none focus:ring-1 focus:ring-slate-300"
+            />
+          )}
 
           {/* ソート */}
           <select

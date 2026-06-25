@@ -20,6 +20,7 @@ export default async function AdminGroupsPage() {
         </div>
         <div className="flex items-center gap-4 mt-1 text-xs flex-wrap">
           <a href="/admin/work-check" className="text-indigo-600 hover:underline">出演作品管理 →</a>
+          <a href="/admin/people-membership-import" className="text-indigo-600 hover:underline">所属CSV更新 →</a>
           <a href="/admin/product-check" className="text-gray-400 hover:underline">商品確認</a>
           <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">ログアウト</a>
         </div>

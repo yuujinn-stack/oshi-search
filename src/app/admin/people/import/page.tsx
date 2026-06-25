@@ -42,6 +42,9 @@ export default async function PeopleImportPage() {
           <a href="/admin/product-check" className="text-gray-400 hover:underline">
             商品確認
           </a>
+          <a href="/admin/people-membership-import" className="text-indigo-600 hover:underline">
+            所属CSV更新 →
+          </a>
           <a href="/admin/groups" className="text-gray-400 hover:underline">
             グループ管理
           </a>

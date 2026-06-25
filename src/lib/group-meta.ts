@@ -41,3 +41,19 @@ export async function deleteGroupMeta(groupName: string): Promise<void> {
   if (!redis) throw new Error('Redis unavailable');
   await redis.hdel(REDIS_KEY, groupName);
 }
+
+export async function ensureGroupMeta(groupName: string): Promise<boolean> {
+  if (!groupName.trim()) return false;
+  try {
+    const existing = await getGroupMeta(groupName.trim());
+    if (existing) return false;
+    await saveGroupMeta({
+      groupName: groupName.trim(),
+      slug: encodeURIComponent(groupName.trim()),
+      activityStatus: 'active',
+      note: '人物登録時に自動作成',
+      createdAt: Date.now(),
+    });
+    return true;
+  } catch { return false; }
+}

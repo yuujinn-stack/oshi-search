@@ -2,9 +2,11 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import SearchForm from '@/components/SearchForm';
 import PersonCard from '@/components/PersonCard';
-import { searchPersonsMerged, getAllPersonsMerged } from '@/lib/persons';
+import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllGroupMetas } from '@/lib/group-meta';
+import { getAllPersonMetas } from '@/lib/person-meta';
 import type { GroupMeta } from '@/types/group';
+import type { ActivityStatus, PersonWithConfig } from '@/types/person';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,35 +22,84 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   };
 }
 
+// 活動状態ラベル → ActivityStatus のマッピング
+const QUERY_TO_STATUS: Record<string, ActivityStatus> = {
+  '現役': 'active',
+  'アクティブ': 'active',
+  '卒業': 'graduated',
+  '脱退': 'withdrawn',
+  '休止': 'hiatus',
+  '休止中': 'hiatus',
+  '活動休止': 'hiatus',
+  '引退': 'retired',
+  '不明': 'unknown',
+};
+
 export default async function SearchPage({ searchParams }: Props) {
   const { q } = await searchParams;
   const query = q?.trim() ?? '';
 
-  // GroupMeta を並列取得（旧グループ名検索のため）
-  const [basePersons, allGroupMetas] = await Promise.all([
-    query ? searchPersonsMerged(query) : getAllPersonsMerged(),
+  const [allPersons, allGroupMetas, personMetaMap] = await Promise.all([
+    getAllPersonsMerged(),
     getAllGroupMetas(),
+    query ? getAllPersonMetas() : Promise.resolve({} as ReturnType<typeof getAllPersonMetas> extends Promise<infer T> ? T : never),
   ]);
 
-  // クエリが旧グループ名と一致するか確認
+  // ── 拡張検索 ─────────────────────────────────────────────────────────────
+  let persons: PersonWithConfig[];
   let formerNameMatch: GroupMeta | undefined;
+
   if (query) {
+    const q = query.toLowerCase();
+    // "元XXX" → formerGroupNames の "XXX" を検索
+    const formerGroupQ = query.startsWith('元') ? query.slice(1).toLowerCase() : null;
+    // クエリが活動状態ラベルに一致するか
+    const matchedStatus = Object.entries(QUERY_TO_STATUS).find(
+      ([label]) => label === query || label.includes(query) || query.includes(label),
+    )?.[1];
+
+    persons = allPersons.filter((p) => {
+      // 基本検索（名前・グループ・ジャンル・aliases）
+      if (p.name.toLowerCase().includes(q)) return true;
+      if (p.group.toLowerCase().includes(q)) return true;
+      if (p.genre.toLowerCase().includes(q)) return true;
+      if ((p.config.aliases ?? []).some((a) => a.toLowerCase().includes(q))) return true;
+
+      const meta = personMetaMap[p.name];
+      if (!meta) return false;
+
+      // 期別検索（例: "3期生", "1期"）
+      if (meta.generation?.toLowerCase().includes(q)) return true;
+
+      // 活動状態検索（例: "卒業", "現役"）
+      if (matchedStatus && meta.activityStatus === matchedStatus) return true;
+
+      // 旧グループ名検索（例: "元欅坂46" → formerGroupNames に "欅坂46" を含む）
+      if (formerGroupQ && (meta.formerGroupNames ?? []).some(
+        (g) => g.toLowerCase().includes(formerGroupQ),
+      )) return true;
+
+      return false;
+    });
+
+    // GroupMeta の旧名からも一致するグループを検索
     formerNameMatch = allGroupMetas.find((g) => {
       const aliases = [...(g.formerNames ?? []), g.renamedFrom].filter(Boolean) as string[];
       return aliases.some(
-        (n) => n.toLowerCase().includes(query.toLowerCase()) || query.toLowerCase().includes(n.toLowerCase()),
+        (n) => n.toLowerCase().includes(q) || q.includes(n.toLowerCase()),
       );
     });
-  }
 
-  // 旧名マッチがあれば新グループのメンバーを追加
-  let persons = basePersons;
-  if (formerNameMatch && query) {
-    const extra = await searchPersonsMerged(formerNameMatch.groupName);
-    const seen = new Set(persons.map((p) => p.name));
-    for (const p of extra) {
-      if (!seen.has(p.name)) persons = [...persons, p];
+    // 旧名マッチがあれば新グループのメンバーを追加（重複なし）
+    if (formerNameMatch) {
+      const seen = new Set(persons.map((p) => p.name));
+      const extra = allPersons.filter(
+        (p) => p.group === formerNameMatch!.groupName && !seen.has(p.name),
+      );
+      persons = [...persons, ...extra];
     }
+  } else {
+    persons = allPersons;
   }
 
   return (
