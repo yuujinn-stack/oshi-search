@@ -40,9 +40,9 @@ export default async function Header() {
   const suggestions = [...groupSuggestions, ...personSuggestions];
 
   return (
-    <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
+    <header className="site-header">
       <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
-        <Link href="/" className="text-xl font-black text-primary whitespace-nowrap tracking-tight">
+        <Link href="/" className="text-xl font-black whitespace-nowrap tracking-tight" style={{ color: 'var(--ds-primary)' }}>
           推しサーチ
         </Link>
         <div className="flex-1 max-w-lg">

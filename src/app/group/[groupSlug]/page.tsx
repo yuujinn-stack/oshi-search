@@ -527,14 +527,14 @@ export default async function GroupPage({ params }: Props) {
       {/* ─── 閲覧数記録（30分以内は重複カウントしない） ─── */}
       <PageViewTracker entity="group" slug={groupSlug} />
 
-      <div className="min-h-screen bg-gray-50">
+      <div className="page-bg">
 
         {/* パンくずリスト */}
-        <nav aria-label="パンくずリスト" className="bg-white border-b border-gray-200">
-          <div className="max-w-4xl mx-auto px-4 py-2.5 flex items-center gap-1.5 text-xs text-gray-500">
-            <Link href="/" className="hover:text-indigo-600 transition-colors">ホーム</Link>
-            <span className="text-gray-300">›</span>
-            <span className="text-slate-700 font-medium">{groupName}</span>
+        <nav aria-label="パンくずリスト" className="breadcrumb-bar">
+          <div className="max-w-4xl mx-auto px-4 py-2.5 flex items-center gap-1.5 text-xs" style={{ color: 'var(--ds-muted)' }}>
+            <Link href="/" className="theme-text-link">ホーム</Link>
+            <span style={{ opacity: 0.4 }}>›</span>
+            <span className="font-medium" style={{ color: 'var(--ds-text)' }}>{groupName}</span>
           </div>
         </nav>
 
@@ -636,10 +636,10 @@ export default async function GroupPage({ params }: Props) {
             {/* 現役メンバー（または全メンバー一覧） */}
             <div>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base font-bold text-slate-800">
+                <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>
                   {hasStatusData && allFormerMembers.length > 0 ? '現役メンバー' : 'メンバー一覧'}
                 </h2>
-                <span className="text-xs text-gray-400">
+                <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>
                   {hasStatusData && allFormerMembers.length > 0 ? activeMembers.length : members.length}人
                 </span>
               </div>
@@ -652,12 +652,12 @@ export default async function GroupPage({ params }: Props) {
 
             {/* 卒業・脱退メンバー */}
             {allFormerMembers.length > 0 && (
-              <details className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-                <summary className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
-                  <span className="font-semibold text-slate-700 text-sm">卒業・脱退メンバー</span>
-                  <span className="text-xs text-gray-400">{allFormerMembers.length}人</span>
+              <details className="theme-card overflow-hidden">
+                <summary className="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
+                  <span className="font-semibold text-sm" style={{ color: 'var(--ds-text)' }}>卒業・脱退メンバー</span>
+                  <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>{allFormerMembers.length}人</span>
                 </summary>
-                <div className="border-t border-gray-50 p-4">
+                <div className="p-4" style={{ borderTop: '1px solid var(--ds-border)' }}>
                   <div className="flex flex-wrap gap-2">
                     {allFormerMembers.map((m) => (
                       <FormerMemberChip key={m.name} member={m} />
@@ -669,26 +669,27 @@ export default async function GroupPage({ params }: Props) {
 
             {/* 期別メンバー */}
             {hasGenerationData && (
-              <details className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-                <summary className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
-                  <span className="font-semibold text-slate-700 text-sm">期別メンバー</span>
-                  <span className="text-xs text-gray-400">{generationGroups.length}期</span>
+              <details className="theme-card overflow-hidden">
+                <summary className="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
+                  <span className="font-semibold text-sm" style={{ color: 'var(--ds-text)' }}>期別メンバー</span>
+                  <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>{generationGroups.length}期</span>
                 </summary>
-                <div className="border-t border-gray-50 p-4 space-y-4">
+                <div className="p-4 space-y-4" style={{ borderTop: '1px solid var(--ds-border)' }}>
                   {generationGroups.map(([gen, genMembers]) => (
                     <div key={gen}>
                       <div className="flex items-center gap-2 mb-2">
-                        <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>
                           {gen}
                         </span>
-                        <span className="text-xs text-gray-400">{genMembers.length}人</span>
+                        <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>{genMembers.length}人</span>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {genMembers.map((m) => (
                           <Link
                             key={m.name}
                             href={`/person/${encodeURIComponent(m.name)}`}
-                            className="flex items-center gap-1 px-2.5 py-1 bg-gray-50 hover:bg-indigo-50 border border-gray-100 hover:border-indigo-200 rounded-lg text-xs font-medium text-slate-700 hover:text-indigo-600 transition-colors"
+                            className="theme-group-chip flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors"
+                            style={{ textDecoration: 'none' }}
                           >
                             {m.name}
                             {m.effectiveStatus !== 'active' && (
@@ -707,18 +708,19 @@ export default async function GroupPage({ params }: Props) {
 
             {/* 歴代メンバー（卒業/脱退メンバーが存在する場合のみ） */}
             {allFormerMembers.length > 0 && (
-              <details className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-                <summary className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
-                  <span className="font-semibold text-slate-700 text-sm">歴代メンバー</span>
-                  <span className="text-xs text-gray-400">全{allTimeMembers.length}人</span>
+              <details className="theme-card overflow-hidden">
+                <summary className="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
+                  <span className="font-semibold text-sm" style={{ color: 'var(--ds-text)' }}>歴代メンバー</span>
+                  <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>全{allTimeMembers.length}人</span>
                 </summary>
-                <div className="border-t border-gray-50 p-4">
+                <div className="p-4" style={{ borderTop: '1px solid var(--ds-border)' }}>
                   <div className="flex flex-wrap gap-1.5">
                     {allTimeMembers.map((m) => (
                       <Link
                         key={m.name}
                         href={`/person/${encodeURIComponent(m.name)}`}
-                        className="flex items-center gap-1 px-2.5 py-1 bg-gray-50 hover:bg-indigo-50 border border-gray-100 hover:border-indigo-200 rounded-lg text-xs font-medium text-slate-700 hover:text-indigo-600 transition-colors"
+                        className="theme-group-chip flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors"
+                        style={{ textDecoration: 'none' }}
                       >
                         {m.name}
                         {m.effectiveStatus !== 'active' && (
@@ -738,7 +740,7 @@ export default async function GroupPage({ params }: Props) {
           {/* ━━━ 2. 配信中の出演作品 ━━━ */}
           <section>
             <div className="flex items-center gap-3 mb-4">
-              <h2 className="text-base font-bold text-slate-800">配信中の出演作品</h2>
+              <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>配信中の出演作品</h2>
               {streamingWorks.length > 0 && (
                 <span className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
                   🟢 {streamingWorks.length}件
@@ -753,13 +755,13 @@ export default async function GroupPage({ params }: Props) {
                   ))}
                 </div>
                 {streamingWorks.length > 12 && (
-                  <p className="text-xs text-gray-400 text-center mt-3">
+                  <p className="text-xs text-center mt-3" style={{ color: 'var(--ds-muted)' }}>
                     他 {streamingWorks.length - 12}件の配信中作品あり
                   </p>
                 )}
               </>
             ) : (
-              <p className="text-sm text-gray-500 bg-white rounded-xl border border-gray-100 px-4 py-3">
+              <p className="text-sm px-4 py-3 rounded-xl" style={{ color: 'var(--ds-muted)', background: 'var(--ds-surface)', border: '1px solid var(--ds-border)' }}>
                 現在、配信情報を確認中です
               </p>
             )}
@@ -768,19 +770,19 @@ export default async function GroupPage({ params }: Props) {
           {/* ━━━ 3. 年代別作品 ━━━ */}
           {allWorks.length > 0 && (
             <section>
-              <h2 className="text-base font-bold text-slate-800 mb-4">年代別作品</h2>
+              <h2 className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>年代別作品</h2>
               <div className="space-y-2.5">
                 {decades.map(([decade, works], idx) => (
                   <details
                     key={decade}
                     open={idx === 0}
-                    className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
+                    className="theme-card overflow-hidden"
                   >
-                    <summary className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
-                      <span className="font-semibold text-slate-700 text-sm">{decade}</span>
-                      <span className="text-xs text-gray-400">{works.length}件</span>
+                    <summary className="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
+                      <span className="font-semibold text-sm" style={{ color: 'var(--ds-text)' }}>{decade}</span>
+                      <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>{works.length}件</span>
                     </summary>
-                    <div className="border-t border-gray-50 p-4">
+                    <div className="p-4" style={{ borderTop: '1px solid var(--ds-border)' }}>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                         {works.map((work) => (
                           <CompactWorkLink key={work.id} work={work} />
@@ -796,7 +798,7 @@ export default async function GroupPage({ params }: Props) {
           {/* ━━━ 4. ジャンル別（映画 / ドラマ）━━━ */}
           {allWorks.length > 0 && (
             <section>
-              <h2 className="text-base font-bold text-slate-800 mb-4">映画・ドラマ別</h2>
+              <h2 className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>映画・ドラマ別</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[
                   { label: '映画', icon: '🎬', works: movieWorks },
@@ -804,15 +806,15 @@ export default async function GroupPage({ params }: Props) {
                 ].map(({ label, icon, works: typeWorks }) => (
                   <details
                     key={label}
-                    className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
+                    className="theme-card overflow-hidden"
                   >
-                    <summary className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
-                      <span className="font-semibold text-slate-700 text-sm">
+                    <summary className="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
+                      <span className="font-semibold text-sm" style={{ color: 'var(--ds-text)' }}>
                         {icon} {label}
                       </span>
-                      <span className="text-xs text-gray-400">{typeWorks.length}件</span>
+                      <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>{typeWorks.length}件</span>
                     </summary>
-                    <div className="border-t border-gray-50 p-4">
+                    <div className="p-4" style={{ borderTop: '1px solid var(--ds-border)' }}>
                       {typeWorks.length > 0 ? (
                         <>
                           <div className="grid grid-cols-1 gap-1">
@@ -821,13 +823,13 @@ export default async function GroupPage({ params }: Props) {
                             ))}
                           </div>
                           {typeWorks.length > 10 && (
-                            <p className="text-xs text-gray-400 text-center mt-2">
+                            <p className="text-xs text-center mt-2" style={{ color: 'var(--ds-muted)' }}>
                               他 {typeWorks.length - 10}件
                             </p>
                           )}
                         </>
                       ) : (
-                        <p className="text-xs text-gray-400">出演作品を整理中です</p>
+                        <p className="text-xs" style={{ color: 'var(--ds-muted)' }}>出演作品を整理中です</p>
                       )}
                     </div>
                   </details>
@@ -839,34 +841,34 @@ export default async function GroupPage({ params }: Props) {
           {/* ━━━ 5. 配信サービス別作品 ━━━ */}
           {providerGroups.length > 0 && (
             <section>
-              <h2 className="text-base font-bold text-slate-800 mb-4">配信サービス別作品</h2>
+              <h2 className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>配信サービス別作品</h2>
               <div className="space-y-2.5">
                 {providerGroups.map(([providerName, { logoPath, works: pWorks }]) => (
                   <details
                     key={providerName}
-                    className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
+                    className="theme-card overflow-hidden"
                   >
-                    <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
+                    <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
                       <ProviderLogo
                         providerName={providerName}
                         logoPath={logoPath}
                         size="md"
                       />
-                      <span className="font-semibold text-slate-700 text-sm flex-1">
+                      <span className="font-semibold text-sm flex-1" style={{ color: 'var(--ds-text)' }}>
                         {providerName}
                       </span>
                       <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
                         {pWorks.length}件
                       </span>
                     </summary>
-                    <div className="border-t border-gray-50 p-4">
+                    <div className="p-4" style={{ borderTop: '1px solid var(--ds-border)' }}>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
                         {pWorks.slice(0, MAX_WORKS_PER_PROVIDER).map((work) => (
                           <CompactWorkLink key={work.id} work={work} />
                         ))}
                       </div>
                       {pWorks.length > MAX_WORKS_PER_PROVIDER && (
-                        <p className="text-xs text-gray-400 text-center mt-2">
+                        <p className="text-xs text-center mt-2" style={{ color: 'var(--ds-muted)' }}>
                           他 {pWorks.length - MAX_WORKS_PER_PROVIDER}件
                         </p>
                       )}
@@ -879,7 +881,7 @@ export default async function GroupPage({ params }: Props) {
 
           {/* ━━━ 6. 関連商品 ━━━ */}
           <section>
-            <h2 className="text-base font-bold text-slate-800 mb-4">関連商品</h2>
+            <h2 className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>関連商品</h2>
             {productSections.some((s) => s.newProducts.length > 0 || s.usedProducts.length > 0) ? (
               <div className="space-y-7">
                 {productSections.map(({ label, icon, newProducts, usedProducts }) => {
@@ -894,10 +896,10 @@ export default async function GroupPage({ params }: Props) {
                   return (
                     <div key={label}>
                       <div className="flex items-center justify-between mb-3">
-                        <h3 className="text-sm font-semibold text-slate-700">
+                        <h3 className="text-sm font-semibold" style={{ color: 'var(--ds-text)' }}>
                           {icon} {label}
                         </h3>
-                        <span className="text-xs text-gray-400">{totalCount}件</span>
+                        <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>{totalCount}件</span>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                         {displayNew.map((p) => (
@@ -908,7 +910,7 @@ export default async function GroupPage({ params }: Props) {
                         ))}
                       </div>
                       {totalCount > displayed && (
-                        <p className="text-xs text-gray-400 text-center mt-2">
+                        <p className="text-xs text-center mt-2" style={{ color: 'var(--ds-muted)' }}>
                           他 {totalCount - displayed}件
                         </p>
                       )}
@@ -917,7 +919,7 @@ export default async function GroupPage({ params }: Props) {
                 })}
               </div>
             ) : (
-              <p className="text-sm text-gray-500 bg-white rounded-xl border border-gray-100 px-4 py-3">
+              <p className="text-sm px-4 py-3 rounded-xl" style={{ color: 'var(--ds-muted)', background: 'var(--ds-surface)', border: '1px solid var(--ds-border)' }}>
                 関連商品は確認中です
               </p>
             )}
@@ -926,16 +928,17 @@ export default async function GroupPage({ params }: Props) {
           {/* ━━━ 7. 関連グループ ━━━ */}
           {relatedGroupNames.length > 0 && (
             <section>
-              <h2 className="text-base font-bold text-slate-800 mb-4">関連グループ</h2>
+              <h2 className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>関連グループ</h2>
               <div className="flex flex-wrap gap-2.5">
                 {relatedGroupNames.map((g) => (
                   <Link
                     key={g}
                     href={`/group/${encodeURIComponent(g)}`}
-                    className="flex items-center gap-1.5 px-4 py-2.5 bg-white border border-gray-200 rounded-xl hover:border-indigo-400 hover:text-indigo-600 transition-colors text-sm font-medium text-slate-700 shadow-sm"
+                    className="theme-group-chip flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium shadow-sm"
+                    style={{ textDecoration: 'none', minHeight: '44px' }}
                   >
                     {g}
-                    <span className="text-gray-300 text-xs">›</span>
+                    <span className="text-xs" style={{ color: 'var(--ds-muted)', opacity: 0.5 }}>›</span>
                   </Link>
                 ))}
               </div>
@@ -944,22 +947,22 @@ export default async function GroupPage({ params }: Props) {
 
           {/* ━━━ 8. FAQ ━━━ */}
           <section>
-            <h2 className="text-base font-bold text-slate-800 mb-4">よくある質問</h2>
+            <h2 className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>よくある質問</h2>
             <div className="space-y-2">
               {faqItems.map(({ q, a }) => (
                 <details
                   key={q}
-                  className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
+                  className="theme-card overflow-hidden"
                 >
-                  <summary className="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
-                    <span className="text-indigo-500 font-black text-sm flex-shrink-0 w-5 text-center">Q</span>
-                    <span className="font-semibold text-slate-700 text-sm flex-1">{q}</span>
-                    <span className="text-gray-300 text-xs flex-shrink-0">›</span>
+                  <summary className="flex items-center gap-3 px-4 py-3.5 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
+                    <span className="font-black text-sm flex-shrink-0 w-5 text-center" style={{ color: 'var(--ds-primary)' }}>Q</span>
+                    <span className="font-semibold text-sm flex-1" style={{ color: 'var(--ds-text)' }}>{q}</span>
+                    <span className="text-xs flex-shrink-0" style={{ color: 'var(--ds-muted)' }}>›</span>
                   </summary>
-                  <div className="border-t border-gray-50 px-4 py-3.5">
+                  <div className="px-4 py-3.5" style={{ borderTop: '1px solid var(--ds-border)' }}>
                     <div className="flex gap-3">
                       <span className="text-emerald-500 font-black text-sm flex-shrink-0 w-5 text-center">A</span>
-                      <p className="text-sm text-gray-600 leading-relaxed">{a}</p>
+                      <p className="text-sm leading-relaxed" style={{ color: 'var(--ds-muted)' }}>{a}</p>
                     </div>
                   </div>
                 </details>

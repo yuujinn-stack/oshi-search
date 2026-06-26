@@ -100,7 +100,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
     : null;
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden hover:shadow-lg transition-all duration-200 flex flex-col h-full">
+    <div className="work-card-root">
       {/* ポスター（クリックで作品詳細へ） */}
       <Link href={workDetailUrl} className="block">
         {work.posterUrl && posterLayout ? (
@@ -133,11 +133,11 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
           </div>
         ) : (
           /* 画像なし用コンパクトヘッダー */
-          <div className="relative h-20 bg-gradient-to-br from-slate-100 via-indigo-50 to-slate-100 overflow-hidden flex-shrink-0 flex items-center px-4 gap-3">
+          <div className="work-card-no-poster relative h-20 overflow-hidden flex-shrink-0 flex items-center px-4 gap-3">
             <WorkTypeIcon type={work.type} />
             <div className="flex flex-col gap-0.5 min-w-0">
-              <span className="text-[10px] text-slate-400 font-medium">画像なし</span>
-              <span className="text-xs bg-black/20 text-slate-600 px-1.5 py-0.5 rounded-full self-start">
+              <span className="text-[10px] font-medium" style={{ color: 'var(--ds-muted)' }}>画像なし</span>
+              <span className="text-xs px-1.5 py-0.5 rounded-full self-start" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>
                 {work.type === 'movie' ? '映画' : 'ドラマ・TV'}
               </span>
             </div>
@@ -158,17 +158,15 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
       <div className="flex flex-col flex-1 p-3 gap-2">
         {/* タイトル・年・役 */}
         <div>
-          <Link href={workDetailUrl}>
-            <p className="font-bold text-slate-800 text-sm leading-tight line-clamp-2 hover:text-indigo-700 transition-colors">
-              {work.title}
-            </p>
+          <Link href={workDetailUrl} className="work-card-title">
+            {work.title}
           </Link>
-          <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-400">
+          <div className="flex items-center gap-1.5 mt-1 text-xs" style={{ color: 'var(--ds-muted)' }}>
             {work.releaseYear && <span>{work.releaseYear}年</span>}
             {work.roleName && (
               <>
                 <span>·</span>
-                <span className="text-indigo-500 line-clamp-1">役: {work.roleName}</span>
+                <span className="line-clamp-1" style={{ color: 'var(--ds-primary)' }}>役: {work.roleName}</span>
               </>
             )}
           </div>
@@ -235,7 +233,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
         {/* 作品詳細ボタン（常に内部リンク） */}
         <Link
           href={workDetailUrl}
-          className="block text-center text-xs font-semibold text-indigo-600 border border-indigo-300 hover:bg-indigo-50 py-1.5 rounded-xl transition-colors"
+          className="work-card-detail-btn"
           onClick={() => trackWorkClick(work.id, work.title, work.personName, work.type, work.posterUrl ?? '')}
         >
           作品詳細 →

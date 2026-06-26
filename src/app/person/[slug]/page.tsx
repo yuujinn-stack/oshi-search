@@ -283,26 +283,26 @@ export default async function PersonPage({ params }: Props) {
       {/* ─── 閲覧数記録（30分以内は重複カウントしない） ─── */}
       <PageViewTracker entity="person" slug={name} />
 
-      <div className="min-h-screen bg-gray-50">
+      <div className="page-bg">
 
         {/* ─── パンくず ─── */}
-        <nav aria-label="パンくずリスト" className="bg-white border-b border-gray-200">
-          <div className="max-w-4xl mx-auto px-4 py-2.5 flex items-center gap-1.5 text-xs text-gray-500 flex-wrap">
-            <Link href="/" className="hover:text-indigo-600 transition-colors">ホーム</Link>
-            <span className="text-gray-300">›</span>
-            <Link href={`/genre/${encodeURIComponent(person.genre)}`} className="hover:text-indigo-600 transition-colors">
+        <nav aria-label="パンくずリスト" className="breadcrumb-bar">
+          <div className="max-w-4xl mx-auto px-4 py-2.5 flex items-center gap-1.5 text-xs flex-wrap" style={{ color: 'var(--ds-muted)' }}>
+            <Link href="/" className="theme-text-link">ホーム</Link>
+            <span style={{ opacity: 0.4 }}>›</span>
+            <Link href={`/genre/${encodeURIComponent(person.genre)}`} className="theme-text-link">
               {person.genre}
             </Link>
             {person.group && (
               <>
-                <span className="text-gray-300">›</span>
-                <Link href={`/group/${encodeURIComponent(person.group)}`} className="hover:text-indigo-600 transition-colors">
+                <span style={{ opacity: 0.4 }}>›</span>
+                <Link href={`/group/${encodeURIComponent(person.group)}`} className="theme-text-link">
                   {person.group}
                 </Link>
               </>
             )}
-            <span className="text-gray-300">›</span>
-            <span className="text-slate-700 font-medium">{person.name}</span>
+            <span style={{ opacity: 0.4 }}>›</span>
+            <span className="font-medium" style={{ color: 'var(--ds-text)' }}>{person.name}</span>
           </div>
         </nav>
 
@@ -416,35 +416,37 @@ export default async function PersonPage({ params }: Props) {
         </div>
 
         {/* ─── CTA ─── */}
-        <div className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="breadcrumb-bar shadow-sm">
           <div className="max-w-4xl mx-auto px-4 py-3">
             <div className="flex gap-2.5 overflow-x-auto scrollbar-none pb-0.5">
               {hasProducts && (
                 <a
                   href="#products"
-                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-colors min-h-[44px]"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-xl transition-colors min-h-[44px]"
+                  style={{ background: 'var(--ds-cta)', color: 'var(--ds-cta-text)' }}
                 >
                   🛍 関連商品を見る
                   {totalProductCount > 0 && (
-                    <span className="text-xs bg-white/25 px-1.5 py-0.5 rounded-full">{totalProductCount}</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.25)' }}>{totalProductCount}</span>
                   )}
                 </a>
               )}
               {hasWorks && (
                 <a
                   href="#works"
-                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 bg-white hover:bg-gray-50 text-slate-700 text-sm font-bold rounded-xl border border-gray-200 transition-colors min-h-[44px]"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-xl transition-colors min-h-[44px]"
+                  style={{ background: 'var(--ds-surface)', color: 'var(--ds-text)', border: '1px solid var(--ds-border)' }}
                 >
                   🎬 出演作品を見る
                   {publishedWorks.length > 0 && (
-                    <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">{publishedWorks.length}</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>{publishedWorks.length}</span>
                   )}
                 </a>
               )}
               {hasVod && (
                 <a
                   href="#vod"
-                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded-xl transition-colors min-h-[44px]"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-xl transition-colors min-h-[44px] bg-green-600 hover:bg-green-700 text-white"
                 >
                   ▶ 配信を見る
                   <span className="text-xs bg-white/25 px-1.5 py-0.5 rounded-full">{streamingWorks.length}件</span>
@@ -460,9 +462,9 @@ export default async function PersonPage({ params }: Props) {
           {/* ━━━ 商品セクション ━━━ */}
           <section id="products">
             <div className="flex items-center gap-2 mb-5">
-              <h2 className="text-base font-bold text-slate-800">🛍 関連商品</h2>
+              <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>🛍 関連商品</h2>
               {hasProducts && (
-                <span className="text-xs font-semibold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>
                   {totalProductCount}件
                 </span>
               )}
@@ -490,8 +492,8 @@ export default async function PersonPage({ params }: Props) {
             <section id="works">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold text-slate-800">🎬 出演作品</h2>
-                  <span className="text-xs font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
+                  <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>🎬 出演作品</h2>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>
                     {publishedWorks.length}件
                   </span>
                 </div>
@@ -513,7 +515,7 @@ export default async function PersonPage({ params }: Props) {
           {providerGroups.length > 0 && (
             <section id="vod">
               <div className="flex items-center gap-2 mb-4">
-                <h2 className="text-base font-bold text-slate-800">▶ 配信情報</h2>
+                <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>▶ 配信情報</h2>
                 <span className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
                   🟢 {streamingWorks.length}件配信中
                 </span>
@@ -523,22 +525,23 @@ export default async function PersonPage({ params }: Props) {
                 {providerGroups.map(([providerName, { logoPath, works: pWorks }]) => (
                   <details
                     key={providerName}
-                    className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
+                    className="theme-card overflow-hidden"
                   >
-                    <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
+                    <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
                       <ProviderLogo providerName={providerName} logoPath={logoPath} size="md" />
-                      <span className="font-semibold text-slate-700 text-sm flex-1">{providerName}</span>
+                      <span className="font-semibold text-sm flex-1" style={{ color: 'var(--ds-text)' }}>{providerName}</span>
                       <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">
                         {pWorks.length}件
                       </span>
                     </summary>
-                    <div className="border-t border-gray-50 px-4 py-3">
+                    <div className="px-4 py-3" style={{ borderTop: '1px solid var(--ds-border)' }}>
                       <div className="space-y-2">
                         {pWorks.slice(0, 8).map((work) => (
                           <Link
                             key={work.id}
                             href={`/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`}
-                            className="flex items-center gap-2 py-1 hover:text-indigo-600 transition-colors group"
+                            className="flex items-center gap-2 py-1 transition-colors group theme-text-link"
+                            style={{ color: 'var(--ds-text)', textDecoration: 'none' }}
                           >
                             {work.posterUrl ? (
                               // eslint-disable-next-line @next/next/no-img-element
@@ -549,22 +552,22 @@ export default async function PersonPage({ params }: Props) {
                                 loading="lazy"
                               />
                             ) : (
-                              <div className="w-8 h-12 bg-gray-100 rounded flex items-center justify-center text-gray-300 text-sm flex-shrink-0">
+                              <div className="w-8 h-12 rounded flex items-center justify-center text-sm flex-shrink-0" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-muted)' }}>
                                 🎬
                               </div>
                             )}
                             <div className="min-w-0">
-                              <p className="text-xs font-medium text-slate-700 line-clamp-2 group-hover:text-indigo-600 transition-colors leading-tight">
+                              <p className="text-xs font-medium line-clamp-2 leading-tight transition-colors" style={{ color: 'var(--ds-text)' }}>
                                 {work.title}
                               </p>
                               {work.releaseYear && (
-                                <p className="text-[10px] text-gray-400 mt-0.5">{work.releaseYear}年</p>
+                                <p className="text-[10px] mt-0.5" style={{ color: 'var(--ds-muted)' }}>{work.releaseYear}年</p>
                               )}
                             </div>
                           </Link>
                         ))}
                         {pWorks.length > 8 && (
-                          <p className="text-xs text-gray-400 text-center pt-1">他 {pWorks.length - 8}件</p>
+                          <p className="text-xs text-center pt-1" style={{ color: 'var(--ds-muted)' }}>他 {pWorks.length - 8}件</p>
                         )}
                       </div>
                     </div>
@@ -578,12 +581,13 @@ export default async function PersonPage({ params }: Props) {
           {related.length > 0 && (
             <section>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base font-bold text-slate-800">
+                <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>
                   {person.group} のメンバー
                 </h2>
                 <Link
                   href={`/group/${encodeURIComponent(person.group)}`}
-                  className="text-indigo-600 text-sm font-medium hover:underline"
+                  className="theme-text-link text-sm font-medium"
+                  style={{ textDecoration: 'none' }}
                 >
                   グループページへ →
                 </Link>
@@ -598,22 +602,22 @@ export default async function PersonPage({ params }: Props) {
 
           {/* ━━━ FAQ ━━━ */}
           <section>
-            <h2 className="text-base font-bold text-slate-800 mb-4">よくある質問</h2>
+            <h2 className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>よくある質問</h2>
             <div className="space-y-2">
               {faqItems.map(({ q, a }) => (
                 <details
                   key={q}
-                  className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
+                  className="theme-card overflow-hidden"
                 >
-                  <summary className="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
-                    <span className="text-indigo-500 font-black text-sm w-5 text-center flex-shrink-0">Q</span>
-                    <span className="font-semibold text-slate-700 text-sm flex-1">{q}</span>
-                    <span className="text-gray-300 text-xs flex-shrink-0">›</span>
+                  <summary className="flex items-center gap-3 px-4 py-3.5 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
+                    <span className="font-black text-sm w-5 text-center flex-shrink-0" style={{ color: 'var(--ds-primary)' }}>Q</span>
+                    <span className="font-semibold text-sm flex-1" style={{ color: 'var(--ds-text)' }}>{q}</span>
+                    <span className="text-xs flex-shrink-0" style={{ color: 'var(--ds-muted)' }}>›</span>
                   </summary>
-                  <div className="border-t border-gray-50 px-4 py-3.5">
+                  <div className="px-4 py-3.5" style={{ borderTop: '1px solid var(--ds-border)' }}>
                     <div className="flex gap-3">
                       <span className="text-emerald-500 font-black text-sm w-5 text-center flex-shrink-0">A</span>
-                      <p className="text-sm text-gray-600 leading-relaxed">{a}</p>
+                      <p className="text-sm leading-relaxed" style={{ color: 'var(--ds-muted)' }}>{a}</p>
                     </div>
                   </div>
                 </details>
