@@ -191,14 +191,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const members = allPersons.filter((p) => p.group === groupName);
   if (members.length === 0) return {};
 
+  const memberCount = allPersons.filter((p) => p.group === groupName).length;
+  const title = `${groupName} | メンバー・出演作品・グッズ・配信情報まとめ`;
+  const description = `${groupName}のメンバー${memberCount}人の出演作品・配信中作品・写真集・CD・Blu-ray・グッズをまとめて掲載。楽天で購入・VODで視聴できます。`;
   return {
-    title: `${groupName} メンバー一覧・出演作品・配信情報`,
-    description: `${groupName}のメンバー、出演作品、配信中作品、関連商品をまとめて掲載。`,
-    openGraph: {
-      title: `${groupName} メンバー一覧・出演作品・配信情報`,
-      description: `${groupName}のメンバー、出演作品、配信中作品、関連商品をまとめて掲載。`,
-      type: 'website',
-    },
+    title,
+    description,
+    openGraph: { title, description, type: 'website' },
   };
 }
 
@@ -435,6 +434,29 @@ export default async function GroupPage({ params }: Props) {
     return allPersons.filter((p) => p.group === g).some((p) => p.genre === genre);
   });
 
+  // ── FAQ ──
+  const topProviders = providerGroups.slice(0, 3).map(([name]) => name);
+  const faqItems = [
+    {
+      q: `${groupName}のメンバーは何人ですか？`,
+      a: hasStatusData && allFormerMembers.length > 0
+        ? `現役メンバーは${activeMembers.length}人です。卒業・脱退メンバーを含めた歴代メンバーは${allTimeMembers.length}人います。`
+        : `${members.length}人のメンバーが登録されています。`,
+    },
+    {
+      q: `${groupName}はどこで視聴できますか？`,
+      a: streamingWorks.length > 0
+        ? `${streamingWorks.length}件の出演作品が配信中です。${topProviders.length > 0 ? `${topProviders.join('・')}などで視聴できます。` : ''}`
+        : '現在、配信情報を確認中です。各VODサービスで検索してみてください。',
+    },
+    {
+      q: `${groupName}の写真集・グッズはどこで買えますか？`,
+      a: totalProductCount > 0
+        ? `このページから楽天市場・楽天ブックスで${totalProductCount}件の関連商品を購入できます。写真集・CD・Blu-ray・グッズなどを掲載しています。`
+        : '楽天市場・楽天ブックスで関連商品を検索できます。',
+    },
+  ];
+
   // ── JSON-LD ──
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.vercel.app';
   const groupUrl = `${siteOrigin}/group/${encodeURIComponent(groupName)}`;
@@ -460,6 +482,16 @@ export default async function GroupPage({ params }: Props) {
     ],
   };
 
+  const faqJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faqItems.map(({ q, a }) => ({
+      '@type': 'Question',
+      name: q,
+      acceptedAnswer: { '@type': 'Answer', text: a },
+    })),
+  };
+
   const gradient = GENRE_GRADIENT[genre] ?? 'from-indigo-500 to-indigo-700';
   const badge = GENRE_BADGE[genre] ?? 'bg-gray-100 text-gray-600';
 
@@ -472,6 +504,10 @@ export default async function GroupPage({ params }: Props) {
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
       />
 
       <div className="min-h-screen bg-gray-50">
@@ -497,6 +533,11 @@ export default async function GroupPage({ params }: Props) {
                 <span className={`inline-block mt-1.5 text-xs px-3 py-1 rounded-full font-bold ${badge}`}>
                   {genre}
                 </span>
+                {groupMeta?.note && (
+                  <p className="text-white/70 text-sm mt-2 leading-relaxed max-w-sm">
+                    {groupMeta.note}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -508,7 +549,7 @@ export default async function GroupPage({ params }: Props) {
                   value: hasStatusData ? activeMembers.length : members.length,
                   unit: '人',
                   sub: hasStatusData && allFormerMembers.length > 0
-                    ? `歴代 ${allTimeMembers.length}人`
+                    ? `卒業 ${allFormerMembers.length}人`
                     : undefined,
                 },
                 { label: '出演作品', value: allWorks.length, unit: '件' },
@@ -883,6 +924,31 @@ export default async function GroupPage({ params }: Props) {
               </div>
             </section>
           )}
+
+          {/* ━━━ 8. FAQ ━━━ */}
+          <section>
+            <h2 className="text-base font-bold text-slate-800 mb-4">よくある質問</h2>
+            <div className="space-y-2">
+              {faqItems.map(({ q, a }) => (
+                <details
+                  key={q}
+                  className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
+                >
+                  <summary className="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
+                    <span className="text-indigo-500 font-black text-sm flex-shrink-0 w-5 text-center">Q</span>
+                    <span className="font-semibold text-slate-700 text-sm flex-1">{q}</span>
+                    <span className="text-gray-300 text-xs flex-shrink-0">›</span>
+                  </summary>
+                  <div className="border-t border-gray-50 px-4 py-3.5">
+                    <div className="flex gap-3">
+                      <span className="text-emerald-500 font-black text-sm flex-shrink-0 w-5 text-center">A</span>
+                      <p className="text-sm text-gray-600 leading-relaxed">{a}</p>
+                    </div>
+                  </div>
+                </details>
+              ))}
+            </div>
+          </section>
 
         </div>
       </div>
