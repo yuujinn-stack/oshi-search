@@ -103,16 +103,47 @@ export default async function SearchPage({ searchParams }: Props) {
   }
 
   // ── グループ検索 ──────────────────────────────────────────────────────────
-  const matchingGroups = query
-    ? allGroupMetas.filter((g) => {
-        const ql = query.toLowerCase();
-        return (
-          g.groupName.toLowerCase().includes(ql) ||
-          (g.formerNames ?? []).some((n) => n.toLowerCase().includes(ql)) ||
-          g.renamedFrom?.toLowerCase().includes(ql)
-        );
-      })
-    : [];
+  // primary source: allPersons の group フィールド（admin:groups 未登録でも検出）
+  // secondary:      allGroupMetas の formerNames / renamedFrom
+  const matchingGroups: GroupMeta[] = (() => {
+    if (!query) return [];
+    const ql = query.toLowerCase();
+
+    // 1. personsのgroupフィールドから一致するグループ名を収集
+    const matched = new Set<string>();
+    for (const p of allPersons) {
+      if (p.group && p.group.toLowerCase().includes(ql)) {
+        matched.add(p.group);
+      }
+    }
+
+    // 2. allGroupMetas の旧名・改名元からも補完
+    for (const g of allGroupMetas) {
+      if (
+        (g.formerNames ?? []).some((n) => n.toLowerCase().includes(ql)) ||
+        g.renamedFrom?.toLowerCase().includes(ql)
+      ) {
+        matched.add(g.groupName);
+      }
+    }
+
+    // 3. 各グループ名に GroupMeta を付与（メタがなければ最小構造で生成）
+    const metaByName = new Map(allGroupMetas.map((g) => [g.groupName, g]));
+    return [...matched].map(
+      (name) =>
+        metaByName.get(name) ?? {
+          groupName: name,
+          slug: encodeURIComponent(name),
+          activityStatus: 'active' as const,
+        },
+    );
+  })();
+
+  // デバッグログ（Vercel Functions ログで確認可能）
+  console.log(`[search] query="${query}" persons=${persons.length} allGroupMetas=${allGroupMetas.length} matchingGroups=${matchingGroups.length}`);
+  if (matchingGroups.length > 0) {
+    console.log('[search] matchingGroups:', matchingGroups.map((g) => g.groupName));
+  }
 
   // ── グループ別メンバー数 ──────────────────────────────────────────────────
   const memberCountMap: Record<string, { active: number; former: number }> = {};
