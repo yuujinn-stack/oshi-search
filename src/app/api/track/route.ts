@@ -3,8 +3,8 @@ import { getRedis } from '@/lib/redis';
 
 type TrackEvent =
   | { type: 'view'; entity: 'person' | 'group'; slug: string }
-  | { type: 'product'; productId: string; slug: string; title?: string; category?: string }
-  | { type: 'work'; workId: string; title?: string; personName?: string; workType?: string }
+  | { type: 'product'; productId: string; slug: string; title?: string; category?: string; imageUrl?: string; affiliateUrl?: string }
+  | { type: 'work'; workId: string; title?: string; personName?: string; workType?: string; posterUrl?: string }
   | { type: 'vod'; service: string };
 
 export async function POST(req: NextRequest) {
@@ -32,6 +32,8 @@ export async function POST(req: NextRequest) {
             title: body.title,
             personSlug: body.slug ?? '',
             category: body.category ?? '',
+            imageUrl: body.imageUrl ?? '',
+            affiliateUrl: body.affiliateUrl ?? '',
           });
         }
         await pipe.exec();
@@ -46,6 +48,7 @@ export async function POST(req: NextRequest) {
             title: body.title,
             personName: body.personName ?? '',
             workType: body.workType ?? '',
+            posterUrl: body.posterUrl ?? '',
           });
         }
         await pipe.exec();

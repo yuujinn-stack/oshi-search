@@ -5,11 +5,11 @@ import type { WorkRecord } from '@/types/work';
 import { deduplicateProviders } from '@/lib/vod-dedup';
 import ProviderLogo from '@/components/ProviderLogo';
 
-function trackWorkClick(workId: string, title: string, personName: string, workType: string) {
+function trackWorkClick(workId: string, title: string, personName: string, workType: string, posterUrl: string) {
   fetch('/api/track', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'work', workId, title, personName, workType }),
+    body: JSON.stringify({ type: 'work', workId, title, personName, workType, posterUrl }),
   }).catch(() => {});
 }
 
@@ -236,7 +236,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
         <Link
           href={workDetailUrl}
           className="block text-center text-xs font-semibold text-indigo-600 border border-indigo-300 hover:bg-indigo-50 py-1.5 rounded-xl transition-colors"
-          onClick={() => trackWorkClick(work.id, work.title, work.personName, work.type)}
+          onClick={() => trackWorkClick(work.id, work.title, work.personName, work.type, work.posterUrl ?? '')}
         >
           作品詳細 →
         </Link>

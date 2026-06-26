@@ -388,3 +388,20 @@ body {
 .mini-product-link:hover .mini-product-name {
   color: var(--ds-primary);
 }
+
+/* ─── 人気検索チップ ─────────────────────────────────────────────────── */
+.theme-search-chip:hover {
+  border-color: var(--ds-primary);
+  color: var(--ds-primary);
+}
+
+/* ─── 人気商品グリッド (responsive) ──────────────────────────────────── */
+.popular-products-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 640px) {
+  .popular-products-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (min-width: 900px) {
+  .popular-products-grid { grid-template-columns: repeat(4, 1fr); }
+}
