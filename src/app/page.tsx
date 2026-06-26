@@ -39,9 +39,9 @@ export default async function HomePage() {
               lineHeight: 1.25,
             }}
           >
-            推しの出演作品・関連商品・
+            推しの出演作品・写真集・CD・
             <wbr />
-            配信情報をまとめて探せる
+            配信情報をまとめて検索
           </h1>
           <p
             style={{
@@ -51,16 +51,35 @@ export default async function HomePage() {
               lineHeight: 1.65,
             }}
           >
-            アイドル・俳優・芸人など、気になる人の作品やグッズをかんたん検索
+            楽天の商品も、出演作品も、配信サービスも一度に探せます。
           </p>
 
           <HeroSearchForm />
-
-          <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '12px', marginTop: '20px' }}>
-            現在 {persons.length} 人のデータを収録中
-          </p>
         </div>
       </section>
+
+      {/* ━━━ スタッツバー ━━━ */}
+      <div className="hero-stats-bar">
+        <div className="hero-stat">
+          <span className="hero-stat-num">{persons.length}</span>
+          <span className="hero-stat-label">登録タレント</span>
+        </div>
+        <div className="hero-stat-divider" aria-hidden="true" />
+        <div className="hero-stat">
+          <span className="hero-stat-num">{groups.length}</span>
+          <span className="hero-stat-label">グループ対応</span>
+        </div>
+        <div className="hero-stat-divider" aria-hidden="true" />
+        <div className="hero-stat">
+          <span className="hero-stat-num">楽天</span>
+          <span className="hero-stat-label">商品情報を網羅</span>
+        </div>
+        <div className="hero-stat-divider" aria-hidden="true" />
+        <div className="hero-stat">
+          <span className="hero-stat-num">VOD</span>
+          <span className="hero-stat-label">配信先をまとめて確認</span>
+        </div>
+      </div>
 
       {/* ━━━ メインコンテンツ ━━━ */}
       <div

@@ -293,3 +293,62 @@ body {
 .home-person-card:hover .person-name {
   color: var(--ds-primary);
 }
+
+/* ─── スタッツバー (Hero直下) ────────────────────────────────────────── */
+.hero-stats-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0;
+  background: var(--ds-surface);
+  border-bottom: 1px solid var(--ds-border);
+  padding: 14px 16px;
+  min-height: 72px; /* CLS防止 */
+}
+
+.hero-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 20px;
+  gap: 2px;
+}
+
+.hero-stat-num {
+  font-size: 20px;
+  font-weight: 900;
+  color: var(--ds-primary);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.hero-stat-label {
+  font-size: 11px;
+  color: var(--ds-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.hero-stat-divider {
+  width: 1px;
+  height: 32px;
+  background: var(--ds-border);
+  flex-shrink: 0;
+}
+
+@media (max-width: 479px) {
+  .hero-stats-bar {
+    gap: 0;
+    padding: 10px 8px;
+  }
+  .hero-stat {
+    padding: 4px 12px;
+  }
+  .hero-stat-num {
+    font-size: 16px;
+  }
+  .hero-stat-label {
+    font-size: 10px;
+  }
+}

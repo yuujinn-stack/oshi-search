@@ -35,7 +35,7 @@ export default function HeroSearchForm() {
           autoComplete="off"
         />
         <button type="submit" className="hero-search-btn">
-          検索
+          検索する
         </button>
       </form>
 
