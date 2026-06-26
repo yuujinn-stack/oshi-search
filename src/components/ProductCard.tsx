@@ -27,8 +27,16 @@ function StarRating({ avg, count }: { avg: number; count: number }) {
   );
 }
 
+function trackProductClick(productId: string, personSlug: string) {
+  fetch('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'product', productId, slug: personSlug }),
+  }).catch(() => {});
+}
+
 // ─── 商品カード ───────────────────────────────────────────────────────────────
-export default function ProductCard({ product }: { product: RakutenItem }) {
+export default function ProductCard({ product, personSlug = '' }: { product: RakutenItem; personSlug?: string }) {
   const [loaded, setLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
 
@@ -134,6 +142,7 @@ export default function ProductCard({ product }: { product: RakutenItem }) {
             minHeight: '44px',
             textDecoration: 'none',
           }}
+          onClick={() => trackProductClick(product.id, personSlug)}
         >
           楽天で見る →
         </a>

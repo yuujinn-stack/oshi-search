@@ -12,6 +12,7 @@ import ProductTabList, { type ProductWithSection } from '@/components/ProductTab
 import PersonCard from '@/components/PersonCard';
 import WorkCard from '@/components/WorkCard';
 import ProviderLogo from '@/components/ProviderLogo';
+import PageViewTracker from '@/components/site/PageViewTracker';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
 import type { ActivityStatus } from '@/types/person';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
@@ -279,6 +280,8 @@ export default async function PersonPage({ params }: Props) {
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(personJsonLd) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
+      {/* ─── 閲覧数記録（30分以内は重複カウントしない） ─── */}
+      <PageViewTracker entity="person" slug={name} />
 
       <div className="min-h-screen bg-gray-50">
 
@@ -478,7 +481,7 @@ export default async function PersonPage({ params }: Props) {
                 関連商品は現在取得中です。しばらくお待ちください。
               </p>
             ) : (
-              <ProductTabList items={allProductItems} />
+              <ProductTabList items={allProductItems} personSlug={name} />
             )}
           </section>
 

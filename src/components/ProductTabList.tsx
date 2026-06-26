@@ -18,7 +18,7 @@ const TAB_ALL = 'すべて';
 const CATEGORY_TABS = ['写真集', 'CD', 'Blu-ray・DVD', 'グッズ', '本・雑誌', '中古'];
 
 // ─── コンポーネント ───────────────────────────────────────────────────────────
-export default function ProductTabList({ items }: { items: ProductWithSection[] }) {
+export default function ProductTabList({ items, personSlug = '' }: { items: ProductWithSection[]; personSlug?: string }) {
   const [activeTab, setActiveTab] = useState(TAB_ALL);
   const [sort, setSort] = useState<SortKey>('default');
   const [showAll, setShowAll] = useState(false);
@@ -117,7 +117,7 @@ export default function ProductTabList({ items }: { items: ProductWithSection[] 
       {displayed.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           {displayed.map(({ product }) => (
-            <ProductCard key={product.id} product={product} />
+            <ProductCard key={product.id} product={product} personSlug={personSlug} />
           ))}
         </div>
       ) : (

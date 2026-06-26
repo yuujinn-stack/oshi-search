@@ -1,7 +1,17 @@
+'use client';
+
 import Link from 'next/link';
 import type { WorkRecord } from '@/types/work';
 import { deduplicateProviders } from '@/lib/vod-dedup';
 import ProviderLogo from '@/components/ProviderLogo';
+
+function trackWorkClick(workId: string) {
+  fetch('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'work', workId }),
+  }).catch(() => {});
+}
 
 // 定額配信（flatrate）を最優先、次に無料・広告付き、購入・レンタルは後ろ
 const TYPE_ORDER: Record<string, number> = {
@@ -226,6 +236,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
         <Link
           href={workDetailUrl}
           className="block text-center text-xs font-semibold text-indigo-600 border border-indigo-300 hover:bg-indigo-50 py-1.5 rounded-xl transition-colors"
+          onClick={() => trackWorkClick(work.id)}
         >
           作品詳細 →
         </Link>

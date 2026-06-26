@@ -10,6 +10,7 @@ import type { ProductCategory } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
 import { deduplicateProviders, normalizeProviderName } from '@/lib/vod-dedup';
 import ProviderLogo from '@/components/ProviderLogo';
+import VodTrackLink from '@/components/site/VodTrackLink';
 
 interface Props {
   params: Promise<{ slug: string; workId: string }>;
@@ -415,14 +416,13 @@ export default async function WorkDetailPage({ params }: Props) {
                       </div>
                       {/* アクションボタン */}
                       {link ? (
-                        <a
+                        <VodTrackLink
                           href={link}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                          service={p.providerName}
                           className={`mt-3 flex items-center justify-center gap-1.5 w-full text-sm font-bold text-white py-2.5 rounded-xl transition-colors ${cfg.btn}`}
                         >
                           {p.providerName}で{cfg.btnLabel} →
-                        </a>
+                        </VodTrackLink>
                       ) : (
                         <p className="mt-3 text-xs text-center text-gray-400 py-1.5 bg-white/60 rounded-lg">
                           {p.providerName}で視聴可能（公式サイトでご確認ください）

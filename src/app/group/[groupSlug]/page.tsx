@@ -18,6 +18,7 @@ import type { VodProvider } from '@/types/vod';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import type { PersonWithConfig } from '@/types/person';
 import type { GroupMeta } from '@/types/group';
+import PageViewTracker from '@/components/site/PageViewTracker';
 
 export const dynamic = 'force-dynamic';
 
@@ -523,6 +524,8 @@ export default async function GroupPage({ params }: Props) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
       />
+      {/* ─── 閲覧数記録（30分以内は重複カウントしない） ─── */}
+      <PageViewTracker entity="group" slug={groupSlug} />
 
       <div className="min-h-screen bg-gray-50">
 

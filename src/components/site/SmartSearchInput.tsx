@@ -6,6 +6,14 @@ import type { SuggestionItem } from '@/types/search';
 
 // ─── 定数 ────────────────────────────────────────────────────────────────────
 const HISTORY_KEY = 'oshi-search-history';
+
+function trackSearch(keyword: string) {
+  fetch('/api/search-track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyword }),
+  }).catch(() => {});
+}
 const HISTORY_MAX = 5;
 const SUGGEST_MAX = 8;
 
@@ -102,6 +110,7 @@ export default function SmartSearchInput({
       setHistory(getHistory());
       setIsOpen(false);
       setActiveIdx(-1);
+      trackSearch(label);
       onSearch?.(label);
       router.push(href ?? `/search?q=${encodeURIComponent(label)}`);
     },
@@ -117,6 +126,7 @@ export default function SmartSearchInput({
     setHistory(getHistory());
     setIsOpen(false);
     setActiveIdx(-1);
+    trackSearch(q);
     onSearch?.(q);
     router.push(`/search?q=${encodeURIComponent(q)}`);
   };
