@@ -7,13 +7,18 @@ import { getAllVerdicts } from '@/lib/judgment-store';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getRedis } from '@/lib/redis';
 import { getGroupMeta } from '@/lib/group-meta';
+import { deduplicateProviders } from '@/lib/vod-dedup';
 import ProductSectionList from '@/components/ProductSectionList';
 import PersonCard from '@/components/PersonCard';
 import WorkCard from '@/components/WorkCard';
+import ProviderLogo from '@/components/ProviderLogo';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
 import type { ActivityStatus } from '@/types/person';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
+import type { WorkRecord } from '@/types/work';
+import type { VodProvider } from '@/types/vod';
 
+// ─── 定数 ──────────────────────────────────────────────────────────────────────
 const ACTIVITY_LABEL: Record<ActivityStatus, string> = {
   active: '現役',
   graduated: '卒業',
@@ -23,57 +28,34 @@ const ACTIVITY_LABEL: Record<ActivityStatus, string> = {
   unknown: '不明',
 };
 const ACTIVITY_BADGE_CLS: Record<ActivityStatus, string> = {
-  active: 'bg-white/20 text-white',
-  graduated: 'bg-white/20 text-white',
-  withdrawn: 'bg-white/20 text-white',
-  hiatus: 'bg-white/20 text-white',
-  retired: 'bg-white/20 text-white',
-  unknown: 'bg-white/10 text-white/60',
+  active:    'bg-green-100 text-green-700',
+  graduated: 'bg-blue-100 text-blue-700',
+  withdrawn: 'bg-red-100 text-red-600',
+  hiatus:    'bg-amber-100 text-amber-700',
+  retired:   'bg-gray-200 text-gray-500',
+  unknown:   'bg-gray-100 text-gray-400',
 };
-
-interface Props {
-  params: Promise<{ slug: string }>;
-}
-
-// バッチ実行後すぐに判定結果を反映するため毎リクエスト SSR
-// ISR だとバッチ更新が最大 1 時間反映されない
-export const dynamic = 'force-dynamic';
-
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { slug } = await params;
-  const name = decodeURIComponent(slug);
-  const person = await getPersonWithConfigMerged(name);
-  if (!person) return {};
-
-  const groupText = person.group ? `（${person.group}）` : '';
-  const groupSuffix = person.group ? `${person.group}の最新情報やメンバー関連商品` : '関連商品';
-  return {
-    title: `${person.name}の写真集・グッズ・Blu-ray まとめ`,
-    description: `${person.name}${groupText}の写真集・雑誌・Blu-ray・グッズを楽天でまとめて探せます。${groupSuffix}もチェック。`,
-  };
-}
-
 const GENRE_BADGE: Record<string, string> = {
-  '坂道': 'bg-pink-100 text-pink-700',
-  '芸人': 'bg-yellow-100 text-yellow-700',
-  'テレビ': 'bg-blue-100 text-blue-700',
+  '坂道':        'bg-pink-100 text-pink-700',
+  '芸人':        'bg-yellow-100 text-yellow-700',
+  'テレビ':      'bg-blue-100 text-blue-700',
   'アーティスト': 'bg-purple-100 text-purple-700',
-  '俳優': 'bg-green-100 text-green-700',
+  '俳優':        'bg-green-100 text-green-700',
+};
+const GENRE_GRADIENT: Record<string, string> = {
+  '坂道':        'from-pink-600 to-rose-700',
+  '芸人':        'from-amber-500 to-orange-600',
+  'テレビ':      'from-sky-600 to-blue-700',
+  'アーティスト': 'from-violet-600 to-purple-800',
+  '俳優':        'from-emerald-600 to-green-800',
 };
 
-// ─── 商品ソート ─────────────────────────────────────────────────────────────
-// 中古判定: isUsed フラグまたはタイトルに含まれる中古キーワードで判定
-const USED_TITLE_PATTERNS = [
-  '中古', 'used', '古本', '中古品',
-  '目立った傷や汚れ', '傷や汚れあり', 'やや傷や汚れ',
-];
-
+// ─── 商品ソート（既存ロジック・変更禁止） ─────────────────────────────────────
+const USED_TITLE_PATTERNS = ['中古', 'used', '古本', '中古品', '目立った傷や汚れ', '傷や汚れあり', 'やや傷や汚れ'];
 function isUsedByTitle(title: string): boolean {
   const t = title.toLowerCase();
   return USED_TITLE_PATTERNS.some((pat) => t.includes(pat.toLowerCase()));
 }
-
-// 並び順: ①新品 → ②画像あり → ③人気順（レビュー数×評価）
 function sortProducts(products: RakutenItem[]): RakutenItem[] {
   return [...products].sort((a, b) => {
     const aUsed = (a.isUsed || isUsedByTitle(a.title)) ? 1 : 0;
@@ -86,18 +68,47 @@ function sortProducts(products: RakutenItem[]): RakutenItem[] {
   });
 }
 
-// 表示セクション定義
-// usedKeywords: 中古カテゴリの商品をこのセクションに分類するタイトルキーワード
+// ─── 表示セクション定義（変更禁止） ──────────────────────────────────────────
 const DISPLAY_SECTIONS: Array<{
   label: string;
+  icon: string;
   sources: ProductCategory[];
   usedKeywords: string[];
 }> = [
-  { label: '本・写真集', sources: ['写真集', '本・雑誌'], usedKeywords: ['写真集', 'フォトブック', 'ムック'] },
-  { label: 'CD', sources: ['CD'], usedKeywords: ['CD', 'シングル', 'アルバム', 'ALBUM', 'SINGLE', 'ベストアルバム'] },
-  { label: 'Blu-ray・DVD', sources: ['Blu-ray・DVD'], usedKeywords: ['DVD', 'Blu-ray', 'ブルーレイ', 'ライブ', 'コンサート', 'ツアー'] },
-  { label: 'グッズ', sources: ['グッズ'], usedKeywords: ['グッズ', 'カレンダー', 'ポスター', 'ぬいぐるみ', 'トレカ'] },
+  { label: '本・写真集', icon: '📷', sources: ['写真集', '本・雑誌'], usedKeywords: ['写真集', 'フォトブック', 'ムック'] },
+  { label: 'CD',         icon: '💿', sources: ['CD'],           usedKeywords: ['CD', 'シングル', 'アルバム', 'ALBUM', 'SINGLE', 'ベストアルバム'] },
+  { label: 'Blu-ray・DVD', icon: '📀', sources: ['Blu-ray・DVD'], usedKeywords: ['DVD', 'Blu-ray', 'ブルーレイ', 'ライブ', 'コンサート', 'ツアー'] },
+  { label: 'グッズ',     icon: '🎁', sources: ['グッズ'],        usedKeywords: ['グッズ', 'カレンダー', 'ポスター', 'ぬいぐるみ', 'トレカ'] },
 ];
+
+// ─── VOD フィルタ（WorkCard と同一ロジック） ──────────────────────────────────
+function getStreamingProviders(work: WorkRecord): VodProvider[] {
+  return deduplicateProviders(
+    (work.vodProviders ?? []).filter((p) => {
+      const isAi = p.source === 'openai_supplement' || p.source === 'openai_web_search';
+      return !isAi || p.confidence !== 'low';
+    }),
+  ).filter((p) => ['flatrate', 'free', 'ads'].includes(p.type));
+}
+
+interface Props { params: Promise<{ slug: string }> }
+
+export const dynamic = 'force-dynamic';
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { slug } = await params;
+  const name = decodeURIComponent(slug);
+  const person = await getPersonWithConfigMerged(name);
+  if (!person) return {};
+  const groupText = person.group ? `（${person.group}）` : '';
+  const title = `${person.name}${groupText}の写真集・グッズ・出演作品・配信情報まとめ`;
+  const description = `${person.name}の写真集・CD・Blu-ray・グッズを楽天で検索。出演ドラマ・映画・配信サービスもまとめて確認。`;
+  return {
+    title,
+    description,
+    openGraph: { title, description, type: 'profile' },
+  };
+}
 
 export default async function PersonPage({ params }: Props) {
   const { slug } = await params;
@@ -108,7 +119,6 @@ export default async function PersonPage({ params }: Props) {
   const groupMembers = person.group ? await getPersonsByGroupMerged(person.group) : [];
   const related = groupMembers.filter((p) => p.name !== person.name).slice(0, 4);
 
-  // Redis から保存済み商品・判定結果・出演作品 + PersonMeta + GroupMeta を並列取得
   const [storedData, verdicts, publishedWorks, personMeta, groupMeta] = await Promise.all([
     getAllStoredProducts(person.name),
     getAllVerdicts(person.name),
@@ -125,7 +135,7 @@ export default async function PersonPage({ params }: Props) {
     person.group ? getGroupMeta(person.group) : Promise.resolve(null),
   ]);
 
-  // 中古カテゴリの関連済み商品を取得（全セクションで共有）
+  // ── 中古商品 ──
   const usedCatData = storedData['中古'];
   const usedProducts: RakutenItem[] = [];
   const usedSeen = new Set<string>();
@@ -138,9 +148,8 @@ export default async function PersonPage({ params }: Props) {
     }
   }
 
-  // 表示セクションごとに「relevant」判定済み商品を統合して抽出
-  const sectionResults = DISPLAY_SECTIONS.map(({ label, sources, usedKeywords }) => {
-    // 新品商品: 各ソースカテゴリから判定済み商品を取得
+  // ── セクション別商品（既存ロジック・変更禁止） ─────────────────────────────
+  const sectionResults = DISPLAY_SECTIONS.map(({ label, icon, sources, usedKeywords }) => {
     const hasAnyData = sources.some((cat) => !!storedData[cat]);
     const newProducts: RakutenItem[] = [];
     const newSeen = new Set<string>();
@@ -155,165 +164,478 @@ export default async function PersonPage({ params }: Props) {
         newProducts.push(p);
       }
     }
-    // 中古商品: 中古カテゴリからこのセクションに該当するものを抽出
     const sectionUsed = usedProducts.filter((p) => {
-      if (newSeen.has(p.id)) return false; // 新品と重複するものは除外
+      if (newSeen.has(p.id)) return false;
       const title = p.title.replace(/^【中古】\s*/, '');
       return usedKeywords.some((kw) => title.includes(kw));
     });
-
-    // 新品リスト内に混入した中古表記を後ろに下げ、人気順で並び替え
     const sortedNew = sortProducts(newProducts);
-    // 中古リストも人気順で並び替え
     const sortedUsed = sortProducts(sectionUsed);
-
     const newResult: ApiResult = !hasAnyData
       ? { status: 'no_data' as const }
       : sortedNew.length > 0
       ? { status: 'ok' as const, products: sortedNew }
       : { status: 'empty' as const };
-
-    return { label, newResult, usedProducts: sortedUsed };
+    return { label, icon, newResult, usedProducts: sortedUsed };
   });
 
+  // ── VOD データ ──
+  const streamingWorks = publishedWorks.filter((w) => getStreamingProviders(w).length > 0);
+  const providerWorkMap = new Map<string, { logoPath?: string; works: WorkRecord[] }>();
+  for (const work of streamingWorks) {
+    for (const p of getStreamingProviders(work)) {
+      if (!providerWorkMap.has(p.providerName)) {
+        providerWorkMap.set(p.providerName, { logoPath: p.logoPath, works: [] });
+      }
+      providerWorkMap.get(p.providerName)!.works.push(work);
+    }
+  }
+  const providerGroups = [...providerWorkMap.entries()].sort(([a], [b]) => a.localeCompare(b, 'ja'));
+
+  // ── Stats ──
+  let totalProductCount = 0;
+  for (const { newResult, usedProducts: su } of sectionResults) {
+    if (newResult.status === 'ok') totalProductCount += newResult.products.length;
+    totalProductCount += su.length;
+  }
+  const hasProducts = totalProductCount > 0;
+  const hasWorks   = publishedWorks.length > 0;
+  const hasVod     = streamingWorks.length > 0;
+
+  // ── FAQ ──
+  const topProviders = providerGroups.slice(0, 3).map(([n]) => n);
+  const faqItems = [
+    {
+      q: `${person.name}の写真集・グッズはどこで買えますか？`,
+      a: hasProducts
+        ? `楽天市場・楽天ブックスで${totalProductCount}件の関連商品を掲載中です。写真集・CD・Blu-ray・グッズなど、このページからまとめてご確認いただけます。`
+        : '楽天市場・楽天ブックスで関連商品をご確認ください。',
+    },
+    {
+      q: `${person.name}の出演作品はどこで見られますか？`,
+      a: hasVod
+        ? `${streamingWorks.length}件の作品が配信中です。${topProviders.length > 0 ? `${topProviders.join('・')}などで視聴できます。` : ''}このページの「配信情報」セクションでご確認ください。`
+        : hasWorks
+        ? `出演作品を${publishedWorks.length}件掲載しています。各VODサービスでご確認ください。`
+        : '配信情報は現在確認中です。',
+    },
+    {
+      q: `${person.name}は${person.group ?? 'どのグループ'}のメンバーですか？`,
+      a: person.group
+        ? `${person.name}は${person.group}のメンバーです。${personMeta?.generation ? `${personMeta.generation}所属。` : ''}グループページでは全メンバーや関連情報をご確認いただけます。`
+        : `${person.name}はソロアーティストです。`,
+    },
+  ];
+
+  // ── JSON-LD ──
+  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.vercel.app';
+  const personUrl  = `${siteOrigin}/person/${encodeURIComponent(person.name)}`;
+  const personJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Person',
+    name: person.name,
+    url: personUrl,
+    ...(person.group
+      ? { memberOf: { '@type': 'Organization', name: person.group, url: `${siteOrigin}/group/${encodeURIComponent(person.group)}` } }
+      : {}),
+  };
+  const breadcrumbJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'ホーム', item: siteOrigin },
+      ...(person.group
+        ? [{ '@type': 'ListItem', position: 2, name: person.group, item: `${siteOrigin}/group/${encodeURIComponent(person.group)}` }]
+        : []),
+      { '@type': 'ListItem', position: person.group ? 3 : 2, name: person.name, item: personUrl },
+    ],
+  };
+  const faqJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faqItems.map(({ q, a }) => ({
+      '@type': 'Question',
+      name: q,
+      acceptedAnswer: { '@type': 'Answer', text: a },
+    })),
+  };
+
+  const gradient = GENRE_GRADIENT[person.genre] ?? 'from-indigo-600 to-indigo-800';
+
   return (
-    <div>
-      {/* Hero */}
-      <div className="bg-gradient-to-br from-primary to-indigo-800 py-12 px-4">
-        <div className="max-w-4xl mx-auto">
-          <nav className="text-indigo-300 text-sm mb-6 flex items-center gap-1 flex-wrap">
-            <Link href="/" className="hover:text-white transition-colors">ホーム</Link>
-            <span>/</span>
-            <Link href={`/genre/${encodeURIComponent(person.genre)}`} className="hover:text-white transition-colors">
+    <>
+      {/* ─── JSON-LD ─── */}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(personJsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
+
+      <div className="min-h-screen bg-gray-50">
+
+        {/* ─── パンくず ─── */}
+        <nav aria-label="パンくずリスト" className="bg-white border-b border-gray-200">
+          <div className="max-w-4xl mx-auto px-4 py-2.5 flex items-center gap-1.5 text-xs text-gray-500 flex-wrap">
+            <Link href="/" className="hover:text-indigo-600 transition-colors">ホーム</Link>
+            <span className="text-gray-300">›</span>
+            <Link href={`/genre/${encodeURIComponent(person.genre)}`} className="hover:text-indigo-600 transition-colors">
               {person.genre}
             </Link>
-            <span>/</span>
-            <span className="text-white font-medium">{person.name}</span>
-          </nav>
+            {person.group && (
+              <>
+                <span className="text-gray-300">›</span>
+                <Link href={`/group/${encodeURIComponent(person.group)}`} className="hover:text-indigo-600 transition-colors">
+                  {person.group}
+                </Link>
+              </>
+            )}
+            <span className="text-gray-300">›</span>
+            <span className="text-slate-700 font-medium">{person.name}</span>
+          </div>
+        </nav>
 
-          <div className="flex items-center gap-5">
-            <div className="w-20 h-20 rounded-full bg-white/20 flex items-center justify-center text-white text-4xl font-black flex-shrink-0 select-none">
-              {person.name[0]}
-            </div>
-            <div>
-              <h1 className="text-3xl font-black text-white">{person.name}</h1>
-              {person.group ? (
-                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <Link
-                    href={`/group/${encodeURIComponent(person.group)}`}
-                    className="text-indigo-200 hover:text-white text-sm transition-colors"
-                  >
-                    {person.group} →
-                  </Link>
-                  {groupMeta?.activityStatus === 'renamed' && groupMeta.renamedTo && (
+        {/* ─── Hero ─── */}
+        <div className={`bg-gradient-to-br ${gradient} py-8 px-4`}>
+          <div className="max-w-4xl mx-auto">
+
+            {/* 人物情報 */}
+            <div className="flex items-start gap-4 mb-6">
+              {/* アバター */}
+              <div
+                className="w-20 h-20 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white text-4xl font-black flex-shrink-0 select-none border border-white/20"
+                aria-hidden="true"
+              >
+                {person.name[0]}
+              </div>
+
+              {/* テキスト情報 */}
+              <div className="min-w-0 flex-1">
+                <h1 className="text-2xl sm:text-3xl font-black text-white leading-tight">{person.name}</h1>
+
+                {/* グループリンク */}
+                {person.group ? (
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <Link
-                      href={`/group/${encodeURIComponent(groupMeta.renamedTo)}`}
-                      className="text-[11px] text-indigo-300 hover:text-white transition-colors"
+                      href={`/group/${encodeURIComponent(person.group)}`}
+                      className="text-white/80 hover:text-white text-sm font-medium transition-colors underline underline-offset-2 decoration-white/40 hover:decoration-white"
                     >
-                      （現: {groupMeta.renamedTo}）
+                      {person.group}
                     </Link>
+                    {groupMeta?.activityStatus === 'renamed' && groupMeta.renamedTo && (
+                      <Link
+                        href={`/group/${encodeURIComponent(groupMeta.renamedTo)}`}
+                        className="text-[11px] text-white/60 hover:text-white transition-colors"
+                      >
+                        （現: {groupMeta.renamedTo}）
+                      </Link>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-white/70 mt-1 text-sm">ソロ活動</p>
+                )}
+
+                {/* バッジ群 */}
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${GENRE_BADGE[person.genre] ?? 'bg-gray-100 text-gray-600'}`}>
+                    {person.genre}
+                  </span>
+                  {personMeta?.activityStatus && personMeta.activityStatus !== 'unknown' && (
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${ACTIVITY_BADGE_CLS[personMeta.activityStatus]}`}>
+                      {ACTIVITY_LABEL[personMeta.activityStatus]}
+                    </span>
+                  )}
+                  {personMeta?.generation && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">
+                      {personMeta.generation}
+                    </span>
+                  )}
+                  {personMeta?.joinedAt && (
+                    <span className="text-[11px] text-white/60">
+                      {personMeta.joinedAt.slice(0, 7)} 加入
+                    </span>
+                  )}
+                  {personMeta?.leftAt && (
+                    <span className="text-[11px] text-white/60">
+                      → {personMeta.leftAt.slice(0, 7)} 卒業
+                    </span>
                   )}
                 </div>
-              ) : (
-                <p className="text-indigo-300 mt-1 text-sm">ソロ活動</p>
-              )}
-              <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                <span className={`text-xs px-3 py-1 rounded-full font-bold ${GENRE_BADGE[person.genre] ?? 'bg-gray-100 text-gray-600'}`}>
-                  {person.genre}
-                </span>
-                {personMeta?.activityStatus && personMeta.activityStatus !== 'unknown' && (
-                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${ACTIVITY_BADGE_CLS[personMeta.activityStatus]}`}>
-                    {ACTIVITY_LABEL[personMeta.activityStatus]}
-                  </span>
-                )}
-                {personMeta?.generation && (
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/15 text-indigo-100 font-medium">
-                    {personMeta.generation}
-                  </span>
+
+                {/* 旧グループ / 補足メモ */}
+                {((personMeta?.formerGroupNames?.length ?? 0) > 0 || personMeta?.membershipNote) && (
+                  <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                    {personMeta?.formerGroupNames?.map((g) => (
+                      <span key={g} className="text-[11px] text-white/60">元{g}</span>
+                    ))}
+                    {personMeta?.membershipNote && (
+                      <span className="text-[11px] text-white/60 italic">{personMeta.membershipNote}</span>
+                    )}
+                  </div>
                 )}
               </div>
-              {((personMeta?.formerGroupNames?.length ?? 0) > 0 || personMeta?.membershipNote) && (
-                <div className="flex flex-wrap items-center gap-2 mt-1">
-                  {personMeta?.formerGroupNames?.map((g) => (
-                    <span key={g} className="text-[11px] text-indigo-200/80">元{g}</span>
-                  ))}
-                  {personMeta?.membershipNote && (
-                    <span className="text-[11px] text-indigo-200/70">{personMeta.membershipNote}</span>
+            </div>
+
+            {/* Stats バー */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                { label: '関連商品',   value: totalProductCount, unit: '件', href: '#products' },
+                { label: '出演作品',   value: publishedWorks.length, unit: '件', href: '#works' },
+                { label: '配信中',     value: streamingWorks.length, unit: '件', href: '#vod' },
+                { label: '配信サービス', value: providerWorkMap.size, unit: '社', href: '#vod' },
+              ].map(({ label, value, unit, href }) => (
+                <a
+                  key={label}
+                  href={href}
+                  className="bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 text-center hover:bg-white/25 transition-colors block"
+                >
+                  <p className="text-white/70 text-[10px] font-medium">{label}</p>
+                  {value > 0 ? (
+                    <p className="text-white font-black text-xl mt-0.5 leading-none">
+                      {value.toLocaleString()}
+                      <span className="text-xs font-medium ml-0.5">{unit}</span>
+                    </p>
+                  ) : (
+                    <p className="text-white/40 text-sm mt-1">—</p>
                   )}
-                </div>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ─── CTA ─── */}
+        <div className="bg-white border-b border-gray-200 shadow-sm">
+          <div className="max-w-4xl mx-auto px-4 py-3">
+            <div className="flex gap-2.5 overflow-x-auto scrollbar-none pb-0.5">
+              {hasProducts && (
+                <a
+                  href="#products"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-colors min-h-[44px]"
+                >
+                  🛍 関連商品を見る
+                  {totalProductCount > 0 && (
+                    <span className="text-xs bg-white/25 px-1.5 py-0.5 rounded-full">{totalProductCount}</span>
+                  )}
+                </a>
+              )}
+              {hasWorks && (
+                <a
+                  href="#works"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 bg-white hover:bg-gray-50 text-slate-700 text-sm font-bold rounded-xl border border-gray-200 transition-colors min-h-[44px]"
+                >
+                  🎬 出演作品を見る
+                  {publishedWorks.length > 0 && (
+                    <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">{publishedWorks.length}</span>
+                  )}
+                </a>
+              )}
+              {hasVod && (
+                <a
+                  href="#vod"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded-xl transition-colors min-h-[44px]"
+                >
+                  ▶ 配信を見る
+                  <span className="text-xs bg-white/25 px-1.5 py-0.5 rounded-full">{streamingWorks.length}件</span>
+                </a>
               )}
             </div>
           </div>
         </div>
-      </div>
 
-      {/* 商品セクション */}
-      <div className="max-w-4xl mx-auto px-4 py-10 space-y-10">
-        {sectionResults.map(({ label, newResult, usedProducts: sectionUsed }) => (
-          <section key={label}>
-            <h2 className="text-base font-bold text-slate-800 mb-4">{label}</h2>
+        {/* ─── メインコンテンツ ─── */}
+        <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
 
-            {/* 新品 */}
-            {(newResult.status === 'ok' || sectionUsed.length === 0) && (
-              <ProductSectionList result={newResult} />
-            )}
-            {newResult.status === 'ok' && sectionUsed.length > 0 && (
-              <p className="text-xs text-gray-400 mt-1 mb-4">
-                新品 {newResult.products.length}件
-              </p>
-            )}
+          {/* ━━━ 商品セクション ━━━ */}
+          <section id="products">
+            <div className="flex items-center gap-2 mb-5">
+              <h2 className="text-base font-bold text-slate-800">🛍 関連商品</h2>
+              {hasProducts && (
+                <span className="text-xs font-semibold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                  {totalProductCount}件
+                </span>
+              )}
+            </div>
 
-            {/* 中古 */}
-            {sectionUsed.length > 0 && (
-              <div className={newResult.status === 'ok' ? 'mt-6' : ''}>
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
-                    中古
+            <div className="space-y-8">
+              {sectionResults.map(({ label, icon, newResult, usedProducts: sectionUsed }) => {
+                if (newResult.status === 'no_data' && sectionUsed.length === 0) return null;
+                return (
+                  <div key={label}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <h3 className="text-sm font-semibold text-slate-700">{icon} {label}</h3>
+                      {newResult.status === 'ok' && sectionUsed.length > 0 && (
+                        <span className="text-xs text-gray-400">
+                          新品{newResult.products.length}件・中古{sectionUsed.length}件
+                        </span>
+                      )}
+                    </div>
+
+                    {/* 新品: status=ok のとき、または中古しかない場合も ProductSectionList で empty/no_data を表示 */}
+                    {(newResult.status === 'ok' || sectionUsed.length === 0) && (
+                      <ProductSectionList result={newResult} />
+                    )}
+
+                    {/* 中古 */}
+                    {sectionUsed.length > 0 && (
+                      <div className={newResult.status === 'ok' ? 'mt-4' : ''}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                            中古
+                          </span>
+                          <span className="text-xs text-gray-400">{sectionUsed.length}件</span>
+                        </div>
+                        <ProductSectionList result={{ status: 'ok', products: sectionUsed }} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* 全セクション no_data の場合 */}
+              {sectionResults.every((r) => r.newResult.status === 'no_data' && r.usedProducts.length === 0) && (
+                <p className="text-sm text-gray-500 bg-white rounded-xl border border-gray-100 px-4 py-4">
+                  関連商品は現在取得中です。しばらくお待ちください。
+                </p>
+              )}
+            </div>
+          </section>
+
+          {/* ━━━ 出演作品 ━━━ */}
+          {publishedWorks.length > 0 && (
+            <section id="works">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-slate-800">🎬 出演作品</h2>
+                  <span className="text-xs font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
+                    {publishedWorks.length}件
                   </span>
-                  <span className="text-xs text-gray-400">{sectionUsed.length}件</span>
                 </div>
-                <ProductSectionList result={{ status: 'ok', products: sectionUsed }} />
+                {hasVod && (
+                  <a href="#vod" className="text-xs text-green-600 font-medium hover:underline flex items-center gap-1">
+                    ▶ 配信中を絞り込む
+                  </a>
+                )}
               </div>
-            )}
-          </section>
-        ))}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {publishedWorks.map((work) => (
+                  <WorkCard key={work.id} work={work} />
+                ))}
+              </div>
+            </section>
+          )}
 
-        {/* 出演作品 */}
-        {publishedWorks.length > 0 && (
+          {/* ━━━ VOD配信情報 ━━━ */}
+          {providerGroups.length > 0 && (
+            <section id="vod">
+              <div className="flex items-center gap-2 mb-4">
+                <h2 className="text-base font-bold text-slate-800">▶ 配信情報</h2>
+                <span className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                  🟢 {streamingWorks.length}件配信中
+                </span>
+              </div>
+
+              <div className="space-y-2.5">
+                {providerGroups.map(([providerName, { logoPath, works: pWorks }]) => (
+                  <details
+                    key={providerName}
+                    className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
+                  >
+                    <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
+                      <ProviderLogo providerName={providerName} logoPath={logoPath} size="md" />
+                      <span className="font-semibold text-slate-700 text-sm flex-1">{providerName}</span>
+                      <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">
+                        {pWorks.length}件
+                      </span>
+                    </summary>
+                    <div className="border-t border-gray-50 px-4 py-3">
+                      <div className="space-y-2">
+                        {pWorks.slice(0, 8).map((work) => (
+                          <Link
+                            key={work.id}
+                            href={`/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`}
+                            className="flex items-center gap-2 py-1 hover:text-indigo-600 transition-colors group"
+                          >
+                            {work.posterUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={work.posterUrl}
+                                alt={work.title}
+                                className="w-8 h-12 object-cover rounded flex-shrink-0"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <div className="w-8 h-12 bg-gray-100 rounded flex items-center justify-center text-gray-300 text-sm flex-shrink-0">
+                                🎬
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-slate-700 line-clamp-2 group-hover:text-indigo-600 transition-colors leading-tight">
+                                {work.title}
+                              </p>
+                              {work.releaseYear && (
+                                <p className="text-[10px] text-gray-400 mt-0.5">{work.releaseYear}年</p>
+                              )}
+                            </div>
+                          </Link>
+                        ))}
+                        {pWorks.length > 8 && (
+                          <p className="text-xs text-gray-400 text-center pt-1">他 {pWorks.length - 8}件</p>
+                        )}
+                      </div>
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* ━━━ 関連メンバー ━━━ */}
+          {related.length > 0 && (
+            <section>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-base font-bold text-slate-800">
+                  {person.group} のメンバー
+                </h2>
+                <Link
+                  href={`/group/${encodeURIComponent(person.group)}`}
+                  className="text-indigo-600 text-sm font-medium hover:underline"
+                >
+                  グループページへ →
+                </Link>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {related.map((p) => (
+                  <PersonCard key={p.name} person={p} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* ━━━ FAQ ━━━ */}
           <section>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-bold text-slate-800">出演作品</h2>
-              <span className="text-xs text-gray-400">{publishedWorks.length}件</span>
-            </div>
-            {/* PC:3列 / タブレット:2列 / スマホ:2列（小さめ） */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-3">
-              {publishedWorks.map((work) => (
-                <WorkCard key={work.id} work={work} />
+            <h2 className="text-base font-bold text-slate-800 mb-4">よくある質問</h2>
+            <div className="space-y-2">
+              {faqItems.map(({ q, a }) => (
+                <details
+                  key={q}
+                  className="bg-white rounded-2xl border border-gray-100 overflow-hidden"
+                >
+                  <summary className="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 transition-colors [list-style:none] [&::-webkit-details-marker]:hidden">
+                    <span className="text-indigo-500 font-black text-sm w-5 text-center flex-shrink-0">Q</span>
+                    <span className="font-semibold text-slate-700 text-sm flex-1">{q}</span>
+                    <span className="text-gray-300 text-xs flex-shrink-0">›</span>
+                  </summary>
+                  <div className="border-t border-gray-50 px-4 py-3.5">
+                    <div className="flex gap-3">
+                      <span className="text-emerald-500 font-black text-sm w-5 text-center flex-shrink-0">A</span>
+                      <p className="text-sm text-gray-600 leading-relaxed">{a}</p>
+                    </div>
+                  </div>
+                </details>
               ))}
             </div>
           </section>
-        )}
 
-        {/* 関連メンバー */}
-        {related.length > 0 && (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-bold text-slate-800">{person.group} のメンバー</h2>
-              <Link
-                href={`/group/${encodeURIComponent(person.group)}`}
-                className="text-primary text-sm font-medium hover:underline"
-              >
-                グループページへ →
-              </Link>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {related.map((p) => (
-                <PersonCard key={p.name} person={p} />
-              ))}
-            </div>
-          </section>
-        )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
