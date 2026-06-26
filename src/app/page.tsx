@@ -17,6 +17,7 @@ const GENRE_EMOJI: Record<string, string> = {
 export default async function HomePage() {
   const persons = await getAllPersonsMerged();
   const groups = [...new Set(persons.map((p) => p.group).filter(Boolean))];
+  const trending = persons.slice(0, 8);
   const featured = persons.slice(0, 12);
 
   return (
@@ -81,6 +82,39 @@ export default async function HomePage() {
         </div>
       </div>
 
+      {/* ━━━ 今人気 ━━━ */}
+      <section style={{ background: 'var(--ds-surface)', borderBottom: '1px solid var(--ds-border)' }}>
+        <div style={{ maxWidth: '1152px', margin: '0 auto', padding: '20px 0 24px' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '0 16px',
+              marginBottom: '12px',
+            }}
+          >
+            <h2 className="section-heading" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span aria-hidden="true">🔥</span>今人気
+            </h2>
+            <Link
+              href="/search"
+              className="theme-text-link"
+              style={{ fontSize: '13px', fontWeight: 500, textDecoration: 'none' }}
+            >
+              全員を見る →
+            </Link>
+          </div>
+          <div className="persons-row">
+            {trending.map((person) => (
+              <div key={person.name} className="persons-row-item">
+                <HomePersonCard person={person} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ━━━ メインコンテンツ ━━━ */}
       <div
         style={{
@@ -117,7 +151,7 @@ export default async function HomePage() {
           </div>
         </section>
 
-        {/* 人気の人物 */}
+        {/* 注目の人物 */}
         <section style={{ marginBottom: '48px' }}>
           <div
             style={{
@@ -128,7 +162,7 @@ export default async function HomePage() {
             }}
           >
             <h2 className="section-heading" style={{ marginBottom: 0 }}>
-              人気の人物
+              注目の人物
             </h2>
             <Link
               href="/search"

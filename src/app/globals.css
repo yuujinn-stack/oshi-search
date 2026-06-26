@@ -352,3 +352,25 @@ body {
     font-size: 10px;
   }
 }
+
+/* ─── 今人気 横スクロールストリップ ─────────────────────────────────── */
+.persons-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: visible;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 4px 16px 12px;
+  min-height: 184px; /* CLS防止: avatar56 + name + group + badge + padding */
+}
+.persons-row::-webkit-scrollbar {
+  display: none;
+}
+
+.persons-row-item {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+  width: 136px;
+}
