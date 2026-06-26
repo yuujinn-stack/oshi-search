@@ -151,18 +151,27 @@ function MiniProductCard({ product, used }: { product: RakutenItem; used?: boole
       href={product.affiliateUrl || product.itemUrl}
       target="_blank"
       rel="noopener noreferrer sponsored"
-      className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md transition-all group block"
+      className="mini-product-link overflow-hidden hover:shadow-md hover:-translate-y-0.5 transition-all block"
+      style={{
+        background: 'var(--ds-surface)',
+        border: `1px solid ${used ? '#fcd34d' : 'var(--ds-border)'}`,
+        borderRadius: 'var(--ds-radius)',
+      }}
     >
       {product.imageUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={product.imageUrl}
           alt={product.title}
-          className="w-full aspect-square object-cover"
+          className="w-full aspect-square object-contain p-1.5"
+          style={{ background: '#f8f9fa' }}
           loading="lazy"
         />
       ) : (
-        <div className="w-full aspect-square bg-gray-100 flex items-center justify-center text-gray-200 text-2xl">
+        <div
+          className="w-full aspect-square flex items-center justify-center text-2xl"
+          style={{ background: '#f8f9fa', color: '#d1d5db' }}
+        >
           🛒
         </div>
       )}
@@ -172,11 +181,16 @@ function MiniProductCard({ product, used }: { product: RakutenItem; used?: boole
             中古
           </span>
         )}
-        <p className="text-[11px] font-medium text-slate-700 line-clamp-2 mt-1 group-hover:text-indigo-600 transition-colors">
+        <p
+          className="mini-product-name text-[11px] font-medium line-clamp-2 mt-1 transition-colors"
+          style={{ color: 'var(--ds-text)' }}
+        >
           {product.title.replace(/^【中古】\s*/, '')}
         </p>
         {product.price > 0 && (
-          <p className="text-xs text-slate-600 font-bold mt-0.5">¥{product.price.toLocaleString()}</p>
+          <p className="text-xs font-black mt-1" style={{ color: 'var(--ds-cta)' }}>
+            ¥{product.price.toLocaleString()}
+          </p>
         )}
       </div>
     </a>

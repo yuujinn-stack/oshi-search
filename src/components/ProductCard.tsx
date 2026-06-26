@@ -3,43 +3,70 @@
 import { useState } from 'react';
 import type { RakutenItem } from '@/types/rakuten';
 
+// ─── 星レーティング ───────────────────────────────────────────────────────────
+function StarRating({ avg, count }: { avg: number; count: number }) {
+  if (count === 0) return null;
+  const filled = Math.round(avg);
+  return (
+    <div className="flex items-center gap-1">
+      <div className="flex gap-px" aria-label={`${avg.toFixed(1)}点`}>
+        {[1, 2, 3, 4, 5].map((s) => (
+          <span
+            key={s}
+            style={{ fontSize: '9px', color: s <= filled ? '#f59e0b' : '#d1d5db' }}
+            aria-hidden="true"
+          >
+            ★
+          </span>
+        ))}
+      </div>
+      <span className="text-[10px]" style={{ color: 'var(--ds-muted)' }}>
+        {avg.toFixed(1)} ({count.toLocaleString()})
+      </span>
+    </div>
+  );
+}
+
+// ─── 商品カード ───────────────────────────────────────────────────────────────
 export default function ProductCard({ product }: { product: RakutenItem }) {
   const [loaded, setLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
 
   const href = product.affiliateUrl || product.itemUrl;
   const hasImage = !!product.imageUrl && !imgError;
+  const price = Number(product.price);
+  const reviewAvg = Number(product.reviewAverage);
+  const reviewCount = Number(product.reviewCount);
 
   return (
     <div
-      className={`bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition-shadow flex flex-col ${
-        product.isUsed ? 'border border-amber-200' : 'border border-gray-100'
-      }`}
+      className="group overflow-hidden flex flex-col shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200"
+      style={{
+        background: 'var(--ds-surface)',
+        border: `1.5px solid ${product.isUsed ? '#fcd34d' : 'var(--ds-border)'}`,
+        borderRadius: 'var(--ds-radius)',
+      }}
     >
-      {/* 商品画像（クリックでアフィリエイトリンクへ） */}
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer sponsored"
-        className="block aspect-square bg-gray-50 overflow-hidden relative"
-      >
+      {/* ─ 画像エリア ─ */}
+      <div className="relative aspect-square overflow-hidden" style={{ background: '#f8f9fa' }}>
+
         {/* 中古バッジ */}
         {product.isUsed && (
-          <span className="absolute top-1.5 left-1.5 z-10 text-[10px] font-bold bg-amber-500 text-white px-1.5 py-0.5 rounded">
+          <span className="absolute top-1.5 left-1.5 z-10 text-[10px] font-bold bg-amber-500 text-white px-2 py-0.5 rounded-full shadow-sm leading-snug">
             中古
           </span>
         )}
 
-        {/* スケルトン：画像読み込み中に表示 */}
+        {/* スケルトン（画像読み込み中） */}
         {!loaded && hasImage && (
-          <div className="absolute inset-0 bg-gray-200 animate-pulse" />
+          <div className="absolute inset-0 animate-pulse" style={{ background: 'var(--ds-border)' }} />
         )}
 
         {hasImage ? (
           <img
             src={product.imageUrl}
             alt={product.title}
-            className={`absolute inset-0 w-full h-full object-contain p-2 transition-opacity duration-300 ${
+            className={`absolute inset-0 w-full h-full object-contain p-2 transition-transform duration-300 group-hover:scale-105 ${
               loaded ? 'opacity-100' : 'opacity-0'
             }`}
             loading="lazy"
@@ -47,45 +74,66 @@ export default function ProductCard({ product }: { product: RakutenItem }) {
             onError={() => setImgError(true)}
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs text-center px-2">
-            No Image
+          <div
+            className="w-full h-full flex flex-col items-center justify-center gap-1.5"
+            style={{ color: 'var(--ds-muted)' }}
+          >
+            <span className="text-3xl" aria-hidden="true">🛒</span>
+            <span className="text-[10px]">画像なし</span>
           </div>
         )}
-      </a>
 
-      <div className="p-3 flex flex-col flex-1 gap-1.5">
-        {/* 商品名 */}
+        {/* 画像クリック用オーバーレイ（キーボードナビ除外） */}
         <a
           href={href}
           target="_blank"
           rel="noopener noreferrer sponsored"
-          className="text-xs font-medium text-slate-800 line-clamp-2 hover:text-primary transition-colors flex-1 min-h-[2.5rem]"
+          className="absolute inset-0 z-20"
+          tabIndex={-1}
+          aria-hidden="true"
+        />
+      </div>
+
+      {/* ─ テキスト情報 ─ */}
+      <div className="p-3 flex flex-col flex-1 gap-2">
+
+        {/* 価格（Visual Hierarchy 最優先） */}
+        {price > 0 && (
+          <p className="font-black text-[18px] leading-none" style={{ color: 'var(--ds-cta)' }}>
+            ¥{price.toLocaleString()}
+            <span className="text-[10px] font-normal ml-1" style={{ color: 'var(--ds-muted)' }}>
+              税込
+            </span>
+          </p>
+        )}
+
+        {/* 商品名（2行まで） */}
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer sponsored"
+          className="text-[11px] font-medium line-clamp-2 leading-snug flex-1 hover:underline"
+          style={{ color: 'var(--ds-text)', minHeight: '2.5rem' }}
         >
           {product.title}
         </a>
 
-        {/* レビュー */}
-        {Number(product.reviewCount) > 0 && (
-          <div className="flex items-center gap-1 text-xs text-gray-500">
-            <span className="text-amber-400">★</span>
-            <span className="font-medium">{Number(product.reviewAverage).toFixed(1)}</span>
-            <span>({Number(product.reviewCount).toLocaleString()}件)</span>
-          </div>
-        )}
+        {/* レビュー星 */}
+        <StarRating avg={reviewAvg} count={reviewCount} />
 
-        {/* 価格 */}
-        <p className="text-primary font-bold text-sm">
-          ¥{Number(product.price).toLocaleString()}
-          <span className="text-xs font-normal text-gray-400 ml-1">（税込）</span>
-        </p>
-
-        {/* CTAボタン */}
+        {/* CTA（Von Restorff: 目立たせる） */}
         <a
           href={href}
           target="_blank"
           rel="noopener noreferrer sponsored"
-          className="mt-1 block bg-accent hover:bg-yellow-500 active:bg-yellow-600 text-white text-center text-xs font-bold rounded-lg transition-colors"
-          style={{ minHeight: '44px', lineHeight: '44px' }}
+          className="flex items-center justify-center font-bold text-[13px] tracking-wide active:scale-95 transition-transform duration-100 mt-1"
+          style={{
+            background: 'var(--ds-cta)',
+            color: 'var(--ds-cta-text)',
+            borderRadius: 'var(--ds-radius)',
+            minHeight: '44px',
+            textDecoration: 'none',
+          }}
         >
           楽天で見る →
         </a>

@@ -4,38 +4,34 @@ import { useState } from 'react';
 import ProductCard from './ProductCard';
 import type { ApiResult } from '@/types/rakuten';
 
-// 初期表示件数（PC・スマホ共通）
 const INITIAL_COUNT = 24;
 
 interface Props {
   result: ApiResult;
 }
 
+function EmptyState({ children }: { children: string }) {
+  return (
+    <div
+      className="py-8 text-center text-sm rounded-xl"
+      style={{ color: 'var(--ds-muted)', background: 'var(--ds-primary-soft)' }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function ProductSectionList({ result }: Props) {
   const [showAll, setShowAll] = useState(false);
 
   if (result.status === 'error') {
-    return (
-      <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
-        現在商品情報を取得できません
-      </div>
-    );
+    return <EmptyState>現在商品情報を取得できません</EmptyState>;
   }
-
   if (result.status === 'no_data') {
-    return (
-      <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
-        商品情報を準備中です。しばらくお待ちください。
-      </div>
-    );
+    return <EmptyState>商品情報を準備中です。しばらくお待ちください。</EmptyState>;
   }
-
   if (result.status === 'empty') {
-    return (
-      <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
-        現在、関連商品は見つかっていません
-      </div>
-    );
+    return <EmptyState>現在、関連商品は見つかっていません</EmptyState>;
   }
 
   const total = result.products.length;
@@ -54,9 +50,15 @@ export default function ProductSectionList({ result }: Props) {
         <div className="text-center">
           <button
             onClick={() => setShowAll(true)}
-            className="px-6 py-2.5 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-colors"
+            className="inline-flex items-center gap-2 px-6 font-bold text-sm rounded-xl transition-colors"
+            style={{
+              background: 'var(--ds-primary-soft)',
+              color: 'var(--ds-primary)',
+              minHeight: '44px',
+            }}
           >
-            もっと見る（残り {remaining} 件）
+            もっと見る
+            <span className="text-xs font-normal opacity-70">（残り {remaining} 件）</span>
           </button>
         </div>
       )}

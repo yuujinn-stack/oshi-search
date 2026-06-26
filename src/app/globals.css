@@ -374,3 +374,17 @@ body {
   flex-shrink: 0;
   width: 136px;
 }
+
+/* ─── スクロールバー非表示ユーティリティ ─────────────────────────────── */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* ─── MiniProductCard ホバーカラー ─────────────────────────────────── */
+.mini-product-link:hover .mini-product-name {
+  color: var(--ds-primary);
+}
