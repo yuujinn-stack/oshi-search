@@ -1,7 +1,7 @@
 import Link from 'next/link';
-import SearchForm from '@/components/SearchForm';
-import PersonCard from '@/components/PersonCard';
 import { getAllPersonsMerged, ALL_GENRES } from '@/lib/persons';
+import HeroSearchForm from '@/components/site/HeroSearchForm';
+import HomePersonCard from '@/components/site/HomePersonCard';
 
 // 公開反映時に revalidateTag('persons') でキャッシュバスト、最大 60s ISR
 export const revalidate = 60;
@@ -16,79 +16,142 @@ const GENRE_EMOJI: Record<string, string> = {
 
 export default async function HomePage() {
   const persons = await getAllPersonsMerged();
-  const groups  = [...new Set(persons.map((p) => p.group).filter(Boolean))];
-  const featured = persons.slice(0, 8);
+  const groups = [...new Set(persons.map((p) => p.group).filter(Boolean))];
+  const featured = persons.slice(0, 12);
 
   return (
     <div>
-      {/* Hero */}
-      <section className="bg-gradient-to-br from-primary via-indigo-600 to-indigo-800 py-16 px-4">
-        <div className="max-w-2xl mx-auto text-center">
-          <h1 className="text-3xl md:text-4xl font-black text-white mb-2 tracking-tight">
-            推し・有名人を検索
+      {/* ━━━ Hero ━━━ */}
+      <section
+        style={{
+          background: 'linear-gradient(135deg, var(--ds-hero-from) 0%, var(--ds-hero-to) 100%)',
+          padding: 'clamp(48px, 8vw, 96px) 16px',
+        }}
+      >
+        <div style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center' }}>
+          <h1
+            style={{
+              fontSize: 'clamp(22px, 5vw, 38px)',
+              fontWeight: 900,
+              color: '#fff',
+              marginBottom: '10px',
+              letterSpacing: '-0.02em',
+              lineHeight: 1.25,
+            }}
+          >
+            推しの出演作品・関連商品・
+            <wbr />
+            配信情報をまとめて探せる
           </h1>
-          <p className="text-indigo-200 mb-8 text-base">
-            写真集・グッズ・出演作品・視聴先をまとめてチェック
+          <p
+            style={{
+              color: 'rgba(255,255,255,0.78)',
+              marginBottom: '32px',
+              fontSize: '15px',
+              lineHeight: 1.65,
+            }}
+          >
+            アイドル・俳優・芸人など、気になる人の作品やグッズをかんたん検索
           </p>
-          <SearchForm />
-          <p className="text-indigo-300 text-xs mt-4">
+
+          <HeroSearchForm />
+
+          <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '12px', marginTop: '20px' }}>
             現在 {persons.length} 人のデータを収録中
           </p>
         </div>
       </section>
 
-      <div className="max-w-6xl mx-auto px-4 py-10 space-y-12">
-
-        {/* Genre quick links */}
-        <section>
-          <h2 className="text-base font-bold text-slate-800 mb-4">ジャンルで探す</h2>
-          <div className="flex flex-wrap gap-3">
+      {/* ━━━ メインコンテンツ ━━━ */}
+      <div
+        style={{
+          maxWidth: '1152px',
+          margin: '0 auto',
+          padding: 'clamp(32px, 5vw, 56px) 16px',
+        }}
+      >
+        {/* ジャンルで探す */}
+        <section style={{ marginBottom: '48px' }}>
+          <h2 className="section-heading">ジャンルで探す</h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
             {ALL_GENRES.map((genre) => (
               <Link
                 key={genre}
                 href={`/genre/${encodeURIComponent(genre)}`}
-                className="flex items-center gap-1.5 px-5 py-2.5 bg-white border-2 border-primary text-primary font-bold rounded-full hover:bg-primary hover:text-white transition-colors text-sm shadow-sm"
-                style={{ minHeight: '44px' }}
+                className="theme-link-pill"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '10px 22px',
+                  borderRadius: '999px',
+                  fontWeight: 700,
+                  fontSize: '14px',
+                  textDecoration: 'none',
+                  minHeight: '44px',
+                }}
               >
-                <span>{GENRE_EMOJI[genre]}</span>
+                <span aria-hidden="true">{GENRE_EMOJI[genre]}</span>
                 <span>{genre}</span>
               </Link>
             ))}
           </div>
         </section>
 
-        {/* Featured persons */}
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-bold text-slate-800">人気の人物</h2>
-            <Link href="/search" className="text-primary text-sm font-medium hover:underline">
+        {/* 人気の人物 */}
+        <section style={{ marginBottom: '48px' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '16px',
+            }}
+          >
+            <h2 className="section-heading" style={{ marginBottom: 0 }}>
+              人気の人物
+            </h2>
+            <Link
+              href="/search"
+              className="theme-text-link"
+              style={{ fontSize: '14px', fontWeight: 500, textDecoration: 'none' }}
+            >
               全員を見る →
             </Link>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+
+          <div className="persons-grid">
             {featured.map((person) => (
-              <PersonCard key={person.name} person={person} />
+              <HomePersonCard key={person.name} person={person} />
             ))}
           </div>
         </section>
 
-        {/* Groups */}
+        {/* グループで探す */}
         <section>
-          <h2 className="text-base font-bold text-slate-800 mb-4">グループで探す</h2>
-          <div className="flex flex-wrap gap-3">
+          <h2 className="section-heading">グループで探す</h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
             {groups.map((group) => (
               <Link
                 key={group}
                 href={`/group/${encodeURIComponent(group)}`}
-                className="px-4 py-2.5 bg-white shadow-sm border border-gray-200 rounded-xl hover:border-primary hover:text-primary transition-colors text-sm font-medium text-slate-700"
-                style={{ minHeight: '44px', lineHeight: '20px', display: 'flex', alignItems: 'center' }}
+                className="theme-group-chip"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '9px 16px',
+                  borderRadius: '10px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  textDecoration: 'none',
+                  minHeight: '40px',
+                }}
               >
                 {group}
               </Link>
             ))}
           </div>
         </section>
-
       </div>
     </div>
   );

@@ -100,3 +100,196 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* ─── トップページ テーマ対応ユーティリティ ───────────────────────────────── */
+
+/* セクション見出し */
+.section-heading {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ds-text);
+  margin-bottom: 16px;
+}
+
+/* テキストリンク */
+.theme-text-link {
+  color: var(--ds-primary);
+  transition: opacity 0.15s;
+}
+.theme-text-link:hover { opacity: 0.75; }
+
+/* ジャンルピル（枠線+色 → hover で塗りつぶし） */
+.theme-link-pill {
+  border: 2px solid var(--ds-primary);
+  color: var(--ds-primary);
+  background: transparent;
+  transition: background 0.15s, color 0.15s;
+}
+.theme-link-pill:hover {
+  background: var(--ds-primary);
+  color: var(--ds-cta-text);
+}
+
+/* グループチップ */
+.theme-group-chip {
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-border);
+  color: var(--ds-text);
+  transition: border-color 0.15s, color 0.15s;
+}
+.theme-group-chip:hover {
+  border-color: var(--ds-primary);
+  color: var(--ds-primary);
+}
+
+/* テーマ対応カード基底 */
+.theme-card {
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.theme-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.09);
+}
+[data-design="premium"] .theme-card:hover {
+  box-shadow: 0 8px 28px rgba(245,158,11,0.18);
+}
+[data-design="oshi-pop"] .theme-card:hover {
+  box-shadow: 0 8px 24px rgba(233,30,140,0.14);
+}
+
+/* 人物グリッド */
+.persons-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+@media (min-width: 480px) {
+  .persons-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (min-width: 640px) {
+  .persons-grid { grid-template-columns: repeat(4, 1fr); gap: 12px; }
+}
+@media (min-width: 900px) {
+  .persons-grid { grid-template-columns: repeat(6, 1fr); }
+}
+
+/* ─── 人物アバター ──────────────────────────────────────────────────────── */
+.person-avatar {
+  background: linear-gradient(135deg, #a78bfa, #7c3aed); /* default */
+}
+.avatar-sakamichi { background: linear-gradient(135deg, #f472b6, #e11d48); }
+.avatar-geinin    { background: linear-gradient(135deg, #fb923c, #f59e0b); }
+.avatar-tv        { background: linear-gradient(135deg, #38bdf8, #3b82f6); }
+.avatar-artist    { background: linear-gradient(135deg, #a78bfa, #7c3aed); }
+.avatar-actor     { background: linear-gradient(135deg, #34d399, #059669); }
+
+/* Premium: 全アバターをゴールドに */
+[data-design="premium"] .person-avatar {
+  background: linear-gradient(135deg, #92400e, #d97706) !important;
+}
+/* Oshi Pop: 全アバターをピンク-パープルに */
+[data-design="oshi-pop"] .person-avatar {
+  background: linear-gradient(135deg, #ec4899, #8b5cf6) !important;
+}
+
+/* ─── ジャンルバッジ ─────────────────────────────────────────────────────── */
+.genre-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.genre-badge-坂道      { background: #fce7f3; color: #be185d; }
+.genre-badge-芸人      { background: #fef3c7; color: #92400e; }
+.genre-badge-テレビ    { background: #dbeafe; color: #1d4ed8; }
+.genre-badge-アーティスト { background: #ede9fe; color: #6d28d9; }
+.genre-badge-俳優      { background: #d1fae5; color: #065f46; }
+
+/* Premium: バッジをゴールドトーンに統一 */
+[data-design="premium"] .genre-badge {
+  background: rgba(245,158,11,0.15) !important;
+  color: #f59e0b !important;
+}
+/* Oshi Pop: バッジをピンクトーンに統一 */
+[data-design="oshi-pop"] .genre-badge {
+  background: #fce7f3 !important;
+  color: #be185d !important;
+}
+
+/* ─── Hero 検索フォーム ─────────────────────────────────────────────────── */
+.hero-search-form {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.hero-search-input {
+  flex: 1;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-radius: 999px;
+  padding: 14px 22px;
+  color: #1e293b;
+  background: rgba(255,255,255,0.95);
+  backdrop-filter: blur(4px);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.hero-search-input::placeholder {
+  color: #94a3b8;
+}
+.hero-search-input:focus {
+  border-color: rgba(255,255,255,0.9);
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.2);
+}
+
+.hero-search-btn {
+  background: var(--ds-cta);
+  color: var(--ds-cta-text);
+  border: none;
+  border-radius: 999px;
+  padding: 14px 28px;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 80px;
+  min-height: 52px;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.hero-search-btn:hover { opacity: 0.88; }
+.hero-search-btn:active { transform: scale(0.97); }
+
+/* Premium: 検索ボタンを白に */
+[data-design="premium"] .hero-search-btn {
+  background: #f59e0b;
+  color: #0f172a;
+}
+
+.hero-keyword-chip {
+  background: rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.9);
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.hero-keyword-chip:hover {
+  background: rgba(255,255,255,0.28);
+  color: #fff;
+}
+
+/* ─── 人物カード (home専用) hover text色対応 ──────────────────────────── */
+.home-person-card:hover .person-name {
+  color: var(--ds-primary);
+}
