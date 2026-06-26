@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { getAllPersonsMerged, ALL_GENRES } from '@/lib/persons';
 import HeroSearchForm from '@/components/site/HeroSearchForm';
 import HomePersonCard from '@/components/site/HomePersonCard';
+import type { SuggestionItem } from '@/types/search';
 
 // 公開反映時に revalidateTag('persons') でキャッシュバスト、最大 60s ISR
 export const revalidate = 60;
@@ -19,6 +20,21 @@ export default async function HomePage() {
   const groups = [...new Set(persons.map((p) => p.group).filter(Boolean))];
   const trending = persons.slice(0, 8);
   const featured = persons.slice(0, 12);
+
+  // サジェスト候補（グループ優先 → 人物 → エイリアス）
+  const heroSuggestions: SuggestionItem[] = [
+    ...groups.map((g) => ({
+      label: g,
+      href: `/group/${encodeURIComponent(g)}`,
+      type: 'group' as const,
+    })),
+    ...persons.flatMap((p) => [
+      { label: p.name, sublabel: p.group || undefined, href: `/person/${encodeURIComponent(p.name)}`, type: 'person' as const },
+      ...(p.config.aliases ?? []).map((a) => ({
+        label: a, sublabel: p.name, href: `/search?q=${encodeURIComponent(a)}`, type: 'alias' as const,
+      })),
+    ]),
+  ];
 
   return (
     <div>
@@ -55,7 +71,7 @@ export default async function HomePage() {
             楽天の商品も、出演作品も、配信サービスも一度に探せます。
           </p>
 
-          <HeroSearchForm />
+          <HeroSearchForm suggestions={heroSuggestions} />
         </div>
       </section>
 

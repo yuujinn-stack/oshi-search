@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
+import SmartSearchInput from './SmartSearchInput';
+import type { SuggestionItem } from '@/types/search';
 
 // グループ名 → /group/ へ、個人名 → /search?q= へ（URL一貫性のため）
 const POPULAR_ITEMS: Array<{ label: string; href: string }> = [
@@ -13,33 +13,21 @@ const POPULAR_ITEMS: Array<{ label: string; href: string }> = [
   { label: 'あの',       href: '/search?q=%E3%81%82%E3%81%AE' },
 ];
 
-export default function HeroSearchForm() {
-  const [query, setQuery] = useState('');
-  const router = useRouter();
+interface Props {
+  suggestions?: SuggestionItem[];
+}
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const q = query.trim();
-    router.push(q ? `/search?q=${encodeURIComponent(q)}` : '/search');
-  }
-
+export default function HeroSearchForm({ suggestions = [] }: Props) {
   return (
     <div>
-      {/* 検索フォーム */}
-      <form onSubmit={handleSubmit} className="hero-search-form">
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="人物名・グループ名・作品名で検索"
-          className="hero-search-input"
-          style={{ fontSize: '16px' }}
-          autoComplete="off"
-        />
-        <button type="submit" className="hero-search-btn">
-          検索する
-        </button>
-      </form>
+      {/* 検索フォーム（SmartSearchInput: サジェスト + 履歴付き） */}
+      <SmartSearchInput
+        suggestions={suggestions}
+        placeholder="人物名・グループ名・作品名で検索"
+        inputClassName="hero-search-input"
+        buttonClassName="hero-search-btn"
+        buttonLabel="検索する"
+      />
 
       {/* 人気キーワード */}
       <div style={{

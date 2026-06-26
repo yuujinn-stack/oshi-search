@@ -9,6 +9,7 @@ import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
 import type { GroupMeta } from '@/types/group';
 import type { ActivityStatus, PersonWithConfig } from '@/types/person';
+import type { SuggestionItem } from '@/types/search';
 
 export const dynamic = 'force-dynamic';
 
@@ -183,11 +184,26 @@ export default async function SearchPage({ searchParams }: Props) {
 
   const totalCount = persons.length + matchingGroups.length;
 
+  // サジェスト候補を構築
+  const suggestions: SuggestionItem[] = [
+    ...[...new Set(allPersons.map((p) => p.group).filter(Boolean) as string[])].map((g) => ({
+      label: g,
+      href: `/group/${encodeURIComponent(g)}`,
+      type: 'group' as const,
+    })),
+    ...allPersons.flatMap((p) => [
+      { label: p.name, sublabel: p.group || undefined, href: `/person/${encodeURIComponent(p.name)}`, type: 'person' as const },
+      ...(p.config.aliases ?? []).map((a) => ({
+        label: a, sublabel: p.name, href: `/search?q=${encodeURIComponent(a)}`, type: 'alias' as const,
+      })),
+    ]),
+  ];
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* 検索フォーム */}
       <div className="mb-6 max-w-2xl">
-        <SearchForm defaultValue={query} />
+        <SearchForm defaultValue={query} suggestions={suggestions} />
       </div>
 
       {/* 旧グループ名バナー（テーマ対応） */}

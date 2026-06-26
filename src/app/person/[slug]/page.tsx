@@ -8,7 +8,7 @@ import { getPublishedWorks } from '@/lib/work-store';
 import { getRedis } from '@/lib/redis';
 import { getGroupMeta } from '@/lib/group-meta';
 import { deduplicateProviders } from '@/lib/vod-dedup';
-import ProductSectionList from '@/components/ProductSectionList';
+import ProductTabList, { type ProductWithSection } from '@/components/ProductTabList';
 import PersonCard from '@/components/PersonCard';
 import WorkCard from '@/components/WorkCard';
 import ProviderLogo from '@/components/ProviderLogo';
@@ -178,6 +178,17 @@ export default async function PersonPage({ params }: Props) {
       : { status: 'empty' as const };
     return { label, icon, newResult, usedProducts: sortedUsed };
   });
+
+  // ── 全商品フラット化（ProductTabList 用）─────────────────────────────────
+  // フィルタ済み sectionResults を再利用する（公開条件・verdict ロジックは変更しない）
+  const allProductItems: ProductWithSection[] = sectionResults.flatMap(
+    ({ label, newResult, usedProducts: su }) => [
+      ...(newResult.status === 'ok'
+        ? newResult.products.map((p) => ({ product: p, sectionLabel: label, isUsed: false }))
+        : []),
+      ...su.map((p) => ({ product: p, sectionLabel: label, isUsed: true })),
+    ],
+  );
 
   // ── VOD データ ──
   const streamingWorks = publishedWorks.filter((w) => getStreamingProviders(w).length > 0);
@@ -454,48 +465,21 @@ export default async function PersonPage({ params }: Props) {
               )}
             </div>
 
-            <div className="space-y-8">
-              {sectionResults.map(({ label, icon, newResult, usedProducts: sectionUsed }) => {
-                if (newResult.status === 'no_data' && sectionUsed.length === 0) return null;
-                return (
-                  <div key={label}>
-                    <div className="flex items-center gap-2 mb-3">
-                      <h3 className="text-sm font-semibold text-slate-700">{icon} {label}</h3>
-                      {newResult.status === 'ok' && sectionUsed.length > 0 && (
-                        <span className="text-xs text-gray-400">
-                          新品{newResult.products.length}件・中古{sectionUsed.length}件
-                        </span>
-                      )}
-                    </div>
-
-                    {/* 新品: status=ok のとき、または中古しかない場合も ProductSectionList で empty/no_data を表示 */}
-                    {(newResult.status === 'ok' || sectionUsed.length === 0) && (
-                      <ProductSectionList result={newResult} />
-                    )}
-
-                    {/* 中古 */}
-                    {sectionUsed.length > 0 && (
-                      <div className={newResult.status === 'ok' ? 'mt-4' : ''}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
-                            中古
-                          </span>
-                          <span className="text-xs text-gray-400">{sectionUsed.length}件</span>
-                        </div>
-                        <ProductSectionList result={{ status: 'ok', products: sectionUsed }} />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {/* 全セクション no_data の場合 */}
-              {sectionResults.every((r) => r.newResult.status === 'no_data' && r.usedProducts.length === 0) && (
-                <p className="text-sm text-gray-500 bg-white rounded-xl border border-gray-100 px-4 py-4">
-                  関連商品は現在取得中です。しばらくお待ちください。
-                </p>
-              )}
-            </div>
+            {/* カテゴリタブ + ソート付き商品一覧 */}
+            {sectionResults.every((r) => r.newResult.status === 'no_data' && r.usedProducts.length === 0) ? (
+              <p
+                className="text-sm rounded-xl border px-4 py-4"
+                style={{
+                  color: 'var(--ds-muted)',
+                  background: 'var(--ds-surface)',
+                  borderColor: 'var(--ds-border)',
+                }}
+              >
+                関連商品は現在取得中です。しばらくお待ちください。
+              </p>
+            ) : (
+              <ProductTabList items={allProductItems} />
+            )}
           </section>
 
           {/* ━━━ 出演作品 ━━━ */}
