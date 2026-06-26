@@ -27,11 +27,11 @@ function StarRating({ avg, count }: { avg: number; count: number }) {
   );
 }
 
-function trackProductClick(productId: string, personSlug: string) {
+function trackProductClick(productId: string, personSlug: string, title: string, category: string) {
   fetch('/api/track', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'product', productId, slug: personSlug }),
+    body: JSON.stringify({ type: 'product', productId, slug: personSlug, title, category }),
   }).catch(() => {});
 }
 
@@ -142,7 +142,7 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
             minHeight: '44px',
             textDecoration: 'none',
           }}
-          onClick={() => trackProductClick(product.id, personSlug)}
+          onClick={() => trackProductClick(product.id, personSlug, product.title, product.category)}
         >
           楽天で見る →
         </a>

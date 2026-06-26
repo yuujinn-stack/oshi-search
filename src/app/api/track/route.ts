@@ -3,8 +3,8 @@ import { getRedis } from '@/lib/redis';
 
 type TrackEvent =
   | { type: 'view'; entity: 'person' | 'group'; slug: string }
-  | { type: 'product'; productId: string; slug: string }
-  | { type: 'work'; workId: string }
+  | { type: 'product'; productId: string; slug: string; title?: string; category?: string }
+  | { type: 'work'; workId: string; title?: string; personName?: string; workType?: string }
   | { type: 'vod'; service: string };
 
 export async function POST(req: NextRequest) {
@@ -23,14 +23,32 @@ export async function POST(req: NextRequest) {
         break;
       }
       case 'product': {
-        await Promise.all([
-          redis.incr(`product:click:${body.productId}`),
-          ...(body.slug ? [redis.incr(`person:productClicks:${body.slug}`)] : []),
-        ]);
+        const pipe = redis.pipeline();
+        pipe.incr(`product:click:${body.productId}`);
+        if (body.slug) pipe.incr(`person:productClicks:${body.slug}`);
+        // メタデータ保存（アナリティクス用・初回のみ上書き）
+        if (body.title) {
+          pipe.hset(`product:meta:${body.productId}`, {
+            title: body.title,
+            personSlug: body.slug ?? '',
+            category: body.category ?? '',
+          });
+        }
+        await pipe.exec();
         break;
       }
       case 'work': {
-        await redis.incr(`work:click:${body.workId}`);
+        const pipe = redis.pipeline();
+        pipe.incr(`work:click:${body.workId}`);
+        // メタデータ保存（アナリティクス用）
+        if (body.title) {
+          pipe.hset(`work:meta:${body.workId}`, {
+            title: body.title,
+            personName: body.personName ?? '',
+            workType: body.workType ?? '',
+          });
+        }
+        await pipe.exec();
         break;
       }
       case 'vod': {
