@@ -19,6 +19,7 @@ import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import type { PersonWithConfig } from '@/types/person';
 import type { GroupMeta } from '@/types/group';
 import PageViewTracker from '@/components/site/PageViewTracker';
+import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
 
 export const dynamic = 'force-dynamic';
 
@@ -508,7 +509,7 @@ export default async function GroupPage({ params }: Props) {
     })),
   };
 
-  const gradient = GENRE_GRADIENT[genre] ?? 'from-indigo-500 to-indigo-700';
+  const heroBackground = getGroupHeroGradient(groupName, genre);
   const badge = GENRE_BADGE[genre] ?? 'bg-gray-100 text-gray-600';
 
   return (
@@ -540,7 +541,7 @@ export default async function GroupPage({ params }: Props) {
         </nav>
 
         {/* ヒーロー */}
-        <div className={`bg-gradient-to-br ${gradient} py-10 px-4`}>
+        <div className="py-10 px-4" style={{ background: heroBackground }}>
           <div className="max-w-4xl mx-auto">
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center text-white text-3xl font-black flex-shrink-0 select-none">

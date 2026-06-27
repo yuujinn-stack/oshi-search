@@ -16,6 +16,7 @@ import PageViewTracker from '@/components/site/PageViewTracker';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
 import type { ActivityStatus } from '@/types/person';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
+import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
 import type { WorkRecord } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 
@@ -273,7 +274,7 @@ export default async function PersonPage({ params }: Props) {
     })),
   };
 
-  const gradient = GENRE_GRADIENT[person.genre] ?? 'from-indigo-600 to-indigo-800';
+  const heroBackground = getGroupHeroGradient(person.group, person.genre);
 
   return (
     <>
@@ -308,7 +309,7 @@ export default async function PersonPage({ params }: Props) {
         </nav>
 
         {/* ─── Hero ─── */}
-        <div className={`bg-gradient-to-br ${gradient} py-8 px-4`}>
+        <div className="py-8 px-4" style={{ background: heroBackground }}>
           <div className="max-w-4xl mx-auto">
 
             {/* 人物情報 */}
