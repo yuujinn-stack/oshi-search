@@ -1,13 +1,19 @@
-// @next/env で .env.local を読み込んでから Redis に直接クエリする調査スクリプト
-import pkg from '@next/env';
-const { loadEnvConfig } = pkg;
+// 作品の vodProviders を Redis から直接確認するスクリプト
+//
+// 使い方:
+//   UPSTASH_REDIS_REST_URL=https://xxx.upstash.io \
+//   UPSTASH_REDIS_REST_TOKEN=AXxxxx \
+//   node scripts/inspect-works.mjs
+//
+// 認証情報の取得: Vercel ダッシュボード > プロジェクト > Settings > Environment Variables
 
-const { combinedEnv } = loadEnvConfig(process.cwd());
-const url   = combinedEnv.UPSTASH_REDIS_REST_URL;
-const token = combinedEnv.UPSTASH_REDIS_REST_TOKEN;
+const url   = process.env.UPSTASH_REDIS_REST_URL;
+const token = process.env.UPSTASH_REDIS_REST_TOKEN;
 
 if (!url || !token) {
-  console.error('UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN が未設定です');
+  console.error('環境変数が未設定です。');
+  console.error('実行例:');
+  console.error('  UPSTASH_REDIS_REST_URL=https://xxx.upstash.io UPSTASH_REDIS_REST_TOKEN=AXxxx node scripts/inspect-works.mjs');
   process.exit(1);
 }
 
@@ -19,58 +25,47 @@ async function hgetall(key) {
   return json.result ?? null;
 }
 
-const TARGETS = [
-  {
-    name: '村山美羽',
-    titleKeywords: ['村山', 'Vlog', '無題'],
-  },
-  {
-    name: 'ちょこさく',
-    titleKeywords: [], // 全件（作品数が少ない前提）
-  },
-];
+const TARGET_PERSON = '村山美羽';
+const TARGET_TITLE_KEYWORDS = ['無題', 'Vlog'];
 
-for (const { name, titleKeywords } of TARGETS) {
-  const raw = await hgetall(`works:${name}`);
-  if (!raw) {
-    console.log(`\n===== ${name} → Redis に存在しません =====`);
+const raw = await hgetall(`works:${TARGET_PERSON}`);
+if (!raw) {
+  console.log(`works:${TARGET_PERSON} → Redis に存在しません`);
+  process.exit(0);
+}
+
+const entries = Object.entries(raw);
+console.log(`works:${TARGET_PERSON} 総作品数: ${entries.length}\n`);
+
+for (const [id, value] of entries) {
+  let w;
+  try {
+    w = typeof value === 'string' ? JSON.parse(value) : value;
+  } catch {
     continue;
   }
 
-  const entries = Object.entries(raw);
-  console.log(`\n===== ${name} (総作品数: ${entries.length}) =====`);
+  const title = w.title ?? '';
+  if (!TARGET_TITLE_KEYWORDS.some((kw) => title.includes(kw))) continue;
 
-  for (const [id, value] of entries) {
-    let w;
-    try {
-      w = typeof value === 'string' ? JSON.parse(value) : value;
-    } catch {
-      console.log(`  [${id}] parse error`);
-      continue;
-    }
+  console.log(`${'─'.repeat(60)}`);
+  console.log(`title:     ${title}`);
+  console.log(`id:        ${id}`);
+  console.log(`source:    ${w.source}`);
+  console.log(`posterUrl: ${w.posterUrl ?? '(なし)'}`);
+  console.log(`vodProviders: (${(w.vodProviders ?? []).length}件)`);
 
-    const title = w.title ?? '';
-    if (titleKeywords.length > 0 && !titleKeywords.some((kw) => title.includes(kw))) continue;
-
-    console.log(`\n  ─── ${title} ───`);
-    console.log(`  id:        ${id}`);
-    console.log(`  source:    ${w.source}`);
-    console.log(`  posterUrl: ${w.posterUrl ?? '(なし)'}`);
-
-    const providers = w.vodProviders ?? [];
-    if (providers.length === 0) {
-      console.log(`  vodProviders: (なし)`);
-    } else {
-      for (const p of providers) {
-        console.log(`  ┌ provider ─────────────────────────`);
-        console.log(`  │ source:       ${p.source}`);
-        console.log(`  │ providerName: ${p.providerName}`);
-        console.log(`  │ type:         ${p.type}`);
-        console.log(`  │ officialUrl:  ${p.officialUrl ?? '(なし)'}`);
-        console.log(`  │ sourceUrl:    ${p.sourceUrl ?? '(なし)'}`);
-        console.log(`  │ link:         ${p.link ?? '(なし)'}`);
-        console.log(`  └───────────────────────────────────`);
-      }
-    }
+  for (const [i, p] of (w.vodProviders ?? []).entries()) {
+    console.log(`\n  [${i}] ${JSON.stringify({
+      providerName: p.providerName,
+      source: p.source,
+      sourceUrl: p.sourceUrl ?? null,
+      officialUrl: p.officialUrl ?? null,
+    }, null, 2).replace(/^/gm, '  ')}`);
   }
+
+  if ((w.vodProviders ?? []).length === 0) {
+    console.log('  (vodProvidersなし)');
+  }
+  console.log('');
 }

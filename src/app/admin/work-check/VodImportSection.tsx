@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import PersonCombobox from '@/components/admin/PersonCombobox';
 
 interface PersonInfo {
   name: string;
@@ -227,20 +228,19 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
       {/* 対象人物セレクター */}
       <div className="flex items-center gap-2">
         <label className="text-[11px] text-gray-600 font-medium whitespace-nowrap">対象人物:</label>
-        <select
+        <PersonCombobox
+          persons={persons}
           value={importPerson}
-          onChange={(e) => {
-            setImportPerson(e.target.value);
+          onChange={(name) => {
+            setImportPerson(name);
             setImportPreview(null);
             setImportError(null);
           }}
-          className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
-        >
-          <option value="">CSVのpersonId列を使用</option>
-          {persons.map((p) => (
-            <option key={p.name} value={p.name}>{p.name}</option>
-          ))}
-        </select>
+          allowEmpty
+          emptyLabel="CSVのpersonId列を使用"
+          placeholder="人物名・グループ名で検索..."
+          className="w-64"
+        />
         {importPerson && (
           <span className="text-[11px] text-orange-600 font-medium">
             → {importPerson} の作品のみ対象

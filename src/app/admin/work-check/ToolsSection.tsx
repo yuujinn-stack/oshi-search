@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import VodRecheckSection from './VodRecheckSection';
+import PersonCombobox from '@/components/admin/PersonCombobox';
 
 interface PersonInfo {
   name: string;
@@ -581,16 +582,15 @@ export default function ToolsSection({ persons }: { persons: PersonInfo[] }) {
         </div>
 
         <div className="flex flex-wrap gap-2 items-center">
-          <select
+          <PersonCombobox
+            persons={persons}
             value={dedupPerson}
-            onChange={(e) => { setDedupPerson(e.target.value); setDedupResult(null); setDedupError(''); }}
-            className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
-          >
-            <option value="">全人物</option>
-            {persons.map((p) => (
-              <option key={p.name} value={p.name}>{p.name}</option>
-            ))}
-          </select>
+            onChange={(name) => { setDedupPerson(name); setDedupResult(null); setDedupError(''); }}
+            allowEmpty
+            emptyLabel="全人物"
+            placeholder="人物名・グループ名で検索..."
+            className="w-48"
+          />
           <button
             onClick={handleDedup}
             disabled={deduping}

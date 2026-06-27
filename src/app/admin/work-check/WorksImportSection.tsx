@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import PersonCombobox from '@/components/admin/PersonCombobox';
 
 interface PersonInfo {
   name: string;
@@ -170,20 +171,19 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
       {/* 対象人物セレクター */}
       <div className="flex items-center gap-2">
         <label className="text-[11px] text-gray-600 font-medium whitespace-nowrap">対象人物:</label>
-        <select
+        <PersonCombobox
+          persons={persons}
           value={workImportPerson}
-          onChange={(e) => {
-            setWorkImportPerson(e.target.value);
+          onChange={(name) => {
+            setWorkImportPerson(name);
             setWorkImportPreview(null);
             setWorkImportError(null);
           }}
-          className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
-        >
-          <option value="">CSVのpersonId/personName列を使用</option>
-          {persons.map((p) => (
-            <option key={p.name} value={p.name}>{p.name}</option>
-          ))}
-        </select>
+          allowEmpty
+          emptyLabel="CSVのpersonId/personName列を使用"
+          placeholder="人物名・グループ名で検索..."
+          className="w-64"
+        />
         {workImportPerson && (
           <span className="text-[11px] text-orange-600 font-medium">
             → {workImportPerson} の作品のみ対象
