@@ -15,7 +15,7 @@ type SortKey = 'default' | 'price-asc' | 'price-desc' | 'review';
 
 // ─── タブ定義 ─────────────────────────────────────────────────────────────────
 const TAB_ALL = 'すべて';
-const CATEGORY_TABS = ['写真集', 'CD', 'Blu-ray・DVD', 'グッズ', '本・雑誌', '中古'];
+const CATEGORY_TABS = ['写真集・書籍', 'CD', 'Blu-ray・DVD', 'グッズ', '中古'];
 
 // ─── コンポーネント ───────────────────────────────────────────────────────────
 export default function ProductTabList({ items, personSlug = '' }: { items: ProductWithSection[]; personSlug?: string }) {
