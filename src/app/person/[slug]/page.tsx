@@ -84,17 +84,54 @@ function applyDisplayOrder(products: RakutenItem[], savedOrder: string[]): Rakut
   return [...inOrder, ...sortProducts(rest)];
 }
 
-// ─── 表示セクション定義（変更禁止） ──────────────────────────────────────────
+// ─── 表示セクション定義 ───────────────────────────────────────────────────────
+// titleKeywords: 新商品をタイトルキーワードで絞り込む（先頭セクションが先に確保する）
+// sources の順に取得し、crossSectionSeen で重複除外
 const DISPLAY_SECTIONS: Array<{
   label: string;
   icon: string;
   sources: ProductCategory[];
+  titleKeywords?: string[];
   usedKeywords: string[];
 }> = [
-  { label: '本・写真集', icon: '📷', sources: ['写真集', '本・雑誌'], usedKeywords: ['写真集', 'フォトブック', 'ムック'] },
-  { label: 'CD',         icon: '💿', sources: ['CD'],           usedKeywords: ['CD', 'シングル', 'アルバム', 'ALBUM', 'SINGLE', 'ベストアルバム'] },
-  { label: 'Blu-ray・DVD', icon: '📀', sources: ['Blu-ray・DVD'], usedKeywords: ['DVD', 'Blu-ray', 'ブルーレイ', 'ライブ', 'コンサート', 'ツアー'] },
-  { label: 'グッズ',     icon: '🎁', sources: ['グッズ'],        usedKeywords: ['グッズ', 'カレンダー', 'ポスター', 'ぬいぐるみ', 'トレカ'] },
+  {
+    label: '写真集・書籍',
+    icon: '📷',
+    // グッズカテゴリに混入した書籍もここで回収する
+    sources: ['写真集', '本・雑誌', 'グッズ'],
+    titleKeywords: [
+      '写真集', 'フォトブック', '書籍', '単行本', '雑誌', 'ムック',
+      'コミック', '楽譜', '小説', '図鑑', '絵本', 'エッセイ',
+    ],
+    usedKeywords: [
+      '写真集', 'フォトブック', 'ムック', '書籍', '単行本', '雑誌',
+      'コミック', '小説', '楽譜',
+    ],
+  },
+  {
+    label: 'CD',
+    icon: '💿',
+    sources: ['CD'],
+    usedKeywords: ['CD', 'シングル', 'アルバム', 'ALBUM', 'SINGLE', 'ベストアルバム'],
+  },
+  {
+    label: 'Blu-ray・DVD',
+    icon: '📀',
+    sources: ['Blu-ray・DVD'],
+    usedKeywords: ['DVD', 'Blu-ray', 'ブルーレイ', 'ライブ', 'コンサート', 'ツアー'],
+  },
+  {
+    label: 'グッズ',
+    icon: '🎁',
+    // 写真集・書籍カテゴリに混入したグッズも残り物として回収する（titleKeywords なし = 残存品すべて）
+    sources: ['グッズ', '写真集', '本・雑誌'],
+    usedKeywords: [
+      'アクリルスタンド', 'アクスタ', 'キーホルダー', 'タオル', 'Tシャツ',
+      'ペンライト', '缶バッジ', '生写真', 'トレカ', 'ポスター', 'ぬいぐるみ',
+      'クッション', 'カレンダー', 'ストラップ', 'クリアファイル', 'うちわ',
+      'ブロマイド', 'グッズ', 'フィギュア', 'チャーム', 'ハンカチ', 'バンダナ',
+    ],
+  },
 ];
 
 // ─── VOD フィルタ（WorkCard と同一ロジック） ──────────────────────────────────
@@ -156,37 +193,42 @@ export default async function PersonPage({ params }: Props) {
   // ── 中古商品 ──
   const usedCatData = storedData['中古'];
   const usedProducts: RakutenItem[] = [];
-  const usedSeen = new Set<string>();
   if (usedCatData && Array.isArray(usedCatData.products)) {
     for (const p of usedCatData.products) {
       const v = verdicts[p.id];
       if (!v || v.verdict !== 'related') continue;
-      usedSeen.add(p.id);
       usedProducts.push(p);
     }
   }
 
-  // ── セクション別商品（既存ロジック・変更禁止） ─────────────────────────────
-  const sectionResults = DISPLAY_SECTIONS.map(({ label, icon, sources, usedKeywords }) => {
+  // ── セクション別商品 ──────────────────────────────────────────────────────
+  // crossSectionSeen: 先頭セクションから順に「新商品」を確保し、後続セクションで重複しない
+  const crossSectionSeen = new Set<string>();
+
+  const sectionResults = DISPLAY_SECTIONS.map(({ label, icon, sources, titleKeywords, usedKeywords }) => {
     const hasAnyData = sources.some((cat) => !!storedData[cat]);
     const newProducts: RakutenItem[] = [];
-    const newSeen = new Set<string>();
+
     for (const cat of sources) {
       const catData = storedData[cat];
       if (!catData || !Array.isArray(catData.products)) continue;
       for (const p of catData.products) {
-        if (newSeen.has(p.id)) continue;
+        if (crossSectionSeen.has(p.id)) continue;
         const v = verdicts[p.id];
         if (!v || v.verdict !== 'related') continue;
-        newSeen.add(p.id);
+        // titleKeywords が指定されている場合はタイトル一致した商品だけを確保
+        if (titleKeywords && !titleKeywords.some((kw) => p.title.includes(kw))) continue;
+        crossSectionSeen.add(p.id);
         newProducts.push(p);
       }
     }
+
     const sectionUsed = usedProducts.filter((p) => {
-      if (newSeen.has(p.id)) return false;
+      if (crossSectionSeen.has(p.id)) return false;
       const title = p.title.replace(/^【中古】\s*/, '');
       return usedKeywords.some((kw) => title.includes(kw));
     });
+
     const savedOrder = sources.flatMap((cat) => displayOrders[cat] ?? []);
     const sortedNew = applyDisplayOrder(newProducts, savedOrder);
     const sortedUsed = sortProducts(sectionUsed);
