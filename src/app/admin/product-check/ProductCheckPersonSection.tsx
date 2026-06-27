@@ -5,6 +5,7 @@ import PersonProducts from './PersonProducts';
 import PersonAiJudgeButton from './PersonAiJudgeButton';
 import PersonRakutenFetchButton from './PersonRakutenFetchButton';
 import type { PersonPriority, ActivityStatus } from '@/app/admin/work-check/work-check-types';
+import type { PersonOption } from '@/components/admin/PersonCombobox';
 
 const ACTIVITY_BADGE: Record<ActivityStatus, { label: string; cls: string }> = {
   active:    { label: '現役',   cls: 'bg-green-100 text-green-700' },
@@ -117,7 +118,7 @@ function sortPersons(list: PersonWithProductStats[], sort: SortKey): PersonWithP
 const RECENT_DAYS = 30;
 
 // ─── 人物カード（メモ・優先度・活動状態編集含む）──────────────────────────────
-function PersonProductCard({ p }: { p: PersonWithProductStats }) {
+function PersonProductCard({ p, allPersons }: { p: PersonWithProductStats; allPersons: PersonOption[] }) {
   const [metaOpen, setMetaOpen] = useState(false);
   const [editMemo, setEditMemo] = useState(p.memo ?? '');
   const [editPriority, setEditPriority] = useState<PersonPriority>(p.priority ?? 'normal');
@@ -389,7 +390,7 @@ function PersonProductCard({ p }: { p: PersonWithProductStats }) {
       </div>
 
       {/* 商品パネル（既存コンポーネント） */}
-      <PersonProducts personName={p.name} />
+      <PersonProducts personName={p.name} allPersons={allPersons} personGroup={p.group || undefined} />
     </div>
   );
 }
@@ -453,6 +454,20 @@ export default function ProductCheckPersonSection({ persons }: Props) {
     setGenreFilter('');
     setStatusFilter('all');
   }
+
+  // ManualProductModal 用: 全人物の最低限データ（useMemo でメモ化）
+  const allPersonsForModal = useMemo<PersonOption[]>(
+    () => persons.map((p) => ({
+      name: p.name,
+      group: p.group || undefined,
+      activityStatus: p.activityStatus,
+      generation: p.generation,
+      aliases: p.aliases,
+      formerGroupNames: p.formerGroupNames,
+      membershipNote: p.membershipNote,
+    })),
+    [persons],
+  );
 
   // ダッシュボード集計
   const totalRelated = persons.reduce((sum, p) => sum + p.stats.related, 0);
@@ -625,7 +640,7 @@ export default function ProductCheckPersonSection({ persons }: Props) {
         {filtered.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-6">条件に一致する人物がいません</p>
         ) : (
-          filtered.map((p) => <PersonProductCard key={p.name} p={p} />)
+          filtered.map((p) => <PersonProductCard key={p.name} p={p} allPersons={allPersonsForModal} />)
         )}
       </div>
     </div>

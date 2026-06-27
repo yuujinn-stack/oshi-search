@@ -21,6 +21,7 @@ import type { JudgmentRecord, Verdict } from '@/lib/judgment-store';
 import type { ProductCategory } from '@/types/person';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
 import ManualProductModal from './ManualProductModal';
+import type { PersonOption } from '@/components/admin/PersonCombobox';
 
 interface ProductData {
   status: string;
@@ -237,7 +238,15 @@ function SortableProductCard({
 
 // ─── Main component ─────────────────────────────────────────────────────────
 
-export default function PersonProducts({ personName }: { personName: string }) {
+export default function PersonProducts({
+  personName,
+  allPersons = [],
+  personGroup,
+}: {
+  personName: string;
+  allPersons?: PersonOption[];
+  personGroup?: string;
+}) {
   type Filter = 'uncertain' | 'all' | 'unrelated';
 
   const [data, setData] = useState<AdminData | null>(null);
@@ -759,6 +768,8 @@ export default function PersonProducts({ personName }: { personName: string }) {
           editProduct={editingProduct ?? undefined}
           onClose={() => { setManualModalOpen(false); setEditingProduct(null); }}
           onSaved={load}
+          allPersons={editingProduct ? [] : allPersons}
+          personGroup={editingProduct ? undefined : personGroup}
         />
       )}
 
