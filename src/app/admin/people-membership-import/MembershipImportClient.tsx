@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { PreviewRow } from '@/app/api/admin/people-membership-import/route';
 import type { PersonMeta } from '@/lib/person-meta';
+import { csvDownloadSection } from '@/lib/chatGptPromptUtil';
 
 // ─── フィールドラベル ─────────────────────────────────────────────────────────
 const FIELD_LABEL: Record<string, string> = {
@@ -148,7 +149,6 @@ ${memberList}
 ・必ず公式発表・公式サイト・公式プロフィールを優先
 ・存在しない情報は空欄
 ・name列は変更しない
-・CSV以外の文章は出力しない
 
 activityStatusは
 
@@ -173,7 +173,8 @@ joinedAt / leftAt は YYYY-MM-DD 形式で記載してください。
 
 formerGroupNamesはカンマ区切りで記載してください。
 
-${csv}`;
+${csv}
+${csvDownloadSection(`${groupName}_所属情報.csv`)}`;
 }
 
 // ─── ダウンロード ─────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { WorkRecord } from '@/types/work';
+import { csvDownloadSection } from '@/lib/chatGptPromptUtil';
 
 const VOD_TYPE_LABEL: Record<string, string> = {
   flatrate: '見放題',
@@ -55,10 +56,8 @@ NHKオンデマンド
 - 配信確認できない場合は vodService=unknown
 - 1サービス1行
 - workId は必ず保持
-- CSV以外の文章は出力しない
 
 出力形式：
-CSVのみ
 
 workId,vodService,availabilityType,confidence,sourceUrl,note
 
@@ -67,7 +66,8 @@ flatrate
 rent
 buy
 free
-unknown`;
+unknown
+${csvDownloadSection(`${work.personName}_VOD配信情報.csv`)}`;
 }
 
 interface Props {

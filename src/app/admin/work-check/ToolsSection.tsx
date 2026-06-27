@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import VodRecheckSection from './VodRecheckSection';
 import PersonCombobox from '@/components/admin/PersonCombobox';
+import { csvDownloadSection } from '@/lib/chatGptPromptUtil';
 
 interface PersonInfo {
   name: string;
@@ -56,7 +57,7 @@ interface ExportPreviewResult {
   warning?: string;
 }
 
-function buildChatGptPrompt(simpleCsv: string): string {
+function buildChatGptPrompt(simpleCsv: string, label = '出演作品'): string {
   return `━━━━━━━━━━━━━━━━━━
 調査依頼
 ━━━━━━━━━━━━━━━━━━
@@ -88,7 +89,8 @@ CSV:
 
 ${simpleCsv}
 
-━━━━━━━━━━━━━━━━━━`;
+━━━━━━━━━━━━━━━━━━
+${csvDownloadSection(`${label}_出演作品調査.csv`)}`;
 }
 
 export default function ToolsSection({ persons }: { persons: PersonInfo[] }) {
@@ -234,7 +236,8 @@ export default function ToolsSection({ persons }: { persons: PersonInfo[] }) {
     try {
       const text = await fetchSimpleCsvAsText();
       if (!text) { setExportPreviewError('ChatGPT用CSV取得に失敗しました'); return; }
-      await navigator.clipboard.writeText(buildChatGptPrompt(text));
+      const fileLabel = exportPersons.length === 1 ? exportPersons[0] : personSelectionLabel;
+      await navigator.clipboard.writeText(buildChatGptPrompt(text, fileLabel));
       setCopyStatus('prompt');
       setTimeout(() => setCopyStatus('idle'), 2000);
     } catch {
