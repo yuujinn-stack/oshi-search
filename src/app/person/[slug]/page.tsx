@@ -85,12 +85,13 @@ function applyDisplayOrder(products: RakutenItem[], savedOrder: string[]): Rakut
 }
 
 // ─── 商品タイトルによるカテゴリ振り分け ────────────────────────────────────
-// 管理画面のカテゴリに依存せず、タイトルから最終判定する。
-// CD・Blu-ray・DVD の管理カテゴリは権威的とし、タイトル判定を行わない。
+// 判定順: CD → Blu-ray・DVD → 写真集・書籍（タイトル判定） → グッズ
+// 管理カテゴリは CD・Blu-ray・DVD・中古 以外では使用しない。
 
-const BOOK_TITLE_KEYWORDS = [
-  '写真集', 'フォトブック', 'Photobook', 'PHOTOBOOK', 'photobook',
-  'PHOTO BOOK', 'Photo Book',
+// 写真集・書籍と判定するタイトルキーワード
+const BOOK_TITLE_KEYWORDS: string[] = [
+  '写真集', 'フォトブック',
+  'PHOTOBOOK', 'Photobook', 'photobook', 'PHOTO BOOK', 'Photo Book',
   'BOOK', 'BOOKS',
   '書籍', '単行本', '雑誌', 'ムック', 'ガイド', 'コミック', '楽譜', '小説',
   '図鑑', '絵本', 'エッセイ',
@@ -99,23 +100,17 @@ const BOOK_TITLE_KEYWORDS = [
   'Platinum FLASH', 'BUBKA', '東京カレンダー', 'TRIANGLE',
 ];
 
-const GOODS_TITLE_KEYWORDS = [
-  'アクリルスタンド', 'アクスタ', '缶バッジ', '生写真', 'キーホルダー',
-  'タオル', 'Tシャツ', 'ペンライト', 'クリアファイル', 'ステッカー',
-  'ぬいぐるみ', 'キーチェーン', 'うちわ', 'ストラップ', 'ブロマイド',
-  'ポスター', 'フィギュア', 'チャーム', 'ハンカチ', 'バンダナ', 'マグカップ',
-  'スタンドパネル', 'ランチボックス', '応援グッズ', 'トレカ',
-];
-
-// タイトルと管理カテゴリからセクションラベルを返す
+// タイトルと管理カテゴリから表示セクションラベルを返す
+// CD・Blu-ray・DVD のみ管理カテゴリを使用。それ以外はタイトル判定のみ。
 function classifyProduct(title: string, adminCat: ProductCategory): string {
   if (adminCat === 'CD') return 'CD';
   if (adminCat === 'Blu-ray・DVD') return 'Blu-ray・DVD';
-  if (BOOK_TITLE_KEYWORDS.some((kw) => title.includes(kw))) return '写真集・書籍';
-  if (GOODS_TITLE_KEYWORDS.some((kw) => title.includes(kw))) return 'グッズ';
-  // キーワード未一致時は管理カテゴリでフォールバック
-  if (adminCat === 'グッズ') return 'グッズ';
-  return '写真集・書籍'; // 写真集・本・雑誌カテゴリのデフォルト
+  // タイトルに書籍キーワードが含まれるか（管理カテゴリ不使用）
+  for (const kw of BOOK_TITLE_KEYWORDS) {
+    if (title.includes(kw)) return '写真集・書籍';
+  }
+  // 書籍キーワード未一致はすべてグッズ（管理カテゴリに関わらず）
+  return 'グッズ';
 }
 
 // ─── 表示セクション定義 ───────────────────────────────────────────────────────
@@ -227,34 +222,49 @@ export default async function PersonPage({ params }: Props) {
     }
   }
 
-  // ── 新商品をタイトルで振り分け（管理カテゴリ非依存） ─────────────────────
-  const NEW_PRODUCT_CATS = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD'] as const;
-  const sectionProductMap = new Map<string, RakutenItem[]>([
-    ['写真集・書籍', []],
-    ['CD', []],
-    ['Blu-ray・DVD', []],
-    ['グッズ', []],
-  ]);
+  // ── 新商品をタイトルで振り分け ──────────────────────────────────────────
+  // ① 全カテゴリ（中古除く）の関連商品を収集
+  // ② classifyProduct でタイトル判定してセクション振り分け
+  const NEW_PRODUCT_CATS: ProductCategory[] = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD'];
+
+  const bookProducts: RakutenItem[] = [];
+  const cdProducts: RakutenItem[] = [];
+  const blurayProducts: RakutenItem[] = [];
+  const goodsProducts: RakutenItem[] = [];
   const globalSeen = new Set<string>();
+  let anyDataFetched = false;
 
   for (const cat of NEW_PRODUCT_CATS) {
     const catData = storedData[cat];
-    if (!catData?.products) continue;
+    if (!catData) continue;
+    anyDataFetched = true;
+    if (!Array.isArray(catData.products)) continue;
     for (const p of catData.products) {
       if (globalSeen.has(p.id)) continue;
       const v = verdicts[p.id];
       if (!v || v.verdict !== 'related') continue;
-      const sectionLabel = classifyProduct(p.title, cat);
-      sectionProductMap.get(sectionLabel)?.push(p);
       globalSeen.add(p.id);
+      const section = classifyProduct(p.title, cat);
+      if (section === '写真集・書籍') bookProducts.push(p);
+      else if (section === 'CD') cdProducts.push(p);
+      else if (section === 'Blu-ray・DVD') blurayProducts.push(p);
+      else goodsProducts.push(p);
     }
   }
 
+  const sectionProductLookup: Record<string, RakutenItem[]> = {
+    '写真集・書籍': bookProducts,
+    'CD': cdProducts,
+    'Blu-ray・DVD': blurayProducts,
+    'グッズ': goodsProducts,
+  };
+
   // ── セクション別商品 ──────────────────────────────────────────────────────
   const sectionResults = DISPLAY_SECTIONS.map(({ label, icon, sources, usedKeywords }) => {
-    const newProducts = sectionProductMap.get(label) ?? [];
-    // 取得済みデータがあるか（新商品ルーティング後でも sources で判定）
-    const hasAnyData = newProducts.length > 0 || sources.some((cat) => !!storedData[cat]);
+    const newProducts = sectionProductLookup[label] ?? [];
+    const hasAnyData = newProducts.length > 0 ||
+      anyDataFetched ||
+      sources.some((cat) => !!storedData[cat]);
 
     const sectionUsed = usedProducts.filter((p) => {
       const title = p.title.replace(/^【中古】\s*/, '');
