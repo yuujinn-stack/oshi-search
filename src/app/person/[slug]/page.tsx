@@ -17,6 +17,7 @@ import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
 import type { ActivityStatus } from '@/types/person';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
+import { getAllDisplayOrders } from '@/lib/product-order-store';
 import type { WorkRecord } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 
@@ -68,6 +69,19 @@ function sortProducts(products: RakutenItem[]): RakutenItem[] {
     if (aImg !== bImg) return aImg - bImg;
     return (b.reviewCount * (b.reviewAverage || 0)) - (a.reviewCount * (a.reviewAverage || 0));
   });
+}
+
+// Apply saved display order; products not in the order list fall back to sortProducts
+function applyDisplayOrder(products: RakutenItem[], savedOrder: string[]): RakutenItem[] {
+  if (savedOrder.length === 0) return sortProducts(products);
+  const added = new Set<string>();
+  const inOrder: RakutenItem[] = [];
+  for (const id of savedOrder) {
+    const p = products.find((x) => x.id === id);
+    if (p && !added.has(p.id)) { inOrder.push(p); added.add(p.id); }
+  }
+  const rest = products.filter((p) => !added.has(p.id));
+  return [...inOrder, ...sortProducts(rest)];
 }
 
 // ─── 表示セクション定義（変更禁止） ──────────────────────────────────────────
@@ -122,7 +136,7 @@ export default async function PersonPage({ params }: Props) {
   const groupMembers = person.group ? await getPersonsByGroupMerged(person.group) : [];
   const related = groupMembers.filter((p) => p.name !== person.name).slice(0, 4);
 
-  const [storedData, verdicts, publishedWorks, personMeta, groupMeta] = await Promise.all([
+  const [storedData, verdicts, publishedWorks, personMeta, groupMeta, displayOrders] = await Promise.all([
     getAllStoredProducts(person.name),
     getAllVerdicts(person.name),
     getPublishedWorks(person.name),
@@ -136,6 +150,7 @@ export default async function PersonPage({ params }: Props) {
       } catch { return null; }
     })(),
     person.group ? getGroupMeta(person.group) : Promise.resolve(null),
+    getAllDisplayOrders(person.name),
   ]);
 
   // ── 中古商品 ──
@@ -172,7 +187,8 @@ export default async function PersonPage({ params }: Props) {
       const title = p.title.replace(/^【中古】\s*/, '');
       return usedKeywords.some((kw) => title.includes(kw));
     });
-    const sortedNew = sortProducts(newProducts);
+    const savedOrder = sources.flatMap((cat) => displayOrders[cat] ?? []);
+    const sortedNew = applyDisplayOrder(newProducts, savedOrder);
     const sortedUsed = sortProducts(sectionUsed);
     const newResult: ApiResult = !hasAnyData
       ? { status: 'no_data' as const }

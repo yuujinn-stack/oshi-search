@@ -1,6 +1,21 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import type { RakutenItem } from '@/types/rakuten';
 import type { JudgmentRecord, Verdict } from '@/lib/judgment-store';
 import type { ProductCategory } from '@/types/person';
@@ -61,6 +76,167 @@ const SOURCE_ICON: Record<string, string> = {
 
 const CATEGORIES = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD', '中古'] as const;
 
+// Product with category label and verdict attached
+type ProductWithMeta = RakutenItem & {
+  catLabel: ProductCategory;
+  judgment: JudgmentRecord | undefined;
+};
+
+// Apply saved display order to a list; unlisted items come last
+function applyDisplayOrder<T extends { id: string }>(items: T[], savedOrder: string[]): T[] {
+  if (savedOrder.length === 0) return items;
+  const added = new Set<string>();
+  const inOrder: T[] = [];
+  for (const id of savedOrder) {
+    const item = items.find((x) => x.id === id);
+    if (item && !added.has(item.id)) { inOrder.push(item); added.add(item.id); }
+  }
+  const rest = items.filter((x) => !added.has(x.id));
+  return [...inOrder, ...rest];
+}
+
+// ─── SortableProductCard ────────────────────────────────────────────────────
+
+interface SortableCardProps {
+  p: ProductWithMeta;
+  sortMode: boolean;
+  selectedIds: Set<string>;
+  onMouseDown: (id: string, e: React.MouseEvent) => void;
+  onMouseEnter: (id: string) => void;
+  onVerdict: (id: string, verdict: Verdict, score: number) => void;
+  onDeleteVerdict: (id: string) => void;
+  onConfirmDelete: (ids: string[]) => void;
+  onEdit: (p: ProductWithMeta) => void;
+}
+
+function SortableProductCard({
+  p, sortMode, selectedIds,
+  onMouseDown, onMouseEnter,
+  onVerdict, onDeleteVerdict, onConfirmDelete, onEdit,
+}: SortableCardProps) {
+  const {
+    listeners, attributes,
+    setNodeRef, setActivatorNodeRef,
+    transform, transition, isDragging,
+  } = useSortable({
+    id: p.id,
+    disabled: !sortMode,
+    data: { category: p.catLabel },
+  });
+
+  const isChecked = selectedIds.has(p.id);
+  const isShown = p.judgment?.verdict === 'related';
+  const isHidden = p.judgment?.verdict === 'unrelated';
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}
+      className={`flex items-start gap-2 p-2.5 rounded-lg text-xs border transition-colors cursor-default ${
+        isChecked
+          ? 'border-slate-400 bg-slate-50 ring-1 ring-slate-300'
+          : isShown
+          ? 'border-green-100 bg-green-50/50'
+          : isHidden
+          ? 'border-red-100 bg-red-50/30 opacity-60'
+          : 'border-yellow-100 bg-yellow-50/50'
+      }`}
+      onMouseDown={sortMode ? undefined : (e) => onMouseDown(p.id, e)}
+      onMouseEnter={sortMode ? undefined : () => onMouseEnter(p.id)}
+    >
+      {/* DnD drag handle */}
+      {sortMode && (
+        <div
+          ref={setActivatorNodeRef}
+          {...listeners}
+          {...attributes}
+          className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 select-none flex items-center self-stretch pr-1 shrink-0 touch-none"
+          title="ドラッグして並び替え"
+        >
+          ☰
+        </div>
+      )}
+
+      {/* Checkbox (non-sort mode only) */}
+      {!sortMode && (
+        <input
+          type="checkbox"
+          readOnly
+          checked={isChecked}
+          className="mt-1 w-3.5 h-3.5 flex-shrink-0 accent-slate-600"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
+
+      {/* Thumbnail */}
+      {p.imageUrl && (
+        <img src={p.imageUrl} alt="" className="w-9 h-11 object-cover rounded flex-shrink-0" />
+      )}
+
+      {/* Product info */}
+      <div className="flex-1 min-w-0">
+        <p className="line-clamp-2 text-slate-700 font-medium leading-tight">{p.title}</p>
+        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+          <span className="text-gray-400">{p.catLabel}</span>
+          <span className="font-mono text-gray-400">score {p.relevanceScore}</span>
+          {p.judgment ? (
+            <span className={`px-1.5 py-0.5 rounded ${VERDICT_BADGE[p.judgment.verdict] ?? 'bg-gray-100 text-gray-500'}`}>
+              {SOURCE_ICON[p.judgment.source]} {VERDICT_LABEL[p.judgment.verdict] ?? p.judgment.verdict}
+              {p.judgment.reason ? ` — ${p.judgment.reason}` : ''}
+            </span>
+          ) : (
+            <span className="text-gray-400 italic">未判定</span>
+          )}
+        </div>
+      </div>
+
+      {/* Verdict buttons (non-sort mode only) */}
+      {!sortMode && (
+        <div className="flex flex-col gap-1 flex-shrink-0">
+          {p.id.startsWith('mn-') && (
+            <button
+              onClick={() => onEdit(p)}
+              className="text-xs px-2 py-1 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-700"
+            >
+              編集
+            </button>
+          )}
+          <button
+            onClick={() => onVerdict(p.id, 'related', p.relevanceScore)}
+            disabled={p.judgment?.verdict === 'related'}
+            className="text-xs px-2 py-1 rounded bg-green-100 hover:bg-green-200 text-green-700 disabled:opacity-40"
+          >
+            採用
+          </button>
+          <button
+            onClick={() => onVerdict(p.id, 'unrelated', p.relevanceScore)}
+            disabled={p.judgment?.verdict === 'unrelated'}
+            className="text-xs px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 disabled:opacity-40"
+          >
+            非表示
+          </button>
+          {p.judgment && (
+            <button
+              onClick={() => onDeleteVerdict(p.id)}
+              className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-500"
+            >
+              リセット
+            </button>
+          )}
+          <button
+            onClick={() => onConfirmDelete([p.id])}
+            className="text-xs px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white font-medium"
+          >
+            削除
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main component ─────────────────────────────────────────────────────────
+
 export default function PersonProducts({ personName }: { personName: string }) {
   type Filter = 'uncertain' | 'all' | 'unrelated';
 
@@ -80,14 +256,88 @@ export default function PersonProducts({ personName }: { personName: string }) {
   const [manualModalOpen, setManualModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<(RakutenItem & { catLabel: ProductCategory }) | null>(null);
 
-  // ─── フィルター済み商品リスト ────────────────────────────────────────────────
+  // ─── Sort mode state ────────────────────────────────────────────────────
+  const [sortMode, setSortMode] = useState(false);
+  const [displayOrders, setDisplayOrders] = useState<Record<string, string[]>>({});
+  const [sortSaving, setSortSaving] = useState<string | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  // Load display orders from Redis whenever data is loaded
+  useEffect(() => {
+    if (!data) return;
+    fetch(`/api/admin/product-order?person=${encodeURIComponent(personName)}`)
+      .then((r) => r.json())
+      .then(({ orders }) => setDisplayOrders(orders ?? {}))
+      .catch(() => {});
+  }, [data, personName]);
+
+  // Products for sort mode: only `related`, grouped by category, ordered
+  const sortedByCategory = useMemo(() => {
+    if (!data) return null;
+    return CATEGORIES.map((cat) => {
+      const catProducts = (data.categories[cat]?.products ?? [])
+        .filter((p) => data.verdicts[p.id]?.verdict === 'related')
+        .map((p) => ({
+          ...p,
+          catLabel: cat as ProductCategory,
+          judgment: data.verdicts[p.id],
+        }));
+      const ordered = applyDisplayOrder(catProducts, displayOrders[cat] ?? []);
+      return { cat, products: ordered };
+    }).filter(({ products }) => products.length > 0);
+  }, [data, displayOrders]);
+
+  // DnD drag end handler
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const category = active.data.current?.category as string;
+    const overCategory = (over.data.current as { category?: string } | undefined)?.category;
+    if (!category || category !== overCategory) return;
+
+    const group = sortedByCategory?.find((g) => g.cat === category);
+    if (!group) return;
+
+    const oldIndex = group.products.findIndex((p) => p.id === active.id);
+    const newIndex = group.products.findIndex((p) => p.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const newOrder = arrayMove(group.products, oldIndex, newIndex).map((p) => p.id);
+    setDisplayOrders((prev) => ({ ...prev, [category]: newOrder }));
+
+    // Auto-save
+    setSortSaving(category);
+    fetch('/api/admin/product-order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, category, order: newOrder }),
+    }).finally(() => setSortSaving(null));
+  }
+
+  async function handleResetOrder(category: string) {
+    setDisplayOrders((prev) => {
+      const next = { ...prev };
+      delete next[category];
+      return next;
+    });
+    await fetch('/api/admin/product-order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, category, order: [] }),
+    });
+  }
+
+  // ─── Filtered product list (non-sort mode) ───────────────────────────────
   const filteredProductList = useMemo(() => {
     if (!data) return [];
     return CATEGORIES.flatMap((cat) => {
       const catData = data.categories[cat];
       if (!catData || catData.status !== 'ok') return [];
       return catData.products
-        .map((p) => ({ ...p, catLabel: cat, judgment: data.verdicts[p.id] }))
+        .map((p) => ({ ...p, catLabel: cat as ProductCategory, judgment: data.verdicts[p.id] }))
         .filter((p) => {
           if (p.judgment?.verdict === 'deleted') return false;
           if (filter === 'uncertain') return p.judgment?.verdict === 'uncertain';
@@ -102,7 +352,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
     [filteredProductList],
   );
 
-  // ─── 一括選択 ────────────────────────────────────────────────────────────────
+  // ─── Bulk selection ──────────────────────────────────────────────────────
   const {
     selectedIds,
     isDragging,
@@ -112,13 +362,11 @@ export default function PersonProducts({ personName }: { personName: string }) {
     clearSelection,
   } = useBulkSelection(filteredProductIds);
 
-  // フィルター変更時に選択クリア
   useEffect(() => { clearSelection(); }, [filter, clearSelection]);
 
-  // 現在のフィルタービュー内で選択中のID
   const selectedInView = filteredProductIds.filter((id) => selectedIds.has(id));
 
-  // ─── データ取得 ──────────────────────────────────────────────────────────────
+  // ─── Data fetch ──────────────────────────────────────────────────────────
   async function load() {
     setLoading(true);
     setMessage('');
@@ -136,7 +384,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
     setOpen((v) => !v);
   }
 
-  // ─── 個別判定 ────────────────────────────────────────────────────────────────
+  // ─── Verdict handlers ────────────────────────────────────────────────────
   async function handleVerdict(productId: string, verdict: Verdict, score: number) {
     const res = await fetch('/api/admin/verdict', {
       method: 'POST',
@@ -155,7 +403,6 @@ export default function PersonProducts({ personName }: { personName: string }) {
     if (res.ok) await load();
   }
 
-  // ─── 一括判定 ────────────────────────────────────────────────────────────────
   async function handleBulkVerdict(verdict: 'related' | 'unrelated') {
     if (selectedInView.length === 0 || bulkProcessing) return;
     setBulkProcessing(true);
@@ -176,7 +423,6 @@ export default function PersonProducts({ personName }: { personName: string }) {
     setBulkProcessing(false);
   }
 
-  // ─── 検索テスト ──────────────────────────────────────────────────────────────
   async function handleSearchTest() {
     setSearchTestLoading(true);
     setSearchTest(null);
@@ -189,7 +435,6 @@ export default function PersonProducts({ personName }: { personName: string }) {
     setSearchTestLoading(false);
   }
 
-  // ─── 削除 ────────────────────────────────────────────────────────────────────
   async function executeDelete() {
     if (!confirmDelete) return;
     setDeleting(true);
@@ -227,7 +472,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
       className="border border-gray-200 rounded-xl overflow-hidden"
       style={{ userSelect: isDragging ? 'none' : undefined }}
     >
-      {/* ヘッダー行 */}
+      {/* Header row */}
       <button
         onClick={handleOpen}
         className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
@@ -243,10 +488,10 @@ export default function PersonProducts({ personName }: { personName: string }) {
         </div>
       </button>
 
-      {/* 展開パネル */}
+      {/* Expanded panel */}
       {open && (
         <div className="p-4 space-y-4 bg-white">
-          {/* アクションバー */}
+          {/* Action bar */}
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={load}
@@ -269,30 +514,48 @@ export default function PersonProducts({ personName }: { personName: string }) {
             >
               ＋ 商品を追加
             </button>
-            <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs ml-auto">
-              <button
-                onClick={() => setFilter('uncertain')}
-                className={`px-3 py-1.5 ${filter === 'uncertain' ? 'bg-yellow-50 text-yellow-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
-              >
-                AI判定待ちのみ
-              </button>
-              <button
-                onClick={() => setFilter('unrelated')}
-                className={`px-3 py-1.5 border-l border-gray-200 ${filter === 'unrelated' ? 'bg-red-50 text-red-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
-              >
-                非表示のみ
-              </button>
-              <button
-                onClick={() => setFilter('all')}
-                className={`px-3 py-1.5 border-l border-gray-200 ${filter === 'all' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
-              >
-                全商品
-              </button>
-            </div>
+
+            {/* Sort mode toggle */}
+            <button
+              onClick={() => setSortMode((v) => !v)}
+              className={`text-xs px-3 py-1.5 rounded-lg transition-colors font-medium ${
+                sortMode
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'
+              }`}
+              title="採用済み商品の表示順を変更します"
+            >
+              {sortMode ? '✓ 並び替えモード中' : '☰ 並び替え'}
+            </button>
+
+            {/* Filter (non-sort mode only) */}
+            {!sortMode && (
+              <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs ml-auto">
+                <button
+                  onClick={() => setFilter('uncertain')}
+                  className={`px-3 py-1.5 ${filter === 'uncertain' ? 'bg-yellow-50 text-yellow-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                >
+                  AI判定待ちのみ
+                </button>
+                <button
+                  onClick={() => setFilter('unrelated')}
+                  className={`px-3 py-1.5 border-l border-gray-200 ${filter === 'unrelated' ? 'bg-red-50 text-red-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                >
+                  非表示のみ
+                </button>
+                <button
+                  onClick={() => setFilter('all')}
+                  className={`px-3 py-1.5 border-l border-gray-200 ${filter === 'all' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                >
+                  全商品
+                </button>
+              </div>
+            )}
+
             {message && <span className="text-xs text-green-600">{message}</span>}
           </div>
 
-          {/* 検索テスト結果 */}
+          {/* Search test results (unchanged) */}
           {searchTest && (
             <div className="border border-blue-100 rounded-xl bg-blue-50/40 p-4 space-y-2">
               <div className="flex items-center justify-between">
@@ -343,8 +606,60 @@ export default function PersonProducts({ personName }: { personName: string }) {
             </div>
           )}
 
-          {/* 商品リスト */}
-          {data && (() => {
+          {/* ── Sort mode view ──────────────────────────────────────────── */}
+          {sortMode && data && (
+            <div className="space-y-4">
+              <p className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+                ☰ ハンドルをドラッグして並び替えてください。保存は自動です。並び順は公開ページに反映されます。
+                {sortSaving && <span className="ml-2 text-indigo-400">（{sortSaving} を保存中...）</span>}
+              </p>
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                {(!sortedByCategory || sortedByCategory.length === 0) && (
+                  <p className="text-sm text-gray-400 text-center py-4">採用済み商品がありません</p>
+                )}
+                {sortedByCategory?.map(({ cat, products }) => (
+                  <div key={cat} className="space-y-1.5">
+                    <div className="flex items-center justify-between px-1">
+                      <h4 className="text-xs font-bold text-gray-500 tracking-wide">
+                        {cat}
+                        <span className="font-normal ml-1 text-gray-400">（{products.length}件）</span>
+                      </h4>
+                      {displayOrders[cat] && displayOrders[cat].length > 0 && (
+                        <button
+                          onClick={() => handleResetOrder(cat)}
+                          className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                          title="このカテゴリの並び順をデフォルトに戻す"
+                        >
+                          並び順をリセット
+                        </button>
+                      )}
+                    </div>
+                    <SortableContext items={products.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+                      <div className="space-y-2">
+                        {products.map((p) => (
+                          <SortableProductCard
+                            key={p.id}
+                            p={p}
+                            sortMode={true}
+                            selectedIds={selectedIds}
+                            onMouseDown={handleCardMouseDown}
+                            onMouseEnter={handleCardMouseEnter}
+                            onVerdict={handleVerdict}
+                            onDeleteVerdict={handleDeleteVerdict}
+                            onConfirmDelete={(ids) => setConfirmDelete({ type: 'single', ids })}
+                            onEdit={(prod) => { setEditingProduct(prod as RakutenItem & { catLabel: ProductCategory }); setManualModalOpen(true); }}
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </div>
+                ))}
+              </DndContext>
+            </div>
+          )}
+
+          {/* ── Normal (non-sort) product list ──────────────────────────── */}
+          {!sortMode && data && (() => {
             const products = filteredProductList;
 
             if (products.length === 0) {
@@ -359,7 +674,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
 
             return (
               <>
-                {/* 全選択 + 非表示一括削除 */}
+                {/* Select all + bulk delete */}
                 <div className="flex flex-wrap items-center gap-2 px-1">
                   <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
                     <input
@@ -386,92 +701,20 @@ export default function PersonProducts({ personName }: { personName: string }) {
                 </div>
 
                 <div className="space-y-2">
-                  {products.map((p) => {
-                    const isShown = p.judgment?.verdict === 'related';
-                    const isHidden = p.judgment?.verdict === 'unrelated';
-                    const isChecked = selectedIds.has(p.id);
-                    return (
-                      <div
-                        key={p.id}
-                        className={`flex items-start gap-2 p-2.5 rounded-lg text-xs border transition-colors cursor-default ${
-                          isChecked ? 'border-slate-400 bg-slate-50 ring-1 ring-slate-300' :
-                          isShown ? 'border-green-100 bg-green-50/50' :
-                          isHidden ? 'border-red-100 bg-red-50/30 opacity-60' :
-                          'border-yellow-100 bg-yellow-50/50'
-                        }`}
-                        onMouseDown={(e) => handleCardMouseDown(p.id, e)}
-                        onMouseEnter={() => handleCardMouseEnter(p.id)}
-                      >
-                        {/* チェックボックス（視覚的フィードバック / ドラッグ起点外） */}
-                        <input
-                          type="checkbox"
-                          readOnly
-                          checked={isChecked}
-                          className="mt-1 w-3.5 h-3.5 flex-shrink-0 accent-slate-600"
-                          style={{ pointerEvents: 'none' }}
-                        />
-                        {/* サムネイル */}
-                        {p.imageUrl && (
-                          <img src={p.imageUrl} alt="" className="w-9 h-11 object-cover rounded flex-shrink-0" />
-                        )}
-                        {/* 商品情報 */}
-                        <div className="flex-1 min-w-0">
-                          <p className="line-clamp-2 text-slate-700 font-medium leading-tight">{p.title}</p>
-                          <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                            <span className="text-gray-400">{p.catLabel}</span>
-                            <span className="font-mono text-gray-400">score {p.relevanceScore}</span>
-                            {p.judgment ? (
-                              <span className={`px-1.5 py-0.5 rounded ${VERDICT_BADGE[p.judgment.verdict] ?? 'bg-gray-100 text-gray-500'}`}>
-                                {SOURCE_ICON[p.judgment.source]} {VERDICT_LABEL[p.judgment.verdict] ?? p.judgment.verdict}
-                                {p.judgment.reason ? ` — ${p.judgment.reason}` : ''}
-                              </span>
-                            ) : (
-                              <span className="text-gray-400 italic">未判定</span>
-                            )}
-                          </div>
-                        </div>
-                        {/* 判定ボタン */}
-                        <div className="flex flex-col gap-1 flex-shrink-0">
-                          {p.id.startsWith('mn-') && (
-                            <button
-                              onClick={() => { setEditingProduct(p as RakutenItem & { catLabel: ProductCategory }); setManualModalOpen(true); }}
-                              className="text-xs px-2 py-1 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-700"
-                            >
-                              編集
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleVerdict(p.id, 'related', p.relevanceScore)}
-                            disabled={p.judgment?.verdict === 'related'}
-                            className="text-xs px-2 py-1 rounded bg-green-100 hover:bg-green-200 text-green-700 disabled:opacity-40"
-                          >
-                            採用
-                          </button>
-                          <button
-                            onClick={() => handleVerdict(p.id, 'unrelated', p.relevanceScore)}
-                            disabled={p.judgment?.verdict === 'unrelated'}
-                            className="text-xs px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 disabled:opacity-40"
-                          >
-                            非表示
-                          </button>
-                          {p.judgment && (
-                            <button
-                              onClick={() => handleDeleteVerdict(p.id)}
-                              className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-500"
-                            >
-                              リセット
-                            </button>
-                          )}
-                          <button
-                            onClick={() => setConfirmDelete({ type: 'single', ids: [p.id] })}
-                            className="text-xs px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white font-medium"
-                          >
-                            削除
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {products.map((p) => (
+                    <SortableProductCard
+                      key={p.id}
+                      p={p}
+                      sortMode={false}
+                      selectedIds={selectedIds}
+                      onMouseDown={handleCardMouseDown}
+                      onMouseEnter={handleCardMouseEnter}
+                      onVerdict={handleVerdict}
+                      onDeleteVerdict={handleDeleteVerdict}
+                      onConfirmDelete={(ids) => setConfirmDelete({ type: 'single', ids })}
+                      onEdit={(prod) => { setEditingProduct(prod as RakutenItem & { catLabel: ProductCategory }); setManualModalOpen(true); }}
+                    />
+                  ))}
                 </div>
               </>
             );
@@ -479,7 +722,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
         </div>
       )}
 
-      {/* 削除確認ダイアログ */}
+      {/* Delete confirmation dialog */}
       {confirmDelete && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-4">
@@ -509,7 +752,7 @@ export default function PersonProducts({ personName }: { personName: string }) {
         </div>
       )}
 
-      {/* 手動追加・編集モーダル */}
+      {/* Manual add/edit modal */}
       {manualModalOpen && (
         <ManualProductModal
           personName={personName}
@@ -519,8 +762,8 @@ export default function PersonProducts({ personName }: { personName: string }) {
         />
       )}
 
-      {/* Sticky一括操作バー */}
-      {selectedInView.length > 0 && (
+      {/* Sticky bulk action bar */}
+      {!sortMode && selectedInView.length > 0 && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white rounded-2xl shadow-2xl text-xs whitespace-nowrap">
           <span className="font-medium mr-1">選択中: {selectedInView.length}件</span>
           <button
