@@ -50,6 +50,10 @@ export interface WorkRecord {
   vodCheckStatus?: 'fresh' | 'needs_recheck' | 'checking' | 'checked' | 'failed';
   vodCheckError?: string;
   priorityRecheck?: boolean;       // 管理者が設定した優先再確認フラグ
+  // 論理削除
+  deleted?: boolean;
+  deletedAt?: number;
+  deletedBy?: string;
   createdAt: number;
   updatedAt: number;
 }

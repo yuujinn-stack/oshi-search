@@ -466,15 +466,36 @@ export default function PersonWorks({
   }
 
   async function handleDelete(workId: string) {
-    const res = await fetch('/api/admin/work-verdict', {
-      method: 'DELETE',
+    const res = await fetch('/api/admin/work-delete', {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ personName, workId }),
+      body: JSON.stringify({ personName, workIds: [workId] }),
     });
     if (res.ok) {
       setTestResult(null);
       await loadWorks();
     }
+  }
+
+  async function handleBulkDelete() {
+    if (selectedInView.length === 0 || bulkProcessing) return;
+    if (!window.confirm(`選択中の ${selectedInView.length} 件を削除しますか？\n（削除済みとしてマークされ、公開ページから非表示になります）`)) return;
+    setBulkProcessing(true);
+    setMessage('');
+    const res = await fetch('/api/admin/work-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, workIds: selectedInView }),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { deletedCount: number };
+      setMessage(`${data.deletedCount}件を削除しました`);
+      clearSelection();
+      await loadWorks();
+    } else {
+      setMessage('一括削除に失敗しました');
+    }
+    setBulkProcessing(false);
   }
 
   async function handleTestJudge(work: WorkRecord) {
@@ -528,6 +549,21 @@ export default function PersonWorks({
 
   const selectedInView = filteredWorkIds.filter((id) => selectedIds.has(id));
 
+  // works がロードされたら件数をリアルタイムで反映
+  const liveCounts = useMemo(() => {
+    if (!works) return counts;
+    return {
+      total: works.length,
+      published: works.filter((w) => w.status === 'auto_published').length,
+      review: works.filter((w) => w.status === 'needs_review').length,
+      hidden: works.filter((w) => w.status === 'hidden').length,
+      noVod: works.filter((w) => (w.vodProviders ?? []).filter((vp) => vp.providerName !== 'unknown').length === 0).length,
+      noTmdbId: works.filter((w) => !w.tmdbId).length,
+      manualCsv: works.filter((w) => w.source === 'manual_csv').length,
+      aiSupplement: works.filter((w) => w.source === 'openai_suggestion' || w.source === 'ai_supplement').length,
+    };
+  }, [works, counts]);
+
   // ─── 一括ステータス変更 ───────────────────────────────────────────────────────
   async function handleBulkWorkVerdict(status: WorkStatus) {
     if (selectedInView.length === 0 || bulkProcessing) return;
@@ -562,7 +598,7 @@ export default function PersonWorks({
           <PersonCard
             personName={personName}
             group={group}
-            counts={counts}
+            counts={liveCounts}
             open={open}
             onClick={handleOpen}
             priority={currentPriority !== 'normal' ? currentPriority : undefined}
@@ -977,6 +1013,13 @@ export default function PersonWorks({
             className="px-3 py-1.5 bg-orange-500 hover:bg-orange-400 rounded-lg font-medium disabled:opacity-50 transition-colors"
           >
             非表示
+          </button>
+          <button
+            onClick={() => void handleBulkDelete()}
+            disabled={bulkProcessing}
+            className="px-3 py-1.5 bg-red-500 hover:bg-red-400 rounded-lg font-medium disabled:opacity-50 transition-colors"
+          >
+            削除
           </button>
           <button
             onClick={clearSelection}

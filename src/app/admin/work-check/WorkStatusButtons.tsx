@@ -81,8 +81,12 @@ export default function WorkStatusButtons({
         </button>
       )}
       <button
-        onClick={() => onDelete(work.id)}
-        className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-500"
+        onClick={() => {
+          if (window.confirm(`「${work.title}」を削除しますか？\n（削除済みとしてマークされ、公開ページから非表示になります）`)) {
+            onDelete(work.id);
+          }
+        }}
+        className="text-xs px-2 py-1 rounded bg-red-50 hover:bg-red-100 text-red-500"
       >
         削除
       </button>

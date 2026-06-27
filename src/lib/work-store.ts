@@ -35,7 +35,7 @@ export async function getAllWorks(personName: string): Promise<WorkRecord[]> {
 export async function getPublishedWorks(personName: string): Promise<WorkRecord[]> {
   const all = await getAllWorks(personName);
   return all
-    .filter((w) => w.status === 'auto_published')
+    .filter((w) => w.status === 'auto_published' && !w.deleted)
     .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0));
 }
 
@@ -75,11 +75,38 @@ export async function updateWorkStatus(
   } catch { /* skip */ }
 }
 
-// 作品を削除
+// 作品を削除（物理削除）
 export async function deleteWork(personName: string, workId: string): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
   await redis.hdel(hashKey(personName), workId);
+}
+
+// 作品を論理削除（deleted フラグをセット）
+export async function softDeleteWork(personName: string, workId: string): Promise<boolean> {
+  const redis = getRedis();
+  if (!redis) return false;
+  const raw = await redis.hget(hashKey(personName), workId);
+  if (!raw) return false;
+  try {
+    const work = (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
+    work.deleted = true;
+    work.deletedAt = Date.now();
+    work.deletedBy = 'manual';
+    work.updatedAt = Date.now();
+    await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    return true;
+  } catch { return false; }
+}
+
+// 複数作品を論理削除
+export async function softDeleteWorks(personName: string, workIds: string[]): Promise<number> {
+  let count = 0;
+  for (const workId of workIds) {
+    const ok = await softDeleteWork(personName, workId);
+    if (ok) count++;
+  }
+  return count;
 }
 
 // 特定の作品を1件取得
