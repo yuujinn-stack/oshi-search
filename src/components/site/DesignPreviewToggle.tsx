@@ -13,9 +13,14 @@ import {
   type DesignTheme,
 } from '@/lib/designTheme';
 
-// opt-out: NEXT_PUBLIC_ENABLE_DESIGN_PREVIEW='false' のときのみ非表示
-// 未設定・その他の値はすべて表示
-const DISABLED = process.env.NEXT_PUBLIC_ENABLE_DESIGN_PREVIEW === 'false';
+// 本番環境では非表示。URLパラメータ(?design=xxx)は引き続き動作する。
+// Vercel production または NODE_ENV=production のとき非表示
+// NEXT_PUBLIC_ENABLE_DESIGN_PREVIEW='true' を明示すると本番でも強制表示（開発確認用）
+const IS_PROD =
+  process.env.NEXT_PUBLIC_VERCEL_ENV === 'production' ||
+  (!process.env.NEXT_PUBLIC_VERCEL_ENV && process.env.NODE_ENV === 'production');
+const DISABLED =
+  process.env.NEXT_PUBLIC_ENABLE_DESIGN_PREVIEW !== 'true' && IS_PROD;
 
 function applyTheme(t: DesignTheme) {
   document.documentElement.setAttribute('data-design', t);
