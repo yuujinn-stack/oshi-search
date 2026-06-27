@@ -2,7 +2,7 @@
 
 import type { WorkRecord } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
-import { deduplicateProviders } from '@/lib/vod-dedup';
+import { VOD_SOURCE_LABEL } from '@/lib/vod-dedup';
 
 const PROVIDER_LOGO_BASE = 'https://image.tmdb.org/t/p/w45';
 
@@ -21,6 +21,7 @@ interface WorkVodActionsProps {
   onManualVodLinkChange: (v: string) => void;
   onManualVodAdd: (workId: string) => void;
   onManualVodRemove: (workId: string, provider: VodProvider) => void;
+  onVodProviderDelete: (workId: string, providerName: string, source: string, type: string) => void;
 }
 
 export default function WorkVodActions({
@@ -38,11 +39,13 @@ export default function WorkVodActions({
   onManualVodLinkChange,
   onManualVodAdd,
   onManualVodRemove,
+  onVodProviderDelete,
 }: WorkVodActionsProps) {
-  const visibleProviders = deduplicateProviders(work.vodProviders ?? []).filter(
-    (p) => p.providerName !== 'unknown',
+  // 管理画面ではすべての非表示（hidden）でないプロバイダーを表示（重複除去なし）
+  const allProviders = (work.vodProviders ?? []).filter(
+    (p) => !p.hidden && p.providerName !== 'unknown',
   );
-  const hasProviders = visibleProviders.length > 0;
+  const hasProviders = allProviders.length > 0;
 
   return (
     <>
@@ -50,9 +53,9 @@ export default function WorkVodActions({
       {hasProviders ? (
         <div className="mt-2 flex flex-wrap gap-1 items-center">
           <span className="text-[10px] text-teal-600 font-medium">📺</span>
-          {visibleProviders.map((p, pi) => (
+          {allProviders.map((p, pi) => (
             <span
-              key={`${p.providerId}-${p.type}-${pi}`}
+              key={`${p.providerId}-${p.source}-${p.type}-${pi}`}
               className={`flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border ${
                 p.source === 'manual'
                   ? 'bg-green-50 border-green-200 text-green-700'
@@ -73,18 +76,26 @@ export default function WorkVodActions({
                 <img src={`${PROVIDER_LOGO_BASE}${p.logoPath}`} alt="" className="w-3 h-3 rounded-sm" />
               ) : null}
               {p.providerName}
-              {(p.source === 'openai_supplement' || p.source === 'openai_web_search' || p.source === 'ai_recheck') && (
-                <span className="text-[8px] ml-0.5 text-purple-400">
-                  {p.source === 'ai_recheck' ? '再確認' : p.source === 'openai_web_search' ? 'Web' : 'AI'}
-                </span>
-              )}
-              {p.source === 'manual_csv' && (
-                <span className="text-[8px] ml-0.5 text-orange-400">CSV</span>
-              )}
-              {p.source === 'manual' && debugMode && (
+              <span className="text-[8px] ml-0.5 opacity-60">
+                {VOD_SOURCE_LABEL[p.source] ?? p.source}
+              </span>
+              {p.source === 'manual' ? (
                 <button
                   onClick={() => onManualVodRemove(work.id, p)}
                   className="ml-0.5 text-red-400 hover:text-red-600"
+                  title="削除"
+                >
+                  ✕
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    if (window.confirm(`「${p.providerName}（${VOD_SOURCE_LABEL[p.source] ?? p.source}）」を削除しますか？`)) {
+                      onVodProviderDelete(work.id, p.providerName, p.source, p.type);
+                    }
+                  }}
+                  className="ml-0.5 text-red-300 hover:text-red-500"
+                  title="このVOD情報を削除"
                 >
                   ✕
                 </button>

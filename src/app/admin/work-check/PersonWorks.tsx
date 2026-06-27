@@ -210,6 +210,15 @@ export default function PersonWorks({
     await loadWorks();
   }
 
+  async function handleVodProviderDelete(workId: string, providerName: string, source: string, type: string) {
+    const res = await fetch('/api/admin/vod-provider-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personName, workId, providerName, source, type }),
+    });
+    if (res.ok) await loadWorks();
+  }
+
   async function handleVodRecheck(workId: string) {
     setRecheckingWorkId(workId);
     setRecheckMessage('');
@@ -949,6 +958,7 @@ export default function PersonWorks({
                       onDelete={handleDelete}
                       onManualVodAdd={handleManualVodAdd}
                       onManualVodRemove={handleManualVodRemove}
+                      onVodProviderDelete={handleVodProviderDelete}
                       onOpenVodResearch={(w) => setVodResearchWork(w)}
                       onTestJudge={handleTestJudge}
                       onOgImageFetch={handleOgImageFetch}

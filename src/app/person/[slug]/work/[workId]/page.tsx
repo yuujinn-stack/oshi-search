@@ -183,6 +183,7 @@ export default async function WorkDetailPage({ params }: Props) {
   // 公開用 VOD フィルタ + 重複除去
   const publicProviders = deduplicateProviders(
     (work.vodProviders ?? []).filter((p) => {
+      if (p.hidden) return false;
       const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
       if (isAiSource && p.confidence === 'low') return false;
       return true;

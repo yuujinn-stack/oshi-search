@@ -173,7 +173,7 @@ export default async function SearchPage({ searchParams }: Props) {
         const workCount = works.length;
         const streamingCount = works.filter((w) =>
           (w.vodProviders ?? []).some((vp) =>
-            ['flatrate', 'free', 'ads'].includes(vp.type),
+            !vp.hidden && ['flatrate', 'free', 'ads'].includes(vp.type),
           ),
         ).length;
         return [p.name, { productCount, workCount, streamingCount }] as const;

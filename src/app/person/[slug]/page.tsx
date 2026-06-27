@@ -86,6 +86,7 @@ const DISPLAY_SECTIONS: Array<{
 function getStreamingProviders(work: WorkRecord): VodProvider[] {
   return deduplicateProviders(
     (work.vodProviders ?? []).filter((p) => {
+      if (p.hidden) return false;
       const isAi = p.source === 'openai_supplement' || p.source === 'openai_web_search';
       return !isAi || p.confidence !== 'low';
     }),

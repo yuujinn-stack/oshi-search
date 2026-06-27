@@ -52,6 +52,7 @@ interface WorkCardProps {
   onDelete: (workId: string) => void;
   onManualVodAdd: (workId: string, name: string, link: string) => Promise<void>;
   onManualVodRemove: (workId: string, provider: VodProvider) => void;
+  onVodProviderDelete: (workId: string, providerName: string, source: string, type: string) => void;
   onOpenVodResearch: (work: WorkRecord) => void;
   onTestJudge: (work: WorkRecord) => void;
   onOgImageFetch: (workId: string) => Promise<{ ok: boolean; reason?: string } | null>;
@@ -75,6 +76,7 @@ export default function WorkCard({
   onDelete,
   onManualVodAdd,
   onManualVodRemove,
+  onVodProviderDelete,
   onOpenVodResearch,
   onTestJudge,
   onOgImageFetch,
@@ -365,6 +367,7 @@ export default function WorkCard({
           onManualVodLinkChange={(v) => setManualVodLink(v)}
           onManualVodAdd={handleManualVodAddLocal}
           onManualVodRemove={onManualVodRemove}
+          onVodProviderDelete={onVodProviderDelete}
         />
 
         {debugMode && (

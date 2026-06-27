@@ -17,6 +17,7 @@ export interface VodProvider {
   checkedDate?: string;     // 情報確認日 (YYYY-MM-DD)
   note?: string;            // 補足メモ
   link?: string;            // JustWatch URL（TMDb が返す作品ページへのリンク）
+  hidden?: boolean;         // 管理画面から手動で非表示にした場合 true（論理削除）
   createdAt?: number;
   updatedAt?: number;
 }

@@ -219,6 +219,37 @@ export async function syncManualCsvVodProviders(
   }
 }
 
+// VOD配信情報を1件だけ論理削除（hidden: true をセット）
+// 同じ providerName+source+type の最初の1件のみ対象
+export async function hideVodProvider(
+  personName: string,
+  workId: string,
+  identifier: { providerName: string; source: string; type: string },
+): Promise<boolean> {
+  const redis = getRedis();
+  if (!redis) return false;
+  const raw = await redis.hget(hashKey(personName), workId);
+  if (!raw) return false;
+  try {
+    const work = (typeof raw === 'string' ? JSON.parse(raw) : raw) as WorkRecord;
+    const providers = work.vodProviders ?? [];
+    const idx = providers.findIndex(
+      (p) =>
+        !p.hidden &&
+        p.providerName === identifier.providerName &&
+        p.source === identifier.source &&
+        p.type === identifier.type,
+    );
+    if (idx < 0) return false;
+    providers[idx] = { ...providers[idx], hidden: true, updatedAt: Date.now() };
+    work.vodProviders = providers;
+    work.vodUpdatedAt = Date.now();
+    work.updatedAt = Date.now();
+    await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    return true;
+  } catch { return false; }
+}
+
 // 手動で配信サービスを1件追加（既存の tmdb_watch_provider は保持）
 export async function addManualVodProvider(
   personName: string,

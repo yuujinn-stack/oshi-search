@@ -60,6 +60,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
   //   同名サービスは優先度の高いソースを1件だけ残す（TMDb > AI > CSV の順）
   const publicProviders = deduplicateProviders(
     (work.vodProviders ?? []).filter((p) => {
+      if (p.hidden) return false;
       const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
       if (isAiSource && p.confidence === 'low') return false;
       return true;
