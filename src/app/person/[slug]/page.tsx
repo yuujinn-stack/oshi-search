@@ -84,28 +84,55 @@ function applyDisplayOrder(products: RakutenItem[], savedOrder: string[]): Rakut
   return [...inOrder, ...sortProducts(rest)];
 }
 
+// ─── 商品タイトルによるカテゴリ振り分け ────────────────────────────────────
+// 管理画面のカテゴリに依存せず、タイトルから最終判定する。
+// CD・Blu-ray・DVD の管理カテゴリは権威的とし、タイトル判定を行わない。
+
+const BOOK_TITLE_KEYWORDS = [
+  '写真集', 'フォトブック', 'Photobook', 'PHOTOBOOK', 'photobook',
+  'PHOTO BOOK', 'Photo Book',
+  'BOOK', 'BOOKS',
+  '書籍', '単行本', '雑誌', 'ムック', 'ガイド', 'コミック', '楽譜', '小説',
+  '図鑑', '絵本', 'エッセイ',
+  '乃木撮', '日向撮', '櫻撮',
+  'B.L.T.', 'BRODY', 'EX大衆', 'anan', 'アップトゥボーイ', 'UTB',
+  'Platinum FLASH', 'BUBKA', '東京カレンダー', 'TRIANGLE',
+];
+
+const GOODS_TITLE_KEYWORDS = [
+  'アクリルスタンド', 'アクスタ', '缶バッジ', '生写真', 'キーホルダー',
+  'タオル', 'Tシャツ', 'ペンライト', 'クリアファイル', 'ステッカー',
+  'ぬいぐるみ', 'キーチェーン', 'うちわ', 'ストラップ', 'ブロマイド',
+  'ポスター', 'フィギュア', 'チャーム', 'ハンカチ', 'バンダナ', 'マグカップ',
+  'スタンドパネル', 'ランチボックス', '応援グッズ', 'トレカ',
+];
+
+// タイトルと管理カテゴリからセクションラベルを返す
+function classifyProduct(title: string, adminCat: ProductCategory): string {
+  if (adminCat === 'CD') return 'CD';
+  if (adminCat === 'Blu-ray・DVD') return 'Blu-ray・DVD';
+  if (BOOK_TITLE_KEYWORDS.some((kw) => title.includes(kw))) return '写真集・書籍';
+  if (GOODS_TITLE_KEYWORDS.some((kw) => title.includes(kw))) return 'グッズ';
+  // キーワード未一致時は管理カテゴリでフォールバック
+  if (adminCat === 'グッズ') return 'グッズ';
+  return '写真集・書籍'; // 写真集・本・雑誌カテゴリのデフォルト
+}
+
 // ─── 表示セクション定義 ───────────────────────────────────────────────────────
-// titleKeywords: 新商品をタイトルキーワードで絞り込む（先頭セクションが先に確保する）
-// sources の順に取得し、crossSectionSeen で重複除外
 const DISPLAY_SECTIONS: Array<{
   label: string;
   icon: string;
-  sources: ProductCategory[];
-  titleKeywords?: string[];
+  sources: ProductCategory[]; // hasAnyData 判定 & 並び順キーに使用
   usedKeywords: string[];
 }> = [
   {
     label: '写真集・書籍',
     icon: '📷',
-    // グッズカテゴリに混入した書籍もここで回収する
-    sources: ['写真集', '本・雑誌', 'グッズ'],
-    titleKeywords: [
-      '写真集', 'フォトブック', '書籍', '単行本', '雑誌', 'ムック',
-      'コミック', '楽譜', '小説', '図鑑', '絵本', 'エッセイ',
-    ],
+    sources: ['写真集', '本・雑誌'],
     usedKeywords: [
-      '写真集', 'フォトブック', 'ムック', '書籍', '単行本', '雑誌',
-      'コミック', '小説', '楽譜',
+      '写真集', 'フォトブック', 'PHOTOBOOK', 'Photobook', 'BOOK', 'BOOKS',
+      '書籍', '単行本', '雑誌', 'ムック', 'ガイド', 'コミック', '小説', '楽譜',
+      '乃木撮', '日向撮', '櫻撮', 'B.L.T.', 'BRODY', 'EX大衆', 'anan',
     ],
   },
   {
@@ -123,13 +150,12 @@ const DISPLAY_SECTIONS: Array<{
   {
     label: 'グッズ',
     icon: '🎁',
-    // 写真集・書籍カテゴリに混入したグッズも残り物として回収する（titleKeywords なし = 残存品すべて）
-    sources: ['グッズ', '写真集', '本・雑誌'],
+    sources: ['グッズ'],
     usedKeywords: [
-      'アクリルスタンド', 'アクスタ', 'キーホルダー', 'タオル', 'Tシャツ',
-      'ペンライト', '缶バッジ', '生写真', 'トレカ', 'ポスター', 'ぬいぐるみ',
-      'クッション', 'カレンダー', 'ストラップ', 'クリアファイル', 'うちわ',
-      'ブロマイド', 'グッズ', 'フィギュア', 'チャーム', 'ハンカチ', 'バンダナ',
+      'アクリルスタンド', 'アクスタ', '缶バッジ', '生写真', 'キーホルダー',
+      'タオル', 'Tシャツ', 'ペンライト', 'クリアファイル', 'ステッカー',
+      'ぬいぐるみ', 'キーチェーン', 'うちわ', 'ストラップ', 'ブロマイド',
+      'グッズ', 'カレンダー', 'ポスター', 'トレカ', 'フィギュア',
     ],
   },
 ];
@@ -201,30 +227,36 @@ export default async function PersonPage({ params }: Props) {
     }
   }
 
-  // ── セクション別商品 ──────────────────────────────────────────────────────
-  // crossSectionSeen: 先頭セクションから順に「新商品」を確保し、後続セクションで重複しない
-  const crossSectionSeen = new Set<string>();
+  // ── 新商品をタイトルで振り分け（管理カテゴリ非依存） ─────────────────────
+  const NEW_PRODUCT_CATS = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD'] as const;
+  const sectionProductMap = new Map<string, RakutenItem[]>([
+    ['写真集・書籍', []],
+    ['CD', []],
+    ['Blu-ray・DVD', []],
+    ['グッズ', []],
+  ]);
+  const globalSeen = new Set<string>();
 
-  const sectionResults = DISPLAY_SECTIONS.map(({ label, icon, sources, titleKeywords, usedKeywords }) => {
-    const hasAnyData = sources.some((cat) => !!storedData[cat]);
-    const newProducts: RakutenItem[] = [];
-
-    for (const cat of sources) {
-      const catData = storedData[cat];
-      if (!catData || !Array.isArray(catData.products)) continue;
-      for (const p of catData.products) {
-        if (crossSectionSeen.has(p.id)) continue;
-        const v = verdicts[p.id];
-        if (!v || v.verdict !== 'related') continue;
-        // titleKeywords が指定されている場合はタイトル一致した商品だけを確保
-        if (titleKeywords && !titleKeywords.some((kw) => p.title.includes(kw))) continue;
-        crossSectionSeen.add(p.id);
-        newProducts.push(p);
-      }
+  for (const cat of NEW_PRODUCT_CATS) {
+    const catData = storedData[cat];
+    if (!catData?.products) continue;
+    for (const p of catData.products) {
+      if (globalSeen.has(p.id)) continue;
+      const v = verdicts[p.id];
+      if (!v || v.verdict !== 'related') continue;
+      const sectionLabel = classifyProduct(p.title, cat);
+      sectionProductMap.get(sectionLabel)?.push(p);
+      globalSeen.add(p.id);
     }
+  }
+
+  // ── セクション別商品 ──────────────────────────────────────────────────────
+  const sectionResults = DISPLAY_SECTIONS.map(({ label, icon, sources, usedKeywords }) => {
+    const newProducts = sectionProductMap.get(label) ?? [];
+    // 取得済みデータがあるか（新商品ルーティング後でも sources で判定）
+    const hasAnyData = newProducts.length > 0 || sources.some((cat) => !!storedData[cat]);
 
     const sectionUsed = usedProducts.filter((p) => {
-      if (crossSectionSeen.has(p.id)) return false;
       const title = p.title.replace(/^【中古】\s*/, '');
       return usedKeywords.some((kw) => title.includes(kw));
     });
