@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { WorkRecord } from '@/types/work';
 import type { PersonWithCounts } from './work-check-types';
 import { csvDownloadSection } from '@/lib/chatGptPromptUtil';
@@ -16,12 +16,13 @@ interface WorkPreview {
 // ─────────────────────────────────────────
 
 const BATCH_FILTERS = [
-  { value: 'no_vod',       label: '① 配信情報なし作品のみ' },
-  { value: 'no_tmdb',      label: '② tmdbIdなし作品のみ' },
-  { value: 'has_unknown',  label: '③ vodService=unknown を含む作品' },
-  { value: 'manual_csv',   label: '④ manual_csv作品のみ' },
-  { value: 'ai_supplement',label: '⑤ ai_supplement作品のみ' },
-  { value: 'all',          label: '⑥ 選択中人物の全作品' },
+  { value: 'no_vod',         label: '① 配信情報なし作品のみ' },
+  { value: 'no_tmdb',        label: '② tmdbIdなし作品のみ' },
+  { value: 'has_unknown',    label: '③ vodService=unknown を含む作品' },
+  { value: 'manual_csv',     label: '④ manual_csv作品のみ' },
+  { value: 'ai_supplement',  label: '⑤ ai_supplement作品のみ' },
+  { value: 'all',            label: '⑥ 選択中人物の全作品' },
+  { value: 'selected_works', label: '⑦ 選択作品のみ' },
 ] as const;
 
 type BatchFilter = typeof BATCH_FILTERS[number]['value'];
@@ -43,6 +44,8 @@ function applyBatchFilter(works: WorkRecord[], filter: BatchFilter): WorkRecord[
       return works.filter((w) => w.source === 'manual_csv');
     case 'ai_supplement':
       return works.filter((w) => w.source === 'ai_supplement');
+    case 'selected_works':
+      return [];
     case 'all':
     default:
       return works;
@@ -72,6 +75,36 @@ function workToBatchRow(w: WorkRecord): string {
 }
 
 // ─────────────────────────────────────────
+// ⑦ 選択作品モード用のヘルパー
+// ─────────────────────────────────────────
+
+const SOURCE_LABEL: Record<string, string> = {
+  tmdb:              'TMDb',
+  manual_csv:        'manual_csv',
+  ai_supplement:     'AI補完',
+  openai_suggestion: 'AI提案',
+  manual:            '手動',
+};
+
+const TYPE_LABEL: Record<string, string> = {
+  movie:   '映画',
+  tv:      'ドラマ',
+  variety: 'バラエティ',
+  anime:   'アニメ',
+};
+
+function getVodSummary(w: WorkRecord): { label: string; cls: string } {
+  const providers = w.vodProviders ?? [];
+  const real = providers.filter((p) => p.providerName !== '配信確認できず');
+  if (real.length === 0) return { label: '配信なし', cls: 'text-gray-400' };
+  if (real.some((p) => p.type === 'unknown' || p.providerName === '配信確認できず'))
+    return { label: 'unknown含む', cls: 'text-yellow-600' };
+  if (real.some((p) => p.type === 'flatrate')) return { label: '見放題あり', cls: 'text-green-600' };
+  if (real.some((p) => p.type === 'free'))     return { label: '無料配信', cls: 'text-teal-600' };
+  return { label: '配信あり（有料）', cls: 'text-teal-600' };
+}
+
+// ─────────────────────────────────────────
 // コンポーネント
 // ─────────────────────────────────────────
 
@@ -85,7 +118,7 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
   const [workCount, setWorkCount] = useState(0);
   const [error, setError] = useState('');
 
-  // ── 配信再調査（一括）──
+  // ── 配信再調査（一括）①〜⑥ ──
   const [batchFilter, setBatchFilter] = useState<BatchFilter>('no_vod');
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchPrompt, setBatchPrompt] = useState('');
@@ -93,10 +126,44 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
   const [batchWorkCount, setBatchWorkCount] = useState(0);
   const [batchError, setBatchError] = useState('');
 
+  // ── 選択作品のみ ⑦ ──
+  const [selectionWorks, setSelectionWorks] = useState<WorkRecord[] | null>(null);
+  const [selectionLoading, setSelectionLoading] = useState(false);
+  const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set());
+  const [selSearch, setSelSearch] = useState('');
+  const [selYear, setSelYear] = useState('');
+  const [selType, setSelType] = useState('');
+  const [selectionPrompt, setSelectionPrompt] = useState('');
+  const [selectionCopied, setSelectionCopied] = useState(false);
+  const [selectionError, setSelectionError] = useState('');
+
   function resetAll() {
     setPrompt(''); setError(''); setWorkCount(0);
     setBatchPrompt(''); setBatchError(''); setBatchWorkCount(0);
+    setSelectionWorks(null); setSelectedWorkIds(new Set());
+    setSelSearch(''); setSelYear(''); setSelType('');
+    setSelectionPrompt(''); setSelectionError('');
   }
+
+  // ⑦ 選択作品モードに切り替わったとき（または人物変更時）に作品一覧を自動取得
+  useEffect(() => {
+    if (batchFilter !== 'selected_works' || !selectedPerson) return;
+    setSelectionWorks(null);
+    setSelectedWorkIds(new Set());
+    setSelectionPrompt('');
+    setSelectionError('');
+    setSelSearch(''); setSelYear(''); setSelType('');
+    setSelectionLoading(true);
+    fetch(`/api/admin/works?person=${encodeURIComponent(selectedPerson)}`)
+      .then((r) => r.json())
+      .then((data: { works?: WorkRecord[] }) => {
+        setSelectionWorks(
+          (data.works ?? []).sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0)),
+        );
+      })
+      .catch(() => setSelectionError('作品の取得に失敗しました'))
+      .finally(() => setSelectionLoading(false));
+  }, [batchFilter, selectedPerson]);
 
   // ── 作品探しプロンプト生成 ──
   async function handleGenerate() {
@@ -147,10 +214,70 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
     setBatchLoading(false);
   }
 
+  // ── 選択作品のみ プロンプト生成 ──
+  function handleSelectionGenerate() {
+    if (selectedWorkIds.size === 0) {
+      setSelectionError('作品を1件以上選択してください');
+      return;
+    }
+    const selected = (selectionWorks ?? []).filter((w) => selectedWorkIds.has(w.id));
+    const csvHeader = 'workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices';
+    const csvRows = selected
+      .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0))
+      .map(workToBatchRow).join('\n');
+    setSelectionPrompt(buildBatchVodPrompt(csvHeader + '\n' + csvRows, selectedPerson));
+    setSelectionError('');
+  }
+
   async function handleCopy(text: string, setter: (v: boolean) => void) {
     await navigator.clipboard.writeText(text);
     setter(true);
     setTimeout(() => setter(false), 2000);
+  }
+
+  // ── 選択作品フィルタリング ──
+  const filteredSelectionWorks = useMemo(() => {
+    if (!selectionWorks) return [];
+    return selectionWorks.filter((w) => {
+      if (selSearch && !w.title.toLowerCase().includes(selSearch.toLowerCase())) return false;
+      if (selYear && String(w.releaseYear ?? '') !== selYear) return false;
+      if (selType && w.type !== selType) return false;
+      return true;
+    });
+  }, [selectionWorks, selSearch, selYear, selType]);
+
+  const availableYears = useMemo(() => {
+    if (!selectionWorks) return [];
+    return [...new Set(selectionWorks.map((w) => w.releaseYear).filter(Boolean) as number[])].sort((a, b) => b - a);
+  }, [selectionWorks]);
+
+  const availableTypes = useMemo(() => {
+    if (!selectionWorks) return [];
+    return [...new Set(selectionWorks.map((w) => w.type))].sort();
+  }, [selectionWorks]);
+
+  function toggleWork(id: string) {
+    setSelectedWorkIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function handleSelectAllFiltered() {
+    setSelectedWorkIds((prev) => {
+      const next = new Set(prev);
+      filteredSelectionWorks.forEach((w) => next.add(w.id));
+      return next;
+    });
+  }
+
+  function handleDeselectAllFiltered() {
+    setSelectedWorkIds((prev) => {
+      const next = new Set(prev);
+      filteredSelectionWorks.forEach((w) => next.delete(w.id));
+      return next;
+    });
   }
 
   return (
@@ -227,45 +354,219 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
                 name="batchFilter"
                 value={f.value}
                 checked={batchFilter === f.value}
-                onChange={() => { setBatchFilter(f.value); setBatchPrompt(''); setBatchError(''); }}
+                onChange={() => {
+                  setBatchFilter(f.value);
+                  setBatchPrompt(''); setBatchError('');
+                  setSelectionPrompt(''); setSelectionError('');
+                }}
                 className="accent-amber-500"
               />
-              <span className="text-[11px] text-slate-600">{f.label}</span>
+              <span className={`text-[11px] ${f.value === 'selected_works' ? 'text-indigo-600 font-medium' : 'text-slate-600'}`}>
+                {f.label}
+              </span>
             </label>
           ))}
         </div>
 
-        {/* 生成ボタン */}
-        <div className="flex flex-wrap gap-2 items-center">
-          <button
-            onClick={handleBatchGenerate}
-            disabled={batchLoading || !selectedPerson}
-            className="text-xs px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors disabled:opacity-50 font-medium"
-          >
-            {batchLoading ? '生成中...' : '📋 配信再調査プロンプト生成'}
-          </button>
-          {batchPrompt && (
-            <>
-              <button
-                onClick={() => handleCopy(batchPrompt, setBatchCopied)}
-                className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-slate-700 transition-colors font-medium"
-              >
-                {batchCopied ? '✓ コピー完了' : 'クリップボードへコピー'}
-              </button>
-              <span className="text-[11px] text-gray-400">対象 {batchWorkCount}件</span>
-            </>
-          )}
-        </div>
+        {/* ══ ⑦ 選択作品のみ モード ══ */}
+        {batchFilter === 'selected_works' && (
+          <div className="space-y-3">
+            {!selectedPerson && (
+              <p className="text-xs text-gray-400">上の人物選択で人物を選んでください。</p>
+            )}
 
-        {batchError && (
-          <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{batchError}</div>
+            {selectedPerson && selectionLoading && (
+              <p className="text-xs text-gray-400 py-2">作品一覧を読み込み中...</p>
+            )}
+
+            {selectedPerson && !selectionLoading && selectionWorks !== null && (
+              <>
+                {/* 検索・フィルタバー */}
+                <div className="flex flex-wrap gap-2 items-center">
+                  <input
+                    type="text"
+                    value={selSearch}
+                    onChange={(e) => setSelSearch(e.target.value)}
+                    placeholder="作品名で検索..."
+                    className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 w-44 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                  />
+                  <select
+                    value={selYear}
+                    onChange={(e) => setSelYear(e.target.value)}
+                    className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                  >
+                    <option value="">年: すべて</option>
+                    {availableYears.map((y) => (
+                      <option key={y} value={String(y)}>{y}年</option>
+                    ))}
+                  </select>
+                  <select
+                    value={selType}
+                    onChange={(e) => setSelType(e.target.value)}
+                    className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                  >
+                    <option value="">種別: すべて</option>
+                    {availableTypes.map((t) => (
+                      <option key={t} value={t}>{TYPE_LABEL[t] ?? t} ({t})</option>
+                    ))}
+                  </select>
+                  <div className="flex gap-1 ml-auto">
+                    <button
+                      onClick={handleSelectAllFiltered}
+                      disabled={filteredSelectionWorks.length === 0}
+                      className="text-[11px] px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition-colors disabled:opacity-40 font-medium"
+                    >
+                      全選択
+                    </button>
+                    <button
+                      onClick={handleDeselectAllFiltered}
+                      disabled={selectedWorkIds.size === 0}
+                      className="text-[11px] px-2.5 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors disabled:opacity-40"
+                    >
+                      全解除
+                    </button>
+                  </div>
+                </div>
+
+                {/* 件数バッジ */}
+                <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                  <span>表示 {filteredSelectionWorks.length}件 / 全 {selectionWorks.length}件</span>
+                  {selectedWorkIds.size > 0 && (
+                    <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full font-medium">
+                      {selectedWorkIds.size}件選択中
+                    </span>
+                  )}
+                </div>
+
+                {/* 作品一覧テーブル */}
+                {filteredSelectionWorks.length === 0 ? (
+                  <p className="text-xs text-gray-400 text-center py-4">
+                    {selectionWorks.length === 0 ? '登録作品がありません' : '検索条件に一致する作品がありません'}
+                  </p>
+                ) : (
+                  <div className="border border-gray-100 rounded-lg overflow-hidden max-h-80 overflow-y-auto">
+                    <table className="w-full text-[11px] border-collapse">
+                      <thead className="sticky top-0 bg-gray-50 z-10">
+                        <tr className="text-gray-500">
+                          <th className="p-2 border-b border-gray-100 w-6"></th>
+                          <th className="text-left p-2 border-b border-gray-100">タイトル</th>
+                          <th className="text-left p-2 border-b border-gray-100 w-16">種別</th>
+                          <th className="text-left p-2 border-b border-gray-100 w-12">年</th>
+                          <th className="text-left p-2 border-b border-gray-100 w-20">配信</th>
+                          <th className="text-left p-2 border-b border-gray-100 w-16">source</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredSelectionWorks.map((w) => {
+                          const checked = selectedWorkIds.has(w.id);
+                          const vod = getVodSummary(w);
+                          return (
+                            <tr
+                              key={w.id}
+                              onClick={() => toggleWork(w.id)}
+                              className={`cursor-pointer transition-colors ${checked ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50'}`}
+                            >
+                              <td className="p-2 border-b border-gray-50 text-center">
+                                <input
+                                  type="checkbox"
+                                  readOnly
+                                  checked={checked}
+                                  className="w-3.5 h-3.5 accent-indigo-600"
+                                  style={{ pointerEvents: 'none' }}
+                                />
+                              </td>
+                              <td className="p-2 border-b border-gray-50 font-medium text-slate-700 max-w-[200px]">
+                                <span className="line-clamp-2">{w.title}</span>
+                              </td>
+                              <td className="p-2 border-b border-gray-50 text-gray-500">
+                                {TYPE_LABEL[w.type] ?? w.type}
+                              </td>
+                              <td className="p-2 border-b border-gray-50 text-gray-500">
+                                {w.releaseYear ?? '—'}
+                              </td>
+                              <td className={`p-2 border-b border-gray-50 ${vod.cls}`}>
+                                {vod.label}
+                              </td>
+                              <td className="p-2 border-b border-gray-50 text-gray-400">
+                                {SOURCE_LABEL[w.source] ?? w.source}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* 生成ボタン */}
+                <div className="flex flex-wrap gap-2 items-center">
+                  <button
+                    onClick={handleSelectionGenerate}
+                    disabled={selectedWorkIds.size === 0}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-50 font-medium"
+                  >
+                    📋 選択{selectedWorkIds.size}件でプロンプト生成
+                  </button>
+                  {selectionPrompt && (
+                    <button
+                      onClick={() => handleCopy(selectionPrompt, setSelectionCopied)}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-slate-700 transition-colors font-medium"
+                    >
+                      {selectionCopied ? '✓ コピー完了' : 'クリップボードへコピー'}
+                    </button>
+                  )}
+                </div>
+
+                {selectionError && (
+                  <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{selectionError}</div>
+                )}
+                {selectionPrompt && (
+                  <textarea
+                    readOnly value={selectionPrompt} rows={20}
+                    className="w-full text-[11px] font-mono border border-gray-200 rounded-lg p-3 bg-gray-50 resize-y focus:outline-none"
+                    onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                  />
+                )}
+              </>
+            )}
+          </div>
         )}
-        {batchPrompt && (
-          <textarea
-            readOnly value={batchPrompt} rows={20}
-            className="w-full text-[11px] font-mono border border-gray-200 rounded-lg p-3 bg-gray-50 resize-y focus:outline-none"
-            onClick={(e) => (e.target as HTMLTextAreaElement).select()}
-          />
+
+        {/* ══ ①〜⑥ 生成ボタン（selected_works 選択時は非表示） ══ */}
+        {batchFilter !== 'selected_works' && (
+          <>
+            <div className="flex flex-wrap gap-2 items-center">
+              <button
+                onClick={handleBatchGenerate}
+                disabled={batchLoading || !selectedPerson}
+                className="text-xs px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors disabled:opacity-50 font-medium"
+              >
+                {batchLoading ? '生成中...' : '📋 配信再調査プロンプト生成'}
+              </button>
+              {batchPrompt && (
+                <>
+                  <button
+                    onClick={() => handleCopy(batchPrompt, setBatchCopied)}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-slate-700 transition-colors font-medium"
+                  >
+                    {batchCopied ? '✓ コピー完了' : 'クリップボードへコピー'}
+                  </button>
+                  <span className="text-[11px] text-gray-400">対象 {batchWorkCount}件</span>
+                </>
+              )}
+            </div>
+
+            {batchError && (
+              <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{batchError}</div>
+            )}
+            {batchPrompt && (
+              <textarea
+                readOnly value={batchPrompt} rows={20}
+                className="w-full text-[11px] font-mono border border-gray-200 rounded-lg p-3 bg-gray-50 resize-y focus:outline-none"
+                onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+              />
+            )}
+          </>
         )}
       </div>
     </div>
