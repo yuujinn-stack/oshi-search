@@ -181,10 +181,16 @@ function SortableProductCard({
           <span className="text-gray-400">{p.catLabel}</span>
           <span className="font-mono text-gray-400">score {p.relevanceScore}</span>
           {p.judgment ? (
-            <span className={`px-1.5 py-0.5 rounded ${VERDICT_BADGE[p.judgment.verdict] ?? 'bg-gray-100 text-gray-500'}`}>
-              {SOURCE_ICON[p.judgment.source]} {VERDICT_LABEL[p.judgment.verdict] ?? p.judgment.verdict}
-              {p.judgment.reason ? ` — ${p.judgment.reason}` : ''}
-            </span>
+            p.judgment.verdict === 'uncertain' && p.judgment.reason?.startsWith('卒業後グループ商品候補') ? (
+              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+                🎓 {p.judgment.reason}
+              </span>
+            ) : (
+              <span className={`px-1.5 py-0.5 rounded ${VERDICT_BADGE[p.judgment.verdict] ?? 'bg-gray-100 text-gray-500'}`}>
+                {SOURCE_ICON[p.judgment.source]} {VERDICT_LABEL[p.judgment.verdict] ?? p.judgment.verdict}
+                {p.judgment.reason ? ` — ${p.judgment.reason}` : ''}
+              </span>
+            )
           ) : (
             <span className="text-gray-400 italic">未判定</span>
           )}

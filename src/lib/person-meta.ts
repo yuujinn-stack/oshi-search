@@ -18,3 +18,13 @@ export async function getAllPersonMetas(): Promise<Record<string, PersonMeta>> {
     return map;
   } catch { return {}; }
 }
+
+export async function getPersonMeta(name: string): Promise<PersonMeta | null> {
+  try {
+    const redis = getRedis();
+    if (!redis) return null;
+    const raw = await redis.hget<string>(META_KEY, name);
+    if (!raw) return null;
+    return (typeof raw === 'string' ? JSON.parse(raw) : raw) as PersonMeta;
+  } catch { return null; }
+}

@@ -7,6 +7,8 @@ import { getProductsByCategory } from './rakuten';
 import { storeProducts, saveBatchMeta, CATEGORIES } from './product-store';
 import { getAllVerdicts, saveVerdict } from './judgment-store';
 import { judgeProducts, shouldAutoApprove, PROMPT_VERSION } from './ai-judge';
+import { checkPostMembershipGroupContent } from './product-membership-guard';
+import { getPersonMeta } from './person-meta';
 import type { RakutenItem } from '@/types/rakuten';
 import type { PersonWithConfig } from '@/types/person';
 
@@ -34,12 +36,13 @@ function trackLog(msg: string): void {
 
 export interface PersonBatchResult {
   personName: string;
-  stored: number;          // 今回楽天APIから取得・保存した商品数（カテゴリ合計）
-  aiJudged: number;        // AI判定結果を保存した商品数
-  aiQueued: number;        // AI判定に送った商品数（aiJudged と差がある場合はAPIエラー）
-  skipped: number;         // 既存判定(ai/manual)があるためスキップした商品数
-  excluded: number;        // 除外キーワード一致でスキップした商品数
-  usedSuppressed: number;  // 中古dedup: 新品と重複して除外した商品数
+  stored: number;              // 今回楽天APIから取得・保存した商品数（カテゴリ合計）
+  aiJudged: number;            // AI判定結果を保存した商品数
+  aiQueued: number;            // AI判定に送った商品数（aiJudged と差がある場合はAPIエラー）
+  skipped: number;             // 既存判定(ai/manual)があるためスキップした商品数
+  excluded: number;            // 除外キーワード一致でスキップした商品数
+  usedSuppressed: number;      // 中古dedup: 新品と重複して除外した商品数
+  membershipFiltered: number;  // 卒業後グループ商品候補として確認待ちにした商品数
   error?: string;
 }
 
@@ -62,11 +65,12 @@ export async function processPerson(
   const all = getAllPersonsWithConfig();
   const person = configOverride ?? all.find((p) => p.name === personName);
   if (!person) {
-    return { personName, stored: 0, aiJudged: 0, aiQueued: 0, skipped: 0, excluded: 0, usedSuppressed: 0, error: '人物が見つかりません' };
+    return { personName, stored: 0, aiJudged: 0, aiQueued: 0, skipped: 0, excluded: 0, usedSuppressed: 0, membershipFiltered: 0, error: '人物が見つかりません' };
   }
 
   const excludeKeywords = person.config.excludeKeywords ?? [];
   const existingVerdicts = await getAllVerdicts(person.name);
+  const personMeta = await getPersonMeta(person.name);
 
   let stored = 0;
   let aiJudged = 0;
@@ -74,6 +78,7 @@ export async function processPerson(
   let skipped = 0;
   let excluded = 0;
   let usedSuppressed = 0;
+  let membershipFiltered = 0;
   const toJudge: RakutenItem[] = [];
 
   const apiKeyStatus = process.env.OPENAI_API_KEY
@@ -217,6 +222,30 @@ export async function processPerson(
         }
       }
 
+      // ━━━ 優先度3.5: 卒業後グループ商品候補チェック ━━━
+      // manual・shouldAutoApprove 済は上でスキップ済みのため非影響
+      // ai 判定済み（スキップ対象外のもの = outdated or forceRejudge）も対象にする
+      if (personMeta) {
+        const guardResult = checkPostMembershipGroupContent(
+          p.title,
+          person.name,
+          person.config.aliases ?? [],
+          personMeta,
+        );
+        if (guardResult.shouldReview) {
+          if (tracked) {
+            trackLog(`🎓 ステップ3.5: 卒業後グループ商品候補 → uncertain 保存`);
+            trackLog(`   title="${p.title}"`);
+            trackLog(`   id=${p.id} | reason="${guardResult.reason}"`);
+          }
+          console.log(`[batch]   卒業後グループ商品候補: id=${p.id} | "${p.title.slice(0, 60)}"`);
+          await saveVerdict(person.name, p.id, 'uncertain', 0, 'auto', guardResult.reason);
+          membershipFiltered++;
+          catNew++;
+          continue;
+        }
+      }
+
       // ━━━ 優先度4: 未判定 / auto 判定 / 再判定対象 → AI キューへ ━━━
       if (tracked) {
         trackLog(`🎯 ステップ3→4: AI判定キューへ追加`);
@@ -290,8 +319,8 @@ export async function processPerson(
     }
   }
 
-  console.log(`[batch] ===== 完了: ${personName} 取得=${stored} AI対象=${aiQueued} AI完了=${aiJudged} スキップ=${skipped} 除外=${excluded} 中古抑制=${usedSuppressed} =====`);
-  return { personName, stored, aiJudged, aiQueued, skipped, excluded, usedSuppressed };
+  console.log(`[batch] ===== 完了: ${personName} 取得=${stored} AI対象=${aiQueued} AI完了=${aiJudged} スキップ=${skipped} 除外=${excluded} 中古抑制=${usedSuppressed} 卒業後候補=${membershipFiltered} =====`);
+  return { personName, stored, aiJudged, aiQueued, skipped, excluded, usedSuppressed, membershipFiltered };
 }
 
 // 全人物を処理（Cron/管理画面から呼ぶ）
@@ -315,6 +344,7 @@ export async function processAllPersons(): Promise<BatchSummary> {
         skipped: 0,
         excluded: 0,
         usedSuppressed: 0,
+        membershipFiltered: 0,
         error: String(err),
       });
     }
