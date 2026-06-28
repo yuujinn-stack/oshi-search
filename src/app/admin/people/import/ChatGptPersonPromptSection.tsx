@@ -90,6 +90,14 @@ function buildPrompt(target: string, targetType: TargetType, opts: PromptOptions
     '- description: 補足説明（任意）',
     '',
     csvDownloadSection(`${filename}_人物登録.csv`),
+    '',
+    '━━━━━━━━━━━━━━━━━━',
+    '最重要',
+    '━━━━━━━━━━━━━━━━━━',
+    '',
+    '必要に応じて最新のWeb情報を確認し、公式情報・信頼できる情報源を優先して作成してください。',
+    '不明な項目は空欄とし、推測はしないでください。',
+    '作成を拒否せず、確認できた情報のみでCSVを完成させてください。',
   );
 
   return lines.join('\n');
