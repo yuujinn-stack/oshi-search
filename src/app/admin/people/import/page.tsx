@@ -3,6 +3,7 @@ import { getPublishedPersonNames } from '@/lib/published-persons';
 import ImportForm from './ImportForm';
 import PersonList from './PersonList';
 import JobQueuePanel from './JobQueuePanel';
+import ChatGptPersonPromptSection from './ChatGptPersonPromptSection';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,6 +67,9 @@ export default async function PeopleImportPage() {
         <span className="text-gray-300">→</span>
         <span className="px-3 py-1.5 bg-gray-100 text-gray-500 rounded-full">⑤ 公開</span>
       </div>
+
+      {/* ChatGPT 人物CSV作成プロンプト生成 */}
+      <ChatGptPersonPromptSection />
 
       {/* 人物CSV登録フォーム */}
       <div className="mb-8">

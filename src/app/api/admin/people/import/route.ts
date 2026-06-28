@@ -8,7 +8,11 @@ import {
 } from '@/lib/imported-persons';
 import { enqueuePersonJob } from '@/lib/person-job-queue';
 import { saveImportHistory } from '@/lib/import-history';
-import type { Genre } from '@/types/person';
+import { getRedis } from '@/lib/redis';
+import { ensureGroupMeta } from '@/lib/group-meta';
+import type { Genre, ActivityStatus } from '@/types/person';
+
+const META_KEY = 'admin:person-meta';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,6 +71,14 @@ export interface PersonPreviewRow {
   description: string;
   action: 'add' | 'skip' | 'error';
   reason: string;
+  // 拡張メタフィールド（CSV に列がある場合のみ設定）
+  activityStatus?: ActivityStatus;
+  generation?: string;
+  joinedAt?: string;
+  leftAt?: string;
+  currentGroupName?: string;
+  formerGroupNames?: string[];
+  membershipNote?: string;
 }
 
 // ─── GET: インポート済み人物一覧 ──────────────────────────────────────────────
@@ -98,12 +110,20 @@ export async function POST(req: NextRequest) {
     // ヘッダー正規化
     const header = rows[0].map((h) => h.trim().toLowerCase().replace(/[\s_-]/g, ''));
     const col = {
-      name:        header.indexOf('name'),
-      groupName:   Math.max(header.indexOf('groupname'), header.indexOf('group')),
-      aliases:     header.indexOf('aliases'),
-      tmdbId:      Math.max(header.indexOf('tmdbid'), header.indexOf('tmdbpersonid')),
-      description: header.indexOf('description'),
-      genre:       header.indexOf('genre'),
+      name:             header.indexOf('name'),
+      groupName:        Math.max(header.indexOf('groupname'), header.indexOf('group')),
+      aliases:          header.indexOf('aliases'),
+      tmdbId:           Math.max(header.indexOf('tmdbid'), header.indexOf('tmdbpersonid')),
+      description:      header.indexOf('description'),
+      genre:            header.indexOf('genre'),
+      // 拡張メタ列
+      activityStatus:   header.indexOf('activitystatus'),
+      generation:       header.indexOf('generation'),
+      joinedAt:         header.indexOf('joinedat'),
+      leftAt:           header.indexOf('leftat'),
+      currentGroupName: header.indexOf('currentgroupname'),
+      formerGroupNames: header.indexOf('formergroupnames'),
+      membershipNote:   header.indexOf('membershipnote'),
     };
 
     if (col.name === -1) {
@@ -142,15 +162,31 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      const group       = get(row, col.groupName);
-      const aliasesRaw  = get(row, col.aliases);
-      const tmdbRaw     = get(row, col.tmdbId);
-      const description = get(row, col.description);
-      const genreRaw    = get(row, col.genre);
+      const group            = get(row, col.groupName);
+      const aliasesRaw       = get(row, col.aliases);
+      const tmdbRaw          = get(row, col.tmdbId);
+      const description      = get(row, col.description);
+      const genreRaw         = get(row, col.genre);
+      const activityStatusRaw = get(row, col.activityStatus);
+      const generation       = get(row, col.generation) || undefined;
+      const joinedAt         = get(row, col.joinedAt) || undefined;
+      const leftAt           = get(row, col.leftAt) || undefined;
+      const currentGroupName = get(row, col.currentGroupName) || undefined;
+      const formerGroupNamesRaw = get(row, col.formerGroupNames);
+      const membershipNote   = get(row, col.membershipNote) || undefined;
 
-      const aliases     = splitAliases(aliasesRaw);
+      const aliases      = splitAliases(aliasesRaw);
       const tmdbPersonId = tmdbRaw && !isNaN(Number(tmdbRaw)) ? Number(tmdbRaw) : null;
-      const genre       = inferGenre(group, genreRaw);
+      const genre        = inferGenre(group, genreRaw);
+
+      const VALID_ACTIVITY = ['active', 'graduated', 'withdrawn', 'hiatus', 'retired', 'unknown'];
+      const activityStatus = VALID_ACTIVITY.includes(activityStatusRaw)
+        ? activityStatusRaw as ActivityStatus
+        : undefined;
+
+      const formerGroupNames = formerGroupNamesRaw
+        ? formerGroupNamesRaw.split(/[,、]/).map((s) => s.trim()).filter(Boolean)
+        : undefined;
 
       if (seenInCsv.has(name)) {
         previewRows.push({
@@ -172,6 +208,7 @@ export async function POST(req: NextRequest) {
       previewRows.push({
         rowNum, name, group, genre, aliases, tmdbPersonId, description,
         action: 'add', reason: '新規追加',
+        activityStatus, generation, joinedAt, leftAt, currentGroupName, formerGroupNames, membershipNote,
       });
     }
 
@@ -203,6 +240,44 @@ export async function POST(req: NextRequest) {
       await saveImportedPersonsBatch(toAdd);
     } catch (err) {
       errors.push(String(err));
+    }
+
+    // 拡張メタフィールドを person-meta へ保存 + グループ自動作成
+    const redis = getRedis();
+    if (redis) {
+      const metaRows = previewRows.filter((r) => r.action === 'add' && (
+        r.activityStatus || r.generation || r.joinedAt || r.leftAt ||
+        r.currentGroupName || r.formerGroupNames || r.membershipNote
+      ));
+      for (const r of metaRows) {
+        try {
+          const existing = await redis.hget<string>(META_KEY, r.name);
+          const current = existing
+            ? ((typeof existing === 'string' ? JSON.parse(existing) : existing) as Record<string, unknown>)
+            : {};
+          const meta = {
+            ...current,
+            ...(r.activityStatus   ? { activityStatus: r.activityStatus }     : {}),
+            ...(r.generation       ? { generation: r.generation }              : {}),
+            ...(r.joinedAt         ? { joinedAt: r.joinedAt }                  : {}),
+            ...(r.leftAt           ? { leftAt: r.leftAt }                      : {}),
+            ...(r.currentGroupName ? { currentGroupName: r.currentGroupName }  : {}),
+            ...(r.formerGroupNames ? { formerGroupNames: r.formerGroupNames }  : {}),
+            ...(r.membershipNote   ? { membershipNote: r.membershipNote }      : {}),
+            updatedAt: Date.now(),
+          };
+          await redis.hset(META_KEY, { [r.name]: JSON.stringify(meta) });
+        } catch { /* meta 保存失敗は非致命的 */ }
+      }
+      // グループ自動作成（groupName / currentGroupName）
+      const groupNames = new Set(
+        previewRows
+          .filter((r) => r.action === 'add')
+          .flatMap((r) => [r.group, r.currentGroupName].filter(Boolean) as string[]),
+      );
+      for (const g of groupNames) {
+        await ensureGroupMeta(g).catch(() => {});
+      }
     }
 
     // 登録成功した人物をキューに追加
