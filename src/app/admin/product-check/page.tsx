@@ -129,6 +129,9 @@ export default async function AdminProductCheckPage() {
           <p className="text-sm text-gray-500 mt-1">全{persons.length}件の登録人物</p>
         </div>
         <div className="flex items-center gap-4 mt-1 flex-wrap text-xs">
+          <a href="/admin/rakuten-search" className="text-indigo-600 hover:underline font-medium">
+            楽天商品検索 →
+          </a>
           <a href="/admin/work-check" className="text-indigo-600 hover:underline">
             出演作品管理 →
           </a>

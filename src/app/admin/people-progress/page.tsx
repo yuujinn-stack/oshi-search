@@ -91,6 +91,9 @@ export default async function PeopleProgressPage() {
           <a href="/admin/people/import" className="text-indigo-600 hover:underline">
             人物登録 →
           </a>
+          <a href="/admin/rakuten-search" className="text-indigo-600 hover:underline font-medium">
+            楽天商品検索 →
+          </a>
           <a href="/admin/product-check" className="text-gray-400 hover:underline">
             商品確認
           </a>

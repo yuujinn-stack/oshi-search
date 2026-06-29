@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { href: '/admin/people-progress',            label: '進捗管理' },
   { href: '/admin/work-check',                 label: '作品管理' },
   { href: '/admin/product-check',              label: '商品管理' },
+  { href: '/admin/rakuten-search',             label: '楽天検索' },
   { href: '/admin/groups',                     label: 'グループ管理' },
   { href: '/admin/providers',                  label: '配信サービス' },
   { href: '/admin/people-membership-import',   label: '所属CSV' },

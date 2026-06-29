@@ -144,6 +144,9 @@ export default async function WorkCheckPage() {
           <a href="/admin/providers" className="text-gray-400 hover:underline">
             配信サービス
           </a>
+          <a href="/admin/rakuten-search" className="text-indigo-600 hover:underline font-medium">
+            楽天商品検索 →
+          </a>
           <a href="/admin/product-check" className="text-gray-400 hover:underline">
             商品確認
           </a>
