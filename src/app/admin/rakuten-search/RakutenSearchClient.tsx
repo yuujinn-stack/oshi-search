@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import PersonCombobox, { type PersonOption } from '@/components/admin/PersonCombobox';
+import type { PersonOption } from '@/components/admin/PersonCombobox';
+import PersonCombobox from '@/components/admin/PersonCombobox';
+import PersonMultiPicker, { recordRecentPersons } from './PersonMultiPicker';
 import type { RakutenSearchItem } from '@/app/api/admin/rakuten-search/route';
 import type { ProductCategory } from '@/types/person';
 
@@ -159,9 +161,6 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
 
   // ── 追加先人物 ────────────────────────────────────────────────────────────
   const [targetNames, setTargetNames] = useState<string[]>([]);
-  const [comboKey, setComboKey] = useState(0);
-  const [csvOpen, setCsvOpen] = useState(false);
-  const [csvText, setCsvText] = useState('');
   const [addCategory, setAddCategory] = useState<ProductCategory>('写真集');
 
   // ── 追加結果 ─────────────────────────────────────────────────────────────
@@ -204,15 +203,6 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
   const selectedItems = useMemo(
     () => displayItems.filter((item) => selectedUrls.has(item.itemUrl)),
     [displayItems, selectedUrls],
-  );
-
-  const targetGroups = useMemo(() => [...new Set(
-    targetNames.map((n) => persons.find((p) => p.name === n)?.group).filter(Boolean) as string[]
-  )], [targetNames, persons]);
-
-  const availableForCombo = useMemo(
-    () => persons.filter((p) => !targetNames.includes(p.name)),
-    [persons, targetNames],
   );
 
   const isFavorited = favorites.some((f) => f.keyword === builtKeyword.trim() && f.apiType === apiType);
@@ -339,29 +329,12 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
   }
 
   // ── 追加先人物操作 ────────────────────────────────────────────────────────
-  const addTargetName = useCallback((name: string) => {
-    if (!name) return;
-    setTargetNames((prev) => prev.includes(name) ? prev : [...prev, name]);
-    setComboKey((k) => k + 1);
+  const addTargetNames = useCallback((names: string[]) => {
+    setTargetNames((prev) => [...new Set([...prev, ...names])]);
   }, []);
 
   function removeTargetName(name: string) {
     setTargetNames((prev) => prev.filter((n) => n !== name));
-  }
-
-  function addGroupMembers(groupName: string, activeOnly: boolean) {
-    const members = persons
-      .filter((p) => p.group === groupName && (!activeOnly || p.activityStatus === 'active'))
-      .map((p) => p.name);
-    setTargetNames((prev) => [...new Set([...prev, ...members])]);
-  }
-
-  function applyCSV() {
-    const names = csvText.split(/[\n,、]/).map((s) => s.trim()).filter(Boolean);
-    const valid = names.filter((n) => persons.some((p) => p.name === n));
-    setTargetNames((prev) => [...new Set([...prev, ...valid])]);
-    setCsvText('');
-    setCsvOpen(false);
   }
 
   // ── 追加実行 ──────────────────────────────────────────────────────────────
@@ -406,6 +379,8 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
     }
 
     setAddResult({ totalCreated, totalDuplicates, personCount: uniquePersons.size, itemCount });
+    // record for "最近追加" in PersonMultiPicker
+    if (uniquePersons.size > 0) recordRecentPersons([...uniquePersons]);
     setAdding(false);
   }
 
@@ -750,50 +725,13 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
 
               {/* 追加先人物 */}
               <div>
-                <p className="text-[10px] text-gray-500 font-medium mb-1.5">
-                  追加先人物 {targetNames.length > 0 && <span className="text-slate-700 font-bold">{targetNames.length}人</span>}
-                </p>
-
-                {targetNames.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mb-2">
-                    {targetNames.map((name) => (
-                      <span key={name} className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-700 rounded-full px-2 py-0.5">
-                        {name}
-                        <button type="button" onClick={() => removeTargetName(name)} className="text-gray-400 hover:text-red-500 leading-none">✕</button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                <PersonCombobox key={comboKey} persons={availableForCombo} value="" onChange={addTargetName}
-                  placeholder="人物を追加..." allowEmpty emptyLabel="人物を追加..." />
-
-                {targetGroups.map((grp) => (
-                  <div key={grp} className="mt-1.5 flex gap-1.5 flex-wrap">
-                    <button type="button" onClick={() => addGroupMembers(grp, true)}
-                      className="text-[11px] px-2 py-1 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors">
-                      {grp} 現役
-                    </button>
-                    <button type="button" onClick={() => addGroupMembers(grp, false)}
-                      className="text-[11px] px-2 py-1 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors">
-                      {grp} 全員
-                    </button>
-                  </div>
-                ))}
-
-                <button type="button" onClick={() => setCsvOpen((v) => !v)}
-                  className="mt-1.5 text-[11px] text-indigo-500 hover:text-indigo-700 underline">
-                  {csvOpen ? '▲ 閉じる' : '▼ 名前を貼り付け'}
-                </button>
-                {csvOpen && (
-                  <div className="mt-1 space-y-1">
-                    <textarea value={csvText} onChange={(e) => setCsvText(e.target.value)}
-                      placeholder={'田中\n山田\n佐藤'} rows={3}
-                      className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 resize-none font-mono focus:outline-none focus:ring-1 focus:ring-slate-300" />
-                    <button type="button" onClick={applyCSV}
-                      className="text-xs px-2.5 py-1 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-700">追加</button>
-                  </div>
-                )}
+                <p className="text-[10px] text-gray-500 font-medium mb-1.5">追加先人物</p>
+                <PersonMultiPicker
+                  persons={persons}
+                  selected={targetNames}
+                  onAdd={addTargetNames}
+                  onRemove={removeTargetName}
+                />
               </div>
 
               {/* 追加結果 or 追加ボタン */}
