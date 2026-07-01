@@ -2,6 +2,7 @@
 // 管理画面から実行される。一般ユーザーのアクセス時には呼ばない。
 
 import OpenAI from 'openai';
+import { logOpenAIUsage } from '@/lib/openai-usage';
 import type { PersonWithConfig } from '@/types/person';
 import type { WorkRecord, WorkStatus } from '@/types/work';
 import { findBestTmdbPerson, getTmdbCredits, getWatchProviders } from './tmdb';
@@ -212,6 +213,7 @@ hidden: 同名別人である可能性が高い、または無関係・エキス
   "confidenceScore": 85
 }`;
 
+  const startTime = Date.now();
   try {
     const res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -219,6 +221,16 @@ hidden: 同名別人である可能性が高い、または無関係・エキス
       response_format: { type: 'json_object' },
       max_tokens: 100,
       temperature: 0,
+    });
+
+    await logOpenAIUsage({
+      feature: 'work_ai',
+      model: 'gpt-4o-mini',
+      inputTokens: res.usage?.prompt_tokens ?? 0,
+      outputTokens: res.usage?.completion_tokens ?? 0,
+      durationMs: Date.now() - startTime,
+      personName: person.name,
+      success: true,
     });
 
     const raw = res.choices[0]?.message?.content ?? '{}';
@@ -251,6 +263,16 @@ hidden: 同名別人である可能性が高い、または無関係・エキス
       usedAi: true,
     };
   } catch (err) {
+    await logOpenAIUsage({
+      feature: 'work_ai',
+      model: 'gpt-4o-mini',
+      inputTokens: 0,
+      outputTokens: 0,
+      durationMs: Date.now() - startTime,
+      personName: person.name,
+      success: false,
+      errorMessage: String(err),
+    });
     console.error(`[work-judge] OpenAIエラー: "${candidate.title}"`, err);
     return ruleBasedDecision(candidate);
   }
@@ -309,6 +331,7 @@ ${personLines}
   ]
 }`;
 
+  const startTime = Date.now();
   try {
     const res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -316,6 +339,16 @@ ${personLines}
       response_format: { type: 'json_object' },
       max_tokens: 600,
       temperature: 0,
+    });
+
+    await logOpenAIUsage({
+      feature: 'work_supplement',
+      model: 'gpt-4o-mini',
+      inputTokens: res.usage?.prompt_tokens ?? 0,
+      outputTokens: res.usage?.completion_tokens ?? 0,
+      durationMs: Date.now() - startTime,
+      personName: person.name,
+      success: true,
     });
 
     const raw = res.choices[0]?.message?.content ?? '{}';
@@ -343,6 +376,16 @@ ${personLines}
     console.log(`[work-supplement] "${person.name}": ${suggestions.length}件補完`);
     return suggestions;
   } catch (err) {
+    await logOpenAIUsage({
+      feature: 'work_supplement',
+      model: 'gpt-4o-mini',
+      inputTokens: 0,
+      outputTokens: 0,
+      durationMs: Date.now() - startTime,
+      personName: person.name,
+      success: false,
+      errorMessage: String(err),
+    });
     console.error(`[work-supplement] OpenAIエラー: "${person.name}"`, err);
     return [];
   }

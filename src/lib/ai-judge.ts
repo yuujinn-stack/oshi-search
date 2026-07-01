@@ -7,6 +7,7 @@ import OpenAI from 'openai';
 import type { Verdict } from './judgment-store';
 import type { PersonWithConfig } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
+import { logOpenAIUsage } from '@/lib/openai-usage';
 
 // プロンプトバージョン: このバージョンと異なる ai 判定済み商品は自動再判定される
 // プロンプトを修正したらこの値をインクリメントすること
@@ -139,6 +140,7 @@ ${productText}
 
   console.log(`[AI_INPUT] personName:${person.name} groupName:${person.group ?? ''} productTitle:"${product.title}" category:${product.category} author:${product.author ?? ''} artistName:${product.artistName ?? ''} promptVersion:${PROMPT_VERSION}`);
 
+  const startTime = Date.now();
   try {
     const res = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -146,6 +148,16 @@ ${productText}
       response_format: { type: 'json_object' },
       max_tokens: 100,
       temperature: 0,
+    });
+
+    await logOpenAIUsage({
+      feature: 'product_ai',
+      model: 'gpt-4o-mini',
+      inputTokens: res.usage?.prompt_tokens ?? 0,
+      outputTokens: res.usage?.completion_tokens ?? 0,
+      durationMs: Date.now() - startTime,
+      personName: person.name,
+      success: true,
     });
 
     const content = res.choices[0]?.message?.content ?? '{}';
@@ -159,6 +171,16 @@ ${productText}
     console.log(`[AI_OUTPUT] label:${verdict} score:${score} reason:"${parsed.reason ?? ''}" title:"${product.title.slice(0, 50)}"`);
     return { verdict, score, reason: parsed.reason ?? '' };
   } catch (err) {
+    await logOpenAIUsage({
+      feature: 'product_ai',
+      model: 'gpt-4o-mini',
+      inputTokens: 0,
+      outputTokens: 0,
+      durationMs: Date.now() - startTime,
+      personName: person.name,
+      success: false,
+      errorMessage: String(err),
+    });
     console.error(`[ai-judge] エラー: ${person.name} | 「${product.title.slice(0, 40)}」 |`, err);
     return null;
   }

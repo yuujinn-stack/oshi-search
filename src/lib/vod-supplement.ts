@@ -6,6 +6,7 @@
 import OpenAI from 'openai';
 import type { VodProvider } from '@/types/vod';
 import type { WorkRecord } from '@/types/work';
+import { logOpenAIUsage } from '@/lib/openai-usage';
 
 // 既知の日本向け配信サービスと TMDb provider_id の対応表
 const JP_PROVIDER_LOOKUP: Record<string, { id: number; logoPath?: string }> = {
@@ -178,6 +179,7 @@ type の意味:
 - ads = 広告付き無料配信（ABEMA無料枠・TVer等）
 - unknown = 配信あるが視聴方法不明`;
 
+  const startTime = Date.now();
   try {
     console.log(`[vod-ai] Web検索補完開始: "${work.title}" (${typeLabel}, ${yearStr})`);
 
@@ -187,10 +189,18 @@ type の意味:
       model: 'gpt-4o',
       tools: [{ type: 'web_search_preview' }],
       input: prompt,
+    }) as { output_text?: string; usage?: { input_tokens?: number; output_tokens?: number } };
+
+    await logOpenAIUsage({
+      feature: 'vod_research',
+      model: 'gpt-4o',
+      inputTokens: response.usage?.input_tokens ?? 0,
+      outputTokens: response.usage?.output_tokens ?? 0,
+      durationMs: Date.now() - startTime,
+      success: true,
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: string = (response as any).output_text ?? '';
+    const raw: string = response.output_text ?? '';
     if (!raw) return [];
 
     const parsed = extractJson(raw);
@@ -225,6 +235,15 @@ type の意味:
     );
     return providers;
   } catch (err) {
+    await logOpenAIUsage({
+      feature: 'vod_research',
+      model: 'gpt-4o',
+      inputTokens: 0,
+      outputTokens: 0,
+      durationMs: Date.now() - startTime,
+      success: false,
+      errorMessage: String(err),
+    });
     console.error(`[vod-ai] Web検索補完エラー: "${work.title}"`, err);
     return [];
   }
