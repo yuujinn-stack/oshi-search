@@ -27,12 +27,15 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-function genLabel(g: string) {
-  return g.includes('期') ? g : `${g}期`;
+function genNum(g: string): number {
+  return parseInt(g.replace(/\D/g, '') || '0', 10);
 }
 
-function genNum(g: string) {
-  return parseInt(g.replace(/\D/g, '') || '0', 10);
+// Normalize various formats to "N期生": "1" / "1期" / "1期生" → "1期生"
+function normalizeGeneration(g: string): string {
+  const n = genNum(g);
+  if (n === 0) return g; // can't extract number, keep as-is
+  return `${n}期生`;
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -79,11 +82,31 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
     return true;
   }), [persons, selected, activityFilter, groupFilter]);
 
-  // Unique generations in baseFiltered, sorted numerically
-  const generations = useMemo(() => {
-    const gens = [...new Set(baseFiltered.map((p) => p.generation).filter(Boolean) as string[])];
-    return gens.sort((a, b) => genNum(a) - genNum(b));
-  }, [baseFiltered]);
+  // Source for generation buttons:
+  //   group selected → all persons in that group (ignore activity filter & selection)
+  //   no group       → baseFiltered (activity-filtered, selection-excluded)
+  const generationSource = useMemo(() =>
+    groupFilter ? persons.filter((p) => p.group === groupFilter) : baseFiltered,
+    [groupFilter, persons, baseFiltered],
+  );
+
+  // normalized_generation → [name, …] (all members, not only visible ones)
+  const generationNamesMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const p of generationSource) {
+      if (!p.generation) continue;
+      const norm = normalizeGeneration(p.generation);
+      const list = map.get(norm) ?? [];
+      list.push(p.name);
+      map.set(norm, list);
+    }
+    return map;
+  }, [generationSource]);
+
+  const generations = useMemo(() =>
+    [...generationNamesMap.keys()].sort((a, b) => genNum(a) - genNum(b)),
+    [generationNamesMap],
+  );
 
   // Final display list (search applied)
   const filteredPersons = useMemo(() => {
@@ -128,13 +151,16 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
   }, [filteredPersons]);
 
   function toggleGeneration(gen: string) {
-    const gp = baseFiltered.filter((p) => p.generation === gen);
-    const allSel = gp.length > 0 && gp.every((p) => checked.has(p.name));
+    // Names in this generation that are currently visible (pass activity + group filter)
+    const allInGen = new Set(generationNamesMap.get(gen) ?? []);
+    const visible = baseFiltered.filter((p) => allInGen.has(p.name));
+    if (visible.length === 0) return;
+    const allSel = visible.every((p) => checked.has(p.name));
     if (allSel) {
-      const gset = new Set(gp.map((p) => p.name));
-      setChecked((prev) => new Set([...prev].filter((n) => !gset.has(n))));
+      const vset = new Set(visible.map((p) => p.name));
+      setChecked((prev) => new Set([...prev].filter((n) => !vset.has(n))));
     } else {
-      setChecked((prev) => new Set([...prev, ...gp.map((p) => p.name)]));
+      setChecked((prev) => new Set([...prev, ...visible.map((p) => p.name)]));
     }
   }
 
@@ -216,14 +242,25 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
       {generations.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {generations.map((gen) => {
-            const gp = baseFiltered.filter((p) => p.generation === gen);
-            const allSel = gp.length > 0 && gp.every((p) => checked.has(p.name));
+            const allInGen = new Set(generationNamesMap.get(gen) ?? []);
+            const visible = baseFiltered.filter((p) => allInGen.has(p.name));
+            const hasVisible = visible.length > 0;
+            const allSel = hasVisible && visible.every((p) => checked.has(p.name));
             return (
-              <button key={gen} type="button" onClick={() => toggleGeneration(gen)}
+              <button
+                key={gen}
+                type="button"
+                onClick={() => toggleGeneration(gen)}
+                disabled={!hasVisible}
                 className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
-                  allSel ? 'bg-blue-600 text-white border-blue-600' : 'border-blue-200 text-blue-600 hover:bg-blue-50'
-                }`}>
-                {genLabel(gen)}
+                  allSel
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : hasVisible
+                    ? 'border-blue-200 text-blue-600 hover:bg-blue-50'
+                    : 'border-gray-100 text-gray-300 cursor-default'
+                }`}
+              >
+                {gen}
               </button>
             );
           })}
@@ -285,7 +322,7 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
                 </div>
                 <span className="text-xs text-slate-700 flex-1 leading-tight">{p.name}</span>
                 {p.generation && (
-                  <span className="text-[9px] text-gray-300 shrink-0">{genLabel(p.generation)}</span>
+                  <span className="text-[9px] text-gray-300 shrink-0">{normalizeGeneration(p.generation)}</span>
                 )}
                 {p.activityStatus && p.activityStatus !== 'active' && (
                   <span className={`text-[9px] shrink-0 ${STATUS_COLOR[p.activityStatus] ?? 'text-gray-400'}`}>
