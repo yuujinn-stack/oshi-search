@@ -58,19 +58,20 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
 
   useEffect(() => { setRecent(readRecent()); }, []);
 
-  // DEBUG: log generation data by group to browser console
+  // DEBUG: ブラウザコンソールにグループ・generation データを出力
   useEffect(() => {
-    const target = ['乃木坂46', '櫻坂46', '日向坂46'];
-    console.log(`[PersonMultiPicker] 総人数: ${persons.length}`);
-    for (const g of target) {
-      const gp = persons.filter((p) => p.group === g);
-      const withGen = gp.filter((p) => p.generation);
-      const genVals = [...new Set(withGen.map((p) => p.generation))];
-      console.log(`[PersonMultiPicker] ${g}: 人数=${gp.length}, generation有=${withGen.length}, 値=`, genVals);
-      if (gp.length > 0 && withGen.length === 0) {
-        console.log(`[PersonMultiPicker] ${g} 先頭5人(generationなし):`, gp.slice(0, 5));
-      }
-    }
+    const groups = [...new Set(persons.map((p) => p.currentGroupName ?? p.group).filter(Boolean))].sort();
+    console.log('[PersonMultiPicker groups]', {
+      totalPersons: persons.length,
+      groups,
+      sample: persons.slice(0, 20).map((p) => ({
+        name: p.name,
+        group: p.group,
+        currentGroupName: p.currentGroupName,
+        generation: p.generation,
+        activityStatus: p.activityStatus,
+      })),
+    });
   }, [persons]);
 
   // Remove from checked when persons become selected
@@ -84,8 +85,15 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
   }, [selected]);
 
   // ── derived ────────────────────────────────────────────────────────────────
+  // 実効グループ名: currentGroupName（改名後）→ group（persons_master）の優先順
+  function effectiveGroup(p: PersonOption): string {
+    return p.currentGroupName ?? p.group ?? '';
+  }
+
+  // グループ一覧: 全 persons から実効グループを集計（選択済み除外しない）
   const allGroups = useMemo(() =>
-    [...new Set(persons.map((p) => p.group).filter(Boolean) as string[])].sort(),
+    [...new Set(persons.map(effectiveGroup).filter(Boolean))].sort(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [persons],
   );
 
@@ -93,15 +101,19 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
   const baseFiltered = useMemo(() => persons.filter((p) => {
     if (selected.includes(p.name)) return false;
     if (activityFilter === 'active' && p.activityStatus && p.activityStatus !== 'active') return false;
-    if (groupFilter && p.group !== groupFilter) return false;
+    if (groupFilter && effectiveGroup(p) !== groupFilter) return false;
     return true;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [persons, selected, activityFilter, groupFilter]);
 
   // Source for generation buttons:
   //   group selected → all persons in that group (ignore activity filter & selection)
   //   no group       → baseFiltered (activity-filtered, selection-excluded)
   const generationSource = useMemo(() =>
-    groupFilter ? persons.filter((p) => p.group === groupFilter) : baseFiltered,
+    groupFilter
+      ? persons.filter((p) => effectiveGroup(p) === groupFilter)
+      : baseFiltered,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [groupFilter, persons, baseFiltered],
   );
 
@@ -243,11 +255,11 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
             すべて
           </button>
           {allGroups.map((g) => {
-            const gCount = persons.filter((p) => p.group === g).length;
-            const genCount = persons.filter((p) => p.group === g && p.generation).length;
+            const gPersons = persons.filter((p) => effectiveGroup(p) === g);
+            const genCount = gPersons.filter((p) => p.generation).length;
             return (
               <button key={g} type="button" onClick={() => setGroupFilter(g === groupFilter ? '' : g)}
-                title={`人数: ${gCount} / generation有: ${genCount}`}
+                title={`人数: ${gPersons.length} / generation有: ${genCount}`}
                 className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 transition-colors ${
                   groupFilter === g ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-500 hover:border-indigo-300'
                 }`}>

@@ -14,28 +14,26 @@ export default async function RakutenSearchPage() {
   const personOptions: PersonOption[] = persons.map((p) => ({
     name: p.name,
     group: p.group || undefined,
+    currentGroupName: metas[p.name]?.currentGroupName || undefined,
     activityStatus: metas[p.name]?.activityStatus,
     generation: metas[p.name]?.generation,
   }));
 
-  // ── DEBUG: generation データの分布をサーバーログに出力 ────────────────────
-  const debugGroups = ['乃木坂46', '櫻坂46', '日向坂46'];
-  for (const g of debugGroups) {
-    const gPersons = personOptions.filter((p) => p.group === g);
-    const withGen = gPersons.filter((p) => p.generation);
-    const genValues = [...new Set(withGen.map((p) => p.generation))];
-    console.log(`[DEBUG generation] ${g}: 人数=${gPersons.length}, generation有=${withGen.length}, 値=[${genValues.join(', ')}]`);
-    if (gPersons.length > 0 && withGen.length === 0) {
-      // generation がない先頭5人のメタを確認
-      for (const p of gPersons.slice(0, 5)) {
-        const meta = metas[p.name];
-        console.log(`  [DEBUG] ${p.name}: meta=${JSON.stringify(meta ?? null)}`);
-      }
-    }
+  // ── サーバーログ: グループ・generation 分布確認 ──────────────────────────
+  const debugTargets = ['乃木坂46', '櫻坂46', '日向坂46'];
+  for (const g of debugTargets) {
+    // currentGroupName か group が一致するもの
+    const gp = personOptions.filter((p) => (p.currentGroupName ?? p.group) === g);
+    const withGen = gp.filter((p) => p.generation);
+    const genVals = [...new Set(withGen.map((p) => p.generation))];
+    console.log(`[rakuten-search] ${g}: 人数=${gp.length}, gen有=${withGen.length}, vals=[${genVals.join(', ')}]`);
   }
-  // ── END DEBUG ──────────────────────────────────────────────────────────────
+  // ── END DEBUG ───────────────────────────────────────────────────────────────
 
-  const groups = [...new Set(persons.map((p) => p.group).filter(Boolean))].sort() as string[];
+  // グループ一覧: currentGroupName 優先 → group フォールバック
+  const groups = [...new Set(
+    personOptions.map((p) => p.currentGroupName ?? p.group).filter(Boolean)
+  )].sort() as string[];
 
   const metaMap: Record<string, { joinedAt?: string; leftAt?: string; activityStatus?: string }> = {};
   for (const [name, meta] of Object.entries(metas)) {

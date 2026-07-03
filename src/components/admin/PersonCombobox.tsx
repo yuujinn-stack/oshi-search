@@ -5,6 +5,8 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 export interface PersonOption {
   name: string;
   group?: string;
+  // currentGroupName: 改名後の現グループ名（欅坂46→櫻坂46 など）。group より優先して使う
+  currentGroupName?: string;
   generation?: string;
   activityStatus?: string;
   aliases?: string[];
