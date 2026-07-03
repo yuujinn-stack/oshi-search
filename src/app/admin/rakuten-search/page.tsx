@@ -2,6 +2,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllPersonMetas } from '@/lib/person-meta';
 import RakutenSearchClient from './RakutenSearchClient';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
+import { createGroupList } from './group-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,10 +31,7 @@ export default async function RakutenSearchPage() {
   }
   // ── END DEBUG ───────────────────────────────────────────────────────────────
 
-  // グループ一覧: currentGroupName 優先 → group フォールバック
-  const groups = [...new Set(
-    personOptions.map((p) => p.currentGroupName ?? p.group).filter(Boolean)
-  )].sort() as string[];
+  const groups = createGroupList(personOptions);
 
   const metaMap: Record<string, { joinedAt?: string; leftAt?: string; activityStatus?: string }> = {};
   for (const [name, meta] of Object.entries(metas)) {

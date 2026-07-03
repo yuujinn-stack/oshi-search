@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import PersonCombobox from '@/components/admin/PersonCombobox';
 import PersonMultiPicker, { recordRecentPersons } from './PersonMultiPicker';
+import { getEffectiveGroup } from './group-utils';
 import type { RakutenSearchItem } from '@/app/api/admin/rakuten-search/route';
 import type { ProductCategory } from '@/types/person';
 
@@ -185,7 +186,7 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
 
   const sortOptions = apiType === 'ichiba' ? SORT_ICHIBA : SORT_BOOKS;
   const searchPersonMeta = metaMap[searchPerson];
-  const searchPersonGroup = persons.find((p) => p.name === searchPerson)?.group;
+  const searchPersonGroup = (() => { const p = persons.find((x) => x.name === searchPerson); return p ? getEffectiveGroup(p) : undefined; })();
 
   const hasFilters = fltNewOnly || fltUsedOnly || fltImageOnly || fltMinPrice !== '' || fltMaxPrice !== '' || fltShop !== '';
 

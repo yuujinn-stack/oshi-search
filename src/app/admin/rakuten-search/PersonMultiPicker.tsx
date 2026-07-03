@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
+import { getEffectiveGroup, createGroupList } from './group-utils';
 
 // ── localStorage ───────────────────────────────────────────────────────────────
 const RECENT_KEY = 'rakuten-person-recent';
@@ -58,9 +59,8 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
 
   useEffect(() => { setRecent(readRecent()); }, []);
 
-  // DEBUG: ブラウザコンソールにグループ・generation データを出力
   useEffect(() => {
-    const groups = [...new Set(persons.map((p) => p.currentGroupName ?? p.group).filter(Boolean))].sort();
+    const groups = createGroupList(persons);
     console.log('[PersonMultiPicker groups]', {
       totalPersons: persons.length,
       groups,
@@ -85,25 +85,15 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
   }, [selected]);
 
   // ── derived ────────────────────────────────────────────────────────────────
-  // 実効グループ名: currentGroupName（改名後）→ group（persons_master）の優先順
-  function effectiveGroup(p: PersonOption): string {
-    return p.currentGroupName ?? p.group ?? '';
-  }
-
-  // グループ一覧: 全 persons から実効グループを集計（選択済み除外しない）
-  const allGroups = useMemo(() =>
-    [...new Set(persons.map(effectiveGroup).filter(Boolean))].sort(),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [persons],
-  );
+  // グループ一覧: group-utils の createGroupList を使用（page.tsx と同一ロジック）
+  const allGroups = useMemo(() => createGroupList(persons), [persons]);
 
   // Persons not yet added, filtered by activity + group
   const baseFiltered = useMemo(() => persons.filter((p) => {
     if (selected.includes(p.name)) return false;
     if (activityFilter === 'active' && p.activityStatus && p.activityStatus !== 'active') return false;
-    if (groupFilter && effectiveGroup(p) !== groupFilter) return false;
+    if (groupFilter && getEffectiveGroup(p) !== groupFilter) return false;
     return true;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [persons, selected, activityFilter, groupFilter]);
 
   // Source for generation buttons:
@@ -111,9 +101,8 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
   //   no group       → baseFiltered (activity-filtered, selection-excluded)
   const generationSource = useMemo(() =>
     groupFilter
-      ? persons.filter((p) => effectiveGroup(p) === groupFilter)
+      ? persons.filter((p) => getEffectiveGroup(p) === groupFilter)
       : baseFiltered,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [groupFilter, persons, baseFiltered],
   );
 
@@ -255,7 +244,7 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
             すべて
           </button>
           {allGroups.map((g) => {
-            const gPersons = persons.filter((p) => effectiveGroup(p) === g);
+            const gPersons = persons.filter((p) => getEffectiveGroup(p) === g);
             const genCount = gPersons.filter((p) => p.generation).length;
             return (
               <button key={g} type="button" onClick={() => setGroupFilter(g === groupFilter ? '' : g)}
