@@ -58,6 +58,21 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
 
   useEffect(() => { setRecent(readRecent()); }, []);
 
+  // DEBUG: log generation data by group to browser console
+  useEffect(() => {
+    const target = ['乃木坂46', '櫻坂46', '日向坂46'];
+    console.log(`[PersonMultiPicker] 総人数: ${persons.length}`);
+    for (const g of target) {
+      const gp = persons.filter((p) => p.group === g);
+      const withGen = gp.filter((p) => p.generation);
+      const genVals = [...new Set(withGen.map((p) => p.generation))];
+      console.log(`[PersonMultiPicker] ${g}: 人数=${gp.length}, generation有=${withGen.length}, 値=`, genVals);
+      if (gp.length > 0 && withGen.length === 0) {
+        console.log(`[PersonMultiPicker] ${g} 先頭5人(generationなし):`, gp.slice(0, 5));
+      }
+    }
+  }, [persons]);
+
   // Remove from checked when persons become selected
   useEffect(() => {
     setChecked((prev) => {
@@ -227,14 +242,20 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
             }`}>
             すべて
           </button>
-          {allGroups.map((g) => (
-            <button key={g} type="button" onClick={() => setGroupFilter(g === groupFilter ? '' : g)}
-              className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 transition-colors ${
-                groupFilter === g ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-500 hover:border-indigo-300'
-              }`}>
-              {g}
-            </button>
-          ))}
+          {allGroups.map((g) => {
+            const gCount = persons.filter((p) => p.group === g).length;
+            const genCount = persons.filter((p) => p.group === g && p.generation).length;
+            return (
+              <button key={g} type="button" onClick={() => setGroupFilter(g === groupFilter ? '' : g)}
+                title={`人数: ${gCount} / generation有: ${genCount}`}
+                className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 transition-colors ${
+                  groupFilter === g ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-500 hover:border-indigo-300'
+                }`}>
+                {g}
+                {genCount === 0 && <span className="ml-0.5 text-amber-400">!</span>}
+              </button>
+            );
+          })}
         </div>
       )}
 

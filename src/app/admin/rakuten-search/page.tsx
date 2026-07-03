@@ -18,6 +18,23 @@ export default async function RakutenSearchPage() {
     generation: metas[p.name]?.generation,
   }));
 
+  // ── DEBUG: generation データの分布をサーバーログに出力 ────────────────────
+  const debugGroups = ['乃木坂46', '櫻坂46', '日向坂46'];
+  for (const g of debugGroups) {
+    const gPersons = personOptions.filter((p) => p.group === g);
+    const withGen = gPersons.filter((p) => p.generation);
+    const genValues = [...new Set(withGen.map((p) => p.generation))];
+    console.log(`[DEBUG generation] ${g}: 人数=${gPersons.length}, generation有=${withGen.length}, 値=[${genValues.join(', ')}]`);
+    if (gPersons.length > 0 && withGen.length === 0) {
+      // generation がない先頭5人のメタを確認
+      for (const p of gPersons.slice(0, 5)) {
+        const meta = metas[p.name];
+        console.log(`  [DEBUG] ${p.name}: meta=${JSON.stringify(meta ?? null)}`);
+      }
+    }
+  }
+  // ── END DEBUG ──────────────────────────────────────────────────────────────
+
   const groups = [...new Set(persons.map((p) => p.group).filter(Boolean))].sort() as string[];
 
   const metaMap: Record<string, { joinedAt?: string; leftAt?: string; activityStatus?: string }> = {};
