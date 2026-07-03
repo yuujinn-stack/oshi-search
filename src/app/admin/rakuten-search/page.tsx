@@ -12,26 +12,6 @@ export default async function RakutenSearchPage() {
     getAllPersonMetas(),
   ]);
 
-  // ── [DIAG-1] getAllPersonsMerged の生データ確認 ───────────────────────────
-  console.log('[DIAG-1] getAllPersonsMerged 件数:', persons.length);
-  console.log('[DIAG-1] 日向坂46 raw (group フィールド):', persons.filter(p => p.group === '日向坂46').map(p => p.name));
-  console.log('[DIAG-1] 櫻坂46 raw (group フィールド):', persons.filter(p => p.group === '櫻坂46').map(p => p.name));
-  console.log('[DIAG-1] 全 group 値一覧:', [...new Set(persons.map(p => p.group))].sort());
-
-  // ── [DIAG-2] Redis PersonMeta の currentGroupName 確認 ─────────────────
-  const hinaMembers = persons.filter(p => p.group === '日向坂46').map(p => p.name);
-  const sakuraMembers = persons.filter(p => p.group === '櫻坂46').map(p => p.name);
-  console.log('[DIAG-2] 日向坂46メンバーのmeta:', hinaMembers.map(n => ({
-    name: n,
-    meta_currentGroupName: metas[n]?.currentGroupName ?? '(未設定)',
-    meta_activityStatus: metas[n]?.activityStatus ?? '(未設定)',
-  })));
-  console.log('[DIAG-2] 櫻坂46メンバーのmeta:', sakuraMembers.map(n => ({
-    name: n,
-    meta_currentGroupName: metas[n]?.currentGroupName ?? '(未設定)',
-    meta_activityStatus: metas[n]?.activityStatus ?? '(未設定)',
-  })));
-
   const personOptions: PersonOption[] = persons.map((p) => ({
     name: p.name,
     group: p.group || undefined,
@@ -40,28 +20,7 @@ export default async function RakutenSearchPage() {
     generation: metas[p.name]?.generation,
   }));
 
-  // ── [DIAG-3] PersonOption マッピング後の値確認 ──────────────────────────
-  console.log('[DIAG-3] personOptions 件数:', personOptions.length);
-  console.log('[DIAG-3] 日向坂46 PersonOption サンプル (group/currentGroupName):',
-    personOptions.filter(p => p.group === '日向坂46').map(p => ({
-      name: p.name, group: p.group, currentGroupName: p.currentGroupName,
-    }))
-  );
-  console.log('[DIAG-3] 櫻坂46 PersonOption サンプル (group/currentGroupName):',
-    personOptions.filter(p => p.group === '櫻坂46').map(p => ({
-      name: p.name, group: p.group, currentGroupName: p.currentGroupName,
-    }))
-  );
-  console.log('[DIAG-3] 先頭5件の PersonOption (全フィールド):',
-    personOptions.slice(0, 5).map(p => ({ name: p.name, group: p.group, currentGroupName: p.currentGroupName }))
-  );
-
-  // ── [DIAG-4] createGroupList の戻り値 ────────────────────────────────────
   const groups = createGroupList(personOptions);
-  console.log('[DIAG-4] createGroupList 戻り値:', groups);
-  console.log('[DIAG-4] getEffectiveGroup で group が空になる人物:',
-    personOptions.filter(p => !(p.currentGroupName ?? p.group)).map(p => ({ name: p.name, group: p.group, currentGroupName: p.currentGroupName }))
-  );
 
   const metaMap: Record<string, { joinedAt?: string; leftAt?: string; activityStatus?: string }> = {};
   for (const [name, meta] of Object.entries(metas)) {

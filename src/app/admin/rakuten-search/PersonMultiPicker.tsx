@@ -59,46 +59,6 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
 
   useEffect(() => { setRecent(readRecent()); }, []);
 
-  useEffect(() => {
-    // ── [DIAG-5] クライアントで受け取った persons の確認 ──────────────────
-    console.log('[DIAG-5] PersonMultiPicker が受け取った persons 件数:', persons.length);
-
-    // group フィールド別に人数を集計
-    const byRawGroup: Record<string, number> = {};
-    for (const p of persons) {
-      const g = p.group ?? '(undefined)';
-      byRawGroup[g] = (byRawGroup[g] ?? 0) + 1;
-    }
-    console.log('[DIAG-5] p.group 別の人数:', byRawGroup);
-
-    // currentGroupName が設定されている件数
-    const withCurrentGroup = persons.filter(p => p.currentGroupName);
-    console.log('[DIAG-5] currentGroupName が設定されている人数:', withCurrentGroup.length);
-    console.log('[DIAG-5] currentGroupName サンプル (先頭5件):',
-      withCurrentGroup.slice(0, 5).map(p => ({ name: p.name, group: p.group, currentGroupName: p.currentGroupName }))
-    );
-
-    // 日向坂46・櫻坂46 の PersonOption を個別確認
-    console.log('[DIAG-5] 日向坂46メンバー (p.group === "日向坂46"):',
-      persons.filter(p => p.group === '日向坂46').map(p => ({ name: p.name, group: p.group, currentGroupName: p.currentGroupName }))
-    );
-    console.log('[DIAG-5] 櫻坂46メンバー (p.group === "櫻坂46"):',
-      persons.filter(p => p.group === '櫻坂46').map(p => ({ name: p.name, group: p.group, currentGroupName: p.currentGroupName }))
-    );
-
-    // ── [DIAG-6] createGroupList の戻り値をクライアントで確認 ──────────────
-    const groups = createGroupList(persons);
-    console.log('[DIAG-6] createGroupList 戻り値:', groups);
-
-    // getEffectiveGroup の結果を全件出力
-    const effectiveGroups = persons.map(p => ({ name: p.name, effectiveGroup: getEffectiveGroup(p) }));
-    const byEffective: Record<string, string[]> = {};
-    for (const { name, effectiveGroup } of effectiveGroups) {
-      const g = effectiveGroup || '(空)';
-      byEffective[g] = [...(byEffective[g] ?? []), name];
-    }
-    console.log('[DIAG-6] getEffectiveGroup 別の人物一覧:', byEffective);
-  }, [persons]);
 
   // Remove from checked when persons become selected
   useEffect(() => {
@@ -268,7 +228,7 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
 
       {/* Group tabs */}
       {allGroups.length > 0 && (
-        <div className="flex gap-1 overflow-x-auto pb-0.5" style={{ scrollbarWidth: 'none' }}>
+        <div className="flex flex-wrap gap-1">
           <button type="button" onClick={() => setGroupFilter('')}
             className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 transition-colors ${
               groupFilter === '' ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-500 hover:border-indigo-300'
