@@ -32,10 +32,9 @@ function genNum(g: string): number {
   return parseInt(g.replace(/\D/g, '') || '0', 10);
 }
 
-// Normalize various formats to "N期生": "1" / "1期" / "1期生" → "1期生"
 function normalizeGeneration(g: string): string {
   const n = genNum(g);
-  if (n === 0) return g; // can't extract number, keep as-is
+  if (n === 0) return g;
   return `${n}期生`;
 }
 
@@ -50,6 +49,7 @@ interface Props {
 export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }: Props) {
   const [activityFilter, setActivityFilter] = useState<'active' | 'all'>('active');
   const [groupFilter, setGroupFilter] = useState('');
+  const [generationFilter, setGenerationFilter] = useState('');
   const [search, setSearch] = useState('');
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [recent, setRecent] = useState<string[]>([]);
@@ -84,32 +84,23 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
     });
   }, [selected]);
 
+  // Reset generation filter when group changes
+  useEffect(() => {
+    setGenerationFilter('');
+  }, [groupFilter]);
+
   // ── derived ────────────────────────────────────────────────────────────────
-  // グループ一覧: group-utils の createGroupList を使用（page.tsx と同一ロジック）
   const allGroups = useMemo(() => createGroupList(persons), [persons]);
 
-  // Persons not yet added, filtered by activity + group
-  const baseFiltered = useMemo(() => persons.filter((p) => {
-    if (selected.includes(p.name)) return false;
-    if (activityFilter === 'active' && p.activityStatus && p.activityStatus !== 'active') return false;
-    if (groupFilter && getEffectiveGroup(p) !== groupFilter) return false;
-    return true;
-  }), [persons, selected, activityFilter, groupFilter]);
-
-  // Source for generation buttons:
-  //   group selected → all persons in that group (ignore activity filter & selection)
-  //   no group       → baseFiltered (activity-filtered, selection-excluded)
-  const generationSource = useMemo(() =>
-    groupFilter
-      ? persons.filter((p) => getEffectiveGroup(p) === groupFilter)
-      : baseFiltered,
-    [groupFilter, persons, baseFiltered],
+  // All persons in selected group (no activity/selection filter) — source for generation tabs
+  const groupPersons = useMemo(() =>
+    groupFilter ? persons.filter((p) => getEffectiveGroup(p) === groupFilter) : [],
+    [groupFilter, persons],
   );
 
-  // normalized_generation → [name, …] (all members, not only visible ones)
   const generationNamesMap = useMemo(() => {
     const map = new Map<string, string[]>();
-    for (const p of generationSource) {
+    for (const p of groupPersons) {
       if (!p.generation) continue;
       const norm = normalizeGeneration(p.generation);
       const list = map.get(norm) ?? [];
@@ -117,12 +108,21 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
       map.set(norm, list);
     }
     return map;
-  }, [generationSource]);
+  }, [groupPersons]);
 
   const generations = useMemo(() =>
     [...generationNamesMap.keys()].sort((a, b) => genNum(a) - genNum(b)),
     [generationNamesMap],
   );
+
+  // Persons not yet added, filtered by activity + group + generation
+  const baseFiltered = useMemo(() => persons.filter((p) => {
+    if (selected.includes(p.name)) return false;
+    if (activityFilter === 'active' && p.activityStatus && p.activityStatus !== 'active') return false;
+    if (groupFilter && getEffectiveGroup(p) !== groupFilter) return false;
+    if (generationFilter && (!p.generation || normalizeGeneration(p.generation) !== generationFilter)) return false;
+    return true;
+  }), [persons, selected, activityFilter, groupFilter, generationFilter]);
 
   // Final display list (search applied)
   const filteredPersons = useMemo(() => {
@@ -136,17 +136,26 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
 
   const allFilteredChecked = filteredPersons.length > 0 && filteredPersons.every((p) => checked.has(p.name));
 
-  // Total checked that can actually be added (not already selected)
   const addableChecked = useMemo(() =>
     [...checked].filter((n) => !selected.includes(n)),
     [checked, selected],
   );
 
-  // Recent persons not yet added
   const availableRecent = useMemo(() =>
     recent.filter((n) => !selected.includes(n) && persons.some((p) => p.name === n)),
     [recent, selected, persons],
   );
+
+  // Active/total counts per group (for tab hints)
+  const groupActiveCounts = useMemo(() => {
+    const map = new Map<string, { active: number; total: number }>();
+    for (const g of allGroups) {
+      const inGroup = persons.filter((p) => !selected.includes(p.name) && getEffectiveGroup(p) === g);
+      const active = inGroup.filter((p) => !p.activityStatus || p.activityStatus === 'active').length;
+      map.set(g, { active, total: inGroup.length });
+    }
+    return map;
+  }, [allGroups, persons, selected]);
 
   // ── actions ────────────────────────────────────────────────────────────────
   function togglePerson(name: string) {
@@ -166,17 +175,14 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
     setChecked((prev) => new Set([...prev].filter((n) => !fset.has(n))));
   }, [filteredPersons]);
 
-  function toggleGeneration(gen: string) {
-    // Names in this generation that are currently visible (pass activity + group filter)
-    const allInGen = new Set(generationNamesMap.get(gen) ?? []);
-    const visible = baseFiltered.filter((p) => allInGen.has(p.name));
-    if (visible.length === 0) return;
-    const allSel = visible.every((p) => checked.has(p.name));
-    if (allSel) {
-      const vset = new Set(visible.map((p) => p.name));
-      setChecked((prev) => new Set([...prev].filter((n) => !vset.has(n))));
-    } else {
-      setChecked((prev) => new Set([...prev, ...visible.map((p) => p.name)]));
+  function handleGroupClick(g: string) {
+    const newFilter = g === groupFilter ? '' : g;
+    setGroupFilter(newFilter);
+    if (newFilter) {
+      const counts = groupActiveCounts.get(newFilter);
+      if (counts && counts.active === 0) {
+        setActivityFilter('all');
+      }
     }
   }
 
@@ -236,7 +242,7 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
 
       {/* Group tabs */}
       {allGroups.length > 0 && (
-        <div className="flex gap-1 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+        <div className="flex gap-1 overflow-x-auto pb-0.5" style={{ scrollbarWidth: 'none' }}>
           <button type="button" onClick={() => setGroupFilter('')}
             className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 transition-colors ${
               groupFilter === '' ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-500 hover:border-indigo-300'
@@ -244,45 +250,53 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
             すべて
           </button>
           {allGroups.map((g) => {
-            const gPersons = persons.filter((p) => getEffectiveGroup(p) === g);
-            const genCount = gPersons.filter((p) => p.generation).length;
+            const counts = groupActiveCounts.get(g) ?? { active: 0, total: 0 };
+            const isActive = groupFilter === g;
+            const allGraduated = activityFilter === 'active' && counts.active === 0 && counts.total > 0;
             return (
-              <button key={g} type="button" onClick={() => setGroupFilter(g === groupFilter ? '' : g)}
-                title={`人数: ${gPersons.length} / generation有: ${genCount}`}
+              <button key={g} type="button" onClick={() => handleGroupClick(g)}
+                title={`現役: ${counts.active}人 / 合計: ${counts.total}人`}
                 className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 transition-colors ${
-                  groupFilter === g ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-500 hover:border-indigo-300'
+                  isActive
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : allGraduated
+                    ? 'border-gray-200 text-gray-300 hover:border-amber-200 hover:text-amber-500'
+                    : 'border-gray-200 text-gray-500 hover:border-indigo-300'
                 }`}>
                 {g}
-                {genCount === 0 && <span className="ml-0.5 text-amber-400">!</span>}
+                {allGraduated && <span className="ml-0.5 text-amber-400">卒</span>}
               </button>
             );
           })}
         </div>
       )}
 
-      {/* Generation buttons */}
+      {/* Generation tabs — shown only when a group is selected and has generation data */}
       {generations.length > 0 && (
         <div className="flex flex-wrap gap-1">
+          <button type="button" onClick={() => setGenerationFilter('')}
+            className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
+              generationFilter === ''
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'border-blue-200 text-blue-600 hover:bg-blue-50'
+            }`}>
+            全期
+          </button>
           {generations.map((gen) => {
-            const allInGen = new Set(generationNamesMap.get(gen) ?? []);
-            const visible = baseFiltered.filter((p) => allInGen.has(p.name));
-            const hasVisible = visible.length > 0;
-            const allSel = hasVisible && visible.every((p) => checked.has(p.name));
+            const count = (generationNamesMap.get(gen) ?? []).length;
             return (
               <button
                 key={gen}
                 type="button"
-                onClick={() => toggleGeneration(gen)}
-                disabled={!hasVisible}
+                onClick={() => setGenerationFilter(gen === generationFilter ? '' : gen)}
                 className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
-                  allSel
+                  generationFilter === gen
                     ? 'bg-blue-600 text-white border-blue-600'
-                    : hasVisible
-                    ? 'border-blue-200 text-blue-600 hover:bg-blue-50'
-                    : 'border-gray-100 text-gray-300 cursor-default'
+                    : 'border-blue-200 text-blue-600 hover:bg-blue-50'
                 }`}
               >
                 {gen}
+                <span className="ml-0.5 opacity-60">{count}</span>
               </button>
             );
           })}
@@ -322,7 +336,15 @@ export default function PersonMultiPicker({ persons, selected, onAdd, onRemove }
       {/* Person list */}
       <div className="border border-gray-200 rounded-lg overflow-y-auto bg-white" style={{ maxHeight: '13rem' }}>
         {filteredPersons.length === 0 ? (
-          <p className="text-[11px] text-gray-300 text-center py-4">表示する人物がありません</p>
+          <div className="py-5 px-3 text-center space-y-1.5">
+            <p className="text-[11px] text-gray-300">表示する人物がありません</p>
+            {activityFilter === 'active' && (groupFilter || generationFilter) && (
+              <button type="button" onClick={() => setActivityFilter('all')}
+                className="text-[10px] text-indigo-400 hover:text-indigo-600 underline block mx-auto">
+                卒業メンバーも表示する
+              </button>
+            )}
+          </div>
         ) : (
           filteredPersons.map((p) => {
             const isChecked = checked.has(p.name);
