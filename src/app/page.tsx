@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getAllPersonsMerged, getAllGenresMerged } from '@/lib/persons';
+import { getAllPersonsEnrichedWithGenres } from '@/lib/persons';
 import { getRankingData } from '@/lib/ranking';
 import HeroSearchForm from '@/components/site/HeroSearchForm';
 import HomePersonCard from '@/components/site/HomePersonCard';
@@ -61,10 +61,9 @@ function SectionHeader({ title, href, linkText }: { title: string; href?: string
 
 // ─── ページ ──────────────────────────────────────────────────────────────────────
 export default async function HomePage() {
-  const [persons, ranking, allGenres] = await Promise.all([
-    getAllPersonsMerged(),
+  const [{ persons, genres: allGenres }, ranking] = await Promise.all([
+    getAllPersonsEnrichedWithGenres(),
     getRankingData(),
-    getAllGenresMerged(),
   ]);
 
   const groups = [...new Set(persons.map((p) => p.group).filter(Boolean))];

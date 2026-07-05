@@ -2,8 +2,10 @@ import type { Person, PersonConfig, PersonWithConfig, Genre } from '@/types/pers
 import personsRaw from '../../data/persons_master.json';
 import personsConfigRaw from '../../data/persons_config.json';
 import { getCachedPublishedPersons } from './published-persons';
-import { splitGenres, sortGenreList, DEFAULT_GENRE_ORDER } from './genre-utils';
+import { splitGenres, sortGenreList, DEFAULT_GENRE_ORDER, type PersonCardMeta } from './genre-utils';
 import { getAllPersonMetas } from './person-meta';
+
+export type PersonCardData = PersonWithConfig & PersonCardMeta;
 
 // JSON を型付き配列に変換（fs.readFileSync を使わないのでサーバーレス環境でも安全）
 const ALL_PERSONS: Person[] = (personsRaw as Array<{ name: string; group: string; genre: string }>).map(
@@ -117,19 +119,56 @@ export async function getAllGenresMerged(): Promise<string[]> {
   return sortGenreList(genreSet);
 }
 
-// ジャンルで絞り込み（genre + primaryGenre + genres を検索対象）
-export async function getPersonsByGenreExtended(genre: string): Promise<PersonWithConfig[]> {
+// ジャンルで絞り込み（genre + primaryGenre + genres を検索対象）＋ メタをインライン付与
+export async function getPersonsByGenreExtended(genre: string): Promise<PersonCardData[]> {
   const [persons, metaMap] = await Promise.all([
     getAllPersonsMerged(),
     getAllPersonMetas(),
   ]);
-  return persons.filter((p) => {
-    if (p.genre === genre) return true;
+  return persons
+    .filter((p) => {
+      if (p.genre === genre) return true;
+      const meta = metaMap[p.name];
+      if (!meta) return false;
+      if (meta.primaryGenre?.trim() === genre) return true;
+      return splitGenres(meta.genres).includes(genre);
+    })
+    .map((p) => {
+      const meta = metaMap[p.name];
+      return {
+        ...p,
+        primaryGenre: meta?.primaryGenre,
+        genres: meta?.genres,
+        activityStatus: meta?.activityStatus,
+        generation: meta?.generation,
+      };
+    });
+}
+
+// 全人物 + メタをまとめて取得（ホームページ用: persons と genres を1回の Redis 呼び出しで返す）
+export async function getAllPersonsEnrichedWithGenres(): Promise<{
+  persons: PersonCardData[];
+  genres: string[];
+}> {
+  const [allPersons, metaMap] = await Promise.all([
+    getAllPersonsMerged(),
+    getAllPersonMetas(),
+  ]);
+  const genreSet = new Set<string>(DEFAULT_GENRE_ORDER);
+  const enrichedPersons: PersonCardData[] = allPersons.map((p) => {
     const meta = metaMap[p.name];
-    if (!meta) return false;
-    if (meta.primaryGenre?.trim() === genre) return true;
-    return splitGenres(meta.genres).includes(genre);
+    if (p.genre) genreSet.add(p.genre);
+    if (meta?.primaryGenre?.trim()) genreSet.add(meta.primaryGenre.trim());
+    for (const g of splitGenres(meta?.genres)) genreSet.add(g);
+    return {
+      ...p,
+      primaryGenre: meta?.primaryGenre,
+      genres: meta?.genres,
+      activityStatus: meta?.activityStatus,
+      generation: meta?.generation,
+    };
   });
+  return { persons: enrichedPersons, genres: sortGenreList(genreSet) };
 }
 
 export async function searchPersonsMerged(query: string): Promise<PersonWithConfig[]> {

@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { Person } from '@/types/person';
+import { getPersonCardBadges } from '@/lib/genre-utils';
+import type { PersonCardMeta } from '@/lib/genre-utils';
 
 // ジャンル別アバターCSSクラス（globals.cssで定義）
 const AVATAR_CLASS: Record<string, string> = {
@@ -17,11 +18,27 @@ const GENRE_EMOJI: Record<string, string> = {
   'テレビ': '📺',
   'アーティスト': '🎵',
   '俳優': '🎬',
+  '女優': '🎭',
+  'アイドル': '⭐',
+  '元アイドル': '🌟',
+  'タレント': '✨',
+  'モデル': '👗',
+  '歌手': '🎤',
+  '声優': '🎙️',
+  'バラエティ': '🎪',
+  'アナウンサー': '📢',
 };
 
-export default function HomePersonCard({ person }: { person: Person }) {
+interface PersonCardData {
+  name: string;
+  group: string;
+  genre: string;
+}
+
+export default function HomePersonCard({ person }: { person: PersonCardData & PersonCardMeta }) {
   const avatarClass = AVATAR_CLASS[person.genre] ?? 'avatar-default';
-  const emoji = GENRE_EMOJI[person.genre] ?? '';
+  const badges = getPersonCardBadges(person.genre, person);
+  const subtitle = person.primaryGenre || person.group;
 
   return (
     <Link
@@ -64,8 +81,8 @@ export default function HomePersonCard({ person }: { person: Person }) {
         {person.name}
       </p>
 
-      {/* グループ名 */}
-      {person.group && (
+      {/* サブタイトル: primaryGenre 優先、なければ group */}
+      {subtitle && (
         <p style={{
           textAlign: 'center',
           color: 'var(--ds-muted)',
@@ -75,15 +92,21 @@ export default function HomePersonCard({ person }: { person: Person }) {
           whiteSpace: 'nowrap',
           marginBottom: '6px',
         }}>
-          {person.group}
+          {subtitle}
         </p>
       )}
 
-      {/* ジャンルバッジ */}
-      <div style={{ display: 'flex', justifyContent: 'center' }}>
-        <span className={`genre-badge genre-badge-${person.genre}`} style={{ fontSize: '11px' }}>
-          {emoji} {person.genre}
-        </span>
+      {/* ジャンルバッジ（複数） */}
+      <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '4px' }}>
+        {badges.map((badge) => (
+          <span
+            key={badge}
+            className={`genre-badge genre-badge-${badge}`}
+            style={{ fontSize: '11px' }}
+          >
+            {GENRE_EMOJI[badge] ?? ''} {badge}
+          </span>
+        ))}
       </div>
     </Link>
   );
