@@ -5,20 +5,39 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import type { ActivityStatus, CareerStatus } from '@/types/person';
 
-// ── GET: グループメンバー + 既存メタを返す（テンプレート生成用）────────────
+// ── GET: グループメンバー or 個人 + 既存メタを返す（テンプレート生成用）──────
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const group = searchParams.get('group');
-  if (!group) return NextResponse.json({ error: 'group is required' }, { status: 400 });
+  const personName = searchParams.get('person');
+
+  if (!group && !personName) {
+    return NextResponse.json({ error: 'group または person が必要です' }, { status: 400 });
+  }
 
   try {
     const allPersons = await getAllPersonsMerged();
-    const members = allPersons.filter((p) => p.group === group);
-    if (members.length === 0) {
-      return NextResponse.json({ members: [] });
+    const redis = getRedis();
+
+    if (personName) {
+      const person = allPersons.find((p) => p.name === personName);
+      if (!person) return NextResponse.json({ error: '人物が見つかりません' }, { status: 404 });
+
+      let meta: PersonMeta | null = null;
+      if (redis) {
+        const raw = await redis.hget<string>(META_KEY, person.name);
+        if (raw) {
+          try { meta = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { /* skip */ }
+        }
+      }
+      return NextResponse.json({
+        members: [{ name: person.name, group: person.group ?? '', meta }],
+      });
     }
 
-    const redis = getRedis();
+    const members = allPersons.filter((p) => p.group === group);
+    if (members.length === 0) return NextResponse.json({ members: [] });
+
     const metaMap: Record<string, PersonMeta> = {};
     if (redis) {
       const rawMetas = await redis.hgetall(META_KEY);
@@ -35,7 +54,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       members: members.map((m) => ({
         name: m.name,
-        group: m.group,
+        group: m.group ?? '',
         meta: metaMap[m.name] ?? null,
       })),
     });

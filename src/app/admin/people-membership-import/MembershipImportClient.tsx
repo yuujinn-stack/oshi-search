@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { PreviewRow } from '@/app/api/admin/people-membership-import/route';
 import type { PersonMeta } from '@/lib/person-meta';
 import { csvDownloadSection } from '@/lib/chatGptPromptUtil';
@@ -232,14 +232,181 @@ function Accordion({
   );
 }
 
+// ─── CSV結果アクションボタン群（グループ・個人共通） ─────────────────────────
+function CsvActions({
+  csv,
+  label,
+  memberNames,
+  onUseCsv,
+}: {
+  csv: string;
+  label: string;
+  memberNames: string[];
+  onUseCsv: (csv: string) => void;
+}) {
+  const { copied: csvCopied, copy: copyCsv } = useCopy();
+  const { copied: promptCopied, copy: copyPrompt } = useCopy();
+  const groupName = memberNames.length === 1 ? memberNames[0] : label;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-gray-500">{label}</span>
+        <div className="ml-auto flex gap-2 flex-wrap">
+          <button onClick={() => copyCsv(csv)} className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors">
+            {csvCopied ? 'コピー完了!' : 'CSVをコピー'}
+          </button>
+          <button onClick={() => downloadCsv(csv, `${groupName}_membership.csv`)} className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors">
+            ダウンロード
+          </button>
+          <button onClick={() => copyPrompt(buildChatGptPrompt(groupName, memberNames, csv))} className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold transition-colors">
+            {promptCopied ? 'コピー完了!' : 'ChatGPTに送る'}
+          </button>
+          <button onClick={() => onUseCsv(csv)} className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold transition-colors">
+            インポートに使う →
+          </button>
+        </div>
+      </div>
+      <textarea
+        readOnly
+        value={csv}
+        rows={Math.min(memberNames.length + 2, 14)}
+        className="w-full border border-gray-200 rounded-xl px-4 py-3 text-xs font-mono bg-gray-50 focus:outline-none resize-none"
+      />
+      <p className="text-xs text-gray-400">
+        テンプレート生成 → 「ChatGPTに送る」でコピー → ChatGPTへ貼り付け → 返答CSVを「インポートに使う」か ② に貼り付け
+      </p>
+    </div>
+  );
+}
+
+// ─── 個人更新サブセクション ───────────────────────────────────────────────────
+function PersonTemplateSubsection({
+  persons,
+  onUseCsv,
+}: {
+  persons: Array<{ name: string; group: string }>;
+  onUseCsv: (csv: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<{ name: string; group: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [csv, setCsv] = useState('');
+  const [error, setError] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const filtered = useMemo(() => {
+    const q = query.trim();
+    if (!q) return [];
+    return persons.filter((p) => p.name.includes(q)).slice(0, 8);
+  }, [query, persons]);
+
+  function selectPerson(p: { name: string; group: string }) {
+    setSelected(p);
+    setQuery('');
+    setCsv('');
+    setError('');
+  }
+
+  async function generate() {
+    if (!selected) return;
+    setLoading(true); setError(''); setCsv('');
+    try {
+      const res = await fetch(
+        `/api/admin/people-membership-import?person=${encodeURIComponent(selected.name)}`,
+      );
+      const data = await res.json() as {
+        members?: Array<{ name: string; group: string; meta: PersonMeta | null }>;
+        error?: string;
+      };
+      if (!res.ok) { setError(data.error ?? 'エラーが発生しました'); return; }
+      const members = data.members ?? [];
+      if (members.length === 0) { setError('人物データを取得できませんでした'); return; }
+      setCsv(generateCsvFromMembers(members));
+    } catch { setError('通信エラーが発生しました'); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-gray-500">
+        人物を1人選択してCSVテンプレートを生成します。ChatGPTで補完後、② にインポートします。
+      </p>
+
+      {/* 検索ボックス */}
+      <div className="relative">
+        <label className="block text-xs font-medium text-gray-600 mb-1">人物を検索</label>
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setSelected(null); setCsv(''); }}
+          placeholder="名前を入力… 例: 菅井友香"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        />
+        {filtered.length > 0 && (
+          <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+            {filtered.map((p) => (
+              <button
+                key={p.name}
+                onClick={() => selectPerson(p)}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left hover:bg-indigo-50 transition-colors"
+              >
+                <span className="font-medium text-slate-700">{p.name}</span>
+                {p.group && <span className="text-xs text-gray-400">{p.group}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 選択済み表示 */}
+      {selected && (
+        <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2.5">
+          <span className="text-sm font-semibold text-indigo-800">{selected.name}</span>
+          {selected.group && <span className="text-xs text-indigo-500">{selected.group}</span>}
+          <button
+            onClick={() => { setSelected(null); setCsv(''); inputRef.current?.focus(); }}
+            className="ml-auto text-xs text-gray-400 hover:text-gray-600"
+          >
+            ✕ 変更
+          </button>
+        </div>
+      )}
+
+      <button
+        onClick={generate}
+        disabled={loading || !selected}
+        className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+      >
+        {loading ? '生成中…' : 'テンプレートを生成'}
+      </button>
+
+      {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+
+      {csv && selected && (
+        <CsvActions
+          csv={csv}
+          label={`${selected.name}${selected.group ? ` · ${selected.group}` : ''}`}
+          memberNames={[selected.name]}
+          onUseCsv={onUseCsv}
+        />
+      )}
+    </div>
+  );
+}
+
 // ─── ① テンプレート生成セクション ────────────────────────────────────────────
 function TemplateSection({
   groups,
+  persons,
   onUseCsv,
 }: {
   groups: string[];
+  persons: Array<{ name: string; group: string }>;
   onUseCsv: (csv: string) => void;
 }) {
+  const [mode, setMode] = useState<'group' | 'person'>('group');
   const [selectedGroup, setSelectedGroup] = useState('');
   const [loading, setLoading] = useState(false);
   const [csv, setCsv] = useState('');
@@ -247,8 +414,6 @@ function TemplateSection({
   const [error, setError] = useState('');
   const [history, setHistory] = useState<CsvHistoryItem[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const { copied: csvCopied, copy: copyCsv } = useCopy();
-  const { copied: promptCopied, copy: copyPrompt } = useCopy();
 
   useEffect(() => {
     setHistory(loadHistory());
@@ -281,96 +446,101 @@ function TemplateSection({
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-500">
-        登録済みの人物データからメンバーを抽出し、CSVテンプレートを生成します。
+        登録済みの人物データからCSVテンプレートを生成します。
         「ChatGPTに送る」でコピー → ChatGPTへ貼り付けて補完 → 返答を ② に貼り付けてインポートします。
       </p>
 
-      <div className="flex gap-3 items-end flex-wrap">
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">グループを選択</label>
-          <select
-            value={selectedGroup}
-            onChange={(e) => { setSelectedGroup(e.target.value); setCsv(''); setError(''); }}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          >
-            <option value="">グループを選択…</option>
-            {groups.map((g) => <option key={g} value={g}>{g}</option>)}
-          </select>
-        </div>
-        <button
-          onClick={generate}
-          disabled={loading || !selectedGroup}
-          className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-        >
-          {loading ? '生成中…' : 'テンプレートを生成'}
-        </button>
+      {/* モード切替 */}
+      <div className="flex gap-4">
+        {([['group', 'グループ更新'], ['person', '個人更新']] as const).map(([val, label]) => (
+          <label key={val} className="flex items-center gap-1.5 cursor-pointer select-none text-sm font-medium text-slate-700">
+            <input
+              type="radio"
+              name="templateMode"
+              value={val}
+              checked={mode === val}
+              onChange={() => { setMode(val); setCsv(''); setError(''); setMemberNames([]); }}
+              className="accent-indigo-600"
+            />
+            {label}
+          </label>
+        ))}
       </div>
 
-      {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
-
-      {csv && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-gray-500">{selectedGroup} · {memberNames.length}人</span>
-            <div className="ml-auto flex gap-2 flex-wrap">
-              <button onClick={() => copyCsv(csv)} className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors">
-                {csvCopied ? 'コピー完了!' : 'CSVをコピー'}
-              </button>
-              <button onClick={() => downloadCsv(csv, `${selectedGroup}_membership.csv`)} className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors">
-                ダウンロード
-              </button>
-              <button onClick={() => copyPrompt(buildChatGptPrompt(selectedGroup, memberNames, csv))} className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold transition-colors">
-                {promptCopied ? 'コピー完了!' : 'ChatGPTに送る'}
-              </button>
-              <button onClick={() => onUseCsv(csv)} className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold transition-colors">
-                インポートに使う →
-              </button>
-            </div>
-          </div>
-          <textarea
-            readOnly
-            value={csv}
-            rows={Math.min(memberNames.length + 2, 14)}
-            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-xs font-mono bg-gray-50 focus:outline-none resize-none"
-          />
-          <p className="text-xs text-gray-400">
-            テンプレート生成 → 「ChatGPTに送る」でコピー → ChatGPTへ貼り付け → 返答CSVを「インポートに使う」か ② に貼り付け
-          </p>
-        </div>
+      {/* 個人更新モード */}
+      {mode === 'person' && (
+        <PersonTemplateSubsection persons={persons} onUseCsv={onUseCsv} />
       )}
 
-      {/* CSV履歴 */}
-      {history.length > 0 && (
-        <div className="border-t border-gray-100 pt-3">
-          <button
-            onClick={() => setHistoryOpen((v) => !v)}
-            className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
-          >
-            {historyOpen ? '▲' : '▼'} 過去のCSV履歴 ({history.length}件)
-          </button>
-          {historyOpen && (
-            <div className="mt-2 space-y-1.5">
-              {history.map((item) => (
-                <div key={item.id} className="flex items-center gap-3 text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                  <span className="font-medium text-slate-700">{item.groupName}</span>
-                  <span className="text-gray-400">{item.memberCount}人</span>
-                  <span className="text-gray-300">{new Date(item.createdAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                  <div className="ml-auto flex gap-2">
-                    <button
-                      onClick={() => downloadCsv(item.csv, `${item.groupName}_membership_${item.id}.csv`)}
-                      className="text-indigo-600 hover:underline"
-                    >
-                      ダウンロード
-                    </button>
-                    <button
-                      onClick={() => onUseCsv(item.csv)}
-                      className="text-green-600 hover:underline"
-                    >
-                      インポートに使う
-                    </button>
-                  </div>
+      {/* グループ更新モード */}
+      {mode === 'group' && (
+        <div className="space-y-4">
+          <div className="flex gap-3 items-end flex-wrap">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">グループを選択</label>
+              <select
+                value={selectedGroup}
+                onChange={(e) => { setSelectedGroup(e.target.value); setCsv(''); setError(''); }}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                <option value="">グループを選択…</option>
+                {groups.map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            <button
+              onClick={generate}
+              disabled={loading || !selectedGroup}
+              className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              {loading ? '生成中…' : 'テンプレートを生成'}
+            </button>
+          </div>
+
+          {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+
+          {csv && (
+            <CsvActions
+              csv={csv}
+              label={`${selectedGroup} · ${memberNames.length}人`}
+              memberNames={memberNames}
+              onUseCsv={onUseCsv}
+            />
+          )}
+
+          {/* CSV履歴 */}
+          {history.length > 0 && (
+            <div className="border-t border-gray-100 pt-3">
+              <button
+                onClick={() => setHistoryOpen((v) => !v)}
+                className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+              >
+                {historyOpen ? '▲' : '▼'} 過去のCSV履歴 ({history.length}件)
+              </button>
+              {historyOpen && (
+                <div className="mt-2 space-y-1.5">
+                  {history.map((item) => (
+                    <div key={item.id} className="flex items-center gap-3 text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                      <span className="font-medium text-slate-700">{item.groupName}</span>
+                      <span className="text-gray-400">{item.memberCount}人</span>
+                      <span className="text-gray-300">{new Date(item.createdAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                      <div className="ml-auto flex gap-2">
+                        <button
+                          onClick={() => downloadCsv(item.csv, `${item.groupName}_membership_${item.id}.csv`)}
+                          className="text-indigo-600 hover:underline"
+                        >
+                          ダウンロード
+                        </button>
+                        <button
+                          onClick={() => onUseCsv(item.csv)}
+                          className="text-green-600 hover:underline"
+                        >
+                          インポートに使う
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           )}
         </div>
@@ -748,9 +918,10 @@ function ImportSection({
 // ─── メインコンポーネント ────────────────────────────────────────────────────
 interface Props {
   groups: string[];
+  persons: Array<{ name: string; group: string }>;
 }
 
-export default function MembershipImportClient({ groups }: Props) {
+export default function MembershipImportClient({ groups, persons }: Props) {
   const [templateOpen, setTemplateOpen] = useState(true);
   const [importCsv, setImportCsv] = useState('');
   const importRef = useRef<HTMLDivElement>(null);
@@ -771,7 +942,7 @@ export default function MembershipImportClient({ groups }: Props) {
         open={templateOpen}
         onToggle={() => setTemplateOpen((v) => !v)}
       >
-        <TemplateSection groups={groups} onUseCsv={handleUseCsv} />
+        <TemplateSection groups={groups} persons={persons} onUseCsv={handleUseCsv} />
       </Accordion>
 
       {/* ② CSVインポート */}

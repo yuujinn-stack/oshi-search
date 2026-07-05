@@ -5,11 +5,13 @@ export const dynamic = 'force-dynamic';
 
 export default async function PeopleMembershipImportPage() {
   let groups: string[] = [];
+  let persons: Array<{ name: string; group: string }> = [];
   try {
     const allPersons = await getAllPersonsMerged();
     groups = [...new Set(allPersons.map((p) => p.group).filter(Boolean))].sort((a, b) =>
       a.localeCompare(b, 'ja'),
     );
+    persons = allPersons.map((p) => ({ name: p.name, group: p.group ?? '' }));
   } catch { /* Redis 未接続時は空 */ }
 
   return (
@@ -31,7 +33,7 @@ export default async function PeopleMembershipImportPage() {
         </div>
       </div>
 
-      <MembershipImportClient groups={groups} />
+      <MembershipImportClient groups={groups} persons={persons} />
     </div>
   );
 }
