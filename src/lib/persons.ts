@@ -2,6 +2,8 @@ import type { Person, PersonConfig, PersonWithConfig, Genre } from '@/types/pers
 import personsRaw from '../../data/persons_master.json';
 import personsConfigRaw from '../../data/persons_config.json';
 import { getCachedPublishedPersons } from './published-persons';
+import { splitGenres, sortGenreList, DEFAULT_GENRE_ORDER } from './genre-utils';
+import { getAllPersonMetas } from './person-meta';
 
 // JSON を型付き配列に変換（fs.readFileSync を使わないのでサーバーレス環境でも安全）
 const ALL_PERSONS: Person[] = (personsRaw as Array<{ name: string; group: string; genre: string }>).map(
@@ -97,6 +99,37 @@ export async function getPersonsByGroupMerged(group: string): Promise<PersonWith
 export async function getPersonsByGenreMerged(genre: string): Promise<PersonWithConfig[]> {
   const all = await getAllPersonsMerged();
   return all.filter((p) => p.genre === genre);
+}
+
+// 全人物データ + メタデータからジャンル一覧を生成（DEFAULT_GENRE_ORDER 優先順）
+export async function getAllGenresMerged(): Promise<string[]> {
+  const [persons, metaMap] = await Promise.all([
+    getAllPersonsMerged(),
+    getAllPersonMetas(),
+  ]);
+  const genreSet = new Set<string>(DEFAULT_GENRE_ORDER);
+  for (const p of persons) {
+    if (p.genre) genreSet.add(p.genre);
+    const meta = metaMap[p.name];
+    if (meta?.primaryGenre?.trim()) genreSet.add(meta.primaryGenre.trim());
+    for (const g of splitGenres(meta?.genres)) genreSet.add(g);
+  }
+  return sortGenreList(genreSet);
+}
+
+// ジャンルで絞り込み（genre + primaryGenre + genres を検索対象）
+export async function getPersonsByGenreExtended(genre: string): Promise<PersonWithConfig[]> {
+  const [persons, metaMap] = await Promise.all([
+    getAllPersonsMerged(),
+    getAllPersonMetas(),
+  ]);
+  return persons.filter((p) => {
+    if (p.genre === genre) return true;
+    const meta = metaMap[p.name];
+    if (!meta) return false;
+    if (meta.primaryGenre?.trim() === genre) return true;
+    return splitGenres(meta.genres).includes(genre);
+  });
 }
 
 export async function searchPersonsMerged(query: string): Promise<PersonWithConfig[]> {

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getAllPersonsMerged, ALL_GENRES } from '@/lib/persons';
+import { getAllPersonsMerged, getAllGenresMerged } from '@/lib/persons';
 import { getRankingData } from '@/lib/ranking';
 import HeroSearchForm from '@/components/site/HeroSearchForm';
 import HomePersonCard from '@/components/site/HomePersonCard';
@@ -10,10 +10,32 @@ export const revalidate = 60;
 
 const GENRE_EMOJI: Record<string, string> = {
   '坂道': '🌸',
-  '芸人': '🎭',
-  'テレビ': '📺',
-  'アーティスト': '🎵',
+  'アイドル': '⭐',
+  '元アイドル': '🌟',
+  '女優': '🎭',
   '俳優': '🎬',
+  'タレント': '✨',
+  'モデル': '👗',
+  '歌手': '🎤',
+  'アーティスト': '🎵',
+  '声優': '🎙️',
+  '芸人': '😄',
+  'テレビ': '📺',
+  'バラエティ': '🎪',
+  'アナウンサー': '📢',
+  '作家': '📝',
+  '小説家': '📚',
+  '漫画家': '✏️',
+  '脚本家': '📄',
+  '映画監督': '🎥',
+  '監督': '🎥',
+  'プロデューサー': '🎬',
+  'クリエイター': '💡',
+  'YouTuber': '▶️',
+  'インフルエンサー': '📱',
+  'ダンサー': '💃',
+  'スポーツ選手': '🏃',
+  'アスリート': '🏆',
 };
 
 const WORK_TYPE_LABEL: Record<string, string> = {
@@ -39,9 +61,10 @@ function SectionHeader({ title, href, linkText }: { title: string; href?: string
 
 // ─── ページ ──────────────────────────────────────────────────────────────────────
 export default async function HomePage() {
-  const [persons, ranking] = await Promise.all([
+  const [persons, ranking, allGenres] = await Promise.all([
     getAllPersonsMerged(),
     getRankingData(),
+    getAllGenresMerged(),
   ]);
 
   const groups = [...new Set(persons.map((p) => p.group).filter(Boolean))];
@@ -375,7 +398,7 @@ export default async function HomePage() {
         <section style={{ marginBottom: '48px' }}>
           <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>ジャンルで探す</h2>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-            {ALL_GENRES.map((genre) => (
+            {allGenres.map((genre) => (
               <Link
                 key={genre}
                 href={`/genre/${encodeURIComponent(genre)}`}

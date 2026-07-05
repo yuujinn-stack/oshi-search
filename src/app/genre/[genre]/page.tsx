@@ -1,14 +1,17 @@
 import type { Metadata } from 'next';
 import PersonCard from '@/components/PersonCard';
-import { getPersonsByGenreMerged, ALL_GENRES } from '@/lib/persons';
-import type { Genre } from '@/types/person';
+import { getPersonsByGenreExtended } from '@/lib/persons';
+import { DEFAULT_GENRE_ORDER } from '@/lib/genre-utils';
+
+export const revalidate = 60;
+export const dynamicParams = true;
 
 interface Props {
   params: Promise<{ genre: string }>;
 }
 
 export async function generateStaticParams() {
-  return ALL_GENRES.map((genre) => ({ genre }));
+  return DEFAULT_GENRE_ORDER.map((genre) => ({ genre }));
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -22,8 +25,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function GenrePage({ params }: Props) {
   const { genre } = await params;
-  const decodedGenre = decodeURIComponent(genre) as Genre;
-  const persons = await getPersonsByGenreMerged(decodedGenre);
+  const decodedGenre = decodeURIComponent(genre);
+  const persons = await getPersonsByGenreExtended(decodedGenre);
 
   // Group by group name
   const grouped = persons.reduce<Record<string, typeof persons>>((acc, p) => {

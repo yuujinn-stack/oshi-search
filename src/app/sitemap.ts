@@ -1,10 +1,14 @@
 import type { MetadataRoute } from 'next';
-import { getAllPersonsMerged, getAllGroupsMerged, ALL_GENRES } from '@/lib/persons';
+import { getAllPersonsMerged, getAllGroupsMerged, getAllGenresMerged } from '@/lib/persons';
 
 const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.vercel.app';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const [persons, groups] = await Promise.all([getAllPersonsMerged(), getAllGroupsMerged()]);
+  const [persons, groups, genres] = await Promise.all([
+    getAllPersonsMerged(),
+    getAllGroupsMerged(),
+    getAllGenresMerged(),
+  ]);
 
   return [
     {
@@ -19,7 +23,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'weekly' as const,
       priority: 0.9,
     })),
-    ...ALL_GENRES.map((genre) => ({
+    ...genres.map((genre) => ({
       url: `${BASE_URL}/genre/${encodeURIComponent(genre)}`,
       lastModified: new Date(),
       changeFrequency: 'weekly' as const,
