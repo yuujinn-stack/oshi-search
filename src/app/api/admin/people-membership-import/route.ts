@@ -3,7 +3,7 @@ import { getRedis } from '@/lib/redis';
 import { ensureGroupMeta } from '@/lib/group-meta';
 import { getAllPersonsMerged } from '@/lib/persons';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
-import type { ActivityStatus } from '@/types/person';
+import type { ActivityStatus, CareerStatus } from '@/types/person';
 
 // ── GET: グループメンバー + 既存メタを返す（テンプレート生成用）────────────
 export async function GET(req: Request) {
@@ -48,6 +48,9 @@ const META_KEY = 'admin:person-meta';
 
 const VALID_STATUSES = new Set<ActivityStatus>([
   'active', 'graduated', 'withdrawn', 'hiatus', 'retired', 'unknown',
+]);
+const VALID_CAREER_STATUSES = new Set<CareerStatus>([
+  'active', 'inactive', 'retired', 'deceased', 'unknown',
 ]);
 
 const CLEAR_SENTINEL = '**clear**';
@@ -127,7 +130,7 @@ function computeChanges(row: Record<string, string>, existing: PersonMeta): Fiel
   changes.push(resolveField('currentGroupName', row['currentGroupName']?.trim() ?? '', existing.currentGroupName));
   changes.push(resolveField('membershipNote', row['membershipNote']?.trim() ?? '', existing.membershipNote));
 
-  // formerGroupNames (カンマ区切り)
+  // formerGroupNames (カンマ区切り配列)
   const rawFormer = row['formerGroupNames']?.trim() ?? '';
   const existingFormerStr = (existing.formerGroupNames ?? []).join(', ');
   if (!rawFormer) {
@@ -138,19 +141,47 @@ function computeChanges(row: Record<string, string>, existing: PersonMeta): Fiel
     changes.push({ field: 'formerGroupNames', action: 'update', oldValue: existingFormerStr || undefined, newValue: rawFormer });
   }
 
+  // 活動情報フィールド
+  changes.push(resolveField('primaryGenre', row['primaryGenre']?.trim() ?? '', existing.primaryGenre));
+  changes.push(resolveField('roleNote', row['roleNote']?.trim() ?? '', existing.roleNote));
+
+  // careerStatus
+  const rawCareer = row['careerStatus']?.trim() ?? '';
+  if (rawCareer && rawCareer !== CLEAR_SENTINEL && !VALID_CAREER_STATUSES.has(rawCareer as CareerStatus)) {
+    changes.push({ field: 'careerStatus', action: 'keep', oldValue: existing.careerStatus, newValue: existing.careerStatus });
+  } else {
+    changes.push(resolveField('careerStatus', rawCareer, existing.careerStatus));
+  }
+
+  // 配列フィールド: genres / titles / publicRoles / awards
+  for (const arrayField of ['genres', 'titles', 'publicRoles', 'awards'] as const) {
+    const rawArr = row[arrayField]?.trim() ?? '';
+    const existingArr = (existing[arrayField] ?? []).join(', ');
+    if (!rawArr) {
+      changes.push({ field: arrayField, action: 'keep', oldValue: existingArr || undefined, newValue: existingArr || undefined });
+    } else if (rawArr === CLEAR_SENTINEL) {
+      changes.push({ field: arrayField, action: 'clear', oldValue: existingArr || undefined, newValue: undefined });
+    } else {
+      changes.push({ field: arrayField, action: 'update', oldValue: existingArr || undefined, newValue: rawArr });
+    }
+  }
+
   return changes.filter((c) => c.action !== 'keep');
 }
 
 function applyChanges(existing: PersonMeta, changes: FieldChange[]): PersonMeta {
   const updated: PersonMeta = { ...existing, updatedAt: Date.now() };
   for (const ch of changes) {
+    const ARRAY_FIELDS = new Set(['formerGroupNames', 'genres', 'titles', 'publicRoles', 'awards']);
     if (ch.action === 'clear') {
       delete (updated as Record<string, unknown>)[ch.field];
     } else if (ch.action === 'update') {
-      if (ch.field === 'formerGroupNames') {
+      if (ARRAY_FIELDS.has(ch.field)) {
         (updated as Record<string, unknown>)[ch.field] = (ch.newValue ?? '').split(',').map((s) => s.trim()).filter(Boolean);
       } else if (ch.field === 'activityStatus') {
         (updated as Record<string, unknown>)[ch.field] = ch.newValue as ActivityStatus;
+      } else if (ch.field === 'careerStatus') {
+        (updated as Record<string, unknown>)[ch.field] = ch.newValue as CareerStatus;
       } else {
         (updated as Record<string, unknown>)[ch.field] = ch.newValue;
       }

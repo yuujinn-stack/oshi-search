@@ -2,6 +2,7 @@ export type Genre = '坂道' | '芸人' | 'テレビ' | 'アーティスト' | '
 export type CheckStatus = 'unchecked' | 'ok' | 'needs_fix';
 export type ProductCategory = '写真集' | '本・雑誌' | 'Blu-ray・DVD' | 'グッズ' | 'CD' | '中古';
 export type ActivityStatus = 'active' | 'graduated' | 'withdrawn' | 'hiatus' | 'retired' | 'unknown';
+export type CareerStatus = 'active' | 'inactive' | 'retired' | 'deceased' | 'unknown';
 
 export interface PersonConfig {
   customKeywords?: string[];  // 補助検索語 / AI判定の関連キーワードとして渡す

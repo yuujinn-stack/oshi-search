@@ -14,6 +14,13 @@ const FIELD_LABEL: Record<string, string> = {
   currentGroupName: '現在G',
   formerGroupNames: '過去G',
   membershipNote:   '備考',
+  primaryGenre:     '主ジャンル',
+  genres:           'ジャンル',
+  titles:           '肩書き',
+  publicRoles:      '役職',
+  awards:           '受賞歴',
+  careerStatus:     '活動状態(career)',
+  roleNote:         '補足',
 };
 const STATUS_LABEL: Record<string, string> = {
   active:    '現役',
@@ -31,12 +38,16 @@ function displayValue(field: string, value: string | undefined): string {
 }
 
 // ─── CSV 生成ユーティリティ ──────────────────────────────────────────────────
-const CSV_HEADER = 'name,groupName,activityStatus,generation,joinedAt,leftAt,currentGroupName,formerGroupNames,membershipNote';
+const CSV_HEADER = 'name,groupName,activityStatus,generation,joinedAt,leftAt,currentGroupName,formerGroupNames,membershipNote,primaryGenre,genres,titles,publicRoles,awards,careerStatus,roleNote';
+
+function csvCell(arr: string[] | undefined): string {
+  if (!arr || arr.length === 0) return '';
+  const s = arr.join(',');
+  return s.includes(',') ? `"${s}"` : s;
+}
 
 function buildCsvRow(name: string, group: string, meta: PersonMeta | null): string {
   const m = meta ?? {};
-  const formerStr = (m.formerGroupNames ?? []).join(',');
-  const formerCell = formerStr.includes(',') ? `"${formerStr}"` : formerStr;
   return [
     name, group,
     m.activityStatus ?? '',
@@ -44,8 +55,15 @@ function buildCsvRow(name: string, group: string, meta: PersonMeta | null): stri
     m.joinedAt ?? '',
     m.leftAt ?? '',
     m.currentGroupName ?? group,
-    formerCell,
+    csvCell(m.formerGroupNames),
     m.membershipNote ?? '',
+    m.primaryGenre ?? '',
+    csvCell(m.genres),
+    csvCell(m.titles),
+    csvCell(m.publicRoles),
+    csvCell(m.awards),
+    m.careerStatus ?? '',
+    m.roleNote ?? '',
   ].join(',');
 }
 
@@ -126,7 +144,7 @@ function useCopy() {
 // ─── ChatGPT送信用テキスト生成 ────────────────────────────────────────────────
 function buildChatGptPrompt(groupName: string, memberNames: string[], csv: string): string {
   const memberList = memberNames.map((n) => `・${n}`).join('\n');
-  return `以下の登録済み人物について、所属情報を補完してください。
+  return `以下の登録済み人物について、所属情報・活動情報を補完してください。
 
 対象グループ：${groupName}
 登録済み人物数：${memberNames.length}人
@@ -135,43 +153,39 @@ function buildChatGptPrompt(groupName: string, memberNames: string[], csv: strin
 ${memberList}
 
 補完対象項目：
-・activityStatus
-・generation
-・joinedAt
-・leftAt
-・currentGroupName
-・formerGroupNames
-・membershipNote
+・activityStatus（グループ活動状態）
+・generation（期別）
+・joinedAt（加入日）
+・leftAt（卒業/脱退日）
+・currentGroupName（現在のグループ名）
+・formerGroupNames（過去のグループ名）
+・membershipNote（所属備考）
+・primaryGenre（現在の主な活動ジャンル）
+・genres（複数ジャンル）
+・titles（世間的な肩書き・称号）
+・publicRoles（役職）
+・awards（主な受賞歴）
+・careerStatus（芸能活動状態）
+・roleNote（活動補足）
 
 厳守ルール：
 ・推測禁止
 ・2026年現在の情報のみ
 ・必ず公式発表・公式サイト・公式プロフィールを優先
-・存在しない情報は空欄
+・確認できない項目は空欄
 ・name列は変更しない
 
-activityStatusは
+activityStatusは以下のみ使用：
+active / graduated / withdrawn / hiatus / retired / unknown
 
-active
-graduated
-withdrawn
-hiatus
-retired
-unknown
+careerStatusは以下のみ使用：
+active / inactive / retired / deceased / unknown
 
-のみ使用してください。
+generationは「1期生」「2期生」などで記載。
 
-generationは
+joinedAt / leftAt は YYYY-MM-DD 形式（不明は空欄）。
 
-1期生
-2期生
-3期生
-
-などで記載してください。
-
-joinedAt / leftAt は YYYY-MM-DD 形式で記載してください。
-
-formerGroupNamesはカンマ区切りで記載してください。
+genres / titles / publicRoles / awards はカンマ区切りで記載。
 
 ${csv}
 ${csvDownloadSection(`${groupName}_所属情報.csv`)}`;

@@ -450,6 +450,16 @@ export default async function PersonPage({ params }: Props) {
 
                 {/* バッジ群 */}
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  {personMeta?.titles && personMeta.titles.length > 0 && personMeta.titles.map((t) => (
+                    <span key={t} className="text-[11px] px-2 py-0.5 rounded-full bg-white/25 text-white font-medium">
+                      {t}
+                    </span>
+                  ))}
+                  {personMeta?.primaryGenre && (
+                    <span className="text-xs px-2.5 py-1 rounded-full font-bold bg-white/20 text-white">
+                      {personMeta.primaryGenre}
+                    </span>
+                  )}
                   <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${GENRE_BADGE[person.genre] ?? 'bg-gray-100 text-gray-600'}`}>
                     {person.genre}
                   </span>

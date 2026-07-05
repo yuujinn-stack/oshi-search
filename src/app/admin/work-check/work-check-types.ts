@@ -1,5 +1,5 @@
-import type { ActivityStatus } from '@/types/person';
-export type { ActivityStatus };
+import type { ActivityStatus, CareerStatus } from '@/types/person';
+export type { ActivityStatus, CareerStatus };
 
 export interface VodFetchDebugItem {
   title: string;
@@ -76,4 +76,11 @@ export interface PersonWithCounts {
   currentGroupName?: string;
   formerGroupNames?: string[];
   membershipNote?: string;
+  primaryGenre?: string;
+  genres?: string[];
+  titles?: string[];
+  publicRoles?: string[];
+  awards?: string[];
+  careerStatus?: CareerStatus;
+  roleNote?: string;
 }

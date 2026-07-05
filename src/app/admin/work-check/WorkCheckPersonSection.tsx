@@ -493,6 +493,13 @@ export default function WorkCheckPersonSection({ persons, stats }: Props) {
               currentGroupName={p.currentGroupName}
               formerGroupNames={p.formerGroupNames}
               membershipNote={p.membershipNote}
+              primaryGenre={p.primaryGenre}
+              genres={p.genres}
+              titles={p.titles}
+              publicRoles={p.publicRoles}
+              awards={p.awards}
+              careerStatus={p.careerStatus}
+              roleNote={p.roleNote}
             />
           ))
         )}

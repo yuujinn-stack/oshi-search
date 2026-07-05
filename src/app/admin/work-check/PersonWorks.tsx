@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { WorkRecord, WorkStatus, WorkSource } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
-import type { VodFetchDebugItem, Counts, PersonPriority, ActivityStatus } from './work-check-types';
+import type { VodFetchDebugItem, Counts, PersonPriority, ActivityStatus, CareerStatus } from './work-check-types';
 import PersonCard from './PersonCard';
 import PersonActionBar from './PersonActionBar';
 import WorkFilters from './WorkFilters';
@@ -27,6 +27,13 @@ interface Props {
   currentGroupName?: string;
   formerGroupNames?: string[];
   membershipNote?: string;
+  primaryGenre?: string;
+  genres?: string[];
+  titles?: string[];
+  publicRoles?: string[];
+  awards?: string[];
+  careerStatus?: CareerStatus;
+  roleNote?: string;
 }
 
 type StatusFilter = WorkStatus | 'all';
@@ -36,6 +43,7 @@ export default function PersonWorks({
   personName, group, counts, priority, memo, dataFetchStatus,
   activityStatus, generation, joinedAt, leftAt,
   currentGroupName, formerGroupNames, membershipNote,
+  primaryGenre, genres, titles, publicRoles, awards, careerStatus, roleNote,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [works, setWorks] = useState<WorkRecord[] | null>(null);
@@ -88,6 +96,13 @@ export default function PersonWorks({
   const [editCurrentGroupName, setEditCurrentGroupName] = useState(currentGroupName ?? '');
   const [editFormerGroupNames, setEditFormerGroupNames] = useState((formerGroupNames ?? []).join(', '));
   const [editMembershipNote, setEditMembershipNote] = useState(membershipNote ?? '');
+  const [editPrimaryGenre, setEditPrimaryGenre] = useState(primaryGenre ?? '');
+  const [editGenres, setEditGenres] = useState((genres ?? []).join(', '));
+  const [editTitles, setEditTitles] = useState((titles ?? []).join(', '));
+  const [editPublicRoles, setEditPublicRoles] = useState((publicRoles ?? []).join(', '));
+  const [editAwards, setEditAwards] = useState((awards ?? []).join(', '));
+  const [editCareerStatus, setEditCareerStatus] = useState<CareerStatus | ''>(careerStatus ?? '');
+  const [editRoleNote, setEditRoleNote] = useState(roleNote ?? '');
   const [currentActivityStatus, setCurrentActivityStatus] = useState<ActivityStatus | ''>(activityStatus ?? '');
   const [currentGeneration, setCurrentGeneration] = useState(generation ?? '');
 
@@ -112,6 +127,13 @@ export default function PersonWorks({
           currentGroupName: editCurrentGroupName || undefined,
           formerGroupNames: formerArr.length > 0 ? formerArr : undefined,
           membershipNote: editMembershipNote || undefined,
+          primaryGenre: editPrimaryGenre || undefined,
+          genres: editGenres ? editGenres.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+          titles: editTitles ? editTitles.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+          publicRoles: editPublicRoles ? editPublicRoles.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+          awards: editAwards ? editAwards.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+          careerStatus: editCareerStatus || undefined,
+          roleNote: editRoleNote || undefined,
         }),
       });
       setCurrentMemo(editMemo);
@@ -731,6 +753,51 @@ export default function PersonWorks({
               value={editMembershipNote}
               onChange={(e) => setEditMembershipNote(e.target.value)}
               placeholder="備考（例: 卒業予定、元欅坂46）"
+              className="flex-1 min-w-36 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+            />
+          </div>
+          {/* 行4: 活動情報 */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500 whitespace-nowrap">主ジャンル:</label>
+              <input
+                type="text"
+                value={editPrimaryGenre}
+                onChange={(e) => setEditPrimaryGenre(e.target.value)}
+                placeholder="例: 女優"
+                className="w-20 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500 whitespace-nowrap">肩書き:</label>
+              <input
+                type="text"
+                value={editTitles}
+                onChange={(e) => setEditTitles(e.target.value)}
+                placeholder="カンマ区切り"
+                className="w-40 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500 whitespace-nowrap">活動状態:</label>
+              <select
+                value={editCareerStatus}
+                onChange={(e) => setEditCareerStatus(e.target.value as CareerStatus | '')}
+                className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+              >
+                <option value="">-</option>
+                <option value="active">活動中</option>
+                <option value="inactive">休止中</option>
+                <option value="retired">引退</option>
+                <option value="deceased">故人</option>
+                <option value="unknown">不明</option>
+              </select>
+            </div>
+            <input
+              type="text"
+              value={editRoleNote}
+              onChange={(e) => setEditRoleNote(e.target.value)}
+              placeholder="補足（例: 卒業後は女優として活動）"
               className="flex-1 min-w-36 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
             />
             <button

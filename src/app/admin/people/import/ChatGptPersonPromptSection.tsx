@@ -19,6 +19,7 @@ interface PromptOptions {
   includeMembership: boolean;
   includeAliases:    boolean;
   includeReading:    boolean;
+  includeCareerInfo: boolean;
 }
 
 function buildPrompt(target: string, targetType: TargetType, opts: PromptOptions): string {
@@ -29,6 +30,7 @@ function buildPrompt(target: string, targetType: TargetType, opts: PromptOptions
   if (opts.includeMembership) conditions.push('所属履歴（加入日・脱退日・活動状態）を含める');
   if (opts.includeAliases)    conditions.push('別名・愛称を aliases 列に含める');
   if (opts.includeReading)    conditions.push('読み仮名を aliases 列に含める');
+  if (opts.includeCareerInfo) conditions.push('活動情報（ジャンル・肩書き・受賞歴・芸能活動状態）を含める');
 
   const cols = ['name', 'groupName', 'genre', 'aliases'];
   const colNotes: string[] = [];
@@ -46,6 +48,22 @@ function buildPrompt(target: string, targetType: TargetType, opts: PromptOptions
     );
     colNotes.push('- joinedAt: 加入日 形式: YYYY-MM-DD 例: 2023-03-15（不明は空欄）');
     colNotes.push('- leftAt: 卒業・脱退日 形式: YYYY-MM-DD（現役・不明は空欄）');
+  }
+  if (opts.includeCareerInfo) {
+    cols.push('primaryGenre');
+    cols.push('genres');
+    cols.push('titles');
+    cols.push('publicRoles');
+    cols.push('awards');
+    cols.push('careerStatus');
+    cols.push('roleNote');
+    colNotes.push('- primaryGenre: 主な活動ジャンル（例: 俳優 / タレント / 歌手 / アイドル）');
+    colNotes.push('- genres: 複数ジャンル（カンマ区切り 例: "俳優,タレント"）');
+    colNotes.push('- titles: 世間的な肩書き・称号（カンマ区切り 例: "元乃木坂46キャプテン"）');
+    colNotes.push('- publicRoles: 現在の役職（カンマ区切り 例: "女優,MC"）');
+    colNotes.push('- awards: 主な受賞歴（カンマ区切り）');
+    colNotes.push('- careerStatus: 芸能活動状態（active=活動中 / inactive=活動休止 / retired=引退 / deceased=故人 / unknown=不明）');
+    colNotes.push('- roleNote: 活動補足（任意）');
   }
   cols.push('description');
 
@@ -114,6 +132,7 @@ export default function ChatGptPersonPromptSection() {
     includeMembership: false,
     includeAliases:    true,
     includeReading:    true,
+    includeCareerInfo: false,
   });
   const [prompt, setPrompt] = useState('');
   const [copied, setCopied] = useState(false);
@@ -196,6 +215,7 @@ export default function ChatGptPersonPromptSection() {
                   { key: 'includeMembership', label: '所属履歴を含める（加入日・脱退日）' },
                   { key: 'includeAliases',    label: '別名・愛称を含める' },
                   { key: 'includeReading',    label: '読み仮名を含める' },
+                  { key: 'includeCareerInfo', label: '活動情報を含める（ジャンル・肩書き・受賞歴・芸能活動状態）' },
                 ] as { key: keyof PromptOptions; label: string }[]).map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
                     <input

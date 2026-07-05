@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getRedis } from '@/lib/redis';
 import { ensureGroupMeta } from '@/lib/group-meta';
 import type { PersonPriority } from '@/app/admin/work-check/work-check-types';
-import type { ActivityStatus } from '@/types/person';
+import type { ActivityStatus, CareerStatus } from '@/types/person';
 
 const META_KEY = 'admin:person-meta';
 
@@ -10,6 +10,7 @@ export interface PersonMeta {
   memo?: string;
   priority?: PersonPriority;
   updatedAt?: number;
+  // 所属情報
   activityStatus?: ActivityStatus;
   generation?: string;
   joinedAt?: string;
@@ -17,6 +18,14 @@ export interface PersonMeta {
   currentGroupName?: string;
   formerGroupNames?: string[];
   membershipNote?: string;
+  // 活動情報（拡張）
+  primaryGenre?: string;
+  genres?: string[];
+  titles?: string[];
+  publicRoles?: string[];
+  awards?: string[];
+  careerStatus?: CareerStatus;
+  roleNote?: string;
 }
 
 export async function GET() {
@@ -49,11 +58,19 @@ export async function POST(req: NextRequest) {
     currentGroupName?: string;
     formerGroupNames?: string[];
     membershipNote?: string;
+    primaryGenre?: string;
+    genres?: string[];
+    titles?: string[];
+    publicRoles?: string[];
+    awards?: string[];
+    careerStatus?: CareerStatus;
+    roleNote?: string;
   };
   const {
     personName, memo, priority,
     activityStatus, generation, joinedAt, leftAt,
     currentGroupName, formerGroupNames, membershipNote,
+    primaryGenre, genres, titles, publicRoles, awards, careerStatus, roleNote,
   } = body;
   if (!personName) {
     return NextResponse.json({ error: 'personName required' }, { status: 400 });
@@ -78,6 +95,13 @@ export async function POST(req: NextRequest) {
     ...(currentGroupName !== undefined ? { currentGroupName } : {}),
     ...(formerGroupNames !== undefined ? { formerGroupNames } : {}),
     ...(membershipNote !== undefined ? { membershipNote } : {}),
+    ...(primaryGenre !== undefined ? { primaryGenre } : {}),
+    ...(genres !== undefined ? { genres } : {}),
+    ...(titles !== undefined ? { titles } : {}),
+    ...(publicRoles !== undefined ? { publicRoles } : {}),
+    ...(awards !== undefined ? { awards } : {}),
+    ...(careerStatus !== undefined ? { careerStatus } : {}),
+    ...(roleNote !== undefined ? { roleNote } : {}),
     updatedAt: Date.now(),
   };
 
