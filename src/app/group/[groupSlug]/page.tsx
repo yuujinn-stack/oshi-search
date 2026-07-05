@@ -9,6 +9,8 @@ import { deduplicateProviders } from '@/lib/vod-dedup';
 import { getRedis } from '@/lib/redis';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import PersonCard from '@/components/PersonCard';
+import MemberSection from '@/components/site/MemberSection';
+import type { GroupMemberCardData } from '@/components/site/GroupMemberCard';
 import WorkCard from '@/components/WorkCard';
 import ProviderLogo from '@/components/ProviderLogo';
 import type { WorkRecord } from '@/types/work';
@@ -54,29 +56,15 @@ type EnrichedMember = PersonWithConfig & {
   effectiveStatus: ActivityStatus;
 };
 
-// ─── 卒業・脱退メンバー用コンパクトカード ─────────────────────────────────────
-function FormerMemberChip({ member }: { member: EnrichedMember }) {
-  const { meta, effectiveStatus } = member;
-  return (
-    <Link href={`/person/${encodeURIComponent(member.name)}`}>
-      <div className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-100 rounded-xl hover:border-gray-300 transition-colors group">
-        <span className="text-sm font-medium text-slate-600 group-hover:text-indigo-600 transition-colors">
-          {member.name}
-        </span>
-        {meta.generation && (
-          <span className="text-[10px] text-gray-400">{meta.generation}</span>
-        )}
-        {effectiveStatus !== 'active' && (
-          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${ACTIVITY_BADGE_CLS[effectiveStatus]}`}>
-            {ACTIVITY_LABEL[effectiveStatus]}
-          </span>
-        )}
-        {meta.leftAt && (
-          <span className="text-[10px] text-gray-300">{meta.leftAt.slice(0, 7)}</span>
-        )}
-      </div>
-    </Link>
-  );
+function toCardData(m: EnrichedMember): GroupMemberCardData {
+  return {
+    name: m.name,
+    group: m.group,
+    genre: m.genre,
+    generation: m.meta.generation,
+    activityStatus: m.effectiveStatus,
+    leftAt: m.meta.leftAt,
+  };
 }
 
 const GENRE_GRADIENT: Record<string, string> = {
@@ -567,14 +555,17 @@ export default async function GroupPage({ params }: Props) {
                   label: hasStatusData ? '現役メンバー' : 'メンバー',
                   value: hasStatusData ? activeMembers.length : members.length,
                   unit: '人',
-                  sub: hasStatusData && allFormerMembers.length > 0
-                    ? `卒業 ${allFormerMembers.length}人`
-                    : undefined,
+                },
+                {
+                  label: '卒業・脱退',
+                  value: hasStatusData ? allFormerMembers.length : 0,
+                  unit: '人',
+                  hidden: !hasStatusData,
                 },
                 { label: '出演作品', value: allWorks.length, unit: '件' },
-                { label: '配信中',   value: streamingWorks.length, unit: '件' },
                 { label: '関連商品', value: totalProductCount, unit: '件' },
-              ].map(({ label, value, unit, sub }) => (
+              ].map(({ label, value, unit, hidden }) => (
+                hidden ? null :
                 <div key={label} className="bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 text-center">
                   <p className="text-white/70 text-[11px]">{label}</p>
                   {value > 0 ? (
@@ -583,10 +574,7 @@ export default async function GroupPage({ params }: Props) {
                       <span className="text-sm font-medium ml-0.5">{unit}</span>
                     </p>
                   ) : (
-                    <p className="text-white/50 text-sm mt-1">確認中</p>
-                  )}
-                  {sub && (
-                    <p className="text-white/50 text-[10px] mt-0.5">{sub}</p>
+                    <p className="text-white/50 text-sm mt-1">なし</p>
                   )}
                 </div>
               ))}
@@ -633,40 +621,34 @@ export default async function GroupPage({ params }: Props) {
           )}
 
           {/* ━━━ 1. メンバー ━━━ */}
-          <section className="space-y-5">
+          <section className="space-y-8">
 
             {/* 現役メンバー（または全メンバー一覧） */}
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>
-                  {hasStatusData && allFormerMembers.length > 0 ? '現役メンバー' : 'メンバー一覧'}
-                </h2>
-                <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>
-                  {hasStatusData && allFormerMembers.length > 0 ? activeMembers.length : members.length}人
-                </span>
+            {hasStatusData && allFormerMembers.length > 0 ? (
+              <MemberSection
+                title="現役メンバー"
+                members={activeMembers.map(toCardData)}
+              />
+            ) : (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>メンバー一覧</h2>
+                  <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>{members.length}人</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {members.map((m) => (
+                    <PersonCard key={m.name} person={m} />
+                  ))}
+                </div>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                {(hasStatusData && allFormerMembers.length > 0 ? activeMembers : members).map((m) => (
-                  <PersonCard key={m.name} person={m} />
-                ))}
-              </div>
-            </div>
+            )}
 
             {/* 卒業・脱退メンバー */}
             {allFormerMembers.length > 0 && (
-              <details className="theme-card overflow-hidden">
-                <summary className="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
-                  <span className="font-semibold text-sm" style={{ color: 'var(--ds-text)' }}>卒業・脱退メンバー</span>
-                  <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>{allFormerMembers.length}人</span>
-                </summary>
-                <div className="p-4" style={{ borderTop: '1px solid var(--ds-border)' }}>
-                  <div className="flex flex-wrap gap-2">
-                    {allFormerMembers.map((m) => (
-                      <FormerMemberChip key={m.name} member={m} />
-                    ))}
-                  </div>
-                </div>
-              </details>
+              <MemberSection
+                title="卒業・脱退メンバー"
+                members={allFormerMembers.map(toCardData)}
+              />
             )}
 
             {/* 期別メンバー */}
@@ -704,35 +686,6 @@ export default async function GroupPage({ params }: Props) {
                       </div>
                     </div>
                   ))}
-                </div>
-              </details>
-            )}
-
-            {/* 歴代メンバー（卒業/脱退メンバーが存在する場合のみ） */}
-            {allFormerMembers.length > 0 && (
-              <details className="theme-card overflow-hidden">
-                <summary className="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
-                  <span className="font-semibold text-sm" style={{ color: 'var(--ds-text)' }}>歴代メンバー</span>
-                  <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>全{allTimeMembers.length}人</span>
-                </summary>
-                <div className="p-4" style={{ borderTop: '1px solid var(--ds-border)' }}>
-                  <div className="flex flex-wrap gap-1.5">
-                    {allTimeMembers.map((m) => (
-                      <Link
-                        key={m.name}
-                        href={`/person/${encodeURIComponent(m.name)}`}
-                        className="theme-group-chip flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors"
-                        style={{ textDecoration: 'none' }}
-                      >
-                        {m.name}
-                        {m.effectiveStatus !== 'active' && (
-                          <span className={`text-[9px] px-1 py-0.5 rounded-full ${ACTIVITY_BADGE_CLS[m.effectiveStatus]}`}>
-                            {ACTIVITY_LABEL[m.effectiveStatus]}
-                          </span>
-                        )}
-                      </Link>
-                    ))}
-                  </div>
                 </div>
               </details>
             )}
