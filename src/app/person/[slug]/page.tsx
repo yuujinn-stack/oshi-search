@@ -426,40 +426,59 @@ export default async function PersonPage({ params }: Props) {
               <div className="min-w-0 flex-1">
                 <h1 className="text-2xl sm:text-3xl font-black text-white leading-tight">{person.name}</h1>
 
-                {/* グループリンク */}
-                {person.group ? (
-                  <div className="flex items-center gap-2 mt-1 flex-wrap">
-                    <Link
-                      href={`/group/${encodeURIComponent(person.group)}`}
-                      className="text-white/80 hover:text-white text-sm font-medium transition-colors underline underline-offset-2 decoration-white/40 hover:decoration-white"
-                    >
-                      {person.group}
-                    </Link>
-                    {groupMeta?.activityStatus === 'renamed' && groupMeta.renamedTo && (
-                      <Link
-                        href={`/group/${encodeURIComponent(groupMeta.renamedTo)}`}
-                        className="text-[11px] text-white/60 hover:text-white transition-colors"
-                      >
-                        （現: {groupMeta.renamedTo}）
-                      </Link>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-white/70 mt-1 text-sm">ソロ活動</p>
-                )}
+                {/* メイン肩書き（primaryGenre優先）+ グループリンク */}
+                {(() => {
+                  const groupLink = personMeta?.currentGroupName || person.group || null;
+                  if (personMeta?.primaryGenre) {
+                    return (
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className="text-white/80 text-sm font-medium">{personMeta.primaryGenre}</span>
+                        {groupLink && (
+                          <Link
+                            href={`/group/${encodeURIComponent(groupLink)}`}
+                            className="text-white/50 hover:text-white/80 text-xs transition-colors underline underline-offset-2 decoration-white/20"
+                          >
+                            {groupLink}
+                          </Link>
+                        )}
+                      </div>
+                    );
+                  }
+                  if (groupLink) {
+                    return (
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <Link
+                          href={`/group/${encodeURIComponent(groupLink)}`}
+                          className="text-white/80 hover:text-white text-sm font-medium transition-colors underline underline-offset-2 decoration-white/40 hover:decoration-white"
+                        >
+                          {groupLink}
+                        </Link>
+                        {groupMeta?.activityStatus === 'renamed' && groupMeta.renamedTo && (
+                          <Link
+                            href={`/group/${encodeURIComponent(groupMeta.renamedTo)}`}
+                            className="text-[11px] text-white/60 hover:text-white transition-colors"
+                          >
+                            （現: {groupMeta.renamedTo}）
+                          </Link>
+                        )}
+                      </div>
+                    );
+                  }
+                  return <p className="text-white/70 mt-1 text-sm">ソロ活動</p>;
+                })()}
 
                 {/* バッジ群 */}
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                  {personMeta?.titles && personMeta.titles.length > 0 && personMeta.titles.map((t) => (
-                    <span key={t} className="text-[11px] px-2 py-0.5 rounded-full bg-white/25 text-white font-medium">
-                      {t}
-                    </span>
-                  ))}
-                  {personMeta?.primaryGenre && (
-                    <span className="text-xs px-2.5 py-1 rounded-full font-bold bg-white/20 text-white">
-                      {personMeta.primaryGenre}
-                    </span>
-                  )}
+                  {/* titles: primaryGenreと同一の値は除外（メインラベルで表示済み） */}
+                  {personMeta?.titles && personMeta.titles.length > 0 &&
+                    personMeta.titles
+                      .filter((t) => t !== personMeta?.primaryGenre)
+                      .map((t) => (
+                        <span key={t} className="text-[11px] px-2 py-0.5 rounded-full bg-white/25 text-white font-medium">
+                          {t}
+                        </span>
+                      ))}
+                  {/* primaryGenreはメインラベルで表示済みのためここでは表示しない */}
                   <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${GENRE_BADGE[person.genre] ?? 'bg-gray-100 text-gray-600'}`}>
                     {person.genre}
                   </span>

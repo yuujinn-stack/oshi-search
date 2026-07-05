@@ -57,13 +57,14 @@ function buildPrompt(target: string, targetType: TargetType, opts: PromptOptions
     cols.push('awards');
     cols.push('careerStatus');
     cols.push('roleNote');
-    colNotes.push('- primaryGenre: 主な活動ジャンル（例: 俳優 / タレント / 歌手 / アイドル）');
-    colNotes.push('- genres: 複数ジャンル（カンマ区切り 例: "俳優,タレント"）');
-    colNotes.push('- titles: 世間的な肩書き・称号（カンマ区切り 例: "元乃木坂46キャプテン"）');
+    colNotes.push('- primaryGenre: 2026年現在の主な活動ジャンル（単一 例: 女優 / タレント / アイドル / 歌手）');
+    colNotes.push('  ※ グループ卒業者は現在の職業を記載。現役アイドルはアイドルなど。不明は空欄。');
+    colNotes.push('- genres: ジャンル（現在を先頭に、過去ジャンルは後に カンマ区切り 例: "女優,タレント,元アイドル"）');
+    colNotes.push('- titles: 現在の肩書きを先頭に、過去の役職・旧所属は後に（カンマ区切り 例: "女優,タレント,元欅坂46,元欅坂46キャプテン"）');
     colNotes.push('- publicRoles: 現在の役職（カンマ区切り 例: "女優,MC"）');
     colNotes.push('- awards: 主な受賞歴（カンマ区切り）');
     colNotes.push('- careerStatus: 芸能活動状態（active=活動中 / inactive=活動休止 / retired=引退 / deceased=故人 / unknown=不明）');
-    colNotes.push('- roleNote: 活動補足（任意）');
+    colNotes.push('- roleNote: 現在の活動内容を簡潔に（例: 現在は女優・タレントとして活動。舞台・ドラマ・映画に出演。）');
   }
   cols.push('description');
 
