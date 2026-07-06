@@ -342,7 +342,7 @@ export default async function PersonPage({ params }: Props) {
   ];
 
   // ── JSON-LD ──
-  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.vercel.app';
+  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
   const personUrl  = `${siteOrigin}/person/${encodeURIComponent(person.name)}`;
   const personJsonLd = {
     '@context': 'https://schema.org',

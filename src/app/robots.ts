@@ -9,6 +9,6 @@ export default function robots(): MetadataRoute.Robots {
         disallow: '/search',
       },
     ],
-    sitemap: 'https://oshi-search.example.com/sitemap.xml',
+    sitemap: `${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp'}/sitemap.xml`,
   };
 }

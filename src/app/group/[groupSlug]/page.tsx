@@ -463,7 +463,7 @@ export default async function GroupPage({ params }: Props) {
   ];
 
   // ── JSON-LD ──
-  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.vercel.app';
+  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
   const groupUrl = `${siteOrigin}/group/${encodeURIComponent(groupName)}`;
 
   const orgJsonLd = {

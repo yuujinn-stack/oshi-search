@@ -5,12 +5,18 @@ import Header from '@/components/Header';
 import DesignPreviewToggle from '@/components/site/DesignPreviewToggle';
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp'),
   title: {
     default: '推しサーチ | 推し・有名人の写真集・グッズ・視聴先を検索',
     template: '%s | 推しサーチ',
   },
   description:
     '推しや有名人の写真集・本・雑誌・Blu-ray・グッズ・出演作品・VOD視聴先をまとめて検索できるサイトです。',
+  openGraph: {
+    siteName: '推しサーチ',
+    locale: 'ja_JP',
+    type: 'website',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
