@@ -9,34 +9,25 @@ import type { SuggestionItem } from '@/types/search';
 export const revalidate = 60;
 
 const GENRE_EMOJI: Record<string, string> = {
-  '坂道': '🌸',
-  'アイドル': '⭐',
-  '元アイドル': '🌟',
-  '女優': '🎭',
-  '俳優': '🎬',
-  'タレント': '✨',
-  'モデル': '👗',
-  '歌手': '🎤',
-  'アーティスト': '🎵',
-  '声優': '🎙️',
-  '芸人': '😄',
-  'テレビ': '📺',
-  'バラエティ': '🎪',
-  'アナウンサー': '📢',
-  '作家': '📝',
-  '小説家': '📚',
-  '漫画家': '✏️',
-  '脚本家': '📄',
-  '映画監督': '🎥',
-  '監督': '🎥',
-  'プロデューサー': '🎬',
-  'クリエイター': '💡',
-  'YouTuber': '▶️',
-  'インフルエンサー': '📱',
-  'ダンサー': '💃',
-  'スポーツ選手': '🏃',
-  'アスリート': '🏆',
+  '坂道': '🌸', 'アイドル': '⭐', '元アイドル': '🌟', 'タレント': '✨', 'バラエティ': '🎪', '芸人': '😄', 'テレビ': '📺',
+  '女優': '🎭', '俳優': '🎬', '声優': '🎙️', 'モデル': '👗', 'グラビア': '📸',
+  '歌手': '🎤', 'アーティスト': '🎵', 'バンド': '🎸', 'シンガーソングライター': '🎸',
+  '作詞家': '✍️', '作曲家': '🎼', '編曲家': '🎵', '音楽プロデューサー': '🎬', 'DJ': '🎧',
+  '作家': '📝', '小説家': '📚', '漫画家': '✏️', '脚本家': '📄', '映画監督': '🎥', '監督': '🎥', 'プロデューサー': '🎬', 'クリエイター': '💡',
+  'スポーツ選手': '🏃', 'アスリート': '🏆', 'ダンサー': '💃', 'コーチ': '🏅',
+  'アナウンサー': '📢', 'キャスター': '📺', 'コメンテーター': '💬',
+  'YouTuber': '▶️', 'インフルエンサー': '📱', '実業家': '💼', '政治家': '🏛️', '研究者': '🔬', '文化人': '🎭', '芸能界引退': '🌙',
 };
+
+const GENRE_CATEGORIES: { label: string; icon: string; genres: string[] }[] = [
+  { label: 'アイドル・芸能',    icon: '⭐', genres: ['坂道', 'アイドル', '元アイドル', 'タレント', 'バラエティ', '芸人', 'テレビ'] },
+  { label: '俳優・女優・モデル', icon: '🎬', genres: ['俳優', '女優', '声優', 'モデル', 'グラビア'] },
+  { label: '音楽',              icon: '🎵', genres: ['歌手', 'アーティスト', 'バンド', 'シンガーソングライター', '作詞家', '作曲家', '編曲家', '音楽プロデューサー', 'DJ'] },
+  { label: '文化・クリエイター', icon: '✍️', genres: ['作家', '小説家', '漫画家', '脚本家', '映画監督', '監督', 'プロデューサー', 'クリエイター'] },
+  { label: 'スポーツ',          icon: '🏃', genres: ['スポーツ選手', 'アスリート', 'ダンサー', 'コーチ'] },
+  { label: '報道・メディア',     icon: '📢', genres: ['アナウンサー', 'キャスター', 'コメンテーター'] },
+  { label: 'その他',            icon: '💡', genres: ['YouTuber', 'インフルエンサー', '実業家', '政治家', '研究者', '文化人', '芸能界引退'] },
+];
 
 const WORK_TYPE_LABEL: Record<string, string> = {
   movie: '映画', tv: 'ドラマ', variety: 'バラエティ', anime: 'アニメ',
@@ -82,6 +73,22 @@ export default async function HomePage() {
 
   // フォールバック（データなし時に使う人物）
   const featured = persons.slice(0, 12);
+
+  // ジャンルを大分類カードに振り分け（実データにあるジャンルのみ表示、未分類は「その他」に追加）
+  const genreSet = new Set(allGenres);
+  const expandedCategories = GENRE_CATEGORIES.map((cat) => ({
+    ...cat,
+    genres: cat.genres.filter((g) => genreSet.has(g)),
+  }));
+  const categorizedGenres = new Set(expandedCategories.flatMap((c) => c.genres));
+  const uncategorized = allGenres.filter((g) => !categorizedGenres.has(g));
+  const visibleCategories = expandedCategories
+    .map((cat) =>
+      cat.label === 'その他'
+        ? { ...cat, genres: [...cat.genres, ...uncategorized] }
+        : cat
+    )
+    .filter((cat) => cat.genres.length > 0);
 
   return (
     <div>
@@ -396,27 +403,58 @@ export default async function HomePage() {
         {/* ジャンルで探す */}
         <section style={{ marginBottom: '48px' }}>
           <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>ジャンルで探す</h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-            {allGenres.map((genre) => (
-              <Link
-                key={genre}
-                href={`/genre/${encodeURIComponent(genre)}`}
-                className="theme-link-pill"
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+            gap: '12px',
+          }}>
+            {visibleCategories.map((cat) => (
+              <div
+                key={cat.label}
                 style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '10px 22px',
-                  borderRadius: '999px',
-                  fontWeight: 700,
-                  fontSize: '14px',
-                  textDecoration: 'none',
-                  minHeight: '44px',
+                  background: 'var(--ds-surface)',
+                  border: '1px solid var(--ds-border)',
+                  borderRadius: 'var(--ds-radius)',
+                  padding: '14px 16px',
                 }}
               >
-                <span aria-hidden="true">{GENRE_EMOJI[genre]}</span>
-                <span>{genre}</span>
-              </Link>
+                <p style={{
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: 'var(--ds-muted)',
+                  marginBottom: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  letterSpacing: '0.02em',
+                }}>
+                  <span aria-hidden="true">{cat.icon}</span>
+                  {cat.label}
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {cat.genres.map((genre) => (
+                    <Link
+                      key={genre}
+                      href={`/genre/${encodeURIComponent(genre)}`}
+                      className="theme-link-pill"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '6px 12px',
+                        borderRadius: '999px',
+                        fontWeight: 600,
+                        fontSize: '13px',
+                        textDecoration: 'none',
+                        minHeight: '34px',
+                      }}
+                    >
+                      <span aria-hidden="true">{GENRE_EMOJI[genre]}</span>
+                      <span>{genre}</span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </section>
