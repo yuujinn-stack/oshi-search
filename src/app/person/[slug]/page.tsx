@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getPersonWithConfigMerged, getPersonsByGroupMerged } from '@/lib/persons';
 import { getAllStoredProductsOrThrow, type StoredCategoryData } from '@/lib/product-store';
-import { getAllVerdicts } from '@/lib/judgment-store';
+import { getAllVerdictsOrThrow } from '@/lib/judgment-store';
 import { getPublishedWorksOrThrow } from '@/lib/work-store';
 import { getRedis } from '@/lib/redis';
 import { getGroupMeta } from '@/lib/group-meta';
@@ -197,7 +197,7 @@ export default async function PersonPage({ params }: Props) {
   const [storedResult, verdictsResult, worksResult, personMetaResult, groupMetaResult, displayOrdersResult] =
     await Promise.allSettled([
       getAllStoredProductsOrThrow(person.name),
-      getAllVerdicts(person.name),
+      getAllVerdictsOrThrow(person.name),
       getPublishedWorksOrThrow(person.name),
       (async (): Promise<PersonMeta | null> => {
         try {
@@ -219,7 +219,10 @@ export default async function PersonPage({ params }: Props) {
   const personMeta = personMetaResult.status === 'fulfilled' ? personMetaResult.value : null;
   const groupMeta = groupMetaResult.status === 'fulfilled' ? groupMetaResult.value : null;
   const displayOrders = displayOrdersResult.status === 'fulfilled' ? displayOrdersResult.value : {};
-  const redisError = storedResult.status === 'rejected' || worksResult.status === 'rejected';
+  const redisError =
+    storedResult.status === 'rejected' ||
+    worksResult.status === 'rejected' ||
+    verdictsResult.status === 'rejected';
 
   // ── 中古商品 ──
   const usedCatData = storedData['中古'];

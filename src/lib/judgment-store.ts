@@ -38,6 +38,22 @@ export async function getAllVerdicts(personName: string): Promise<Record<string,
   }
 }
 
+// Redis エラー時に throw する版（公開人物ページの商品フィルタで error/empty を区別するために使う）
+// getAllVerdicts が {} を返すと承認済み商品が全件非表示になるため、OrThrow で区別する
+export async function getAllVerdictsOrThrow(personName: string): Promise<Record<string, JudgmentRecord>> {
+  const redis = getRedis();
+  if (!redis) return {};
+  const raw = await redis.hgetall(hashKey(personName)); // エラー時は throw
+  if (!raw) return {};
+  const result: Record<string, JudgmentRecord> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    try {
+      result[k] = (typeof v === 'string' ? JSON.parse(v) : v) as JudgmentRecord;
+    } catch { /* 壊れたデータはスキップ */ }
+  }
+  return result;
+}
+
 // 単一商品の判定結果を保存
 export async function saveVerdict(
   personName: string,

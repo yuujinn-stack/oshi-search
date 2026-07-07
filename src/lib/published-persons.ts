@@ -59,6 +59,13 @@ export async function getPublishedPersonNames(): Promise<string[]> {
   }
 }
 
+// Redis エラー時に throw する版（管理画面 people/import で error/empty を区別するために使う）
+export async function getPublishedPersonNamesOrThrow(): Promise<string[]> {
+  const redis = getRedis();
+  if (!redis) return [];
+  return await redis.hkeys(HASH_KEY); // エラー時は throw
+}
+
 // ── 書き込み ────────────────────────────────────────────────────────────────
 export async function publishPersonsBatch(records: PublishedRecord[]): Promise<void> {
   if (records.length === 0) return;

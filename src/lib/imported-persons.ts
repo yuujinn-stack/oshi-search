@@ -56,6 +56,18 @@ export async function getAllImportedPersons(): Promise<ImportedPerson[]> {
   }
 }
 
+// Redis エラー時に throw する版（管理画面ページで error/empty を区別するために使う）
+export async function getAllImportedPersonsOrThrow(): Promise<ImportedPerson[]> {
+  const redis = getRedis();
+  if (!redis) return [];
+  const raw = await redis.hgetall(HASH_KEY); // エラー時は throw
+  if (!raw) return [];
+  return Object.values(raw)
+    .map(deserialize)
+    .filter((p): p is ImportedPerson => p !== null)
+    .sort((a, b) => b.importedAt - a.importedAt);
+}
+
 // バッチ処理から呼ぶ: インポート済み人物の名前一覧
 export async function getImportedPersonNames(): Promise<string[]> {
   const persons = await getAllImportedPersons();

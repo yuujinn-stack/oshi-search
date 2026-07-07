@@ -1,6 +1,6 @@
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks } from '@/lib/work-store';
-import { getAllImportedPersons } from '@/lib/imported-persons';
+import { getAllImportedPersonsOrThrow } from '@/lib/imported-persons';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { getRedis } from '@/lib/redis';
 import { pingRedis } from '@/lib/redis-health';
@@ -22,10 +22,16 @@ export default async function WorkCheckPage() {
     return <RedisErrorBanner detail={health.error} />;
   }
 
-  const [persons, importedPersons] = await Promise.all([
-    getAllPersonsMerged(),
-    getAllImportedPersons(),
-  ]);
+  let persons: Awaited<ReturnType<typeof getAllPersonsMerged>>;
+  let importedPersons: Awaited<ReturnType<typeof getAllImportedPersonsOrThrow>>;
+  try {
+    [persons, importedPersons] = await Promise.all([
+      getAllPersonsMerged(),
+      getAllImportedPersonsOrThrow(),
+    ]);
+  } catch (err) {
+    return <RedisErrorBanner detail={String(err)} />;
+  }
 
   const importedMap = new Map(importedPersons.map((p) => [p.name, p]));
 

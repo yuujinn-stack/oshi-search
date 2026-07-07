@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 
-import { getAllImportedPersons } from '@/lib/imported-persons';
+import { getAllImportedPersonsOrThrow } from '@/lib/imported-persons';
 import { getAllWorks } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { pingRedis } from '@/lib/redis-health';
@@ -33,7 +33,12 @@ export default async function PeopleProgressPage() {
     return <RedisErrorBanner detail={health.error} />;
   }
 
-  const persons = await getAllImportedPersons();
+  let persons: Awaited<ReturnType<typeof getAllImportedPersonsOrThrow>>;
+  try {
+    persons = await getAllImportedPersonsOrThrow();
+  } catch (err) {
+    return <RedisErrorBanner detail={String(err)} />;
+  }
 
   const progressList = await Promise.all(
     persons.map(async (person): Promise<PersonProgress> => {

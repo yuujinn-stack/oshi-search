@@ -1,5 +1,5 @@
-import { getAllImportedPersons } from '@/lib/imported-persons';
-import { getPublishedPersonNames } from '@/lib/published-persons';
+import { getAllImportedPersonsOrThrow } from '@/lib/imported-persons';
+import { getPublishedPersonNamesOrThrow } from '@/lib/published-persons';
 import { pingRedis } from '@/lib/redis-health';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import ImportForm from './ImportForm';
@@ -15,16 +15,16 @@ export default async function PeopleImportPage() {
     return <RedisErrorBanner detail={health.error} />;
   }
 
-  let imported: Awaited<ReturnType<typeof getAllImportedPersons>> = [];
+  let imported: Awaited<ReturnType<typeof getAllImportedPersonsOrThrow>> = [];
   let publishedNames: string[] = [];
 
   try {
     [imported, publishedNames] = await Promise.all([
-      getAllImportedPersons(),
-      getPublishedPersonNames(),
+      getAllImportedPersonsOrThrow(),
+      getPublishedPersonNamesOrThrow(),
     ]);
-  } catch {
-    // Redis 未接続時は空リスト
+  } catch (err) {
+    return <RedisErrorBanner detail={String(err)} />;
   }
 
   return (

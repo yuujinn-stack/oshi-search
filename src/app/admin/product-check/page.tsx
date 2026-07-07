@@ -1,7 +1,7 @@
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getBatchMeta, getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
-import { getAllImportedPersons } from '@/lib/imported-persons';
+import { getAllImportedPersonsOrThrow } from '@/lib/imported-persons';
 import { getRedis } from '@/lib/redis';
 import { pingRedis } from '@/lib/redis-health';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
@@ -46,11 +46,13 @@ export default async function AdminProductCheckPage() {
   }
 
   // importedPersons（aliases/importedAt/dataFetchStatus） + personMetaMap（memo/priority）を並列取得
-  let importedPersons: Awaited<ReturnType<typeof getAllImportedPersons>> = [];
+  let importedPersons: Awaited<ReturnType<typeof getAllImportedPersonsOrThrow>> = [];
   let personMetaMap: Record<string, PersonMeta> = {};
   try {
-    [importedPersons] = await Promise.all([getAllImportedPersons()]);
-  } catch { /* 取得失敗時は空配列のまま */ }
+    importedPersons = await getAllImportedPersonsOrThrow();
+  } catch (err) {
+    return <RedisErrorBanner detail={String(err)} />;
+  }
   try {
     const redis = getRedis();
     if (redis) {
