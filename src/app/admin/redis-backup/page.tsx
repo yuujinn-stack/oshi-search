@@ -44,6 +44,7 @@ async function getBackupSummary(): Promise<{ redis: boolean; rows: KeySummary[];
     { key: 'imported:persons',      label: 'CSVインポート人物' },
     { key: 'persons:published',     label: '公開反映済み人物' },
     { key: 'admin:person-meta',     label: '人物メタ情報' },
+    { key: 'admin:groups',          label: 'グループメタ情報' },
     { key: 'vod:providers',         label: 'VOD配信サービス設定' },
     { key: 'vod:intensive:persons', label: 'VOD集中取得対象' },
   ];
