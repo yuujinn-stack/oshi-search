@@ -3,6 +3,8 @@ import { getBatchMeta, getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 import { getAllImportedPersons } from '@/lib/imported-persons';
 import { getRedis } from '@/lib/redis';
+import { pingRedis } from '@/lib/redis-health';
+import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import BatchButton from './BatchButton';
 import ProductCheckPersonSection from './ProductCheckPersonSection';
 import UncertainQueue from './UncertainQueue';
@@ -13,6 +15,11 @@ import type { PersonWithProductStats } from './ProductCheckPersonSection';
 export const dynamic = 'force-dynamic';
 
 export default async function AdminProductCheckPage() {
+  const health = await pingRedis();
+  if (!health.ok) {
+    return <RedisErrorBanner detail={health.error} />;
+  }
+
   // エラーを画面に表示して本番クラッシュの原因を特定する（診断用）
   let persons: Awaited<ReturnType<typeof getAllPersonsMerged>>;
   let batchMeta: Awaited<ReturnType<typeof getBatchMeta>>;

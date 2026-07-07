@@ -39,6 +39,23 @@ export async function getPublishedWorks(personName: string): Promise<WorkRecord[
     .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0));
 }
 
+// Redis エラー時に throw する版（人物ページで error/empty を区別するために使う）
+export async function getPublishedWorksOrThrow(personName: string): Promise<WorkRecord[]> {
+  const redis = getRedis();
+  if (!redis) return [];
+  const raw = await redis.hgetall(hashKey(personName)); // エラー時は throw
+  if (!raw) return [];
+  const all = Object.values(raw)
+    .map((v) => {
+      try { return (typeof v === 'string' ? JSON.parse(v) : v) as WorkRecord; }
+      catch { return null; }
+    })
+    .filter((w): w is WorkRecord => w !== null);
+  return all
+    .filter((w) => w.status === 'auto_published' && !w.deleted)
+    .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0));
+}
+
 // 作品を保存（新規・更新どちらも）
 export async function saveWork(work: WorkRecord): Promise<void> {
   const redis = getRedis();

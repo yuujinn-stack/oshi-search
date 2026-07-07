@@ -3,6 +3,8 @@ import { getAllWorks } from '@/lib/work-store';
 import { getAllImportedPersons } from '@/lib/imported-persons';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { getRedis } from '@/lib/redis';
+import { pingRedis } from '@/lib/redis-health';
+import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import WorkCheckPersonSection from './WorkCheckPersonSection';
 import AiSupplementSection from './AiSupplementSection';
 import ChatGptPromptSection from './ChatGptPromptSection';
@@ -15,6 +17,11 @@ import type { PersonPriority } from './work-check-types';
 export const dynamic = 'force-dynamic';
 
 export default async function WorkCheckPage() {
+  const health = await pingRedis();
+  if (!health.ok) {
+    return <RedisErrorBanner detail={health.error} />;
+  }
+
   const [persons, importedPersons] = await Promise.all([
     getAllPersonsMerged(),
     getAllImportedPersons(),

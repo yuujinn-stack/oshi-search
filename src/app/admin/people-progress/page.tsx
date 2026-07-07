@@ -3,6 +3,8 @@ export const dynamic = 'force-dynamic';
 import { getAllImportedPersons } from '@/lib/imported-persons';
 import { getAllWorks } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
+import { pingRedis } from '@/lib/redis-health';
+import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import PeopleProgressClient from './PeopleProgressClient';
 
 export type PersonProgress = {
@@ -26,6 +28,11 @@ export type PersonProgress = {
 };
 
 export default async function PeopleProgressPage() {
+  const health = await pingRedis();
+  if (!health.ok) {
+    return <RedisErrorBanner detail={health.error} />;
+  }
+
   const persons = await getAllImportedPersons();
 
   const progressList = await Promise.all(

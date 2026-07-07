@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getPersonWithConfigMerged, getPersonsByGroupMerged } from '@/lib/persons';
-import { getAllStoredProducts } from '@/lib/product-store';
+import { getAllStoredProductsOrThrow, type StoredCategoryData } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
-import { getPublishedWorks } from '@/lib/work-store';
+import { getPublishedWorksOrThrow } from '@/lib/work-store';
 import { getRedis } from '@/lib/redis';
 import { getGroupMeta } from '@/lib/group-meta';
 import { deduplicateProviders } from '@/lib/vod-dedup';
@@ -194,22 +194,32 @@ export default async function PersonPage({ params }: Props) {
   const groupMembers = person.group ? await getPersonsByGroupMerged(person.group) : [];
   const related = groupMembers.filter((p) => p.name !== person.name).slice(0, 4);
 
-  const [storedData, verdicts, publishedWorks, personMeta, groupMeta, displayOrders] = await Promise.all([
-    getAllStoredProducts(person.name),
-    getAllVerdicts(person.name),
-    getPublishedWorks(person.name),
-    (async (): Promise<PersonMeta | null> => {
-      try {
-        const redis = getRedis();
-        if (!redis) return null;
-        const raw = await redis.hget<string>('admin:person-meta', person.name);
-        if (!raw) return null;
-        return (typeof raw === 'string' ? JSON.parse(raw) : raw) as PersonMeta;
-      } catch { return null; }
-    })(),
-    person.group ? getGroupMeta(person.group) : Promise.resolve(null),
-    getAllDisplayOrders(person.name),
-  ]);
+  const [storedResult, verdictsResult, worksResult, personMetaResult, groupMetaResult, displayOrdersResult] =
+    await Promise.allSettled([
+      getAllStoredProductsOrThrow(person.name),
+      getAllVerdicts(person.name),
+      getPublishedWorksOrThrow(person.name),
+      (async (): Promise<PersonMeta | null> => {
+        try {
+          const redis = getRedis();
+          if (!redis) return null;
+          const raw = await redis.hget<string>('admin:person-meta', person.name);
+          if (!raw) return null;
+          return (typeof raw === 'string' ? JSON.parse(raw) : raw) as PersonMeta;
+        } catch { return null; }
+      })(),
+      person.group ? getGroupMeta(person.group) : Promise.resolve(null),
+      getAllDisplayOrders(person.name),
+    ]);
+
+  const storedData: Partial<Record<ProductCategory, StoredCategoryData>> =
+    storedResult.status === 'fulfilled' ? storedResult.value : {};
+  const verdicts = verdictsResult.status === 'fulfilled' ? verdictsResult.value : {};
+  const publishedWorks = worksResult.status === 'fulfilled' ? worksResult.value : [];
+  const personMeta = personMetaResult.status === 'fulfilled' ? personMetaResult.value : null;
+  const groupMeta = groupMetaResult.status === 'fulfilled' ? groupMetaResult.value : null;
+  const displayOrders = displayOrdersResult.status === 'fulfilled' ? displayOrdersResult.value : {};
+  const redisError = storedResult.status === 'rejected' || worksResult.status === 'rejected';
 
   // ── 中古商品 ──
   const usedCatData = storedData['中古'];
@@ -611,7 +621,9 @@ export default async function PersonPage({ params }: Props) {
                   borderColor: 'var(--ds-border)',
                 }}
               >
-                関連商品は現在取得中です。しばらくお待ちください。
+                {redisError
+                  ? '商品情報を一時的に取得できません。データは保持されています。時間をおいて再度お試しください。'
+                  : '関連商品は現在取得中です。しばらくお待ちください。'}
               </p>
             ) : (
               <ProductTabList items={allProductItems} personSlug={name} />
@@ -619,7 +631,7 @@ export default async function PersonPage({ params }: Props) {
           </section>
 
           {/* ━━━ 出演作品 ━━━ */}
-          {publishedWorks.length > 0 && (
+          {publishedWorks.length > 0 ? (
             <section id="works">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
@@ -640,7 +652,19 @@ export default async function PersonPage({ params }: Props) {
                 ))}
               </div>
             </section>
-          )}
+          ) : redisError ? (
+            <section id="works">
+              <div className="flex items-center gap-2 mb-4">
+                <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>🎬 出演作品</h2>
+              </div>
+              <p
+                className="text-sm rounded-xl border px-4 py-4"
+                style={{ color: 'var(--ds-muted)', background: 'var(--ds-surface)', borderColor: 'var(--ds-border)' }}
+              >
+                作品情報を一時的に取得できません。データは保持されています。時間をおいて再度お試しください。
+              </p>
+            </section>
+          ) : null}
 
           {/* ━━━ VOD配信情報 ━━━ */}
           {providerGroups.length > 0 && (

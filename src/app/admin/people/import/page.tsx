@@ -1,5 +1,7 @@
 import { getAllImportedPersons } from '@/lib/imported-persons';
 import { getPublishedPersonNames } from '@/lib/published-persons';
+import { pingRedis } from '@/lib/redis-health';
+import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import ImportForm from './ImportForm';
 import PersonList from './PersonList';
 import JobQueuePanel from './JobQueuePanel';
@@ -8,6 +10,11 @@ import ChatGptPersonPromptSection from './ChatGptPersonPromptSection';
 export const dynamic = 'force-dynamic';
 
 export default async function PeopleImportPage() {
+  const health = await pingRedis();
+  if (!health.ok) {
+    return <RedisErrorBanner detail={health.error} />;
+  }
+
   let imported: Awaited<ReturnType<typeof getAllImportedPersons>> = [];
   let publishedNames: string[] = [];
 

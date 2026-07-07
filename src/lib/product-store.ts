@@ -124,6 +124,26 @@ export async function getAllStoredProducts(
   }
 }
 
+// Redis エラー時に throw する版（人物ページで error/empty を区別するために使う）
+export async function getAllStoredProductsOrThrow(
+  personName: string,
+): Promise<Partial<Record<ProductCategory, StoredCategoryData>>> {
+  const redis = getRedis();
+  if (!redis) return {};
+  const raw = await redis.hgetall(hashKey(personName)); // エラー時は throw
+  if (!raw) return {};
+  const result: Partial<Record<ProductCategory, StoredCategoryData>> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if ((CATEGORIES as string[]).includes(k)) {
+      try {
+        const parsed = typeof v === 'string' ? JSON.parse(v) : v;
+        result[k as ProductCategory] = parsed as StoredCategoryData;
+      } catch { /* 壊れたデータはスキップ */ }
+    }
+  }
+  return result;
+}
+
 // バッチの最終実行情報を保存
 export async function saveBatchMeta(meta: {
   lastRunAt: number;
