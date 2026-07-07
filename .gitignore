@@ -19,3 +19,4 @@ build/
 
 npm-debug.log*
 .vercel
+tsconfig.tsbuildinfo
