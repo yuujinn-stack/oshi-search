@@ -101,19 +101,24 @@ export async function getJobByPerson(personName: string): Promise<PersonJob | nu
 export async function getQueueLength(): Promise<number> {
   const redis = getRedis();
   if (!redis) return 0;
-  return redis.llen(QUEUE_KEY);
+  try { return await redis.llen(QUEUE_KEY); } catch { return 0; }
 }
 
 export async function getAllJobs(limit = 200): Promise<PersonJob[]> {
   const redis = getRedis();
   if (!redis) return [];
-  const byPerson = await redis.hgetall(BY_PERSON_KEY);
-  if (!byPerson) return [];
-  const jobIds = Object.values(byPerson) as string[];
-  const jobs = await Promise.all(jobIds.map((id) => getJob(id)));
-  return (jobs.filter(Boolean) as PersonJob[])
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, limit);
+  try {
+    const byPerson = await redis.hgetall(BY_PERSON_KEY);
+    if (!byPerson) return [];
+    const jobIds = Object.values(byPerson) as string[];
+    const jobs = await Promise.all(jobIds.map((id) => getJob(id)));
+    return (jobs.filter(Boolean) as PersonJob[])
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit);
+  } catch (err) {
+    console.error('[person-job-queue] getAllJobs failed:', err);
+    return [];
+  }
 }
 
 // status=processing かつ startedAt が一定時間以上前のジョブを検出し queued にリセット

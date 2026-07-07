@@ -1,10 +1,36 @@
 import Link from 'next/link';
-import { getAllPersonsEnrichedWithGenres } from '@/lib/persons';
+import { unstable_cache } from 'next/cache';
+import { getAllPersonsEnrichedWithGenres, getAllPersonsWithConfig } from '@/lib/persons';
 import { getRankingData } from '@/lib/ranking';
+import type { RankingData } from '@/lib/ranking';
+import type { PersonCardData } from '@/lib/persons';
+import { DEFAULT_GENRE_ORDER } from '@/lib/genre-utils';
 import HeroSearchForm from '@/components/site/HeroSearchForm';
 import HomePersonCard from '@/components/site/HomePersonCard';
 import RankingPersonCard from '@/components/site/RankingPersonCard';
 import type { SuggestionItem } from '@/types/search';
+
+// Redis への問い合わせ結果を 60 秒間 Vercel Data Cache でキャッシュ
+// → 同一デプロイ内でリクエストが集中しても Redis 呼び出しは最大1回/60秒
+const getCachedEnrichedData = unstable_cache(
+  getAllPersonsEnrichedWithGenres,
+  ['home-enriched-data'],
+  { revalidate: 60 },
+);
+
+const getCachedRankingData = unstable_cache(
+  getRankingData,
+  ['home-ranking-data'],
+  { revalidate: 60 },
+);
+
+const EMPTY_RANKING: RankingData = {
+  popularPersons: [],
+  risingPersons: [],
+  popularSearches: [],
+  popularWorks: [],
+  popularProducts: [],
+};
 
 export const revalidate = 60;
 
@@ -52,10 +78,20 @@ function SectionHeader({ title, href, linkText }: { title: string; href?: string
 
 // ─── ページ ──────────────────────────────────────────────────────────────────────
 export default async function HomePage() {
-  const [{ persons, genres: allGenres }, ranking] = await Promise.all([
-    getAllPersonsEnrichedWithGenres(),
-    getRankingData(),
+  // Redis 失敗時も200を返すため allSettled を使用
+  const [enrichedResult, rankingResult] = await Promise.allSettled([
+    getCachedEnrichedData(),
+    getCachedRankingData(),
   ]);
+
+  const { persons, genres: allGenres } = enrichedResult.status === 'fulfilled'
+    ? enrichedResult.value
+    : { persons: getAllPersonsWithConfig() as unknown as PersonCardData[], genres: Array.from(DEFAULT_GENRE_ORDER) };
+
+  const ranking = rankingResult.status === 'fulfilled' ? rankingResult.value : EMPTY_RANKING;
+
+  if (enrichedResult.status === 'rejected') console.error('[page] enriched data failed:', enrichedResult.reason);
+  if (rankingResult.status === 'rejected') console.error('[page] ranking data failed:', rankingResult.reason);
 
   const groups = [...new Set(persons.map((p) => p.group).filter(Boolean))];
 

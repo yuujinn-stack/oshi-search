@@ -80,18 +80,18 @@ export async function getRankingData(): Promise<RankingData> {
   const allPersons = await getAllPersonsMerged();
   const redis = getRedis();
 
-  // Redis 未接続時フォールバック
-  if (!redis) {
-    const fallback = makePersonFallback(allPersons);
-    return {
-      popularPersons: fallback,
-      risingPersons: fallback,
-      popularSearches: [],
-      popularWorks: [],
-      popularProducts: [],
-    };
-  }
+  const fallbackPersons = makePersonFallback(allPersons);
+  const emptyRanking: RankingData = {
+    popularPersons: fallbackPersons,
+    risingPersons: fallbackPersons,
+    popularSearches: [],
+    popularWorks: [],
+    popularProducts: [],
+  };
 
+  if (!redis) return emptyRanking;
+
+  try {
   // ── 1. 人物閲覧数 + 検索ランキング + SCAN キー を並列取得 ─────────────────────
   const pipe = redis.pipeline();
   for (const p of allPersons) pipe.hgetall(`person:view:${p.name}`);
@@ -213,4 +213,8 @@ export async function getRankingData(): Promise<RankingData> {
   }
 
   return { popularPersons, risingPersons, popularSearches, popularWorks, popularProducts };
+  } catch (err) {
+    console.error('[ranking] Redis error, using fallback:', err);
+    return emptyRanking;
+  }
 }
