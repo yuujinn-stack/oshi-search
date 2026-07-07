@@ -3,7 +3,7 @@
 
 import { db } from './client';
 import { persons, personMeta, groupMeta, vodProviders, works, products, verdicts } from './schema';
-import { sql } from 'drizzle-orm';
+import { sql, eq, and } from 'drizzle-orm';
 
 const first = (rows: { n: number }[]) => rows[0]?.n ?? 0;
 
@@ -56,3 +56,25 @@ export async function getVerdictsCountByPerson(): Promise<Map<string, number>> {
     .groupBy(verdicts.personName);
   return new Map(rows.map((r) => [r.personName, r.n]));
 }
+
+// ── 人物別カウント（シャドーリード検証用）──────────────────────────────────────
+
+export const countProductsForPerson = (personName: string) =>
+  db.select({ n: sql<number>`count(*)::int` })
+    .from(products).where(eq(products.personName, personName)).then(first);
+
+export const countVerdictsForPerson = (personName: string) =>
+  db.select({ n: sql<number>`count(*)::int` })
+    .from(verdicts).where(eq(verdicts.personName, personName)).then(first);
+
+// Redis の getPublishedWorksOrThrow と同等条件: status='auto_published' && !deleted
+export const countPublishedWorksForPerson = (personName: string) =>
+  db.select({ n: sql<number>`count(*)::int` })
+    .from(works)
+    .where(and(eq(works.personName, personName), eq(works.status, 'auto_published'), eq(works.deleted, false)))
+    .then(first);
+
+export const hasPersonMetaInDB = (personName: string) =>
+  db.select({ n: sql<number>`count(*)::int` })
+    .from(personMeta).where(eq(personMeta.personName, personName))
+    .then((rows) => (rows[0]?.n ?? 0) > 0);

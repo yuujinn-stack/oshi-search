@@ -23,6 +23,8 @@ import type { PersonWithConfig } from '@/types/person';
 import type { GroupMeta } from '@/types/group';
 import PageViewTracker from '@/components/site/PageViewTracker';
 import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
+import { getCachedPublishedPersons } from '@/lib/published-persons';
+import { shadowReadGroupPage } from '@/lib/shadow-read';
 
 export const dynamic = 'force-dynamic';
 
@@ -309,6 +311,16 @@ export default async function GroupPage({ params }: Props) {
       } catch { return {}; }
     })(),
   ]);
+
+  // シャドーリード: DB件数をRedisと比較してログ出力（ユーザー表示に影響しない）
+  {
+    const publishedForShadow = await getCachedPublishedPersons().catch(() => []);
+    await shadowReadGroupPage({
+      groupMetaCount: allGroupMetas.length,
+      personMetaCount: Object.keys(personMetaMap).length,
+      publishedPersonCount: publishedForShadow.length,
+    });
+  }
 
   // ── メンバー分類 ──────────────────────────────────────────────────────────────
   const enrichedMembers: EnrichedMember[] = members.map((m) => {

@@ -11,6 +11,7 @@ import { getAllStoredProducts } from '@/lib/product-store';
 import type { GroupMeta } from '@/types/group';
 import type { ActivityStatus, PersonWithConfig } from '@/types/person';
 import type { SuggestionItem } from '@/types/search';
+import { shadowReadSearchPage } from '@/lib/shadow-read';
 
 export const dynamic = 'force-dynamic';
 
@@ -148,6 +149,12 @@ export default async function SearchPage({ searchParams }: Props) {
         },
     );
   })();
+
+  // シャドーリード: DB件数をRedisと比較してログ出力（ユーザー表示に影響しない）
+  await shadowReadSearchPage({
+    personMetaCount: Object.keys(personMetaMap).length,
+    groupMetaCount: allGroupMetas.length,
+  });
 
   // デバッグログ（Vercel Functions ログで確認可能）
   console.log(`[search] query="${query}" persons=${persons.length} allGroupMetas=${allGroupMetas.length} matchingGroups=${matchingGroups.length}`);
