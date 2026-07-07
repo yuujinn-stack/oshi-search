@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: '/admin/openai-usage',               label: 'OpenAI利用状況' },
   { href: '/admin/analytics',                  label: '📊 アナリティクス' },
   { href: '/admin/redis-backup',               label: '💾 バックアップ' },
+  { href: '/admin/db-compare',                label: '🔄 DB検証' },
   { href: '/api/admin/logout',                 label: 'ログアウト', danger: true },
 ] as const;
 
