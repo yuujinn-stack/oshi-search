@@ -51,7 +51,7 @@ async function getBackupSummary(): Promise<{ redis: boolean; rows: KeySummary[];
   const patternKeys: { pattern: string; label: string }[] = [
     { pattern: 'products:*', label: '商品データ' },
     { pattern: 'works:*',    label: '出演作品データ' },
-    { pattern: 'judgments:*', label: 'AI判定データ' },
+    { pattern: 'verdicts:*', label: 'AI判定データ' },
   ];
 
   const rows: KeySummary[] = [];

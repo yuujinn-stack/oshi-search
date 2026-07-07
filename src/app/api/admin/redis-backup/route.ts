@@ -1,6 +1,6 @@
 // Redis バックアップ API — 読み取り専用。書き込み・削除は一切行わない。
 // 対象: imported:persons, persons:published, admin:person-meta,
-//       vod:providers, vod:intensive:persons, products:*, works:*, judgments:*
+//       vod:providers, vod:intensive:persons, products:*, works:*, verdicts:*
 import { NextResponse } from 'next/server';
 import { getRedis } from '@/lib/redis';
 import type { Redis } from '@upstash/redis';
@@ -75,7 +75,7 @@ export async function GET() {
   }
 
   // ── パターンハッシュキー（人物別データ）────────────────────────────────────
-  const patternKeys = ['products:*', 'works:*', 'judgments:*'];
+  const patternKeys = ['products:*', 'works:*', 'verdicts:*'];
 
   for (const pattern of patternKeys) {
     try {
