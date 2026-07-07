@@ -36,6 +36,24 @@ export async function getAllProviders(): Promise<ProviderRecord[]> {
   }
 }
 
+// Redis エラー時に throw する版（管理画面で error/empty を区別するために使う）
+export async function getAllProvidersOrThrow(): Promise<ProviderRecord[]> {
+  const redis = getRedis();
+  if (!redis) return [];
+  const raw = await redis.hgetall(HASH_KEY); // エラー時は throw
+  if (!raw) return [];
+  return Object.values(raw)
+    .map((v) => {
+      try {
+        return (typeof v === 'string' ? JSON.parse(v) : v) as ProviderRecord;
+      } catch {
+        return null;
+      }
+    })
+    .filter((p): p is ProviderRecord => p !== null)
+    .sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
 // アクティブなプロバイダーの slug → logoUrl マップを返す（/api/providers 用）
 export async function getActiveProviderLogoMap(): Promise<Record<string, string>> {
   const providers = await getAllProviders();

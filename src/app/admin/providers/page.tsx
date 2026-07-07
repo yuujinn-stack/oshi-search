@@ -1,14 +1,15 @@
-import { getAllProviders } from '@/lib/provider-store';
+import { getAllProvidersOrThrow } from '@/lib/provider-store';
+import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import ProviderManager from './ProviderManager';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminProvidersPage() {
-  let providers: Awaited<ReturnType<typeof getAllProviders>> = [];
+  let providers: Awaited<ReturnType<typeof getAllProvidersOrThrow>>;
   try {
-    providers = await getAllProviders();
-  } catch {
-    // Redis 未接続時は空リストで表示
+    providers = await getAllProvidersOrThrow();
+  } catch (err) {
+    return <RedisErrorBanner detail={String(err)} />;
   }
 
   return (

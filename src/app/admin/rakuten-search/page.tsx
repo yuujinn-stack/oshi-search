@@ -1,5 +1,6 @@
 import { getAllPersonsMerged } from '@/lib/persons';
-import { getAllPersonMetas } from '@/lib/person-meta';
+import { getAllPersonMetasOrThrow } from '@/lib/person-meta';
+import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import RakutenSearchClient from './RakutenSearchClient';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import { createGroupList } from './group-utils';
@@ -7,10 +8,16 @@ import { createGroupList } from './group-utils';
 export const dynamic = 'force-dynamic';
 
 export default async function RakutenSearchPage() {
-  const [persons, metas] = await Promise.all([
-    getAllPersonsMerged(),
-    getAllPersonMetas(),
-  ]);
+  let persons: Awaited<ReturnType<typeof getAllPersonsMerged>>;
+  let metas: Awaited<ReturnType<typeof getAllPersonMetasOrThrow>>;
+  try {
+    [persons, metas] = await Promise.all([
+      getAllPersonsMerged(),
+      getAllPersonMetasOrThrow(),
+    ]);
+  } catch (err) {
+    return <RedisErrorBanner detail={String(err)} />;
+  }
 
   const personOptions: PersonOption[] = persons.map((p) => ({
     name: p.name,

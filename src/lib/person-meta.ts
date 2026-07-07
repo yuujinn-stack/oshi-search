@@ -19,6 +19,19 @@ export async function getAllPersonMetas(): Promise<Record<string, PersonMeta>> {
   } catch { return {}; }
 }
 
+// Redis エラー時に throw する版（検索・ジャンルページ等で error/empty を区別するために使う）
+export async function getAllPersonMetasOrThrow(): Promise<Record<string, PersonMeta>> {
+  const redis = getRedis();
+  if (!redis) return {};
+  const raw = await redis.hgetall(META_KEY); // エラー時は throw
+  if (!raw) return {};
+  const map: Record<string, PersonMeta> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    try { map[k] = (typeof v === 'string' ? JSON.parse(v) : v) as PersonMeta; } catch { /* skip */ }
+  }
+  return map;
+}
+
 export async function getPersonMeta(name: string): Promise<PersonMeta | null> {
   try {
     const redis = getRedis();

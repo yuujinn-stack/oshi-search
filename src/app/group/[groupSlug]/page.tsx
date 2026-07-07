@@ -7,7 +7,8 @@ import { getAllStoredProducts, CATEGORIES } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 import { deduplicateProviders } from '@/lib/vod-dedup';
 import { getRedis } from '@/lib/redis';
-import { getAllGroupMetas } from '@/lib/group-meta';
+import { getAllGroupMetasOrThrow } from '@/lib/group-meta';
+import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import PersonCard from '@/components/PersonCard';
 import MemberSection from '@/components/site/MemberSection';
 import type { GroupMemberCardData } from '@/components/site/GroupMemberCard';
@@ -246,8 +247,25 @@ export default async function GroupPage({ params }: Props) {
   const members    = allPersons.filter((p) => p.group === groupName);
 
   // GroupMeta を先に取得（改名/解散リダイレクトの判定に使用）
-  const allGroupMetas = await getAllGroupMetas();
+  let allGroupMetas: GroupMeta[] = [];
+  let groupMetaRedisError = false;
+  try {
+    allGroupMetas = await getAllGroupMetasOrThrow();
+  } catch {
+    groupMetaRedisError = true;
+    // Redis 失敗: メンバーがいない場合はリダイレクト判定不能なのでエラー表示
+    // メンバーがいる場合は空 allGroupMetas のまま続行（ページは表示できる）
+    if (members.length === 0) {
+      return (
+        <RedisErrorBanner
+          title="グループ情報を一時的に取得できません"
+          detail="Redisのリクエスト制限または接続エラーにより、グループの改名・解散情報を確認できませんでした。データは保持されています。"
+        />
+      );
+    }
+  }
   const groupMeta: GroupMeta | null = allGroupMetas.find((g) => g.groupName === groupName) ?? null;
+  void groupMetaRedisError; // used above, suppress unused warning
 
   if (members.length === 0) {
     // このグループ名が別グループの旧名として登録されているか確認

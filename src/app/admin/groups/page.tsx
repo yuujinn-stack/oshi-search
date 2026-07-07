@@ -1,13 +1,16 @@
-import { getAllGroupMetas } from '@/lib/group-meta';
+import { getAllGroupMetasOrThrow } from '@/lib/group-meta';
+import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import GroupManager from './GroupManager';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminGroupsPage() {
-  let initialMetas: Awaited<ReturnType<typeof getAllGroupMetas>> = [];
+  let initialMetas: Awaited<ReturnType<typeof getAllGroupMetasOrThrow>>;
   try {
-    initialMetas = await getAllGroupMetas();
-  } catch { /* Redis 未設定時は空配列のまま */ }
+    initialMetas = await getAllGroupMetasOrThrow();
+  } catch (err) {
+    return <RedisErrorBanner detail={String(err)} />;
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">

@@ -3,8 +3,9 @@ import Link from 'next/link';
 import SearchForm from '@/components/SearchForm';
 import SearchResults, { type PersonStats } from './SearchResults';
 import { getAllPersonsMerged } from '@/lib/persons';
-import { getAllGroupMetas } from '@/lib/group-meta';
-import { getAllPersonMetas } from '@/lib/person-meta';
+import { getAllGroupMetasOrThrow } from '@/lib/group-meta';
+import { getAllPersonMetasOrThrow } from '@/lib/person-meta';
+import { getAllPersonsWithConfig } from '@/lib/persons';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
 import type { GroupMeta } from '@/types/group';
@@ -45,12 +46,20 @@ export default async function SearchPage({ searchParams }: Props) {
   const { q } = await searchParams;
   const query = q?.trim() ?? '';
 
-  // 全データ並行取得（personMetaMap は常に取得・単一 HGETALL のため軽量）
-  const [allPersons, allGroupMetas, personMetaMap] = await Promise.all([
+  // 全データ並行取得（meta系はOrThrowで取得し、Redis失敗を検知する）
+  const [personsResult, groupMetasResult, personMetasResult] = await Promise.allSettled([
     getAllPersonsMerged(),
-    getAllGroupMetas(),
-    getAllPersonMetas(),
+    getAllGroupMetasOrThrow(),
+    getAllPersonMetasOrThrow(),
   ]);
+  const allPersons =
+    personsResult.status === 'fulfilled' ? personsResult.value : getAllPersonsWithConfig();
+  const allGroupMetas =
+    groupMetasResult.status === 'fulfilled' ? groupMetasResult.value : [];
+  const personMetaMap =
+    personMetasResult.status === 'fulfilled' ? personMetasResult.value : {};
+  const redisError =
+    groupMetasResult.status === 'rejected' || personMetasResult.status === 'rejected';
 
   // ── 人物フィルタ ──────────────────────────────────────────────────────────
   let persons: PersonWithConfig[];
@@ -205,6 +214,14 @@ export default async function SearchPage({ searchParams }: Props) {
       <div className="mb-6 max-w-2xl">
         <SearchForm defaultValue={query} suggestions={suggestions} />
       </div>
+
+      {/* Redis 一時エラー警告 */}
+      {redisError && (
+        <div className="mb-4 rounded-xl px-4 py-3 text-sm text-amber-700 bg-amber-50 border border-amber-200">
+          一部の検索機能（活動状態・世代・旧グループ名など）を一時的に取得できません。
+          人物・グループの基本検索は引き続き利用できます。
+        </div>
+      )}
 
       {/* 旧グループ名バナー（テーマ対応） */}
       {formerNameMatch && query && (
