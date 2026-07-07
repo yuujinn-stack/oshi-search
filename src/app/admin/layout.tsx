@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { href: '/admin/analytics',                  label: '📊 アナリティクス' },
   { href: '/admin/redis-backup',               label: '💾 バックアップ' },
   { href: '/admin/db-compare',                label: '🔄 DB検証' },
+  { href: '/admin/db-patch-products',         label: '🩹 DB補完' },
   { href: '/api/admin/logout',                 label: 'ログアウト', danger: true },
 ] as const;
 
