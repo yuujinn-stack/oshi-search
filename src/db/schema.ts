@@ -80,8 +80,9 @@ export const vodProviders = pgTable('vod_providers', {
 
 // ── 出演作品（works:{personName}）────────────────────────────────────────────
 // AIフィールドは ai_data JSONB、VODフィールドは vod_data JSONB にまとめる
+// id は TMDb ベース（tmdb-movie-xxxxx）のため複数人が同一 id を持つ → PK は (person_name, id)
 export const works = pgTable('works', {
-  id:              text('id').primaryKey(),
+  id:              text('id').notNull(),
   personName:      text('person_name').notNull(),
   title:           text('title').notNull(),
   originalTitle:   text('original_title'),
@@ -106,7 +107,7 @@ export const works = pgTable('works', {
   createdAt:       timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt:       timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
-  index('works_person_name_idx').on(t.personName),
+  primaryKey({ columns: [t.personName, t.id] }),
   index('works_status_idx').on(t.status),
 ]);
 
