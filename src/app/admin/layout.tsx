@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { href: '/admin/db-compare',                label: '🔄 DB検証' },
   { href: '/admin/db-patch-products',         label: '🩹 products補完' },
   { href: '/admin/db-patch-data',              label: '🔧 works/verdicts補完' },
+  { href: '/admin/db-patch-meta',              label: '🔧 meta補完' },
   { href: '/api/admin/logout',                 label: 'ログアウト', danger: true },
 ] as const;
 

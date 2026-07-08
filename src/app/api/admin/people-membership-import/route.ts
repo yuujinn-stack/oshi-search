@@ -269,7 +269,16 @@ export async function POST(req: Request) {
     const errors: string[] = [];
 
     for (const preview of previewRows) {
-      if (!preview.found || !preview.hasChanges) { skipped++; continue; }
+      if (!preview.found) { skipped++; continue; }
+      if (!preview.hasChanges) {
+        // 変更なしでも Redis 既存メタを DB に同期（デュアルライト実装前のデータ対応）
+        const existingMeta = metaMap[preview.name];
+        if (existingMeta) {
+          dbWrite(`person-meta/${preview.name}`, () => upsertPersonMeta(preview.name, existingMeta));
+        }
+        skipped++;
+        continue;
+      }
       try {
         const newMeta = applyChanges(metaMap[preview.name] ?? {}, preview.changes);
         await redis.hset(META_KEY, { [preview.name]: JSON.stringify(newMeta) });

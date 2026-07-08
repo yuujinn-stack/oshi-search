@@ -64,7 +64,11 @@ export async function ensureGroupMeta(groupName: string): Promise<boolean> {
   if (!groupName.trim()) return false;
   try {
     const existing = await getGroupMeta(groupName.trim());
-    if (existing) return false;
+    if (existing) {
+      // Redis に既存でも DB に未同期の可能性があるため upsert する
+      dbWrite(`group-meta/${groupName}`, () => upsertGroupMeta(existing));
+      return false;
+    }
     await saveGroupMeta({
       groupName: groupName.trim(),
       slug: encodeURIComponent(groupName.trim()),
