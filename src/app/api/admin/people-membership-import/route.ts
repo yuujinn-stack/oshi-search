@@ -4,6 +4,7 @@ import { ensureGroupMeta } from '@/lib/group-meta';
 import { getAllPersonsMerged } from '@/lib/persons';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import type { ActivityStatus, CareerStatus } from '@/types/person';
+import { dbWrite, upsertPersonMeta } from '@/db/write';
 
 // ── GET: グループメンバー or 個人 + 既存メタを返す（テンプレート生成用）──────
 export async function GET(req: Request) {
@@ -272,6 +273,7 @@ export async function POST(req: Request) {
       try {
         const newMeta = applyChanges(metaMap[preview.name] ?? {}, preview.changes);
         await redis.hset(META_KEY, { [preview.name]: JSON.stringify(newMeta) });
+        dbWrite(`person-meta/${preview.name}`, () => upsertPersonMeta(preview.name, newMeta));
 
         // グループ自動作成
         const groupsToEnsure = [

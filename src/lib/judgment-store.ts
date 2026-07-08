@@ -2,6 +2,7 @@
 // 同じ人物×商品の組み合わせではAIを再実行しない
 
 import { getRedis } from './redis';
+import { dbWrite, upsertVerdict } from '@/db/write';
 
 export type Verdict = 'related' | 'uncertain' | 'unrelated' | 'deleted';
 
@@ -68,6 +69,7 @@ export async function saveVerdict(
   if (!redis) return;
   const record: JudgmentRecord = { verdict, score, source, reason, timestamp: Date.now(), promptVersion };
   await redis.hset(hashKey(personName), { [productId]: JSON.stringify(record) });
+  dbWrite(`verdicts/${personName}/${productId}`, () => upsertVerdict(personName, productId, verdict, score, source, reason, promptVersion, record.timestamp));
 }
 
 // 判定結果を削除（リセット）
@@ -89,6 +91,10 @@ export async function bulkSaveVerdict(
   const fields: Record<string, string> = {};
   for (const id of productIds) fields[id] = JSON.stringify(record);
   await redis.hset(hashKey(personName), fields);
+  const now = Date.now();
+  for (const id of productIds) {
+    dbWrite(`verdicts/${personName}/${id}`, () => upsertVerdict(personName, id, verdict, 0, 'manual', undefined, undefined, now));
+  }
 }
 
 // 判定結果を適用して商品を表示/非表示にフィルタリング（ユーザーページ用）

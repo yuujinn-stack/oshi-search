@@ -2,6 +2,7 @@
 // バッチ・管理画面からのみ書き込み、人物ページから読み取る
 
 import { getRedis } from './redis';
+import { dbWrite, upsertWork } from '@/db/write';
 import type { WorkRecord, WorkStatus } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 
@@ -61,6 +62,7 @@ export async function saveWork(work: WorkRecord): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
   await redis.hset(hashKey(work.personName), { [work.id]: JSON.stringify(work) });
+  dbWrite(`works/${work.personName}/${work.id}`, () => upsertWork(work));
 }
 
 // 作品が存在しない場合のみ保存（統合CSVインポートでの重複防止）
@@ -70,6 +72,7 @@ export async function saveWorkIfAbsent(work: WorkRecord): Promise<'created' | 's
   const existing = await redis.hget(hashKey(work.personName), work.id);
   if (existing) return 'skipped';
   await redis.hset(hashKey(work.personName), { [work.id]: JSON.stringify(work) });
+  dbWrite(`works/${work.personName}/${work.id}`, () => upsertWork(work));
   return 'created';
 }
 
@@ -89,6 +92,7 @@ export async function updateWorkStatus(
     work.checkedAt = Date.now();
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    dbWrite(`works/${personName}/${workId}`, () => upsertWork(work));
   } catch { /* skip */ }
 }
 
@@ -112,6 +116,7 @@ export async function softDeleteWork(personName: string, workId: string): Promis
     work.deletedBy = 'manual';
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    dbWrite(`works/${personName}/${workId}`, () => upsertWork(work));
     return true;
   } catch { return false; }
 }
@@ -169,6 +174,7 @@ export async function updateWorkVod(
     if (options?.nextVodCheckAt !== undefined) work.nextVodCheckAt = options.nextVodCheckAt;
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    dbWrite(`works/${personName}/${workId}`, () => upsertWork(work));
   } catch { /* skip */ }
 }
 
@@ -204,6 +210,7 @@ export async function upsertManualCsvVodProviders(
     work.vodUpdatedAt = Date.now();
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    dbWrite(`works/${personName}/${workId}`, () => upsertWork(work));
     return { added, updated };
   } catch {
     return { added: 0, updated: 0 };
@@ -230,6 +237,7 @@ export async function syncManualCsvVodProviders(
     work.vodUpdatedAt = Date.now();
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    dbWrite(`works/${personName}/${workId}`, () => upsertWork(work));
     return { removed: removedCount, added: providers.length };
   } catch {
     return { removed: 0, added: 0 };
@@ -263,6 +271,7 @@ export async function hideVodProvider(
     work.vodUpdatedAt = Date.now();
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    dbWrite(`works/${personName}/${workId}`, () => upsertWork(work));
     return true;
   } catch { return false; }
 }
@@ -288,6 +297,7 @@ export async function addManualVodProvider(
     work.vodUpdatedAt = Date.now();
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    dbWrite(`works/${personName}/${workId}`, () => upsertWork(work));
   } catch { /* skip */ }
 }
 
@@ -309,6 +319,7 @@ export async function removeManualVodProvider(
     work.vodUpdatedAt = Date.now();
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    dbWrite(`works/${personName}/${workId}`, () => upsertWork(work));
   } catch { /* skip */ }
 }
 
@@ -335,6 +346,7 @@ export async function updateWorkVodCheckStatus(
     if (opts?.lastVodCheckAt !== undefined) work.lastVodCheckAt = opts.lastVodCheckAt;
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    dbWrite(`works/${personName}/${workId}`, () => upsertWork(work));
   } catch { /* skip */ }
 }
 
@@ -356,6 +368,7 @@ export async function setPriorityRecheck(
     }
     work.updatedAt = Date.now();
     await redis.hset(hashKey(personName), { [workId]: JSON.stringify(work) });
+    dbWrite(`works/${personName}/${workId}`, () => upsertWork(work));
   } catch { /* skip */ }
 }
 

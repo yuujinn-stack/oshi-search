@@ -11,6 +11,7 @@ import { saveImportHistory } from '@/lib/import-history';
 import { getRedis } from '@/lib/redis';
 import { ensureGroupMeta } from '@/lib/group-meta';
 import type { Genre, ActivityStatus } from '@/types/person';
+import { dbWrite, upsertPersonFromImport, upsertPersonMeta } from '@/db/write';
 
 const META_KEY = 'admin:person-meta';
 
@@ -238,6 +239,9 @@ export async function POST(req: NextRequest) {
     const errors: string[] = [];
     try {
       await saveImportedPersonsBatch(toAdd);
+      for (const p of toAdd) {
+        dbWrite(`imported-person/${p.name}`, () => upsertPersonFromImport(p));
+      }
     } catch (err) {
       errors.push(String(err));
     }
@@ -267,6 +271,7 @@ export async function POST(req: NextRequest) {
             updatedAt: Date.now(),
           };
           await redis.hset(META_KEY, { [r.name]: JSON.stringify(meta) });
+          dbWrite(`person-meta/${r.name}`, () => upsertPersonMeta(r.name, meta));
         } catch { /* meta 保存失敗は非致命的 */ }
       }
       // グループ自動作成（groupName / currentGroupName）

@@ -4,6 +4,7 @@
 
 import { getRedis } from './redis';
 import type { Genre } from '@/types/person';
+import { dbWrite, upsertPersonFromImport, updatePersonFetchStatusInDB } from '@/db/write';
 
 const HASH_KEY = 'imported:persons';
 
@@ -82,6 +83,9 @@ export async function saveImportedPersonsBatch(persons: ImportedPerson[]): Promi
     entries[p.name] = JSON.stringify(p);
   }
   await redis.hset(HASH_KEY, entries);
+  for (const p of persons) {
+    dbWrite(`imported-person/${p.name}`, () => upsertPersonFromImport(p));
+  }
 }
 
 export async function updateImportedPersonStatus(
@@ -104,6 +108,12 @@ export async function updateImportedPersonStatus(
     dataFetchErrorMessage: errorMessage ?? undefined,
   };
   await redis.hset(HASH_KEY, { [name]: JSON.stringify(updated) });
+  dbWrite(`imported-person-status/${name}`, () => updatePersonFetchStatusInDB(
+    name,
+    dataFetchStatus,
+    errorMessage,
+    updated.lastDataFetchedAt ? new Date(updated.lastDataFetchedAt) : undefined,
+  ));
 }
 
 export async function deleteImportedPerson(name: string): Promise<void> {

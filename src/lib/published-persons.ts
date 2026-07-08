@@ -5,6 +5,7 @@
 import { cache } from 'react';
 import { getRedis } from './redis';
 import type { PersonWithConfig } from '@/types/person';
+import { dbWrite, publishPersonInDB, unpublishPersonInDB } from '@/db/write';
 
 const HASH_KEY = 'persons:published';
 
@@ -79,10 +80,14 @@ export async function publishPersonsBatch(records: PublishedRecord[]): Promise<v
   }
   const result = await redis.hset(HASH_KEY, entries);
   console.log(`[published-persons] hset(${HASH_KEY}) wrote ${records.length} records, result=${result}`);
+  for (const r of records) {
+    dbWrite(`publish-person/${r.name}`, () => publishPersonInDB(r.name, r.publishedAt));
+  }
 }
 
 export async function unpublishPerson(name: string): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
   await redis.hdel(HASH_KEY, name);
+  dbWrite(`unpublish-person/${name}`, () => unpublishPersonInDB(name));
 }

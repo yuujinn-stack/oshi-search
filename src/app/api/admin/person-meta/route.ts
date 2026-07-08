@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedis } from '@/lib/redis';
 import { ensureGroupMeta } from '@/lib/group-meta';
+import { dbWrite, upsertPersonMeta } from '@/db/write';
 import type { PersonPriority } from '@/app/admin/work-check/work-check-types';
 import type { ActivityStatus, CareerStatus } from '@/types/person';
 
@@ -106,6 +107,7 @@ export async function POST(req: NextRequest) {
   };
 
   await redis.hset(META_KEY, { [personName]: JSON.stringify(updated) });
+  dbWrite(`person-meta/${personName}`, () => upsertPersonMeta(personName, updated));
 
   // currentGroupName が設定されていれば GroupMeta を自動作成
   if (currentGroupName) {

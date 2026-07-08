@@ -2,6 +2,7 @@
 // バッチ処理でのみ書き込み、人物ページと管理画面から読み取る
 
 import { getRedis } from './redis';
+import { dbWrite, upsertProduct } from '@/db/write';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
 
@@ -50,6 +51,7 @@ export async function storeProducts(
 
   const data: StoredCategoryData = { products: finalProducts, fetchedAt: Date.now() };
   await redis.hset(hashKey(personName), { [category]: JSON.stringify(data) });
+  dbWrite(`products/${personName}/${category}`, () => upsertProduct(personName, category, finalProducts, data.fetchedAt));
 }
 
 // 手動追加: カテゴリに商品を1件追加（既存商品は保持）
@@ -74,6 +76,7 @@ export async function appendProductToCategory(
   if (dup) return 'duplicate';
   existing.products = [...existing.products, product];
   await redis.hset(hashKey(personName), { [category]: JSON.stringify(existing) });
+  dbWrite(`products/${personName}/${category}`, () => upsertProduct(personName, category, existing.products, existing.fetchedAt));
   return 'created';
 }
 
@@ -94,6 +97,7 @@ export async function updateProductInCategory(
     if (idx === -1) return false;
     existing.products[idx] = { ...existing.products[idx], ...updates };
     await redis.hset(hashKey(personName), { [category]: JSON.stringify(existing) });
+    dbWrite(`products/${personName}/${category}`, () => upsertProduct(personName, category, existing.products, existing.fetchedAt));
     return true;
   } catch {
     return false;

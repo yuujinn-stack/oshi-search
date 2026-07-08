@@ -1,5 +1,6 @@
 import { getRedis } from '@/lib/redis';
 import type { GroupMeta } from '@/types/group';
+import { dbWrite, upsertGroupMeta } from '@/db/write';
 
 const REDIS_KEY = 'admin:groups';
 
@@ -50,6 +51,7 @@ export async function saveGroupMeta(meta: GroupMeta): Promise<void> {
   if (!redis) throw new Error('Redis unavailable');
   meta.updatedAt = Date.now();
   await redis.hset(REDIS_KEY, { [meta.groupName]: JSON.stringify(meta) });
+  dbWrite(`group-meta/${meta.groupName}`, () => upsertGroupMeta(meta));
 }
 
 export async function deleteGroupMeta(groupName: string): Promise<void> {

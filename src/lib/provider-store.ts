@@ -2,6 +2,7 @@
 // 管理画面からのみ書き込み、ProviderLogo コンポーネントから読み取る
 
 import { getRedis } from './redis';
+import { dbWrite, upsertVodProvider } from '@/db/write';
 
 const HASH_KEY = 'vod:providers';
 
@@ -70,6 +71,7 @@ export async function saveProvider(record: ProviderRecord): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
   await redis.hset(HASH_KEY, { [record.slug]: JSON.stringify(record) });
+  dbWrite(`vod-providers/${record.slug}`, () => upsertVodProvider(record));
 }
 
 export async function deleteProvider(slug: string): Promise<void> {
