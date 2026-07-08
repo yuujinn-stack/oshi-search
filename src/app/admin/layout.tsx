@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 
+export const dynamic = 'force-dynamic';
+
 const NAV_ITEMS = [
   { href: '/admin/people/import',              label: '人物登録' },
   { href: '/admin/people-progress',            label: '進捗管理' },
