@@ -2,6 +2,9 @@
 // 管理画面からのみ書き込み、ProviderLogo コンポーネントから読み取る
 
 import { getRedis } from './redis';
+import { isDbReadEnabled } from './db-flag';
+import { db } from '@/db/client';
+import { vodProviders as vodProvidersTable } from '@/db/schema';
 import { dbWrite, upsertVodProvider } from '@/db/write';
 
 const HASH_KEY = 'vod:providers';
@@ -16,43 +19,62 @@ export interface ProviderRecord {
   updatedAt: number;
 }
 
+// DB行 → ProviderRecord マッピング（id は DB に存在しないため slug で代替）
+function dbRowToProviderRecord(r: typeof vodProvidersTable.$inferSelect): ProviderRecord {
+  return {
+    id:        r.slug,
+    name:      r.name,
+    slug:      r.slug,
+    logoUrl:   r.logoUrl,
+    isActive:  r.isActive,
+    createdAt: r.createdAt.getTime(),
+    updatedAt: r.updatedAt.getTime(),
+  };
+}
+
+function redisParseProviders(raw: Record<string, unknown>): ProviderRecord[] {
+  return Object.values(raw)
+    .map((v) => {
+      try { return (typeof v === 'string' ? JSON.parse(v) : v) as ProviderRecord; }
+      catch { return null; }
+    })
+    .filter((p): p is ProviderRecord => p !== null)
+    .sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
 export async function getAllProviders(): Promise<ProviderRecord[]> {
+  if (isDbReadEnabled()) {
+    try {
+      const rows = await db.select().from(vodProvidersTable);
+      return rows.map(dbRowToProviderRecord).sort((a, b) => a.slug.localeCompare(b.slug));
+    } catch (err) {
+      console.warn('[db-read] FALLBACK getAllProviders:', String(err));
+    }
+  }
   const redis = getRedis();
   if (!redis) return [];
   try {
     const raw = await redis.hgetall(HASH_KEY);
     if (!raw) return [];
-    return Object.values(raw)
-      .map((v) => {
-        try {
-          return (typeof v === 'string' ? JSON.parse(v) : v) as ProviderRecord;
-        } catch {
-          return null;
-        }
-      })
-      .filter((p): p is ProviderRecord => p !== null)
-      .sort((a, b) => a.slug.localeCompare(b.slug));
-  } catch {
-    return [];
-  }
+    return redisParseProviders(raw);
+  } catch { return []; }
 }
 
 // Redis エラー時に throw する版（管理画面で error/empty を区別するために使う）
 export async function getAllProvidersOrThrow(): Promise<ProviderRecord[]> {
+  if (isDbReadEnabled()) {
+    try {
+      const rows = await db.select().from(vodProvidersTable);
+      return rows.map(dbRowToProviderRecord).sort((a, b) => a.slug.localeCompare(b.slug));
+    } catch (err) {
+      console.warn('[db-read] FALLBACK getAllProvidersOrThrow:', String(err));
+    }
+  }
   const redis = getRedis();
   if (!redis) return [];
   const raw = await redis.hgetall(HASH_KEY); // エラー時は throw
   if (!raw) return [];
-  return Object.values(raw)
-    .map((v) => {
-      try {
-        return (typeof v === 'string' ? JSON.parse(v) : v) as ProviderRecord;
-      } catch {
-        return null;
-      }
-    })
-    .filter((p): p is ProviderRecord => p !== null)
-    .sort((a, b) => a.slug.localeCompare(b.slug));
+  return redisParseProviders(raw);
 }
 
 // アクティブなプロバイダーの slug → logoUrl マップを返す（/api/providers 用）
