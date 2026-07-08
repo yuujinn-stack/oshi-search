@@ -19,6 +19,10 @@ export interface EntitySummary {
   dbCount: number;
   match: boolean;
   note?: string;
+  /** パターンキーのみ: Redis 側のユニーク人物数 */
+  personCount?: number;
+  /** パターンキーのみ: DB 側のユニーク人物数 */
+  dbPersonCount?: number;
 }
 
 export interface PersonDiscrepancy {
@@ -46,7 +50,8 @@ async function scanKeys(redis: Redis, pattern: string): Promise<string[]> {
   const keys: string[] = [];
   let cursor = 0;
   do {
-    const [cur, batch] = await redis.scan(cursor, { match: pattern, count: 100 });
+    // count: 200 で db-patch-products と同じ hint に統一
+    const [cur, batch] = await redis.scan(cursor, { match: pattern, count: 200 });
     cursor = Number(cur);
     keys.push(...(batch as string[]));
   } while (cursor !== 0);
@@ -96,27 +101,8 @@ export async function compareRedisAndDB(): Promise<CompareResult> {
   }
 
   try {
-    // Redis の固定キーと可変キーを並行取得
-    const [
-      rImported, rPublished, rPersonMeta, rGroupMeta, rProviders,
-      worksData, productsData, verdictsData,
-      // DB カウント（Redis と並行）
-      dImported, dPublished, dPersonMeta, dGroupMeta, dProviders,
-      dWorks, dProducts, dVerdicts,
-      // DB の人物別件数
-      dbWorksByPerson, dbProductsByPerson, dbVerdictsByPerson,
-    ] = await Promise.all([
-      // Redis 固定キー（pipeline で一括）
-      redis.hlen('imported:persons'),
-      redis.hlen('persons:published'),
-      redis.hlen('admin:person-meta'),
-      redis.hlen('admin:groups'),
-      redis.hlen('vod:providers'),
-      // Redis パターンキー
-      getCountsByPattern(redis, 'works:*', 'works:'),
-      getCountsByPattern(redis, 'products:*', 'products:'),
-      getCountsByPattern(redis, 'verdicts:*', 'verdicts:'),
-      // DB カウント
+    // フェーズ1: DB クエリを先に発火（Neon は Upstash と独立した接続）
+    const dbPromise = Promise.all([
       countPersonsImported(),
       countPersonsPublished(),
       countPersonMeta(),
@@ -125,11 +111,32 @@ export async function compareRedisAndDB(): Promise<CompareResult> {
       countWorks(),
       countProducts(),
       countVerdicts(),
-      // DB 人物別件数
       getWorksCountByPerson(),
       getProductsCountByPerson(),
       getVerdictsCountByPerson(),
     ]);
+
+    // フェーズ2: Redis 固定キー（軽量な hlen 5本を並行）
+    const [rImported, rPublished, rPersonMeta, rGroupMeta, rProviders] = await Promise.all([
+      redis.hlen('imported:persons'),
+      redis.hlen('persons:published'),
+      redis.hlen('admin:person-meta'),
+      redis.hlen('admin:groups'),
+      redis.hlen('vod:providers'),
+    ]);
+
+    // フェーズ3: Redis パターンスキャンを順次実行
+    // 並行すると Upstash REST pipeline の結果が欠落することがあるため、1本ずつ完結させる
+    const worksData    = await getCountsByPattern(redis, 'works:*',    'works:');
+    const productsData = await getCountsByPattern(redis, 'products:*', 'products:');
+    const verdictsData = await getCountsByPattern(redis, 'verdicts:*', 'verdicts:');
+
+    // DB 結果を受け取る
+    const [
+      dImported, dPublished, dPersonMeta, dGroupMeta, dProviders,
+      dWorks, dProducts, dVerdicts,
+      dbWorksByPerson, dbProductsByPerson, dbVerdictsByPerson,
+    ] = await dbPromise;
 
     // ── サマリー作成 ──────────────────────────────────────────────────────────
     const summary: EntitySummary[] = [
@@ -175,6 +182,8 @@ export async function compareRedisAndDB(): Promise<CompareResult> {
         redisCount: worksData.total,
         dbCount: dWorks,
         match: worksData.total === dWorks,
+        personCount: worksData.byPerson.size,
+        dbPersonCount: dbWorksByPerson.size,
       },
       {
         label: '商品',
@@ -182,6 +191,8 @@ export async function compareRedisAndDB(): Promise<CompareResult> {
         redisCount: productsData.total,
         dbCount: dProducts,
         match: productsData.total === dProducts,
+        personCount: productsData.byPerson.size,
+        dbPersonCount: dbProductsByPerson.size,
       },
       {
         label: 'AI判定',
@@ -189,6 +200,8 @@ export async function compareRedisAndDB(): Promise<CompareResult> {
         redisCount: verdictsData.total,
         dbCount: dVerdicts,
         match: verdictsData.total === dVerdicts,
+        personCount: verdictsData.byPerson.size,
+        dbPersonCount: dbVerdictsByPerson.size,
       },
     ];
 
@@ -215,9 +228,9 @@ export async function compareRedisAndDB(): Promise<CompareResult> {
       }
     };
 
-    checkByPerson('works',    worksData.byPerson,    dbWorksByPerson);
-    checkByPerson('products', productsData.byPerson,  dbProductsByPerson);
-    checkByPerson('verdicts', verdictsData.byPerson,  dbVerdictsByPerson);
+    checkByPerson('works',    worksData.byPerson,   dbWorksByPerson);
+    checkByPerson('products', productsData.byPerson, dbProductsByPerson);
+    checkByPerson('verdicts', verdictsData.byPerson, dbVerdictsByPerson);
 
     // 人物名でソート
     personDiscrepancies.sort((a, b) => a.personName.localeCompare(b.personName, 'ja'));

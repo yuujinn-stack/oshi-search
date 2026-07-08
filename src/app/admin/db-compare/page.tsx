@@ -40,7 +40,14 @@ function SummaryTable({ rows }: { rows: EntitySummary[] }) {
             <td className="px-3 py-2 text-center">
               <MatchBadge match={row.match} />
             </td>
-            <td className="px-3 py-2 text-slate-500 text-xs">{row.note ?? ''}</td>
+            <td className="px-3 py-2 text-slate-500 text-xs">
+              {row.personCount !== undefined && (
+                <span className="block text-slate-400">
+                  Redis {row.personCount}人 / DB {row.dbPersonCount}人
+                </span>
+              )}
+              {row.note && <span>{row.note}</span>}
+            </td>
           </tr>
         ))}
       </tbody>
