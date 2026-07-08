@@ -30,8 +30,10 @@ export async function GET() {
     const rows = result as unknown as Array<{ db_name: string }>;
     const dbName = rows[0]?.db_name ?? '(unknown)';
 
-    return NextResponse.json({ dbName, urlHint });
+    const vercelEnv = process.env.VERCEL_ENV ?? 'development';
+    return NextResponse.json({ dbName, urlHint, vercelEnv });
   } catch (err) {
-    return NextResponse.json({ error: String(err), urlHint }, { status: 500 });
+    const vercelEnv = process.env.VERCEL_ENV ?? 'development';
+    return NextResponse.json({ error: String(err), urlHint, vercelEnv }, { status: 500 });
   }
 }

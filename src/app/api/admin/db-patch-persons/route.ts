@@ -78,7 +78,16 @@ export async function GET() {
   });
 }
 
+// Production と Preview が同じ DB を共有している場合の誤実行を防ぐ
+const SEED_BLOCKED_ENVS = ['production', 'preview'];
+
 export async function POST() {
+  if (SEED_BLOCKED_ENVS.includes(process.env.VERCEL_ENV ?? '')) {
+    return NextResponse.json(
+      { error: `VERCEL_ENV=${process.env.VERCEL_ENV} ではシードを実行できません。本番DBへの再投入を避けるためブロックしています。` },
+      { status: 403 },
+    );
+  }
   const redis = getRedis();
   if (!redis) return NextResponse.json({ error: 'Redis未接続' }, { status: 503 });
 
