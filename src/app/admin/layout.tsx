@@ -22,6 +22,7 @@ const NAV_ITEMS = [
   { href: '/admin/db-patch-meta',              label: '🔧 meta補完' },
   { href: '/admin/db-init',                    label: '🗄️ DBスキーマ初期化' },
   { href: '/admin/db-seed',                    label: '🌱 DBシード' },
+  { href: '/admin/db-diff-products',            label: '🔍 products差分' },
   { href: '/api/admin/logout',                 label: 'ログアウト', danger: true },
 ] as const;
 
