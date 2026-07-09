@@ -17,14 +17,23 @@ interface DiffEntry {
   dbItemCount: number | null;
   redisItemCount: number | null;
   fetchedAt: string | null;
-  sampleItemName: string | null;
+  // 先頭 3 件のサンプル商品名（itemName）
+  sampleItems: string[];
   sampleShopName: string | null;
+}
+
+export interface DbOnlyAnalysis {
+  schemaNote: string;
+  distinctPersons: string[];
+  fetchedAtMin: string | null;
+  fetchedAtMax: string | null;
+  totalDbItemCount: number;
+  originHint: string;
+  verdict: 'real-data' | 'likely-real' | 'unknown' | 'test-data';
 }
 
 // ── ユーティリティ ───────────────────────────────────────────────────────────
 
-/** db.execute() の戻り値は NeonHttpQueryResult (配列継承版) かオブジェクト版かバージョンで異なる。
- *  どちらでも安全に行配列を取り出す。 */
 function extractRows<T>(result: unknown): T[] {
   if (Array.isArray(result)) return result as T[];
   if (result && typeof result === 'object') {
@@ -34,8 +43,6 @@ function extractRows<T>(result: unknown): T[] {
   return [];
 }
 
-/** Redis hgetall の戻り値を安全に Record<string, string> に正規化する。
- *  null / undefined / string / 想定外型はすべて {} を返す。 */
 function normalizeHash(v: unknown): Record<string, string> {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
   const obj = v as Record<string, unknown>;
@@ -44,15 +51,12 @@ function normalizeHash(v: unknown): Record<string, string> {
     if (typeof val === 'string') {
       out[k] = val;
     } else if (val !== null && val !== undefined) {
-      // オブジェクトが既に parse 済みの場合は JSON.stringify で文字列化して保持
       try { out[k] = JSON.stringify(val); } catch { /* skip */ }
     }
   }
   return out;
 }
 
-/** Redis に格納された 1 カテゴリ値から items 件数を安全に取得する。
- *  壊れた値は malformed とみなし 0 を返す。 */
 function parseRedisItemCount(raw: string): { count: number; malformed: boolean } {
   if (!raw || raw.trim() === '') return { count: 0, malformed: true };
   try {
@@ -67,6 +71,123 @@ function parseRedisItemCount(raw: string): { count: number; malformed: boolean }
   }
 }
 
+function toFetchedAt(v: unknown): string | null {
+  if (!v) return null;
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === 'string') return v;
+  return null;
+}
+
+function toItemCount(v: unknown): number {
+  const n = Number(v);
+  return isNaN(n) ? 0 : n;
+}
+
+function safeString(v: unknown): string | null {
+  if (typeof v === 'string' && v.trim() !== '') return v;
+  return null;
+}
+
+function sortEntries(a: DiffEntry, b: DiffEntry): number {
+  return a.personName.localeCompare(b.personName, 'ja') || a.category.localeCompare(b.category);
+}
+
+// ── 起源判断ロジック ────────────────────────────────────────────────────────
+
+const REAL_CATEGORIES = new Set([
+  'CD', 'Blu-ray・DVD', '写真集', '本', 'DVD', 'Blu-ray',
+  '楽器', 'グッズ', 'ゲーム', 'フィギュア', '雑誌',
+]);
+
+function analyzeDbOnly(entries: DiffEntry[]): DbOnlyAnalysis {
+  const schemaNote =
+    'products テーブルには source / created_at / updated_at カラムは存在しません。' +
+    '判断に使える情報: fetched_at（取得日時）と items JSONB（楽天商品配列）のみです。';
+
+  if (entries.length === 0) {
+    return {
+      schemaNote,
+      distinctPersons: [],
+      fetchedAtMin: null,
+      fetchedAtMax: null,
+      totalDbItemCount: 0,
+      originHint: 'DB のみエントリなし',
+      verdict: 'real-data',
+    };
+  }
+
+  const distinctPersons = [...new Set(entries.map((e) => e.personName))].sort((a, b) =>
+    a.localeCompare(b, 'ja'),
+  );
+
+  const fetchedAts = entries
+    .map((e) => e.fetchedAt)
+    .filter((v): v is string => v !== null)
+    .sort();
+  const fetchedAtMin = fetchedAts[0] ?? null;
+  const fetchedAtMax = fetchedAts[fetchedAts.length - 1] ?? null;
+
+  const totalDbItemCount = entries.reduce((s, e) => s + (e.dbItemCount ?? 0), 0);
+
+  // カテゴリが実際の楽天カテゴリか判定
+  const realCatCount = entries.filter((e) => REAL_CATEGORIES.has(e.category)).length;
+  const realCatRatio = entries.length > 0 ? realCatCount / entries.length : 0;
+
+  // 商品名サンプルが含まれているか
+  const hasSampleItems = entries.some((e) => e.sampleItems.length > 0);
+
+  // fetched_at が今日かどうか
+  const today = new Date().toISOString().slice(0, 10);
+  const isFetchedToday =
+    fetchedAtMin !== null &&
+    fetchedAtMin.slice(0, 10) === today;
+
+  // fetched_at が一定範囲に集中しているか（バッチ取得らしい）
+  const isClusteredFetch =
+    fetchedAtMin !== null &&
+    fetchedAtMax !== null &&
+    Math.abs(new Date(fetchedAtMax).getTime() - new Date(fetchedAtMin).getTime()) < 60 * 60 * 1000; // 1時間以内
+
+  let originHint = '';
+  let verdict: DbOnlyAnalysis['verdict'] = 'unknown';
+
+  if (realCatRatio >= 0.8 && hasSampleItems && totalDbItemCount > 10) {
+    if (isFetchedToday && isClusteredFetch) {
+      originHint =
+        `fetched_at が今日(${today})で1時間以内に集中 → 楽天商品バッチ取得で dual-write されたデータの可能性が高い。` +
+        `Redis 側の書き込みが失敗（fire-and-forget のため無音）した可能性あり。正当な商品データとみなせる。`;
+      verdict = 'real-data';
+    } else if (isFetchedToday) {
+      originHint =
+        `fetched_at が今日(${today})。カテゴリ(${Math.round(realCatRatio * 100)}%)が実楽天カテゴリ。` +
+        `商品サンプルあり。正当な楽天商品データとみなせる。`;
+      verdict = 'real-data';
+    } else {
+      originHint =
+        `カテゴリ(${Math.round(realCatRatio * 100)}%)が実楽天カテゴリで商品サンプルあり。` +
+        `fetched_at: ${fetchedAtMin?.slice(0, 10) ?? '不明'} 〜 ${fetchedAtMax?.slice(0, 10) ?? '不明'}。` +
+        `正当な楽天商品データの可能性が高い。`;
+      verdict = 'likely-real';
+    }
+  } else if (totalDbItemCount === 0) {
+    originHint = `items が全件 0 件。空データのみ → テスト実行やマイグレーション残留の可能性あり。`;
+    verdict = 'test-data';
+  } else {
+    originHint = `カテゴリや商品名から起源を特定できませんでした。手動で内容を確認してください。`;
+    verdict = 'unknown';
+  }
+
+  return {
+    schemaNote,
+    distinctPersons,
+    fetchedAtMin,
+    fetchedAtMax,
+    totalDbItemCount,
+    originHint,
+    verdict,
+  };
+}
+
 // ── Redis ヘルパー ────────────────────────────────────────────────────────────
 
 async function scanProductKeys(redis: NonNullable<ReturnType<typeof getRedis>>): Promise<string[]> {
@@ -75,7 +196,6 @@ async function scanProductKeys(redis: NonNullable<ReturnType<typeof getRedis>>):
   let guard = 0;
   do {
     const scanResult = await redis.scan(cursor, { match: 'products:*', count: 200 });
-    // scan は [cursor, keys] の2要素タプルを返す
     if (!Array.isArray(scanResult) || scanResult.length < 2) break;
     cursor = Number(scanResult[0]);
     const batch = scanResult[1];
@@ -85,8 +205,6 @@ async function scanProductKeys(redis: NonNullable<ReturnType<typeof getRedis>>):
   return keys.sort();
 }
 
-/** Promise.all で全キーを並行取得し redisMap を構築する。
- *  pipeline は型の不確実性が高いため使用しない。 */
 async function buildRedisMap(
   redis: NonNullable<ReturnType<typeof getRedis>>,
   keys: string[],
@@ -95,25 +213,21 @@ async function buildRedisMap(
   let malformedCount = 0;
   if (keys.length === 0) return { map, malformedCount };
 
-  // Upstash は HTTP ベースのため Promise.all は TCP 並列ではなく HTTP パイプライン
-  // 1 回のリクエストに制限はないが、件数が多い場合は 50 件ずつバッチ処理する
-  const BATCH_SIZE = 50;
-  for (let start = 0; start < keys.length; start += BATCH_SIZE) {
-    const batch = keys.slice(start, start + BATCH_SIZE);
+  const BATCH = 50;
+  for (let start = 0; start < keys.length; start += BATCH) {
+    const chunk = keys.slice(start, start + BATCH);
     const results = await Promise.all(
-      batch.map((key) =>
+      chunk.map((key) =>
         redis.hgetall(key).catch((e) => {
-          console.warn('[db-diff-products] hgetall error', key, String(e).slice(0, 60));
+          console.warn('[db-diff-products] hgetall error', key.slice(0, 40), String(e).slice(0, 60));
           return null;
         }),
       ),
     );
-
-    for (let i = 0; i < batch.length; i++) {
-      const key = batch[i];
+    for (let i = 0; i < chunk.length; i++) {
+      const key = chunk[i];
       const personName = key.replace(/^products:/, '');
       const hash = normalizeHash(results[i]);
-
       for (const [category, rawValue] of Object.entries(hash)) {
         const { count, malformed } = parseRedisItemCount(rawValue);
         if (malformed) malformedCount++;
@@ -121,7 +235,6 @@ async function buildRedisMap(
       }
     }
   }
-
   return { map, malformedCount };
 }
 
@@ -132,12 +245,14 @@ interface DbRow {
   category: string;
   fetched_at: unknown;
   item_count: unknown;
-  sample_item_name: unknown;
+  // 先頭 3 件のサンプル商品名
+  sample_item_0: unknown;
+  sample_item_1: unknown;
+  sample_item_2: unknown;
   sample_shop_name: unknown;
 }
 
 async function fetchDbRows(): Promise<DbRow[]> {
-  // db.execute() の戻り値形式はバージョンで異なるため extractRows() で正規化する
   const result = await db.execute(sql`
     SELECT
       person_name,
@@ -147,29 +262,14 @@ async function fetchDbRows(): Promise<DbRow[]> {
         CASE WHEN jsonb_typeof(items) = 'array' THEN jsonb_array_length(items) ELSE 0 END,
         0
       ) AS item_count,
-      CASE WHEN jsonb_typeof(items) = 'array' THEN items->0->>'itemName' ELSE NULL END AS sample_item_name,
+      CASE WHEN jsonb_typeof(items) = 'array' THEN items->0->>'itemName' ELSE NULL END AS sample_item_0,
+      CASE WHEN jsonb_typeof(items) = 'array' THEN items->1->>'itemName' ELSE NULL END AS sample_item_1,
+      CASE WHEN jsonb_typeof(items) = 'array' THEN items->2->>'itemName' ELSE NULL END AS sample_item_2,
       CASE WHEN jsonb_typeof(items) = 'array' THEN items->0->>'shopName' ELSE NULL END AS sample_shop_name
     FROM products
     ORDER BY person_name, category
   `);
   return extractRows<DbRow>(result);
-}
-
-function toFetchedAt(v: unknown): string | null {
-  if (!v) return null;
-  if (v instanceof Date) return v.toISOString();
-  if (typeof v === 'string') return v;
-  return null;
-}
-
-function toItemCount(v: unknown): number {
-  if (v === null || v === undefined) return 0;
-  const n = Number(v);
-  return isNaN(n) ? 0 : n;
-}
-
-function sortEntries(a: DiffEntry, b: DiffEntry): number {
-  return a.personName.localeCompare(b.personName, 'ja') || a.category.localeCompare(b.category);
 }
 
 // ── GET ─────────────────────────────────────────────────────────────────────
@@ -184,7 +284,7 @@ export async function GET() {
       );
     }
 
-    // ── Stage 1: DB クエリ ────────────────────────────────────────────────
+    // Stage 1: DB
     let dbRows: DbRow[] = [];
     try {
       dbRows = await fetchDbRows();
@@ -195,7 +295,7 @@ export async function GET() {
       return NextResponse.json({ error: `DB クエリエラー: ${msg}` }, { status: 500 });
     }
 
-    // ── Stage 2: Redis SCAN ───────────────────────────────────────────────
+    // Stage 2: Redis SCAN
     let redisKeys: string[] = [];
     try {
       redisKeys = await scanProductKeys(redis);
@@ -206,13 +306,13 @@ export async function GET() {
       return NextResponse.json({ error: `Redis SCAN エラー: ${msg}` }, { status: 500 });
     }
 
-    // ── Stage 3: Redis hgetall (バッチ) ──────────────────────────────────
+    // Stage 3: Redis hgetall (バッチ)
     let redisMap: Map<string, number>;
     let malformedCount = 0;
     try {
-      const result = await buildRedisMap(redis, redisKeys);
-      redisMap = result.map;
-      malformedCount = result.malformedCount;
+      const r = await buildRedisMap(redis, redisKeys);
+      redisMap = r.map;
+      malformedCount = r.malformedCount;
       console.log(`[db-diff-products] Redis: ${redisMap.size}エントリ malformed=${malformedCount}`);
     } catch (err) {
       const msg = String(err).slice(0, 200);
@@ -220,7 +320,7 @@ export async function GET() {
       return NextResponse.json({ error: `Redis hgetall エラー: ${msg}` }, { status: 500 });
     }
 
-    // ── Stage 4: 差分計算 ─────────────────────────────────────────────────
+    // Stage 4: 差分計算
     const dbMap = new Map<string, DbRow>();
     for (const row of dbRows) {
       if (row && typeof row.person_name === 'string' && typeof row.category === 'string') {
@@ -233,8 +333,14 @@ export async function GET() {
     const bothDiff: DiffEntry[] = [];
 
     for (const [compositeKey, row] of dbMap.entries()) {
-      const dbCount = toItemCount(row.item_count);
+      const dbCount    = toItemCount(row.item_count);
       const redisCount = redisMap.get(compositeKey);
+
+      const sampleItems = [
+        safeString(row.sample_item_0),
+        safeString(row.sample_item_1),
+        safeString(row.sample_item_2),
+      ].filter((s): s is string => s !== null);
 
       const entry: DiffEntry = {
         personName:     row.person_name,
@@ -242,8 +348,8 @@ export async function GET() {
         dbItemCount:    dbCount,
         redisItemCount: redisCount ?? null,
         fetchedAt:      toFetchedAt(row.fetched_at),
-        sampleItemName: typeof row.sample_item_name === 'string' ? row.sample_item_name : null,
-        sampleShopName: typeof row.sample_shop_name === 'string' ? row.sample_shop_name : null,
+        sampleItems,
+        sampleShopName: safeString(row.sample_shop_name),
       };
 
       if (redisCount === undefined) {
@@ -263,7 +369,7 @@ export async function GET() {
           dbItemCount:    null,
           redisItemCount: redisCount,
           fetchedAt:      null,
-          sampleItemName: null,
+          sampleItems:    [],
           sampleShopName: null,
         });
       }
@@ -272,6 +378,9 @@ export async function GET() {
     dbOnly.sort(sortEntries);
     redisOnly.sort(sortEntries);
     bothDiff.sort(sortEntries);
+
+    // Stage 5: 起源分析
+    const dbOnlyAnalysis = analyzeDbOnly(dbOnly);
 
     return NextResponse.json({
       summary: {
@@ -283,6 +392,7 @@ export async function GET() {
         malformedRedisCount: malformedCount,
         truncatedAt:         MAX_ENTRIES_PER_SECTION,
       },
+      dbOnlyAnalysis,
       dbOnly:    dbOnly.slice(0,    MAX_ENTRIES_PER_SECTION),
       redisOnly: redisOnly.slice(0, MAX_ENTRIES_PER_SECTION),
       bothDiff:  bothDiff.slice(0,  MAX_ENTRIES_PER_SECTION),
