@@ -84,10 +84,10 @@ const STRUCTURE_BADGE: Record<StructureClass, { cls: string; label: string }> = 
 };
 
 const VERDICT_STYLE: Record<string, { bg: string; text: string; label: string }> = {
-  'real-data':    { bg: 'bg-green-50 border-green-200',  text: 'text-green-800',  label: '✓ 正当なデータ — 削除不要' },
-  'likely-real':  { bg: 'bg-blue-50 border-blue-200',    text: 'text-blue-800',   label: '○ 正当データの可能性大 — 削除不要' },
-  'unknown':      { bg: 'bg-amber-50 border-amber-200',  text: 'text-amber-800',  label: '? 判定不能 — 手動確認が必要' },
-  'test-data':    { bg: 'bg-red-50 border-red-200',      text: 'text-red-800',    label: '✗ テスト/不要データの可能性あり — 削除候補' },
+  'real-data':    { bg: 'bg-green-50 border-green-200',  text: 'text-green-800',  label: '✓ 正常商品あり — 削除不要' },
+  'likely-real':  { bg: 'bg-blue-50 border-blue-200',    text: 'text-blue-800',   label: '○ 正常商品データの可能性大 — 削除不要' },
+  'unknown':      { bg: 'bg-amber-50 border-amber-200',  text: 'text-amber-800',  label: '? 商品名取得不可 — 手動確認が必要' },
+  'test-data':    { bg: 'bg-red-50 border-red-200',      text: 'text-red-800',    label: '✗ 商品データなし — テスト/残留データの可能性あり' },
 };
 
 function fmtDate(v: string | null): string {

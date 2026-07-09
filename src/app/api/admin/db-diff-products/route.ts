@@ -106,9 +106,10 @@ function sortEntries(a: DiffEntry, b: DiffEntry): number {
 
 // ── 起源判断ロジック ────────────────────────────────────────────────────────
 
+// product-store.ts の CATEGORIES と一致させる（本・雑誌, 中古 を含む）
 const REAL_CATEGORIES = new Set([
-  'CD', 'Blu-ray・DVD', '写真集', '本', 'DVD', 'Blu-ray',
-  '楽器', 'グッズ', 'ゲーム', 'フィギュア', '雑誌',
+  'CD', 'Blu-ray・DVD', '写真集', '本', '本・雑誌', 'DVD', 'Blu-ray',
+  '楽器', 'グッズ', 'ゲーム', 'フィギュア', '雑誌', '中古',
 ]);
 
 function analyzeDbOnly(entries: DiffEntry[]): DbOnlyAnalysis {
@@ -163,29 +164,39 @@ function analyzeDbOnly(entries: DiffEntry[]): DbOnlyAnalysis {
   let originHint = '';
   let verdict: DbOnlyAnalysis['verdict'] = 'unknown';
 
-  if (realCatRatio >= 0.8 && hasSampleItems && totalDbItemCount > 10) {
-    if (isFetchedToday && isClusteredFetch) {
-      originHint =
-        `fetched_at が今日(${today})で1時間以内に集中 → 楽天商品バッチ取得で dual-write されたデータの可能性が高い。` +
-        `Redis 側の書き込みが失敗（fire-and-forget のため無音）した可能性あり。正当な商品データとみなせる。`;
-      verdict = 'real-data';
-    } else if (isFetchedToday) {
-      originHint =
-        `fetched_at が今日(${today})。カテゴリ(${Math.round(realCatRatio * 100)}%)が実楽天カテゴリ。` +
-        `商品サンプルあり。正当な楽天商品データとみなせる。`;
-      verdict = 'real-data';
+  if (hasSampleItems && totalDbItemCount > 0) {
+    // 商品名（title）が取得できている → 正常な楽天商品データ
+    const dateRange = `${fetchedAtMin?.slice(0, 10) ?? '不明'} 〜 ${fetchedAtMax?.slice(0, 10) ?? '不明'}`;
+    if (realCatRatio >= 0.7) {
+      if (isFetchedToday && isClusteredFetch) {
+        originHint =
+          `正常商品あり（title 取得済み ${totalDbItemCount}件）。` +
+          `fetched_at が今日(${today})で1時間以内に集中 → 楽天バッチ dual-write 済みデータ。` +
+          `Redis 側が fire-and-forget で未書き込みの可能性あり。削除不要。`;
+        verdict = 'real-data';
+      } else if (isFetchedToday) {
+        originHint =
+          `正常商品あり（title 取得済み ${totalDbItemCount}件）。` +
+          `fetched_at が今日(${today})。カテゴリ ${Math.round(realCatRatio * 100)}% が楽天カテゴリ。削除不要。`;
+        verdict = 'real-data';
+      } else {
+        originHint =
+          `正常商品あり（title 取得済み ${totalDbItemCount}件）。` +
+          `カテゴリ ${Math.round(realCatRatio * 100)}% が楽天カテゴリ。` +
+          `fetched_at: ${dateRange}。削除不要。`;
+        verdict = 'real-data';
+      }
     } else {
       originHint =
-        `カテゴリ(${Math.round(realCatRatio * 100)}%)が実楽天カテゴリで商品サンプルあり。` +
-        `fetched_at: ${fetchedAtMin?.slice(0, 10) ?? '不明'} 〜 ${fetchedAtMax?.slice(0, 10) ?? '不明'}。` +
-        `正当な楽天商品データの可能性が高い。`;
+        `正常商品あり（title 取得済み ${totalDbItemCount}件）。` +
+        `一部カテゴリが標準外（${Math.round(realCatRatio * 100)}% 一致）ですが、商品データは正常。削除不要。`;
       verdict = 'likely-real';
     }
   } else if (totalDbItemCount === 0) {
     originHint = `items が全件 0 件。空データのみ → テスト実行やマイグレーション残留の可能性あり。`;
     verdict = 'test-data';
   } else {
-    originHint = `カテゴリや商品名から起源を特定できませんでした。手動で内容を確認してください。`;
+    originHint = `商品件数はあるが商品名を取得できません。手動で内容を確認してください。`;
     verdict = 'unknown';
   }
 
@@ -307,9 +318,15 @@ async function fetchDbRows(): Promise<DbRow[]> {
         CASE WHEN jsonb_typeof(items) = 'array' THEN jsonb_array_length(items) ELSE 0 END,
         0
       ) AS item_count,
-      CASE WHEN jsonb_typeof(items) = 'array' THEN items->0->>'title' ELSE NULL END AS sample_item_0,
-      CASE WHEN jsonb_typeof(items) = 'array' THEN items->1->>'title' ELSE NULL END AS sample_item_1,
-      CASE WHEN jsonb_typeof(items) = 'array' THEN items->2->>'title' ELSE NULL END AS sample_item_2,
+      CASE WHEN jsonb_typeof(items) = 'array'
+        THEN COALESCE(items->0->>'title', items->0->>'itemName', items->0->>'name')
+        ELSE NULL END AS sample_item_0,
+      CASE WHEN jsonb_typeof(items) = 'array'
+        THEN COALESCE(items->1->>'title', items->1->>'itemName', items->1->>'name')
+        ELSE NULL END AS sample_item_1,
+      CASE WHEN jsonb_typeof(items) = 'array'
+        THEN COALESCE(items->2->>'title', items->2->>'itemName', items->2->>'name')
+        ELSE NULL END AS sample_item_2,
       CASE WHEN jsonb_typeof(items) = 'array' THEN items->0->>'shopName' ELSE NULL END AS sample_shop_name
     FROM products
     ORDER BY person_name, category
