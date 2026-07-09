@@ -11,15 +11,27 @@ const MAX_ENTRIES_PER_SECTION = 100;
 
 // ── 型定義 ──────────────────────────────────────────────────────────────────
 
+type StructureClass = 'normal' | 'empty-array' | 'unknown-structure' | 'malformed';
+
 interface DiffEntry {
   personName: string;
   category: string;
   dbItemCount: number | null;
   redisItemCount: number | null;
   fetchedAt: string | null;
-  // 先頭 3 件のサンプル商品名（itemName）
   sampleItems: string[];
   sampleShopName: string | null;
+  structureClass: StructureClass;
+}
+
+interface PersonBreakdown {
+  personName: string;
+  categoryCount: number;
+  totalItemCount: number;
+  normal: number;
+  emptyArray: number;
+  unknownStructure: number;
+  malformed: number;
 }
 
 export interface DbOnlyAnalysis {
@@ -244,12 +256,44 @@ interface DbRow {
   person_name: string;
   category: string;
   fetched_at: unknown;
+  items_type: unknown;
   item_count: unknown;
-  // 先頭 3 件のサンプル商品名
   sample_item_0: unknown;
   sample_item_1: unknown;
   sample_item_2: unknown;
   sample_shop_name: unknown;
+}
+
+function classifyStructure(row: DbRow, sampleItems: string[]): StructureClass {
+  const itemsType = safeString(row.items_type);
+  const itemCount = toItemCount(row.item_count);
+  if (itemsType !== 'array') return 'malformed';
+  if (itemCount === 0) return 'empty-array';
+  if (sampleItems.length > 0) return 'normal';
+  return 'unknown-structure';
+}
+
+function buildPersonBreakdown(entries: DiffEntry[]): PersonBreakdown[] {
+  const map = new Map<string, PersonBreakdown>();
+  for (const e of entries) {
+    const p = map.get(e.personName) ?? {
+      personName: e.personName,
+      categoryCount: 0,
+      totalItemCount: 0,
+      normal: 0,
+      emptyArray: 0,
+      unknownStructure: 0,
+      malformed: 0,
+    };
+    p.categoryCount++;
+    p.totalItemCount += e.dbItemCount ?? 0;
+    if (e.structureClass === 'normal') p.normal++;
+    else if (e.structureClass === 'empty-array') p.emptyArray++;
+    else if (e.structureClass === 'unknown-structure') p.unknownStructure++;
+    else p.malformed++;
+    map.set(e.personName, p);
+  }
+  return [...map.values()].sort((a, b) => b.totalItemCount - a.totalItemCount);
 }
 
 async function fetchDbRows(): Promise<DbRow[]> {
@@ -258,13 +302,14 @@ async function fetchDbRows(): Promise<DbRow[]> {
       person_name,
       category,
       fetched_at,
+      jsonb_typeof(items) AS items_type,
       COALESCE(
         CASE WHEN jsonb_typeof(items) = 'array' THEN jsonb_array_length(items) ELSE 0 END,
         0
       ) AS item_count,
-      CASE WHEN jsonb_typeof(items) = 'array' THEN items->0->>'itemName' ELSE NULL END AS sample_item_0,
-      CASE WHEN jsonb_typeof(items) = 'array' THEN items->1->>'itemName' ELSE NULL END AS sample_item_1,
-      CASE WHEN jsonb_typeof(items) = 'array' THEN items->2->>'itemName' ELSE NULL END AS sample_item_2,
+      CASE WHEN jsonb_typeof(items) = 'array' THEN items->0->>'title' ELSE NULL END AS sample_item_0,
+      CASE WHEN jsonb_typeof(items) = 'array' THEN items->1->>'title' ELSE NULL END AS sample_item_1,
+      CASE WHEN jsonb_typeof(items) = 'array' THEN items->2->>'title' ELSE NULL END AS sample_item_2,
       CASE WHEN jsonb_typeof(items) = 'array' THEN items->0->>'shopName' ELSE NULL END AS sample_shop_name
     FROM products
     ORDER BY person_name, category
@@ -350,6 +395,7 @@ export async function GET() {
         fetchedAt:      toFetchedAt(row.fetched_at),
         sampleItems,
         sampleShopName: safeString(row.sample_shop_name),
+        structureClass: classifyStructure(row, sampleItems),
       };
 
       if (redisCount === undefined) {
@@ -371,6 +417,7 @@ export async function GET() {
           fetchedAt:      null,
           sampleItems:    [],
           sampleShopName: null,
+          structureClass: 'empty-array',
         });
       }
     }
@@ -379,8 +426,9 @@ export async function GET() {
     redisOnly.sort(sortEntries);
     bothDiff.sort(sortEntries);
 
-    // Stage 5: 起源分析
+    // Stage 5: 起源分析 + 人物別集計
     const dbOnlyAnalysis = analyzeDbOnly(dbOnly);
+    const dbOnlyPersonBreakdown = buildPersonBreakdown(dbOnly);
 
     return NextResponse.json({
       summary: {
@@ -393,6 +441,7 @@ export async function GET() {
         truncatedAt:         MAX_ENTRIES_PER_SECTION,
       },
       dbOnlyAnalysis,
+      dbOnlyPersonBreakdown,
       dbOnly:    dbOnly.slice(0,    MAX_ENTRIES_PER_SECTION),
       redisOnly: redisOnly.slice(0, MAX_ENTRIES_PER_SECTION),
       bothDiff:  bothDiff.slice(0,  MAX_ENTRIES_PER_SECTION),
