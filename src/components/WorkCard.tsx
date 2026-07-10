@@ -34,13 +34,13 @@ function getPosterLayout(url: string): { container: string; img: string } {
   if (url.includes('image.tmdb.org')) {
     return {
       container: 'relative aspect-[2/3] bg-gray-100 overflow-hidden flex-shrink-0',
-      img: 'w-full h-full object-cover',
+      img: 'w-full h-full object-contain',
     };
   }
   // YouTube サムネイル・OG 画像は横長として扱う
   return {
-    container: 'relative aspect-video bg-gray-900 overflow-hidden flex-shrink-0',
-    img: 'w-full h-full object-cover object-center',
+    container: 'relative aspect-video bg-gray-800 overflow-hidden flex-shrink-0',
+    img: 'w-full h-full object-contain',
   };
 }
 

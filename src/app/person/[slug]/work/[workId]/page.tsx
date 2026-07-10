@@ -298,7 +298,7 @@ export default async function WorkDetailPage({ params }: Props) {
                   <img
                     src={work.posterUrl.replace('/w500', '/w300')}
                     alt={work.title}
-                    className="w-24 aspect-[2/3] object-cover rounded-xl shadow-sm"
+                    className="w-24 aspect-[2/3] object-contain rounded-xl shadow-sm"
                   />
                 ) : (
                   <div className="w-24 aspect-[2/3] bg-gray-100 rounded-xl flex items-center justify-center text-gray-300 text-2xl">
@@ -584,7 +584,7 @@ export default async function WorkDetailPage({ params }: Props) {
                         <img
                           src={w.posterUrl}
                           alt={w.title}
-                          className="w-full h-full object-cover group-hover:opacity-90 transition-opacity"
+                          className="w-full h-full object-contain group-hover:opacity-90 transition-opacity"
                           loading="lazy"
                         />
                       ) : (
@@ -624,7 +624,7 @@ export default async function WorkDetailPage({ params }: Props) {
                       <img
                         src={product.imageUrl}
                         alt={product.title}
-                        className="w-12 h-14 object-cover rounded-lg flex-shrink-0"
+                        className="w-12 h-14 object-contain rounded-lg flex-shrink-0"
                         loading="lazy"
                       />
                     ) : (
