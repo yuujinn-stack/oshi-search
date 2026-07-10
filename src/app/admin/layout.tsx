@@ -24,6 +24,7 @@ const NAV_ITEMS = [
   { href: '/admin/db-seed',                    label: '🌱 DBシード' },
   { href: '/admin/db-diff-products',            label: '🔍 products差分' },
   { href: '/admin/db-diff-works',              label: '🔍 works差分' },
+  { href: '/admin/db-person-diff',             label: '🔎 人物別差分' },
   { href: '/api/admin/logout',                 label: 'ログアウト', danger: true },
 ] as const;
 
