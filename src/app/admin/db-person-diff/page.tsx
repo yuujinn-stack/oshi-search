@@ -59,6 +59,14 @@ interface AllResult {
   error?: string;
 }
 
+interface MigrateResult {
+  inserted: number;
+  skipped: number;
+  failed: number;
+  failedIds: string[];
+  error?: string;
+}
+
 // ── 分類設定 ──────────────────────────────────────────────────────────────────
 
 const CLASS_CONFIG: Record<Classification, { label: string; chip: string }> = {
@@ -262,8 +270,44 @@ function AllPersonsTable({
 
 // ── 人物詳細結果 ──────────────────────────────────────────────────────────────
 
-function PersonResultView({ result }: { result: PersonResult }) {
-  const missingInDB = result.redisRawCount - result.dbTotal;
+function PersonResultView({
+  result,
+  onRefresh,
+}: {
+  result: PersonResult;
+  onRefresh: () => Promise<void>;
+}) {
+  const [showConfirm, setShowConfirm]       = useState(false);
+  const [migrating, setMigrating]           = useState(false);
+  const [migrateResult, setMigrateResult]   = useState<MigrateResult | null>(null);
+  const [migrateError, setMigrateError]     = useState<string | null>(null);
+
+  const migrateCount = result.classSummary['migrate'] ?? 0;
+  const missingInDB  = result.redisRawCount - result.dbTotal;
+
+  const handleMigrate = async () => {
+    setMigrating(true);
+    setMigrateError(null);
+    setMigrateResult(null);
+    setShowConfirm(false);
+    try {
+      const res = await fetch('/api/admin/db-migrate-person', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personName: result.personName }),
+      });
+      const text = await res.text();
+      if (!text.trim()) throw new Error('空レスポンス（タイムアウトの可能性）');
+      const data = JSON.parse(text) as MigrateResult;
+      if (data.error) throw new Error(data.error);
+      setMigrateResult(data);
+      await onRefresh();
+    } catch (e) {
+      setMigrateError(String(e));
+    } finally {
+      setMigrating(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -311,6 +355,96 @@ function PersonResultView({ result }: { result: PersonResult }) {
                 </span>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* DB移行候補 登録ボタン */}
+      {migrateCount > 0 && (
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() => setShowConfirm(true)}
+            disabled={migrating}
+            className="self-start px-4 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 font-medium"
+          >
+            {migrating
+              ? '登録中...'
+              : `DB移行候補をDBへ登録（${migrateCount}件）`}
+          </button>
+          {migrating && (
+            <p className="text-xs text-gray-500">DBへの登録中です。しばらくお待ちください...</p>
+          )}
+        </div>
+      )}
+
+      {/* 移行結果 */}
+      {migrateResult && (
+        <div className="p-4 rounded-lg bg-green-50 border border-green-200 text-sm">
+          <p className="font-semibold text-green-700 mb-2">登録完了</p>
+          <div className="flex gap-6 text-xs">
+            <span className="text-green-700">✓ 登録: <strong className="text-base">{migrateResult.inserted}</strong>件</span>
+            <span className="text-gray-500">- スキップ: <strong>{migrateResult.skipped}</strong>件</span>
+            {migrateResult.failed > 0 && (
+              <span className="text-red-600">✗ 失敗: <strong>{migrateResult.failed}</strong>件</span>
+            )}
+          </div>
+          {migrateResult.failedIds.length > 0 && (
+            <div className="mt-2">
+              <p className="text-xs text-red-600 font-medium mb-1">失敗した workId:</p>
+              <div className="flex flex-wrap gap-1">
+                {migrateResult.failedIds.map((id) => (
+                  <code key={id} className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 border border-red-200 text-red-700">{id}</code>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="text-xs text-gray-400 mt-2">差分は自動的に再取得されました</p>
+        </div>
+      )}
+
+      {/* 移行エラー */}
+      {migrateError && (
+        <div className="p-3 rounded bg-red-50 border border-red-200">
+          <p className="text-xs font-semibold text-red-700 mb-1">登録エラー</p>
+          <pre className="text-xs text-red-600 whitespace-pre-wrap break-all">{migrateError}</pre>
+        </div>
+      )}
+
+      {/* 確認モーダル */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setShowConfirm(false)}
+          />
+          <div className="relative bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4 z-10">
+            <h3 className="font-bold text-base mb-3">DB移行候補を登録</h3>
+            <p className="text-sm mb-3 text-gray-700">
+              <strong>{result.personName}</strong>さんのDB移行候補を登録します。
+            </p>
+            <ul className="text-xs text-gray-500 mb-5 space-y-1 list-disc list-inside bg-gray-50 rounded p-3">
+              <li>既存DBデータは変更しません</li>
+              <li>重複は登録しません</li>
+              <li>Redisを正として不足分のみ追加します</li>
+              <li>deleted / suspect / 重複 / unknown は登録しません</li>
+            </ul>
+            <p className="text-xs font-medium text-blue-700 mb-4">
+              対象: DB移行候補 {migrateCount}件
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowConfirm(false)}
+                className="px-4 py-2 text-sm rounded border border-gray-300 hover:bg-gray-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleMigrate}
+                className="px-4 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 font-medium"
+              >
+                登録する
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -461,7 +595,10 @@ function Content() {
             <p className="text-sm font-bold mb-3 text-gray-700">
               {personResult.personName} の差分
             </p>
-            <PersonResultView result={personResult} />
+            <PersonResultView
+              result={personResult}
+              onRefresh={() => fetchPerson(personResult.personName)}
+            />
           </div>
         )}
       </section>
