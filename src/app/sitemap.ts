@@ -20,6 +20,24 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'daily',
       priority: 1,
     },
+    {
+      url: `${BASE_URL}/disclaimer`,
+      lastModified: new Date('2026-07-10'),
+      changeFrequency: 'yearly' as const,
+      priority: 0.3,
+    },
+    {
+      url: `${BASE_URL}/privacy`,
+      lastModified: new Date('2026-07-10'),
+      changeFrequency: 'yearly' as const,
+      priority: 0.3,
+    },
+    {
+      url: `${BASE_URL}/contact`,
+      lastModified: new Date('2026-07-10'),
+      changeFrequency: 'monthly' as const,
+      priority: 0.4,
+    },
     ...groups.map((group) => ({
       url: `${BASE_URL}${groupHrefByName(group, groupMetas)}`,
       lastModified: new Date(),
