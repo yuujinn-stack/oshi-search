@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -590,10 +591,10 @@ export default async function PersonPage({ params }: Props) {
             {/* Stats バー */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {[
-                { label: '関連商品',   value: totalProductCount, unit: '件', href: '#products' },
                 { label: '出演作品',   value: publishedWorks.length, unit: '件', href: '#works' },
                 { label: '配信中',     value: streamingWorks.length, unit: '件', href: '#vod' },
                 { label: '配信サービス', value: providerWorkMap.size, unit: '社', href: '#vod' },
+                { label: '関連商品',   value: totalProductCount, unit: '件', href: '#products' },
               ].map(({ label, value, unit, href }) => (
                 <a
                   key={label}
@@ -619,30 +620,6 @@ export default async function PersonPage({ params }: Props) {
         <div className="breadcrumb-bar shadow-sm">
           <div className="max-w-4xl mx-auto px-4 py-3">
             <div className="flex gap-2.5 overflow-x-auto scrollbar-none pb-0.5">
-              {hasProducts && (
-                <a
-                  href="#products"
-                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-xl transition-colors min-h-[44px]"
-                  style={{ background: 'var(--ds-cta)', color: 'var(--ds-cta-text)' }}
-                >
-                  🛍 関連商品を見る
-                  {totalProductCount > 0 && (
-                    <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.25)' }}>{totalProductCount}</span>
-                  )}
-                </a>
-              )}
-              {hasWorks && (
-                <a
-                  href="#works"
-                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-xl transition-colors min-h-[44px]"
-                  style={{ background: 'var(--ds-surface)', color: 'var(--ds-text)', border: '1px solid var(--ds-border)' }}
-                >
-                  🎬 出演作品を見る
-                  {publishedWorks.length > 0 && (
-                    <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>{publishedWorks.length}</span>
-                  )}
-                </a>
-              )}
               {hasVod && (
                 <a
                   href="#vod"
@@ -652,6 +629,30 @@ export default async function PersonPage({ params }: Props) {
                   <span className="text-xs bg-white/25 px-1.5 py-0.5 rounded-full">{streamingWorks.length}件</span>
                 </a>
               )}
+              {hasWorks && (
+                <a
+                  href="#works"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-xl transition-colors min-h-[44px]"
+                  style={{ background: 'var(--ds-cta)', color: 'var(--ds-cta-text)' }}
+                >
+                  🎬 出演作品を見る
+                  {publishedWorks.length > 0 && (
+                    <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.25)' }}>{publishedWorks.length}</span>
+                  )}
+                </a>
+              )}
+              {hasProducts && (
+                <a
+                  href="#products"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-xl transition-colors min-h-[44px]"
+                  style={{ background: 'var(--ds-surface)', color: 'var(--ds-text)', border: '1px solid var(--ds-border)' }}
+                >
+                  🛍 関連商品を見る
+                  {totalProductCount > 0 && (
+                    <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>{totalProductCount}</span>
+                  )}
+                </a>
+              )}
             </div>
           </div>
         </div>
@@ -659,79 +660,107 @@ export default async function PersonPage({ params }: Props) {
         {/* ─── メインコンテンツ ─── */}
         <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
 
-          {/* ━━━ 商品セクション ━━━ */}
-          <section id="products">
-            <div className="flex items-center gap-2 mb-5">
-              <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>🛍 関連商品</h2>
-              {hasProducts && (
-                <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>
-                  {totalProductCount}件
-                </span>
-              )}
-            </div>
+          {/* ━━━ 人物情報 ━━━ */}
+          {(() => {
+            const infoRows: { label: string; value: ReactNode }[] = [];
 
-            {/* カテゴリタブ + ソート付き商品一覧 */}
-            {sectionResults.every((r) => r.newResult.status === 'no_data' && r.usedProducts.length === 0) ? (
-              <p
-                className="text-sm rounded-xl border px-4 py-4"
-                style={{
-                  color: 'var(--ds-muted)',
-                  background: 'var(--ds-surface)',
-                  borderColor: 'var(--ds-border)',
-                }}
-              >
-                {redisError
-                  ? '商品情報を一時的に取得できません。データは保持されています。時間をおいて再度お試しください。'
-                  : '関連商品は現在取得中です。しばらくお待ちください。'}
-              </p>
-            ) : (
-              <ProductTabList items={allProductItems} personSlug={name} />
-            )}
-          </section>
+            const groupLink = personMeta?.currentGroupName || person.group || null;
+            if (groupLink) {
+              const href = groupLink === person.group && groupPagePath
+                ? groupPagePath
+                : `/groups/${encodeURIComponent(groupLink)}`;
+              infoRows.push({
+                label: '所属',
+                value: <Link href={href} className="theme-text-link">{groupLink}</Link>,
+              });
+            }
 
-          {/* ━━━ 出演作品 ━━━ */}
-          {publishedWorks.length > 0 ? (
-            <section id="works">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>🎬 出演作品</h2>
-                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>
-                    {publishedWorks.length}件
-                  </span>
+            if (personMeta?.generation) {
+              infoRows.push({ label: '期別', value: personMeta.generation });
+            }
+
+            if (personMeta?.activityStatus && personMeta.activityStatus !== 'unknown') {
+              infoRows.push({ label: '活動状況', value: ACTIVITY_LABEL[personMeta.activityStatus] });
+            }
+
+            if (person.config.reading) {
+              infoRows.push({ label: '読み', value: person.config.reading });
+            }
+
+            const genres: string[] = personMeta?.genres?.length
+              ? personMeta.genres
+              : person.genre ? [person.genre] : [];
+            if (genres.length > 0) {
+              infoRows.push({ label: 'ジャンル', value: genres.join(' / ') });
+            }
+
+            if (personMeta?.titles && personMeta.titles.length > 0) {
+              infoRows.push({ label: '肩書き', value: personMeta.titles.join(' / ') });
+            }
+
+            if (personMeta?.publicRoles && personMeta.publicRoles.length > 0) {
+              infoRows.push({ label: '役職', value: personMeta.publicRoles.join(' / ') });
+            }
+
+            if (personMeta?.joinedAt) {
+              infoRows.push({ label: '加入日', value: personMeta.joinedAt.slice(0, 7) });
+            }
+
+            if (personMeta?.leftAt) {
+              const statusLabel = personMeta.activityStatus === 'withdrawn' ? '脱退日' : '卒業日';
+              infoRows.push({ label: statusLabel, value: personMeta.leftAt.slice(0, 7) });
+            }
+
+            if (personMeta?.formerGroupNames && personMeta.formerGroupNames.length > 0) {
+              infoRows.push({ label: '旧所属', value: personMeta.formerGroupNames.join(' / ') });
+            }
+
+            if (person.config.aliases && person.config.aliases.length > 0) {
+              infoRows.push({ label: '別名・愛称', value: person.config.aliases.join(' / ') });
+            }
+
+            if (personMeta?.awards && personMeta.awards.length > 0) {
+              infoRows.push({ label: '受賞歴', value: personMeta.awards.join(' / ') });
+            }
+
+            if (personMeta?.membershipNote) {
+              infoRows.push({ label: '備考', value: personMeta.membershipNote });
+            }
+
+            if (infoRows.length === 0) return null;
+
+            return (
+              <section id="profile" aria-labelledby="profile-heading">
+                <h2 id="profile-heading" className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>人物情報</h2>
+                <div className="theme-card overflow-hidden">
+                  <dl className="divide-y" style={{ borderColor: 'var(--ds-border)' }}>
+                    {infoRows.map(({ label, value }) => (
+                      <div
+                        key={label}
+                        className="grid grid-cols-[7rem_1fr] sm:grid-cols-[9rem_1fr] gap-3 px-4 py-3"
+                        style={{ background: 'var(--ds-surface)' }}
+                      >
+                        <dt className="text-xs font-semibold self-start pt-0.5" style={{ color: 'var(--ds-muted)' }}>
+                          {label}
+                        </dt>
+                        <dd className="text-sm font-medium" style={{ color: 'var(--ds-text)' }}>
+                          {value}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
                 </div>
-                {hasVod && (
-                  <a href="#vod" className="text-xs text-green-600 font-medium hover:underline flex items-center gap-1">
-                    ▶ 配信中を絞り込む
-                  </a>
-                )}
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {publishedWorks.map((work) => (
-                  <WorkCard key={work.id} work={work} />
-                ))}
-              </div>
-            </section>
-          ) : redisError ? (
-            <section id="works">
-              <div className="flex items-center gap-2 mb-4">
-                <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>🎬 出演作品</h2>
-              </div>
-              <p
-                className="text-sm rounded-xl border px-4 py-4"
-                style={{ color: 'var(--ds-muted)', background: 'var(--ds-surface)', borderColor: 'var(--ds-border)' }}
-              >
-                作品情報を一時的に取得できません。データは保持されています。時間をおいて再度お試しください。
-              </p>
-            </section>
-          ) : null}
+              </section>
+            );
+          })()}
 
           {/* ━━━ VOD配信情報 ━━━ */}
-          {providerGroups.length > 0 && (
-            <section id="vod">
+          {providerGroups.length > 0 ? (
+            <section id="vod" aria-labelledby="vod-heading">
               <div className="flex items-center gap-2 mb-4">
-                <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>▶ 配信情報</h2>
+                <h2 id="vod-heading" className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>▶ 配信中の出演作品</h2>
                 <span className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
-                  🟢 {streamingWorks.length}件配信中
+                  🟢 {streamingWorks.length}件
                 </span>
               </div>
 
@@ -789,7 +818,73 @@ export default async function PersonPage({ params }: Props) {
                 ))}
               </div>
             </section>
-          )}
+          ) : hasVod ? null : null}
+
+          {/* ━━━ 出演作品 ━━━ */}
+          {publishedWorks.length > 0 ? (
+            <section id="works" aria-labelledby="works-heading">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <h2 id="works-heading" className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>🎬 出演作品</h2>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>
+                    {publishedWorks.length}件
+                  </span>
+                </div>
+                {hasVod && (
+                  <a href="#vod" className="text-xs text-green-600 font-medium hover:underline flex items-center gap-1">
+                    ▶ 配信中を見る
+                  </a>
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {publishedWorks.map((work) => (
+                  <WorkCard key={work.id} work={work} />
+                ))}
+              </div>
+            </section>
+          ) : redisError ? (
+            <section id="works">
+              <div className="flex items-center gap-2 mb-4">
+                <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>🎬 出演作品</h2>
+              </div>
+              <p
+                className="text-sm rounded-xl border px-4 py-4"
+                style={{ color: 'var(--ds-muted)', background: 'var(--ds-surface)', borderColor: 'var(--ds-border)' }}
+              >
+                作品情報を一時的に取得できません。データは保持されています。時間をおいて再度お試しください。
+              </p>
+            </section>
+          ) : null}
+
+          {/* ━━━ 関連商品 ━━━ */}
+          <section id="products" aria-labelledby="products-heading">
+            <div className="flex items-center gap-2 mb-5">
+              <h2 id="products-heading" className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>🛍 関連商品</h2>
+              {hasProducts && (
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>
+                  {totalProductCount}件
+                </span>
+              )}
+            </div>
+
+            {/* カテゴリタブ + ソート付き商品一覧 */}
+            {sectionResults.every((r) => r.newResult.status === 'no_data' && r.usedProducts.length === 0) ? (
+              <p
+                className="text-sm rounded-xl border px-4 py-4"
+                style={{
+                  color: 'var(--ds-muted)',
+                  background: 'var(--ds-surface)',
+                  borderColor: 'var(--ds-border)',
+                }}
+              >
+                {redisError
+                  ? '商品情報を一時的に取得できません。データは保持されています。時間をおいて再度お試しください。'
+                  : '関連商品は現在取得中です。しばらくお待ちください。'}
+              </p>
+            ) : (
+              <ProductTabList items={allProductItems} personSlug={name} />
+            )}
+          </section>
 
           {/* ━━━ 関連メンバー ━━━ */}
           {related.length > 0 && (
