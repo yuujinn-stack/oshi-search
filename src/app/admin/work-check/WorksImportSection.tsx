@@ -159,13 +159,16 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
             必須列: <span className="font-mono">workTitle（またはtitle）, workType（またはtype）</span>
           </p>
           <p className="text-[10px] text-gray-500">
-            任意列: <span className="font-mono">personId / personName, releaseYear, roleName, vodService, availabilityType, sourceUrl, confidence, note</span>
+            任意列: <span className="font-mono">personId / personName, releaseYear, roleName, workDisplayType, vodService, availabilityType, sourceUrl, confidence, note</span>
           </p>
           <p className="text-[10px] text-gray-500">
             workType: <span className="font-mono">movie / tv / variety / documentary / web / drama / special / stage</span> 等（日本語も可）
           </p>
+          <p className="text-[10px] text-indigo-600">
+            workDisplayType: <span className="font-mono">movie / drama / variety / idol_show / live / documentary / stage / music / web / anime_voice / other</span>（日本語も可）
+          </p>
           <p className="text-[10px] text-gray-400">
-            ※ 補完CSVダウンロード（16列）・ChatGPT調査返却CSVそのまま使用可
+            ※ ChatGPT「出演作品探し」返却CSVはそのままインポート可（workDisplayType 対応済み）
           </p>
           <p className="text-[10px] text-orange-500 font-medium">
             ※ CSVにpersonId/personName列がない場合は、下の「対象人物」を必ず選択してください

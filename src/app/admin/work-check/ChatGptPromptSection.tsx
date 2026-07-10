@@ -654,13 +654,27 @@ ${workList}
 
 出力形式
 
-personName,workTitle,workType,releaseYear,roleName,workDisplayType,vodService,availabilityType,sourceUrl,confidence,note
+workId,personName,workTitle,workType,releaseYear,roleName,workDisplayType,sourceUrl,note
 
 workTypeは以下を使用：
-movie / drama / variety / documentary / special / web / stage
+movie / tv / drama / variety / documentary / special / web / stage / anime
 
-workDisplayTypeは以下のいずれかを使用（必須・空欄不可）：
-movie（映画）/ drama（ドラマ）/ variety（バラエティ）/ idol_show（アイドル番組）/ live（ライブ・コンサート）/ documentary（ドキュメンタリー）/ stage（舞台・ミュージカル）/ music（音楽番組）/ web（配信番組・Web）/ anime_voice（アニメ・声優）/ other（その他）
+workDisplayType（必須・空欄禁止。不明なら other）
+以下のいずれかを使用：
+
+movie        → 映画（劇場公開作品）
+drama        → ドラマ（連続ドラマ・単発ドラマ）
+variety      → バラエティ（一般バラエティ番組）
+idol_show    → アイドル番組（乃木坂工事中・日向坂で会いましょう・欅って書けない等のアイドル冠番組）
+live         → ライブ・コンサート（ライブ映像・コンサートツアー・卒業コンサート）
+documentary  → ドキュメンタリー（ドキュメンタリー映画・密着番組）
+stage        → 舞台・ミュージカル（舞台作品・朗読劇・ミュージカル）
+music        → 音楽番組（MUSIC STATION・紅白歌合戦・CDTV等）
+web          → 配信番組・Web（配信限定番組・YouTubeオリジナル等）
+anime_voice  → アニメ・声優（アニメ出演・声優・吹替・ナレーション）
+other        → その他（上記に当てはまらないもの）
+
+workIdは空欄でよい（インポート時に自動採番）
 ${csvDownloadSection(`${personName}_出演作品.csv`)}`;
 }
 
