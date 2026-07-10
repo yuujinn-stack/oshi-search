@@ -7,6 +7,7 @@ import { getAllVerdictsOrThrow } from '@/lib/judgment-store';
 import { getPublishedWorksOrThrow } from '@/lib/work-store';
 import { getRedis } from '@/lib/redis';
 import { getGroupMeta } from '@/lib/group-meta';
+import { groupHref } from '@/lib/group-slug';
 import { deduplicateProviders } from '@/lib/vod-dedup';
 import ProductTabList, { type ProductWithSection } from '@/components/ProductTabList';
 import PersonCard from '@/components/PersonCard';
@@ -366,13 +367,16 @@ export default async function PersonPage({ params }: Props) {
   // ── JSON-LD ──
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
   const personUrl  = `${siteOrigin}/person/${encodeURIComponent(person.name)}`;
+  const groupPagePath = person.group
+    ? (groupMeta ? groupHref(groupMeta) : `/groups/${encodeURIComponent(person.group)}`)
+    : null;
   const personJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Person',
     name: person.name,
     url: personUrl,
-    ...(person.group
-      ? { memberOf: { '@type': 'Organization', name: person.group, url: `${siteOrigin}/group/${encodeURIComponent(person.group)}` } }
+    ...(person.group && groupPagePath
+      ? { memberOf: { '@type': 'Organization', name: person.group, url: `${siteOrigin}${groupPagePath}` } }
       : {}),
   };
   const breadcrumbJsonLd = {
@@ -380,8 +384,8 @@ export default async function PersonPage({ params }: Props) {
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'ホーム', item: siteOrigin },
-      ...(person.group
-        ? [{ '@type': 'ListItem', position: 2, name: person.group, item: `${siteOrigin}/group/${encodeURIComponent(person.group)}` }]
+      ...(person.group && groupPagePath
+        ? [{ '@type': 'ListItem', position: 2, name: person.group, item: `${siteOrigin}${groupPagePath}` }]
         : []),
       { '@type': 'ListItem', position: person.group ? 3 : 2, name: person.name, item: personUrl },
     ],
@@ -417,10 +421,10 @@ export default async function PersonPage({ params }: Props) {
             <Link href={`/genre/${encodeURIComponent(person.genre)}`} className="theme-text-link">
               {person.genre}
             </Link>
-            {person.group && (
+            {person.group && groupPagePath && (
               <>
                 <span style={{ opacity: 0.4 }}>›</span>
-                <Link href={`/group/${encodeURIComponent(person.group)}`} className="theme-text-link">
+                <Link href={groupPagePath} className="theme-text-link">
                   {person.group}
                 </Link>
               </>
@@ -457,7 +461,7 @@ export default async function PersonPage({ params }: Props) {
                         <span className="text-white/80 text-sm font-medium">{personMeta.primaryGenre}</span>
                         {groupLink && (
                           <Link
-                            href={`/group/${encodeURIComponent(groupLink)}`}
+                            href={groupLink === person.group && groupPagePath ? groupPagePath : `/groups/${encodeURIComponent(groupLink)}`}
                             className="text-white/50 hover:text-white/80 text-xs transition-colors underline underline-offset-2 decoration-white/20"
                           >
                             {groupLink}
@@ -470,14 +474,14 @@ export default async function PersonPage({ params }: Props) {
                     return (
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         <Link
-                          href={`/group/${encodeURIComponent(groupLink)}`}
+                          href={groupLink === person.group && groupPagePath ? groupPagePath : `/groups/${encodeURIComponent(groupLink)}`}
                           className="text-white/80 hover:text-white text-sm font-medium transition-colors underline underline-offset-2 decoration-white/40 hover:decoration-white"
                         >
                           {groupLink}
                         </Link>
                         {groupMeta?.activityStatus === 'renamed' && groupMeta.renamedTo && (
                           <Link
-                            href={`/group/${encodeURIComponent(groupMeta.renamedTo)}`}
+                            href={`/groups/${encodeURIComponent(groupMeta.renamedTo)}`}
                             className="text-[11px] text-white/60 hover:text-white transition-colors"
                           >
                             （現: {groupMeta.renamedTo}）
@@ -752,7 +756,7 @@ export default async function PersonPage({ params }: Props) {
                   {person.group} のメンバー
                 </h2>
                 <Link
-                  href={`/group/${encodeURIComponent(person.group)}`}
+                  href={groupPagePath ?? `/groups/${encodeURIComponent(person.group)}`}
                   className="theme-text-link text-sm font-medium"
                   style={{ textDecoration: 'none' }}
                 >

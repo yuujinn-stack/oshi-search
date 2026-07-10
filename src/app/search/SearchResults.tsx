@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type { PersonWithConfig, ActivityStatus } from '@/types/person';
 import type { PersonMeta } from '@/lib/person-meta';
 import type { GroupMeta } from '@/types/group';
+import { groupHref } from '@/lib/group-slug';
 
 // ─── 型定義 ──────────────────────────────────────────────────────────────────
 export interface PersonStats {
@@ -169,7 +170,7 @@ function SearchGroupCard({
   const statusCls = GROUP_STATUS_CLS[group.activityStatus] ?? '';
 
   return (
-    <Link href={`/group/${encodeURIComponent(group.groupName)}`} className="block group">
+    <Link href={groupHref(group)} className="block group">
       <div
         className="p-4 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200"
         style={{

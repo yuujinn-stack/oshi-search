@@ -9,6 +9,9 @@ import HeroSearchForm from '@/components/site/HeroSearchForm';
 import HomePersonCard from '@/components/site/HomePersonCard';
 import RankingPersonCard from '@/components/site/RankingPersonCard';
 import type { SuggestionItem } from '@/types/search';
+import { getAllGroupMetas } from '@/lib/group-meta';
+import { groupHrefByName } from '@/lib/group-slug';
+import type { GroupMeta } from '@/types/group';
 
 // Redis への問い合わせ結果を 60 秒間 Vercel Data Cache でキャッシュ
 // → 同一デプロイ内でリクエストが集中しても Redis 呼び出しは最大1回/60秒
@@ -21,6 +24,12 @@ const getCachedEnrichedData = unstable_cache(
 const getCachedRankingData = unstable_cache(
   getRankingData,
   ['home-ranking-data'],
+  { revalidate: 60 },
+);
+
+const getCachedGroupMetas = unstable_cache(
+  getAllGroupMetas,
+  ['home-group-metas'],
   { revalidate: 60 },
 );
 
@@ -79,9 +88,10 @@ function SectionHeader({ title, href, linkText }: { title: string; href?: string
 // ─── ページ ──────────────────────────────────────────────────────────────────────
 export default async function HomePage() {
   // Redis 失敗時も200を返すため allSettled を使用
-  const [enrichedResult, rankingResult] = await Promise.allSettled([
+  const [enrichedResult, rankingResult, groupMetasResult] = await Promise.allSettled([
     getCachedEnrichedData(),
     getCachedRankingData(),
+    getCachedGroupMetas(),
   ]);
 
   const { persons, genres: allGenres } = enrichedResult.status === 'fulfilled'
@@ -89,6 +99,7 @@ export default async function HomePage() {
     : { persons: getAllPersonsWithConfig() as unknown as PersonCardData[], genres: Array.from(DEFAULT_GENRE_ORDER) };
 
   const ranking = rankingResult.status === 'fulfilled' ? rankingResult.value : EMPTY_RANKING;
+  const groupMetaList: GroupMeta[] = groupMetasResult.status === 'fulfilled' ? groupMetasResult.value : [];
 
   if (enrichedResult.status === 'rejected') console.error('[page] enriched data failed:', enrichedResult.reason);
   if (rankingResult.status === 'rejected') console.error('[page] ranking data failed:', rankingResult.reason);
@@ -96,7 +107,7 @@ export default async function HomePage() {
   const groups = [...new Set(persons.map((p) => p.group).filter(Boolean))];
 
   const heroSuggestions: SuggestionItem[] = [
-    ...groups.map((g) => ({ label: g, href: `/group/${encodeURIComponent(g)}`, type: 'group' as const })),
+    ...groups.map((g) => ({ label: g, href: groupHrefByName(g, groupMetaList), type: 'group' as const })),
     ...persons.flatMap((p) => [
       { label: p.name, sublabel: p.group || undefined, href: `/person/${encodeURIComponent(p.name)}`, type: 'person' as const },
       ...(p.config.aliases ?? []).map((a) => ({
@@ -517,7 +528,7 @@ export default async function HomePage() {
             {groups.map((group) => (
               <Link
                 key={group}
-                href={`/group/${encodeURIComponent(group)}`}
+                href={groupHrefByName(group, groupMetaList)}
                 className="theme-group-chip"
                 style={{
                   display: 'inline-flex',

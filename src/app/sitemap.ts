@@ -1,13 +1,16 @@
 import type { MetadataRoute } from 'next';
 import { getAllPersonsMerged, getAllGroupsMerged, getAllGenresMerged } from '@/lib/persons';
+import { getAllGroupMetas } from '@/lib/group-meta';
+import { groupHrefByName } from '@/lib/group-slug';
 
 const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const [persons, groups, genres] = await Promise.all([
+  const [persons, groups, genres, groupMetas] = await Promise.all([
     getAllPersonsMerged(),
     getAllGroupsMerged(),
     getAllGenresMerged(),
+    getAllGroupMetas(),
   ]);
 
   return [
@@ -18,7 +21,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 1,
     },
     ...groups.map((group) => ({
-      url: `${BASE_URL}/group/${encodeURIComponent(group)}`,
+      url: `${BASE_URL}${groupHrefByName(group, groupMetas)}`,
       lastModified: new Date(),
       changeFrequency: 'weekly' as const,
       priority: 0.9,
