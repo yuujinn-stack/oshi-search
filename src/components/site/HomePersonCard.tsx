@@ -37,7 +37,7 @@ interface PersonCardData {
 
 export default function HomePersonCard({ person }: { person: PersonCardData & PersonCardMeta }) {
   const avatarClass = AVATAR_CLASS[person.genre] ?? 'avatar-default';
-  const badges = getPersonCardBadges(person.genre, person);
+  const badges = getPersonCardBadges(person.genre, person, 3);
   const subtitle = person.primaryGenre || person.group;
 
   return (

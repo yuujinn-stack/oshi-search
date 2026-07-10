@@ -4,6 +4,7 @@ import personsConfigRaw from '../../data/persons_config.json';
 import { getCachedPublishedPersons } from './published-persons';
 import { splitGenres, sortGenreList, DEFAULT_GENRE_ORDER, type PersonCardMeta } from './genre-utils';
 import { getAllPersonMetas } from './person-meta';
+import { normalizeTag, getGenreAliases } from './person-display-tags';
 
 export type PersonCardData = PersonWithConfig & PersonCardMeta;
 
@@ -111,27 +112,37 @@ export async function getAllGenresMerged(): Promise<string[]> {
   ]);
   const genreSet = new Set<string>(DEFAULT_GENRE_ORDER);
   for (const p of persons) {
-    if (p.genre) genreSet.add(p.genre);
+    if (p.genre) genreSet.add(normalizeTag(p.genre) ?? p.genre);
     const meta = metaMap[p.name];
-    if (meta?.primaryGenre?.trim()) genreSet.add(meta.primaryGenre.trim());
-    for (const g of splitGenres(meta?.genres)) genreSet.add(g);
+    if (meta?.primaryGenre?.trim()) genreSet.add(normalizeTag(meta.primaryGenre.trim()) ?? meta.primaryGenre.trim());
+    for (const g of splitGenres(meta?.genres)) genreSet.add(normalizeTag(g) ?? g);
   }
   return sortGenreList(genreSet);
 }
 
-// ジャンルで絞り込み（genre + primaryGenre + genres を検索対象）＋ メタをインライン付与
+// ジャンルで絞り込み（genre + primaryGenre + genres を検索対象）＋ alias・正規化一致も含む
 export async function getPersonsByGenreExtended(genre: string): Promise<PersonCardData[]> {
+  const canonical = normalizeTag(genre) ?? genre;
+  // 一致対象: リクエスト値 + canonical + その alias すべて
+  const allForms = new Set([genre, canonical, ...getGenreAliases(canonical)]);
+
   const [persons, metaMap] = await Promise.all([
     getAllPersonsMerged(),
     getAllPersonMetas(),
   ]);
   return persons
     .filter((p) => {
-      if (p.genre === genre) return true;
+      if (allForms.has(p.genre) || allForms.has(normalizeTag(p.genre) ?? p.genre)) return true;
       const meta = metaMap[p.name];
       if (!meta) return false;
-      if (meta.primaryGenre?.trim() === genre) return true;
-      return splitGenres(meta.genres).includes(genre);
+      if (meta.primaryGenre) {
+        const pg = meta.primaryGenre.trim();
+        if (allForms.has(pg) || allForms.has(normalizeTag(pg) ?? pg)) return true;
+      }
+      for (const g of splitGenres(meta.genres)) {
+        if (allForms.has(g) || allForms.has(normalizeTag(g) ?? g)) return true;
+      }
+      return false;
     })
     .map((p) => {
       const meta = metaMap[p.name];
@@ -157,9 +168,9 @@ export async function getAllPersonsEnrichedWithGenres(): Promise<{
   const genreSet = new Set<string>(DEFAULT_GENRE_ORDER);
   const enrichedPersons: PersonCardData[] = allPersons.map((p) => {
     const meta = metaMap[p.name];
-    if (p.genre) genreSet.add(p.genre);
-    if (meta?.primaryGenre?.trim()) genreSet.add(meta.primaryGenre.trim());
-    for (const g of splitGenres(meta?.genres)) genreSet.add(g);
+    if (p.genre) genreSet.add(normalizeTag(p.genre) ?? p.genre);
+    if (meta?.primaryGenre?.trim()) genreSet.add(normalizeTag(meta.primaryGenre.trim()) ?? meta.primaryGenre.trim());
+    for (const g of splitGenres(meta?.genres)) genreSet.add(normalizeTag(g) ?? g);
     return {
       ...p,
       primaryGenre: meta?.primaryGenre,

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import PersonCard from '@/components/PersonCard';
 import { getPersonsByGenreExtended } from '@/lib/persons';
 import { DEFAULT_GENRE_ORDER } from '@/lib/genre-utils';
+import { getCanonicalGenreLabel } from '@/lib/person-display-tags';
 
 export const revalidate = 60;
 export const dynamicParams = true;
@@ -16,7 +17,7 @@ export async function generateStaticParams() {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { genre } = await params;
-  const g = decodeURIComponent(genre);
+  const g = getCanonicalGenreLabel(decodeURIComponent(genre));
   return {
     title: `${g}の一覧`,
     description: `${g}カテゴリの人物一覧です。写真集・グッズ・出演情報を検索できます。`,
@@ -26,6 +27,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function GenrePage({ params }: Props) {
   const { genre } = await params;
   const decodedGenre = decodeURIComponent(genre);
+  // alias / 表記ゆれ → canonical 表示名（検索はalias含めて実施）
+  const displayGenre = getCanonicalGenreLabel(decodedGenre);
   const persons = await getPersonsByGenreExtended(decodedGenre);
 
   // Group by group name
@@ -41,12 +44,12 @@ export default async function GenrePage({ params }: Props) {
       <div className="max-w-6xl mx-auto px-4 py-8">
         <div className="mb-8">
           <p className="text-sm text-gray-500 mb-1">ジャンル</p>
-          <h1 className="text-2xl font-black text-slate-800">{decodedGenre}</h1>
+          <h1 className="text-2xl font-black text-slate-800">{displayGenre}</h1>
         </div>
         <div className="bg-gray-50 border border-gray-200 rounded-2xl p-12 text-center">
           <p className="text-4xl mb-4">🚧</p>
           <p className="font-bold text-gray-700 text-lg mb-2">このジャンルは準備中です</p>
-          <p className="text-sm text-gray-500">近日中に{decodedGenre}ジャンルの人物を追加予定です。</p>
+          <p className="text-sm text-gray-500">近日中に{displayGenre}ジャンルの人物を追加予定です。</p>
         </div>
       </div>
     );
@@ -57,7 +60,7 @@ export default async function GenrePage({ params }: Props) {
       <div className="mb-8">
         <p className="text-sm text-gray-500 mb-1">ジャンル</p>
         <h1 className="text-2xl font-black text-slate-800">
-          {decodedGenre}
+          {displayGenre}
           <span className="text-gray-400 font-normal text-lg ml-2">{persons.length}人</span>
         </h1>
       </div>

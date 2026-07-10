@@ -34,7 +34,7 @@ interface PersonCardData {
 export default function PersonCard({ person }: { person: PersonCardData & PersonCardMeta }) {
   const initial = person.name[0];
   const gradient = AVATAR_GRADIENT[person.genre] ?? 'from-primary to-indigo-400';
-  const badges = getPersonCardBadges(person.genre, person);
+  const badges = getPersonCardBadges(person.genre, person, 3);
   const subtitle = person.primaryGenre || person.group;
 
   return (

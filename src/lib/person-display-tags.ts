@@ -171,3 +171,55 @@ export function buildCardBadges(
 
   return badges.slice(0, maxBadges);
 }
+
+// ── 正準化ユーティリティ（将来の一括補正用・表示専用）─────────────────────────
+
+/** canonical ジャンル名 → 表記ゆれエイリアス一覧 */
+export const GENRE_ALIAS_MAP: Record<string, string[]> = {
+  'YouTuber':     ['Youtuber', 'youtuber', 'ユーチューバー'],
+  'インフルエンサー': ['SNS'],
+  '俳優':         ['役者'],
+  'アーティスト': ['ミュージシャン'],
+  '乃木坂46':    ['乃木坂'],
+  '日向坂46':    ['日向坂'],
+  '櫻坂46':      ['櫻坂'],
+  '欅坂46':      ['欅坂'],
+  '＝LOVE':      ['=LOVE', 'イコラブ'],
+  '≠ME':         ['ノイミー'],
+  '≒JOY':        ['ニアジョイ'],
+};
+
+/** alias → canonical の逆引きマップ（GENRE_NORMALIZE_MAP と同値。補完用） */
+export function getGenreAliases(canonical: string): string[] {
+  return GENRE_ALIAS_MAP[canonical] ?? [];
+}
+
+/** `normalizeTag` のエイリアス（管理画面や将来補正処理向け） */
+export function normalizePersonGenreTag(tag: string | null | undefined): string | null {
+  return normalizeTag(tag);
+}
+
+/** `normalizeTag(tag) ?? tag` — null を返さないバージョン */
+export function getCanonicalGenreLabel(tag: string): string {
+  return normalizeTag(tag) ?? tag;
+}
+
+/**
+ * 人物の全ジャンル情報から canonical タグ一覧を生成する（重複なし）。
+ * 元データを変更せず、表示・補正確認に使う。
+ */
+export function buildCanonicalGenreTags(
+  genre?: string,
+  meta?: { primaryGenre?: string; genres?: string | string[] | null },
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  function push(v: string | null | undefined): void {
+    const norm = normalizeTag(v);
+    if (norm && !seen.has(norm)) { seen.add(norm); result.push(norm); }
+  }
+  push(meta?.primaryGenre);
+  for (const g of normalizeTags(meta?.genres ?? [])) push(g);
+  push(genre);
+  return result;
+}
