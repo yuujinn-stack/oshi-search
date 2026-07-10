@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllGroupMetas, saveGroupMeta, deleteGroupMeta } from '@/lib/group-meta';
+import { isAsciiSlug } from '@/lib/group-slug';
 import type { GroupMeta } from '@/types/group';
 
 export async function GET() {
@@ -17,9 +18,34 @@ export async function POST(req: Request) {
     if (!body.groupName?.trim()) {
       return NextResponse.json({ error: 'groupName は必須です' }, { status: 400 });
     }
+
+    const rawSlug = body.slug?.trim() ?? '';
+
+    // slug が空でない場合はフォーマットチェック
+    if (rawSlug && !isAsciiSlug(rawSlug)) {
+      return NextResponse.json(
+        { error: 'slugは英小文字・数字・ハイフンのみ、先頭は英数字で入力してください' },
+        { status: 400 },
+      );
+    }
+
+    // slug 重複チェック（同一グループ名を除く）
+    if (rawSlug) {
+      const existing = await getAllGroupMetas();
+      const dup = existing.find(
+        (m) => m.groupName !== body.groupName!.trim() && isAsciiSlug(m.slug) && m.slug === rawSlug,
+      );
+      if (dup) {
+        return NextResponse.json(
+          { error: `このslugは「${dup.groupName}」で既に使用されています` },
+          { status: 409 },
+        );
+      }
+    }
+
     const meta: GroupMeta = {
       groupName: body.groupName.trim(),
-      slug: (body.slug ?? body.groupName).trim(),
+      slug: rawSlug,
       activityStatus: body.activityStatus ?? 'active',
       formedAt: body.formedAt?.trim() || undefined,
       endedAt: body.endedAt?.trim() || undefined,

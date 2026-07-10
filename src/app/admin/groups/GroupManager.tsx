@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { GroupMeta, GroupActivityStatus } from '@/types/group';
+import { GROUP_NAME_TO_SLUG, isAsciiSlug } from '@/lib/group-slug';
 
 const STATUS_OPTIONS: { value: GroupActivityStatus; label: string }[] = [
   { value: 'active',    label: '活動中' },
@@ -19,12 +20,27 @@ const STATUS_BADGE: Record<GroupActivityStatus, string> = {
   unknown:   'bg-gray-100 text-gray-400',
 };
 
+// slug のクライアントサイドバリデーション
+// currentGroupName: 自分自身との重複を除外するため
+function validateSlug(slug: string, currentGroupName: string, metas: GroupMeta[]): string {
+  if (!slug) return '';
+  if (!isAsciiSlug(slug)) {
+    return 'slugは英小文字・数字・ハイフンのみ、先頭は英数字で入力してください';
+  }
+  const dup = metas.find(
+    (m) => m.groupName !== currentGroupName && isAsciiSlug(m.slug) && m.slug === slug,
+  );
+  if (dup) return `このslugは「${dup.groupName}」で既に使用されています`;
+  return '';
+}
+
 // ─── 追加フォーム ──────────────────────────────────────────────────────────────
 interface AddFormProps {
   onAdded: (record: GroupMeta) => void;
+  metas: GroupMeta[];
 }
 
-function AddForm({ onAdded }: AddFormProps) {
+function AddForm({ onAdded, metas }: AddFormProps) {
   const [open, setOpen] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [slug, setSlug] = useState('');
@@ -40,7 +56,8 @@ function AddForm({ onAdded }: AddFormProps) {
   const [error, setError] = useState('');
 
   function autoSlug() {
-    setSlug(encodeURIComponent(groupName));
+    const candidate = GROUP_NAME_TO_SLUG[groupName.trim()] ?? '';
+    setSlug(candidate);
   }
 
   function reset() {
@@ -50,9 +67,11 @@ function AddForm({ onAdded }: AddFormProps) {
     setError('');
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!groupName.trim()) { setError('グループ名は必須です'); return; }
+    const slugErr = validateSlug(slug.trim(), groupName.trim(), metas);
+    if (slugErr) { setError(slugErr); return; }
     setSaving(true); setError('');
     try {
       const formerNames = formerNamesStr.split(/[,、\n]/).map((s) => s.trim()).filter(Boolean);
@@ -61,7 +80,7 @@ function AddForm({ onAdded }: AddFormProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           groupName: groupName.trim(),
-          slug: slug.trim() || groupName.trim(),
+          slug: slug.trim(),
           activityStatus,
           formedAt: formedAt.trim() || undefined,
           endedAt: endedAt.trim() || undefined,
@@ -112,16 +131,23 @@ function AddForm({ onAdded }: AddFormProps) {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">slug</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              slug
+              <span className="ml-1 text-gray-400 font-normal">（英小文字・数字・ハイフン）</span>
+            </label>
             <div className="flex gap-1">
               <input type="text" value={slug} onChange={(e) => setSlug(e.target.value)}
-                placeholder="URLスラッグ"
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                placeholder="例: nogizaka46"
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400" />
               <button type="button" onClick={autoSlug}
-                className="px-2 py-2 text-xs text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50">
-                自動
+                className="px-2 py-2 text-xs text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50"
+                title="グループ名から候補を自動入力">
+                候補
               </button>
             </div>
+            {slug && !isAsciiSlug(slug) && (
+              <p className="text-[11px] text-amber-600 mt-0.5">英小文字・数字・ハイフンのみ使用できます</p>
+            )}
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">活動状態</label>
@@ -204,11 +230,13 @@ function AddForm({ onAdded }: AddFormProps) {
 // ─── インライン編集行 ──────────────────────────────────────────────────────────
 interface EditRowProps {
   record: GroupMeta;
+  metas: GroupMeta[];
   onSaved: (updated: GroupMeta) => void;
   onCancel: () => void;
 }
 
-function EditRow({ record, onSaved, onCancel }: EditRowProps) {
+function EditRow({ record, metas, onSaved, onCancel }: EditRowProps) {
+  const [slug, setSlug] = useState(record.slug ?? '');
   const [activityStatus, setActivityStatus] = useState<GroupActivityStatus>(record.activityStatus);
   const [formedAt, setFormedAt] = useState(record.formedAt ?? '');
   const [endedAt, setEndedAt] = useState(record.endedAt ?? '');
@@ -221,6 +249,8 @@ function EditRow({ record, onSaved, onCancel }: EditRowProps) {
   const [error, setError] = useState('');
 
   async function handleSave() {
+    const slugErr = validateSlug(slug.trim(), record.groupName, metas);
+    if (slugErr) { setError(slugErr); return; }
     setSaving(true); setError('');
     try {
       const formerNames = formerNamesStr.split(/[,、\n]/).map((s) => s.trim()).filter(Boolean);
@@ -229,6 +259,7 @@ function EditRow({ record, onSaved, onCancel }: EditRowProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...record,
+          slug: slug.trim(),
           activityStatus,
           formedAt: formedAt.trim() || undefined,
           endedAt: endedAt.trim() || undefined,
@@ -253,8 +284,49 @@ function EditRow({ record, onSaved, onCancel }: EditRowProps) {
     }
   }
 
+  const slugCandidate = GROUP_NAME_TO_SLUG[record.groupName];
+
   return (
     <div className="bg-indigo-50 border-t border-indigo-100 px-4 py-4 space-y-3">
+      {/* slug 欄（最上部に配置） */}
+      <div>
+        <label className="block text-[11px] font-medium text-gray-500 mb-1">
+          slug（URLスラッグ）
+          <span className="ml-1 text-gray-400 font-normal">英小文字・数字・ハイフンのみ</span>
+        </label>
+        <div className="flex gap-2 items-center">
+          <input
+            type="text"
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            placeholder={slugCandidate ?? '例: nogizaka46'}
+            className="w-64 border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          {slugCandidate && slug !== slugCandidate && (
+            <button
+              type="button"
+              onClick={() => setSlug(slugCandidate)}
+              className="text-[11px] text-indigo-600 border border-indigo-200 rounded px-2 py-1 hover:bg-indigo-50"
+            >
+              候補を使う: {slugCandidate}
+            </button>
+          )}
+          {slug && isAsciiSlug(slug) && (
+            <a
+              href={`/groups/${slug}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-indigo-400 hover:underline"
+            >
+              /groups/{slug} ↗
+            </a>
+          )}
+        </div>
+        {slug && !isAsciiSlug(slug) && (
+          <p className="text-[11px] text-amber-600 mt-0.5">英小文字・数字・ハイフンのみ使用できます</p>
+        )}
+      </div>
+
       <div className="grid grid-cols-4 gap-3">
         <div>
           <label className="block text-[11px] font-medium text-gray-500 mb-1">活動状態</label>
@@ -363,7 +435,7 @@ export default function GroupManager({ initialMetas }: Props) {
 
   return (
     <>
-      <AddForm onAdded={handleAdded} />
+      <AddForm onAdded={handleAdded} metas={metas} />
 
       <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
@@ -403,6 +475,26 @@ export default function GroupManager({ initialMetas }: Props) {
                     <div className="flex flex-wrap gap-3 mt-1 text-[11px] text-gray-400">
                       {g.formedAt && <span>結成: {g.formedAt}</span>}
                       {g.endedAt && <span>改名/解散: {g.endedAt}</span>}
+                      {/* slug / URL 表示 */}
+                      {isAsciiSlug(g.slug) ? (
+                        <a
+                          href={`/groups/${g.slug}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-indigo-500 hover:underline font-mono"
+                        >
+                          /groups/{g.slug}
+                        </a>
+                      ) : (
+                        <span className="text-amber-500">
+                          slug未設定
+                          {GROUP_NAME_TO_SLUG[g.groupName] && (
+                            <span className="ml-1 text-gray-400">
+                              (候補: {GROUP_NAME_TO_SLUG[g.groupName]})
+                            </span>
+                          )}
+                        </span>
+                      )}
                       {g.note && <span className="text-gray-500">{g.note}</span>}
                     </div>
                   </div>
@@ -436,6 +528,7 @@ export default function GroupManager({ initialMetas }: Props) {
                 {editingName === g.groupName && (
                   <EditRow
                     record={g}
+                    metas={metas}
                     onSaved={handleSaved}
                     onCancel={() => setEditingName(null)}
                   />

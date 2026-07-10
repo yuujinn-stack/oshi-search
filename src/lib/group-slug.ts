@@ -3,21 +3,33 @@ import type { GroupMeta } from '@/types/group';
 // ── 固定マッピング ──────────────────────────────────────────────────────────────
 // GroupMeta.slug が未設定または URL エンコード済み日本語の場合でも、
 // 英数字 slug → 正式グループ名 を解決するためのフォールバック。
-// 管理画面で slug を正しく設定すれば DB/Redis が優先される。
+// 管理画面で slug を正しく設定すれば DB/Redis の値が優先される。
 export const SLUG_TO_GROUP_NAME: Record<string, string> = {
-  'nogizaka46':   '乃木坂46',
-  'hinatazaka46': '日向坂46',
-  'sakurazaka46': '櫻坂46',
-  'keyakizaka46': '欅坂46',
-  'equal-love':   '＝LOVE',
-  'audrey':       'オードリー',
-  'bananaman':    'バナナマン',
+  'nogizaka46':       '乃木坂46',
+  'hinatazaka46':     '日向坂46',
+  'sakurazaka46':     '櫻坂46',
+  'keyakizaka46':     '欅坂46',
+  'equal-love':       '＝LOVE',
+  'not-equal-me':     '≠ME',
+  'nearly-equal-joy': '≒JOY',
+  'audrey':           'オードリー',
+  'bananaman':        'バナナマン',
 };
 
-// 正式グループ名 → slug の逆引き
-const GROUP_NAME_TO_SLUG: Record<string, string> = Object.fromEntries(
-  Object.entries(SLUG_TO_GROUP_NAME).map(([slug, name]) => [name, slug]),
-);
+// 正式グループ名 → slug の逆引き（複数バリアントを含む）
+// 管理画面での slug 候補表示・URL 生成のフォールバックに使用
+export const GROUP_NAME_TO_SLUG: Record<string, string> = {
+  '乃木坂46':   'nogizaka46',
+  '日向坂46':   'hinatazaka46',
+  '櫻坂46':     'sakurazaka46',
+  '欅坂46':     'keyakizaka46',
+  '＝LOVE':     'equal-love',
+  '=LOVE':      'equal-love',   // 半角等号バリアント
+  '≠ME':        'not-equal-me',
+  '≒JOY':       'nearly-equal-joy',
+  'オードリー':  'audrey',
+  'バナナマン':  'bananaman',
+};
 
 // ── ユーティリティ ──────────────────────────────────────────────────────────────
 
