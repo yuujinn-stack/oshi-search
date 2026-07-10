@@ -654,10 +654,13 @@ ${workList}
 
 出力形式
 
-personName,workTitle,workType,releaseYear,roleName,vodService,availabilityType,sourceUrl,confidence,note
+personName,workTitle,workType,releaseYear,roleName,workDisplayType,vodService,availabilityType,sourceUrl,confidence,note
 
 workTypeは以下を使用：
 movie / drama / variety / documentary / special / web / stage
+
+workDisplayTypeは以下のいずれかを使用（必須・空欄不可）：
+movie（映画）/ drama（ドラマ）/ variety（バラエティ）/ idol_show（アイドル番組）/ live（ライブ・コンサート）/ documentary（ドキュメンタリー）/ stage（舞台・ミュージカル）/ music（音楽番組）/ web（配信番組・Web）/ anime_voice（アニメ・声優）/ other（その他）
 ${csvDownloadSection(`${personName}_出演作品.csv`)}`;
 }
 

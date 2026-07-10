@@ -88,6 +88,7 @@ function buildWorkRow(work: WorkRecord): typeof works.$inferInsert {
   if (work.usedAi !== undefined)                 aiData.usedAi = work.usedAi;
   if (work.tmdbMatchedPersonId !== undefined)    aiData.tmdbMatchedPersonId = work.tmdbMatchedPersonId;
   if (work.tmdbMatchedPersonName !== undefined)  aiData.tmdbMatchedPersonName = work.tmdbMatchedPersonName;
+  if (work.workDisplayType !== undefined)        aiData.workDisplayType = work.workDisplayType;
 
   const vodData: Record<string, unknown> = {};
   if (work.vodProviders !== undefined)    vodData.vodProviders = work.vodProviders;

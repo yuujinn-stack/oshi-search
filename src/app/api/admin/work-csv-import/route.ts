@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, saveWork, upsertManualCsvVodProviders } from '@/lib/work-store';
 import { normalizeWorkTitle } from '@/lib/work-processor';
-import type { WorkRecord, WorkType } from '@/types/work';
+import type { WorkRecord, WorkType, DisplayWorkType } from '@/types/work';
 import type { VodProvider, VodProviderType } from '@/types/vod';
+import { normalizeDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
 
 // POST /api/admin/work-csv-import
 // body: { csvContent: string, commit?: boolean, personName?: string }
@@ -30,6 +31,12 @@ export interface WorkImportPreviewRow {
   workType: string;
   releaseYear: string;
   roleName: string;
+  // 表示カテゴリ
+  workDisplayType: string;         // CSV から読んだ生の値（空文字可）
+  resolvedDisplayType?: string;    // 正規化後の内部値（バリデーション通過時のみ）
+  displayTypeLabel?: string;       // 日本語ラベル（プレビュー表示用）
+  displayTypeWarning?: string;     // 不正値の警告メッセージ
+  displayTypeAction?: 'set' | 'update' | 'unchanged' | 'none'; // 既存作品への更新状況
   // 作品操作
   action: 'add' | 'existing' | 'error';
   reason: string;
@@ -85,8 +92,9 @@ const CONFIDENCE_MAP: Record<string, 'high' | 'medium' | 'low'> = {
 
 // 列名エイリアス
 const COL_ALIASES: Record<string, string[]> = {
-  worktitle: ['worktitle', 'title'],
-  worktype:  ['worktype', 'type'],
+  worktitle:       ['worktitle', 'title'],
+  worktype:        ['worktype', 'type'],
+  workdisplaytype: ['workdisplaytype', 'workgenre', 'displaycategory', 'displaytype', 'genrelabel'],
 };
 
 function findColIndex(header: string[], candidates: string[]): number {
@@ -97,11 +105,10 @@ function findColIndex(header: string[], candidates: string[]): number {
   return -1;
 }
 
-const EXAMPLE_CSV = `personName,workTitle,workType,releaseYear,roleName,vodService,availabilityType,sourceUrl,confidence,note
-賀喜遥香,ドラマタイトル,drama,2023,主人公,Netflix,flatrate,,high,
-賀喜遥香,ドラマタイトル,drama,2023,主人公,Hulu,flatrate,,medium,
-賀喜遥香,映画タイトル,movie,2022,,,,,,
-賀喜遥香,バラエティ番組,variety,2023,,,,,, `;
+const EXAMPLE_CSV = `personName,workTitle,workType,releaseYear,roleName,workDisplayType,vodService,availabilityType,sourceUrl,confidence,note
+賀喜遥香,乃木坂スター誕生！SIX,tv,2025,本人,idol_show,,,,,
+賀喜遥香,ドラマタイトル,drama,2023,主人公,drama,Netflix,flatrate,,high,
+賀喜遥香,映画タイトル,movie,2022,,movie,,,,, `;
 
 // ─────────────────────────────────────────
 // CSV パーサー（RFC 4180・BOM対応）
@@ -204,6 +211,7 @@ export async function POST(req: NextRequest) {
     workType:         findColIndex(header, COL_ALIASES['worktype']),
     releaseYear:      header.indexOf('releaseyear'),
     roleName:         header.indexOf('rolename'),
+    workDisplayType:  findColIndex(header, COL_ALIASES['workdisplaytype']),
     vodService:       header.indexOf('vodservice'),
     availabilityType: header.indexOf('availabilitytype'),
     sourceUrl:        header.indexOf('sourceurl'),
@@ -240,16 +248,31 @@ export async function POST(req: NextRequest) {
     const row = dataRows[i];
     const get = (col: number) => (col >= 0 ? (row[col] ?? '').trim() : '');
 
-    const csvPersonId        = get(COL.personId);
-    const workTitle          = get(COL.workTitle);
-    const workTypeRaw        = get(COL.workType);
-    const releaseYear        = get(COL.releaseYear);
-    const roleName           = get(COL.roleName);
-    const vodService         = get(COL.vodService);
-    const availabilityType   = get(COL.availabilityType);
-    const sourceUrl          = get(COL.sourceUrl);
-    const confidence         = get(COL.confidence);
-    const note               = get(COL.note);
+    const csvPersonId          = get(COL.personId);
+    const workTitle            = get(COL.workTitle);
+    const workTypeRaw          = get(COL.workType);
+    const releaseYear          = get(COL.releaseYear);
+    const roleName             = get(COL.roleName);
+    const workDisplayTypeRaw   = get(COL.workDisplayType);
+    const vodService           = get(COL.vodService);
+    const availabilityType     = get(COL.availabilityType);
+    const sourceUrl            = get(COL.sourceUrl);
+    const confidence           = get(COL.confidence);
+    const note                 = get(COL.note);
+
+    // workDisplayType の正規化とバリデーション
+    let resolvedDisplayType: DisplayWorkType | undefined;
+    let displayTypeLabel: string | undefined;
+    let displayTypeWarning: string | undefined;
+    if (workDisplayTypeRaw) {
+      const normalized = normalizeDisplayWorkType(workDisplayTypeRaw);
+      if (normalized) {
+        resolvedDisplayType = normalized;
+        displayTypeLabel = DISPLAY_WORK_TYPE_LABEL[normalized];
+      } else {
+        displayTypeWarning = `workDisplayType "${workDisplayTypeRaw}" は未対応の値です（movie / drama / variety / idol_show / live / documentary / stage / music / web / anime_voice / other）`;
+      }
+    }
 
     const effectivePersonName = csvPersonId || bodyPersonName;
 
@@ -260,6 +283,10 @@ export async function POST(req: NextRequest) {
       workType: workTypeRaw,
       releaseYear,
       roleName,
+      workDisplayType: workDisplayTypeRaw,
+      resolvedDisplayType,
+      displayTypeLabel,
+      displayTypeWarning,
       vodService,
       availabilityType,
       sourceUrl,
@@ -296,9 +323,21 @@ export async function POST(req: NextRequest) {
     let workAction: 'add' | 'existing';
     let workReason: string;
 
+    // displayTypeAction: 既存作品に対して workDisplayType を更新するか
+    let displayTypeAction: WorkImportPreviewRow['displayTypeAction'] = 'none';
+
     if (existingWork) {
       workAction = 'existing';
       workReason = '既存作品に紐付け';
+      if (resolvedDisplayType) {
+        if (!existingWork.workDisplayType) {
+          displayTypeAction = 'set';
+        } else if (existingWork.workDisplayType !== resolvedDisplayType) {
+          displayTypeAction = 'update';
+        } else {
+          displayTypeAction = 'unchanged';
+        }
+      }
     } else if (seenWorksInCsv.has(workKey)) {
       workAction = 'existing';
       workReason = 'このCSVの前の行で追加済み';
@@ -338,7 +377,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    previewRows.push({ ...baseRow, action: workAction, reason: workReason, vodAction, vodSkipReason });
+    previewRows.push({ ...baseRow, action: workAction, reason: workReason, vodAction, vodSkipReason, displayTypeAction });
   }
 
   const addCount      = previewRows.filter((r) => r.action === 'add').length;
@@ -390,6 +429,7 @@ export async function POST(req: NextRequest) {
       source: 'manual_csv',
       releaseYear: isNaN(yearNum) ? undefined : yearNum,
       roleName: row.roleName || undefined,
+      workDisplayType: row.resolvedDisplayType as DisplayWorkType | undefined,
       confidenceScore: 100,
       status: 'auto_published',
       vodProviders: [],
@@ -405,6 +445,32 @@ export async function POST(req: NextRequest) {
       savedCount++;
     } catch (err) {
       errors.push(`${row.personName}「${row.workTitle}」作品作成: ${String(err)}`);
+    }
+  }
+
+  // Phase 1.5: 既存作品の workDisplayType を更新
+  const updatedDisplayTypeCount = { count: 0 };
+  for (const row of previewRows) {
+    if (row.action !== 'existing') continue;
+    if (row.displayTypeAction !== 'set' && row.displayTypeAction !== 'update') continue;
+    if (!row.resolvedDisplayType) continue;
+
+    const nt = normalizeWorkTitle(row.workTitle);
+    const workMap = await getPersonWorkMap(row.personName);
+    const existing = workMap.get(nt);
+    if (!existing) continue;
+
+    const updated: WorkRecord = {
+      ...existing,
+      workDisplayType: row.resolvedDisplayType as DisplayWorkType,
+      updatedAt: now,
+    };
+    try {
+      await saveWork(updated);
+      workMap.set(nt, updated);
+      updatedDisplayTypeCount.count++;
+    } catch (err) {
+      errors.push(`${row.personName}「${row.workTitle}」カテゴリ更新: ${String(err)}`);
     }
   }
 
@@ -465,5 +531,10 @@ export async function POST(req: NextRequest) {
   }
 
   const failedCount = previewRows.filter((r) => r.action === 'add').length - savedCount - skipCount;
-  return NextResponse.json({ savedCount, existingCount, skipCount, vodSavedCount, vodSkippedCount, failedCount, errors });
+  return NextResponse.json({
+    savedCount, existingCount, skipCount,
+    vodSavedCount, vodSkippedCount, failedCount,
+    displayTypeUpdatedCount: updatedDisplayTypeCount.count,
+    errors,
+  });
 }

@@ -15,6 +15,11 @@ interface WorkImportPreviewRow {
   workType: string;
   releaseYear: string;
   roleName: string;
+  workDisplayType: string;
+  resolvedDisplayType?: string;
+  displayTypeLabel?: string;
+  displayTypeWarning?: string;
+  displayTypeAction?: 'set' | 'update' | 'unchanged' | 'none';
   action: 'add' | 'existing' | 'error';
   reason: string;
   vodService: string;
@@ -309,6 +314,7 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
                     <th className="text-left p-1.5 border-b border-gray-200">人物</th>
                     <th className="text-left p-1.5 border-b border-gray-200">タイトル</th>
                     <th className="text-left p-1.5 border-b border-gray-200">種別/年</th>
+                    <th className="text-left p-1.5 border-b border-gray-200">カテゴリ</th>
                     <th className="text-left p-1.5 border-b border-gray-200 w-12">VOD</th>
                     <th className="text-left p-1.5 border-b border-gray-200">配信サービス</th>
                     <th className="text-left p-1.5 border-b border-gray-200">備考</th>
@@ -338,6 +344,23 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
                       </td>
                       <td className="p-1.5 text-gray-400 whitespace-nowrap">
                         {row.workType}{row.releaseYear ? ` ${row.releaseYear}` : ''}
+                      </td>
+                      <td className="p-1.5 max-w-[100px]">
+                        {row.displayTypeWarning ? (
+                          <span className="text-[9px] text-orange-600" title={row.displayTypeWarning}>
+                            ⚠️ {row.workDisplayType}
+                          </span>
+                        ) : row.resolvedDisplayType ? (
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                            row.displayTypeAction === 'set'    ? 'bg-indigo-100 text-indigo-700' :
+                            row.displayTypeAction === 'update' ? 'bg-amber-100 text-amber-700' :
+                                                                  'bg-gray-100 text-gray-500'
+                          }`}>
+                            {row.displayTypeLabel ?? row.resolvedDisplayType}
+                          </span>
+                        ) : (
+                          <span className="text-gray-300 text-[9px]">—</span>
+                        )}
                       </td>
                       <td className="p-1.5">
                         {row.vodAction === 'none' ? (

@@ -20,20 +20,10 @@
  *  11. その他              (other)
  */
 
-import type { WorkRecord } from '@/types/work';
+import type { WorkRecord, DisplayWorkType } from '@/types/work';
 
-export type DisplayWorkType =
-  | 'live'
-  | 'documentary'
-  | 'stage'
-  | 'idol_show'
-  | 'music'
-  | 'drama'
-  | 'variety'
-  | 'movie'
-  | 'web'
-  | 'anime_voice'
-  | 'other';
+// 後方互換のため re-export（既存の import 先に影響しない）
+export type { DisplayWorkType };
 
 export const DISPLAY_WORK_TYPE_LABEL: Record<DisplayWorkType, string> = {
   live:         'ライブ・コンサート',
@@ -68,6 +58,42 @@ export const DISPLAY_WORK_TYPE_ORDER: DisplayWorkType[] = [
   'live', 'documentary', 'stage', 'idol_show', 'music',
   'drama', 'variety', 'movie', 'web', 'anime_voice', 'other',
 ];
+
+// ── 日本語ラベル → DisplayWorkType 正規化マップ ──────────────────────────────
+export const DISPLAY_WORK_TYPE_NORMALIZE_MAP: Record<string, DisplayWorkType> = {
+  '映画': 'movie',
+  'ドラマ': 'drama',
+  'バラエティ': 'variety',
+  'アイドル番組': 'idol_show',
+  'ライブ': 'live',
+  'ライブ・コンサート': 'live',
+  'コンサート': 'live',
+  'ドキュメンタリー': 'documentary',
+  '舞台': 'stage',
+  '舞台・ミュージカル': 'stage',
+  'ミュージカル': 'stage',
+  '音楽番組': 'music',
+  '配信番組': 'web',
+  '配信番組・Web': 'web',
+  'Web': 'web',
+  'アニメ': 'anime_voice',
+  'アニメ・声優': 'anime_voice',
+  '声優': 'anime_voice',
+  'その他': 'other',
+};
+
+const VALID_DISPLAY_WORK_TYPES = new Set<string>([
+  'live', 'documentary', 'stage', 'idol_show', 'music',
+  'drama', 'variety', 'movie', 'web', 'anime_voice', 'other',
+]);
+
+/** CSV等から取り込んだ生の文字列を DisplayWorkType に正規化する。不正値は null を返す。 */
+export function normalizeDisplayWorkType(raw: string): DisplayWorkType | null {
+  const t = raw.trim();
+  if (!t) return null;
+  if (VALID_DISPLAY_WORK_TYPES.has(t)) return t as DisplayWorkType;
+  return DISPLAY_WORK_TYPE_NORMALIZE_MAP[t] ?? null;
+}
 
 // ── 内部ユーティリティ ───────────────────────────────────────────────────────
 
@@ -192,10 +218,13 @@ const ANIME_VOICE_KEYWORDS = [
  * DB の workType は変更しない。タイトル文字列で判定する表示専用の値。
  */
 export function getDisplayWorkType(work: WorkRecord): DisplayWorkType {
+  // ① 保存済み明示カテゴリを最優先（CSVインポートで設定した値）
+  if (work.workDisplayType) return work.workDisplayType;
+
   const title    = work.title    ?? '';
   const overview = work.overview ?? '';
 
-  // ① ライブ・コンサート（最優先）
+  // ② ライブ・コンサート（キーワード自動判定の最優先）
   if (matchesAny(title, LIVE_KEYWORDS)) return 'live';
 
   // ② ドキュメンタリー（タイトル + overview も参照）

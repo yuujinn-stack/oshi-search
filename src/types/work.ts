@@ -2,6 +2,20 @@ export type WorkStatus = 'auto_published' | 'needs_review' | 'hidden';
 export type WorkType = 'movie' | 'tv' | 'variety' | 'anime';
 export type WorkSource = 'tmdb' | 'openai_suggestion' | 'ai_supplement' | 'manual' | 'manual_csv';
 
+// 人物ページ・作品詳細ページでの表示カテゴリ（CSVで明示設定、自動分類より優先）
+export type DisplayWorkType =
+  | 'live'
+  | 'documentary'
+  | 'stage'
+  | 'idol_show'
+  | 'music'
+  | 'drama'
+  | 'variety'
+  | 'movie'
+  | 'web'
+  | 'anime_voice'
+  | 'other';
+
 export const WORK_TYPE_LABEL: Record<WorkType, string> = {
   movie: '映画',
   tv: 'ドラマ',
@@ -50,6 +64,8 @@ export interface WorkRecord {
   vodCheckStatus?: 'fresh' | 'needs_recheck' | 'checking' | 'checked' | 'failed';
   vodCheckError?: string;
   priorityRecheck?: boolean;       // 管理者が設定した優先再確認フラグ
+  // 表示カテゴリ（CSVインポート時に明示設定・自動分類より優先）
+  workDisplayType?: DisplayWorkType;
   // 論理削除
   deleted?: boolean;
   deletedAt?: number;
