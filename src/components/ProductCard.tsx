@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { RakutenItem } from '@/types/rakuten';
+import { getBestProductImageUrl } from '@/lib/product-image';
 
 // ─── 星レーティング ───────────────────────────────────────────────────────────
 function StarRating({ avg, count }: { avg: number; count: number }) {
@@ -41,7 +42,8 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
   const [imgError, setImgError] = useState(false);
 
   const href = product.affiliateUrl || product.itemUrl;
-  const hasImage = !!product.imageUrl && !imgError;
+  const bestImageUrl = getBestProductImageUrl(product.imageUrl);
+  const hasImage = !!bestImageUrl && !imgError;
   const price = Number(product.price);
   const reviewAvg = Number(product.reviewAverage);
   const reviewCount = Number(product.reviewCount);
@@ -72,7 +74,7 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
 
         {hasImage ? (
           <img
-            src={product.imageUrl}
+            src={bestImageUrl}
             alt={product.title}
             className={`absolute inset-0 w-full h-full object-contain p-2 transition-transform duration-300 group-hover:scale-105 ${
               loaded ? 'opacity-100' : 'opacity-0'
@@ -142,7 +144,7 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
             minHeight: '44px',
             textDecoration: 'none',
           }}
-          onClick={() => trackProductClick(product.id, personSlug, product.title, product.category, product.imageUrl ?? '', product.affiliateUrl || product.itemUrl)}
+          onClick={() => trackProductClick(product.id, personSlug, product.title, product.category, bestImageUrl, product.affiliateUrl || product.itemUrl)}
         >
           楽天で見る →
         </a>

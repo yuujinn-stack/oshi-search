@@ -32,10 +32,10 @@ function affiliateLink(affiliate: string, item: string): string {
 
 // 楽天URLから安定したプロダクトIDを生成（インデックスではなくURLベース）
 // これにより同じ商品は常に同じIDを持ち、AI判定結果が再利用できる
-// 楽天市場の画像URLを高解像度版に変換（128x128 → 500x500）
+// 楽天市場の画像URLを高解像度版に変換（任意の _ex=NxN → 500x500）
 function upgradeIchibaImageUrl(url: string): string {
   if (!url) return '';
-  return url.replace('?_ex=128x128', '?_ex=500x500');
+  return url.replace(/\?_ex=\d+x\d+/, '?_ex=500x500');
 }
 
 function stableId(prefix: string, itemUrl: string): string {

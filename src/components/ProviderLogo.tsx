@@ -129,8 +129,8 @@ function getLocalSlug(providerName: string): string | undefined {
 // ─── サイズ定義 ────────────────────────────────────────────────────────────────
 type Size = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 const SIZE_CLASS: Record<Size, string> = {
-  xs: 'w-4 h-4',
-  sm: 'w-6 h-6',
+  xs: 'w-5 h-5',
+  sm: 'w-7 h-7',
   md: 'w-8 h-8',
   lg: 'w-10 h-10',
   xl: 'w-11 h-11',
@@ -224,7 +224,7 @@ export default function ProviderLogo({
           src={imgSrc}
           alt={providerName}
           onError={handleError}
-          className="w-full h-full object-contain p-0.5"
+          className="w-full h-full object-contain"
         />
       ) : (
         <PlayFallback />
