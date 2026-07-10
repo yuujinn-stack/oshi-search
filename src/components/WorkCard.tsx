@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { WorkRecord } from '@/types/work';
 import { deduplicateProviders } from '@/lib/vod-dedup';
 import ProviderLogo from '@/components/ProviderLogo';
+import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL, DISPLAY_WORK_TYPE_ICON } from '@/lib/work-display-type';
 
 function trackWorkClick(workId: string, title: string, personName: string, workType: string, posterUrl: string) {
   fetch('/api/track', {
@@ -43,15 +44,10 @@ function getPosterLayout(url: string): { container: string; img: string } {
   };
 }
 
-function WorkTypeIcon({ type }: { type: string }) {
-  if (type === 'movie') return <span className="text-3xl">🎬</span>;
-  if (type === 'documentary') return <span className="text-3xl">🎥</span>;
-  if (type === 'stage') return <span className="text-3xl">🎭</span>;
-  if (type === 'web') return <span className="text-3xl">🌐</span>;
-  return <span className="text-3xl">📺</span>;
-}
-
 export default function WorkCard({ work }: { work: WorkRecord }) {
+  const displayType = getDisplayWorkType(work);
+  const displayLabel = DISPLAY_WORK_TYPE_LABEL[displayType];
+  const displayIcon  = DISPLAY_WORK_TYPE_ICON[displayType];
   const workDetailUrl = `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
   const posterLayout = work.posterUrl ? getPosterLayout(work.posterUrl) : null;
 
@@ -116,7 +112,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
             {/* 種別バッジ（ポスター上） */}
             <div className="absolute top-2 left-2">
               <span className="text-xs bg-black/60 text-white px-1.5 py-0.5 rounded-full backdrop-blur-sm">
-                {work.type === 'movie' ? '映画' : 'ドラマ・TV'}
+                {displayLabel}
               </span>
             </div>
             {/* 配信中バッジ */}
@@ -135,11 +131,11 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
         ) : (
           /* 画像なし用コンパクトヘッダー */
           <div className="work-card-no-poster relative h-20 overflow-hidden flex-shrink-0 flex items-center px-4 gap-3">
-            <WorkTypeIcon type={work.type} />
+            <span className="text-3xl">{displayIcon}</span>
             <div className="flex flex-col gap-0.5 min-w-0">
               <span className="text-[10px] font-medium" style={{ color: 'var(--ds-muted)' }}>画像なし</span>
               <span className="text-xs px-1.5 py-0.5 rounded-full self-start" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>
-                {work.type === 'movie' ? '映画' : 'ドラマ・TV'}
+                {displayLabel}
               </span>
             </div>
             {streamingProviders.length > 0 && (

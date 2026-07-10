@@ -12,7 +12,7 @@ import { groupHref } from '@/lib/group-slug';
 import { deduplicateProviders } from '@/lib/vod-dedup';
 import ProductTabList, { type ProductWithSection } from '@/components/ProductTabList';
 import PersonCard from '@/components/PersonCard';
-import WorkCard from '@/components/WorkCard';
+import WorksSection from '@/components/WorksSection';
 import ProviderLogo from '@/components/ProviderLogo';
 import PageViewTracker from '@/components/site/PageViewTracker';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
@@ -800,11 +800,7 @@ export default async function PersonPage({ params }: Props) {
                   </a>
                 )}
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {publishedWorks.map((work) => (
-                  <WorkCard key={work.id} work={work} />
-                ))}
-              </div>
+              <WorksSection works={publishedWorks} />
             </section>
           ) : redisError ? (
             <section id="works">
