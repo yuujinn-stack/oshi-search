@@ -20,6 +20,7 @@ import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
 import { getAllDisplayOrders } from '@/lib/product-order-store';
 import { shadowReadPersonPage } from '@/lib/shadow-read';
+import { sortProductsByPerson, type PersonDisplayContext } from '@/lib/product-display-score';
 import type { WorkRecord } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 
@@ -73,9 +74,13 @@ function sortProducts(products: RakutenItem[]): RakutenItem[] {
   });
 }
 
-// Apply saved display order; products not in the order list fall back to sortProducts
-function applyDisplayOrder(products: RakutenItem[], savedOrder: string[]): RakutenItem[] {
-  if (savedOrder.length === 0) return sortProducts(products);
+// Apply saved display order; products not in the order list fall back to sortProductsByPerson
+function applyDisplayOrder(
+  products: RakutenItem[],
+  savedOrder: string[],
+  ctx: PersonDisplayContext,
+): RakutenItem[] {
+  if (savedOrder.length === 0) return sortProductsByPerson(products, ctx);
   const added = new Set<string>();
   const inOrder: RakutenItem[] = [];
   for (const id of savedOrder) {
@@ -83,7 +88,7 @@ function applyDisplayOrder(products: RakutenItem[], savedOrder: string[]): Rakut
     if (p && !added.has(p.id)) { inOrder.push(p); added.add(p.id); }
   }
   const rest = products.filter((p) => !added.has(p.id));
-  return [...inOrder, ...sortProducts(rest)];
+  return [...inOrder, ...sortProductsByPerson(rest, ctx)];
 }
 
 // ─── 商品タイトルによるカテゴリ振り分け ────────────────────────────────────
@@ -282,6 +287,14 @@ export default async function PersonPage({ params }: Props) {
     'グッズ': goodsProducts,
   };
 
+  // 人物コンテキスト（表示スコア計算用）
+  // aliases は3文字未満を除外（短い別名の誤爆対策）
+  const personCtx: PersonDisplayContext = {
+    name: person.name,
+    groupName: person.group ?? '',
+    aliases: (person.config.aliases ?? []).filter((a) => a.length >= 3),
+  };
+
   // ── セクション別商品 ──────────────────────────────────────────────────────
   const sectionResults = DISPLAY_SECTIONS.map(({ label, icon, sources, usedKeywords }) => {
     const newProducts = sectionProductLookup[label] ?? [];
@@ -295,7 +308,7 @@ export default async function PersonPage({ params }: Props) {
     });
 
     const savedOrder = sources.flatMap((cat) => displayOrders[cat] ?? []);
-    const sortedNew = applyDisplayOrder(newProducts, savedOrder);
+    const sortedNew = applyDisplayOrder(newProducts, savedOrder, personCtx);
     const sortedUsed = sortProducts(sectionUsed);
     const newResult: ApiResult = !hasAnyData
       ? { status: 'no_data' as const }
