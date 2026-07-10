@@ -29,6 +29,7 @@ import {
 } from '@/lib/product-display-score';
 import type { WorkRecord } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
+import { buildHeroBadgeTitles, buildInfoGenreList, normalizeTag } from '@/lib/person-display-tags';
 
 // ─── 定数 ──────────────────────────────────────────────────────────────────────
 const ACTIVITY_LABEL: Record<ActivityStatus, string> = {
@@ -539,19 +540,25 @@ export default async function PersonPage({ params }: Props) {
 
                 {/* バッジ群 */}
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                  {/* titles: primaryGenreと同一の値は除外（メインラベルで表示済み） */}
-                  {personMeta?.titles && personMeta.titles.length > 0 &&
-                    personMeta.titles
-                      .filter((t) => t !== personMeta?.primaryGenre)
-                      .map((t) => (
-                        <span key={t} className="text-[11px] px-2 py-0.5 rounded-full bg-white/25 text-white font-medium">
-                          {t}
-                        </span>
-                      ))}
-                  {/* primaryGenreはメインラベルで表示済みのためここでは表示しない */}
-                  <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${GENRE_BADGE[person.genre] ?? 'bg-gray-100 text-gray-600'}`}>
-                    {person.genre}
-                  </span>
+                  {/* titles: primaryGenre・genre と重複する値を除外して正規化表示 */}
+                  {buildHeroBadgeTitles({
+                    genre: person.genre,
+                    primaryGenre: personMeta?.primaryGenre,
+                    titles: personMeta?.titles,
+                  }).map((t) => (
+                    <span key={t} className="text-[11px] px-2 py-0.5 rounded-full bg-white/25 text-white font-medium">
+                      {t}
+                    </span>
+                  ))}
+                  {/* genre バッジ（正規化して表示） */}
+                  {(() => {
+                    const displayGenre = normalizeTag(person.genre) ?? person.genre;
+                    return (
+                      <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${GENRE_BADGE[displayGenre] ?? GENRE_BADGE[person.genre] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {displayGenre}
+                      </span>
+                    );
+                  })()}
                   {personMeta?.activityStatus && personMeta.activityStatus !== 'unknown' && (
                     <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${ACTIVITY_BADGE_CLS[personMeta.activityStatus]}`}>
                       {ACTIVITY_LABEL[personMeta.activityStatus]}
@@ -687,9 +694,11 @@ export default async function PersonPage({ params }: Props) {
               infoRows.push({ label: '読み', value: person.config.reading });
             }
 
-            const genres: string[] = personMeta?.genres?.length
-              ? personMeta.genres
-              : person.genre ? [person.genre] : [];
+            const genres = buildInfoGenreList({
+              genre: person.genre,
+              primaryGenre: personMeta?.primaryGenre,
+              genres: personMeta?.genres,
+            });
             if (genres.length > 0) {
               infoRows.push({ label: 'ジャンル', value: genres.join(' / ') });
             }

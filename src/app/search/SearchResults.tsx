@@ -6,6 +6,7 @@ import type { PersonWithConfig, ActivityStatus } from '@/types/person';
 import type { PersonMeta } from '@/lib/person-meta';
 import type { GroupMeta } from '@/types/group';
 import { groupHref } from '@/lib/group-slug';
+import { normalizeTag } from '@/lib/person-display-tags';
 
 // ─── 型定義 ──────────────────────────────────────────────────────────────────
 export interface PersonStats {
@@ -71,8 +72,9 @@ function SearchPersonCard({
   stats?: PersonStats;
 }) {
   const initial = person.name[0];
-  const gradient = GENRE_GRADIENT[person.genre] ?? 'from-indigo-400 to-violet-500';
-  const badgeCls = GENRE_BADGE_CLS[person.genre] ?? 'bg-gray-100 text-gray-600';
+  const displayGenre = normalizeTag(person.genre) ?? person.genre;
+  const gradient = GENRE_GRADIENT[displayGenre] ?? GENRE_GRADIENT[person.genre] ?? 'from-indigo-400 to-violet-500';
+  const badgeCls = GENRE_BADGE_CLS[displayGenre] ?? GENRE_BADGE_CLS[person.genre] ?? 'bg-gray-100 text-gray-600';
   const status = meta?.activityStatus;
   const statusLabel = status ? ACTIVITY_LABEL[status] : undefined;
   const statusCls = status ? ACTIVITY_BADGE_CLS[status] : '';
@@ -111,7 +113,7 @@ function SearchPersonCard({
           {/* ジャンル・活動状態バッジ */}
           <div className="flex flex-wrap gap-1">
             <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${badgeCls}`}>
-              {person.genre}
+              {displayGenre}
             </span>
             {statusLabel && statusCls && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusCls}`}>

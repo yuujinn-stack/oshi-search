@@ -1,3 +1,5 @@
+import { buildCardBadges } from '@/lib/person-display-tags';
+
 // 人物カードに渡す任意のメタフィールド
 export interface PersonCardMeta {
   primaryGenre?: string;
@@ -6,29 +8,14 @@ export interface PersonCardMeta {
   generation?: string;
 }
 
-// 人物カード用バッジ生成（重複除去・最大 maxBadges 件）
+// 人物カード用バッジ生成（正規化・重複除去・最大 maxBadges 件）
 // 優先順: primaryGenre → genres（分割後） → genre → 卒業/脱退 → generation
 export function getPersonCardBadges(
   genre: string,
   meta?: PersonCardMeta,
   maxBadges = 4,
 ): string[] {
-  const seen = new Set<string>();
-  const badges: string[] = [];
-
-  function push(v: string | null | undefined) {
-    const s = v?.trim();
-    if (s && !seen.has(s)) { seen.add(s); badges.push(s); }
-  }
-
-  push(meta?.primaryGenre);
-  for (const g of splitGenres(meta?.genres)) push(g);
-  push(genre);
-  if (meta?.activityStatus === 'graduated') push('卒業');
-  else if (meta?.activityStatus === 'withdrawn') push('脱退');
-  push(meta?.generation);
-
-  return badges.slice(0, maxBadges);
+  return buildCardBadges(genre, meta, maxBadges);
 }
 
 export const DEFAULT_GENRE_ORDER = [
