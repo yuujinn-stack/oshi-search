@@ -5,6 +5,10 @@
  * ・DB / Redis への書き込みなし
  * ・既存の relevanceScore / AI 判定 / verdict には一切影響しない
  * ・既に verdict=related でフィルタ済みの商品一覧内でスコアを付ける
+ *
+ * 並び順の優先ティア（大→小）:
+ *   Tier 1 (NEW)  : 本人名入り → 期別 → グループ → バンドル/その他
+ *   Tier 2 (USED) : 中古・まとめ・ランダム・福袋（常に新品より下）
  */
 
 import type { RakutenItem } from '@/types/rakuten';
@@ -19,6 +23,11 @@ export interface PersonDisplayContext {
    * 短い別名ほど誤爆リスクが高いため、呼び出し側で除外する。
    */
   aliases: string[];
+  /**
+   * 期別・世代キーワード（例: "4期生"）。
+   * PersonMeta.generation から取得。期別商品を本人商品の次に表示する。
+   */
+  generation?: string;
 }
 
 // ── 内部ユーティリティ ──────────────────────────────────────────────────────────
@@ -39,57 +48,79 @@ function includes(title: string, name: string): boolean {
   return n !== name && title.includes(n);
 }
 
-// 中古タイトル判定（page.tsx と同一パターン）
-const USED_PATTERNS = [
-  '中古', 'used', '古本', '中古品',
+// ── 中古・バンドル判定 ──────────────────────────────────────────────────────────
+
+/**
+ * 中古商品の判定キーワード。
+ * RakutenItem.isUsed フラグ OR タイトルにこれらが含まれる場合に中古扱いとする。
+ */
+const USED_TITLE_KEYWORDS = [
+  '中古', 'USED', 'used', '古本', '中古品',
+  '中古 - 良い', '中古 - 非常に良い', '中古 - 可',
+  '中古DVD', '中古Blu-ray', '中古本', '中古雑誌',
   '目立った傷や汚れ', '傷や汚れあり', 'やや傷や汚れ',
 ];
-function isUsedTitle(title: string): boolean {
+
+/** まとめ・ランダム・福袋系キーワード（中古ティアと同じ扱いにする） */
+const BUNDLE_KEYWORDS = [
+  'まとめ売り', 'セット売り', 'まとめ', 'ランダム', '福袋',
+];
+
+/** タイトルが中古商品のシグナルを含むか */
+export function isUsedByTitle(title: string): boolean {
   const t = title.toLowerCase();
-  return USED_PATTERNS.some((p) => t.includes(p.toLowerCase()));
+  return USED_TITLE_KEYWORDS.some((kw) => t.includes(kw.toLowerCase()));
+}
+
+/** タイトルがバンドル・ランダム系か */
+function isBundleByTitle(title: string): boolean {
+  return BUNDLE_KEYWORDS.some((kw) => title.includes(kw));
 }
 
 // ── スコアリングルール定数 ──────────────────────────────────────────────────────
 
-// 人物名タイトル一致 ─ 基本点
-const S_NAME_IN_TITLE   = 500;
-// 人物名がタイトル冒頭に（単独商品の強いシグナル）
-const S_NAME_STARTS     = 500;
-// 写真集 + 人物名
-const S_PHOTOBOOK       = 300;
-// 1st写真集 など「1st」付き
-const S_FIRST           = 200;
-// カレンダー + 人物名
-const S_CALENDAR        = 200;
-// 表紙・特典・生写真・ポスター + 人物名
-const S_COVER_SPECIAL   = 100;
-// 説明文に人物名（タイトルにない場合のみ）
-const S_NAME_IN_DESC    = 300;
-// 別名がタイトルに一致
-const S_ALIAS           = 250;
-// グループ名がタイトルに含まれる
-const S_GROUP           = 200;
-// グループ名しかなく人物名なし（相殺 + 追加減点）
-const P_GROUP_ONLY      = -(S_GROUP + 300); // +200 - 500 = -300 net
-// 写真集 / フォトブック / カレンダー カテゴリボーナス
-const S_CAT_PHOTO       = 150;
-// 雑誌 / 表紙 / 特典系カテゴリボーナス
-const S_CAT_MAGAZINE    = 100;
-// Blu-ray / DVD / CD / ライブカテゴリボーナス
-const S_CAT_MEDIA       = 80;
-// まとめ売り・セット・ランダム・福袋
-const P_BUNDLE          = -150;
-// 中古かつ人物名なし
-const P_USED_NO_NAME    = -50;
+/**
+ * 中古・バンドルティアのオフセット。
+ * 全ての中古/バンドル商品が全ての通常新品より低いスコアになるよう
+ * 十分に大きな負の値を設定する。
+ * (通常新品の最高スコア ≒ 2000 なので -10000 で安全に分離)
+ */
+const TIER_USED   = -10000;
+const TIER_BUNDLE = -8000; // バンドルは中古より少し上（新品の下）
+
+// ── 新品ティア内のスコア ──────────────────────────────────────────────────────
+
+// 本人名マッチング（最重要）
+const S_NAME_IN_TITLE  = 500;   // タイトルに人物名
+const S_NAME_STARTS    = 500;   // タイトルが人物名で始まる（単独商品シグナル）
+const S_PHOTOBOOK      = 300;   // 人物名 + 写真集/フォトブック
+const S_FIRST          = 200;   // 人物名 + 1st（1st写真集など）
+const S_CALENDAR       = 200;   // 人物名 + カレンダー
+const S_COVER_SPECIAL  = 100;   // 人物名 + 表紙/特典/生写真/ポスター
+
+// 説明文・別名
+const S_NAME_IN_DESC   = 300;   // 説明文に人物名（タイトルにない場合のみ）
+const S_ALIAS          = 250;   // 別名（3文字以上）がタイトルに一致
+
+// グループ・期別
+const S_GENERATION     = 200;   // 期別キーワードがタイトルに含まれる
+const S_GROUP          = 200;   // グループ名がタイトルに含まれる
+
+// カテゴリキーワードボーナス
+const S_CAT_PHOTO      = 150;   // 写真集/フォトブック/カレンダー
+const S_CAT_MAGAZINE   = 100;   // 雑誌/表紙/特典/生写真
+const S_CAT_MEDIA      = 80;    // Blu-ray/DVD/CD/ライブ
 
 // ── メイン関数 ─────────────────────────────────────────────────────────────────
 
 /**
  * 商品の表示スコアを計算する。
+ *
  * スコアが高いほど人物との関連性が強い本人商品と判断する。
+ * 中古・バンドル商品は大きなティアオフセットで常に通常新品の下になる。
  *
  * @param product  - 評価対象の商品
- * @param ctx      - 人物コンテキスト（名前・グループ・別名）
+ * @param ctx      - 人物コンテキスト（名前・グループ・別名・期別）
  * @returns        - 表示優先度スコア（高いほど上位表示）
  */
 export function calcDisplayScore(
@@ -98,15 +129,17 @@ export function calcDisplayScore(
 ): number {
   const title       = product.title ?? '';
   const description = product.description ?? product.catchcopy ?? '';
-  const { name, groupName, aliases } = ctx;
+  const { name, groupName, aliases, generation } = ctx;
 
-  let score = 0;
+  // ──── 中古・バンドルティア判定（先に行う）──────────────────────────────────
+  const isUsed   = product.isUsed || isUsedByTitle(title);
+  const isBundle = !isUsed && isBundleByTitle(title); // 中古でないバンドル
 
   // ──── 人物名のタイトルマッチング ────────────────────────────────────────────
   // 2文字以下の短い名前（"あの"、"なお" 等）は誤爆防止のため
   // 冒頭一致または単語境界（スペース前後）のみを有効なマッチとする
   const nameNormalized = norm(name);
-  const isShortName = name.length <= 2;
+  const isShortName    = name.length <= 2;
   const hasName = isShortName
     ? (
         title === name ||
@@ -115,13 +148,16 @@ export function calcDisplayScore(
         title.startsWith(name + '　') ||
         title.startsWith(nameNormalized + ' ') ||
         title.startsWith(nameNormalized + '　') ||
-        // スペースで囲まれた完全一致（タイトル中間にある場合）
         (' ' + title).includes(' ' + name + ' ') ||
         (' ' + title).includes(' ' + nameNormalized + ' ')
       )
     : includes(title, name);
 
-  const hasGroup = !!groupName && title.includes(groupName);
+  const hasGroup      = !!groupName && title.includes(groupName);
+  const hasGeneration = !!generation && title.includes(generation);
+
+  // ──── コンテンツスコア計算 ───────────────────────────────────────────────────
+  let score = 0;
 
   if (hasName) {
     score += S_NAME_IN_TITLE;
@@ -159,12 +195,12 @@ export function calcDisplayScore(
     }
   }
 
-  // ──── 説明文に人物名（タイトルにない場合のみ加点） ──────────────────────────
+  // 説明文に人物名（タイトルにない場合のみ加点）
   if (!hasName && description && includes(description, name)) {
     score += S_NAME_IN_DESC;
   }
 
-  // ──── 別名マッチング（3文字以上のみ・最初の1件だけ加点） ──────────────────
+  // 別名マッチング（3文字以上のみ・最初の1件だけ加点）
   for (const alias of aliases) {
     if (title.includes(alias)) {
       score += S_ALIAS;
@@ -172,16 +208,17 @@ export function calcDisplayScore(
     }
   }
 
-  // ──── グループ名 ─────────────────────────────────────────────────────────────
-  if (hasGroup) {
-    score += S_GROUP;
-    if (!hasName) {
-      // グループ名のみ・人物名なし → 大幅減点
-      score += P_GROUP_ONLY; // P_GROUP_ONLY は負の値（S_GROUP を打ち消す + 追加減点）
-    }
+  // 期別キーワード（タイトルに人物名がない場合のみ加点。人物名ありなら人物点で十分）
+  if (hasGeneration && !hasName) {
+    score += S_GENERATION;
   }
 
-  // ──── カテゴリキーワードボーナス ─────────────────────────────────────────────
+  // グループ名（人物名があってもなくても加点。人物名なしでもグループ商品と判断できる）
+  if (hasGroup) {
+    score += S_GROUP;
+  }
+
+  // カテゴリキーワードボーナス（タイトルのみ）
   if (
     title.includes('写真集') ||
     title.includes('フォトブック') ||
@@ -214,20 +251,13 @@ export function calcDisplayScore(
     score += S_CAT_MEDIA;
   }
 
-  // ──── 減点 ────────────────────────────────────────────────────────────────────
-  // まとめ売り・ランダム封入・福袋
-  if (
-    title.includes('まとめ') ||
-    title.includes('セット') ||
-    title.includes('ランダム') ||
-    title.includes('福袋')
-  ) {
-    score += P_BUNDLE;
-  }
-
-  // 中古かつ人物名なし
-  if (!hasName && (product.isUsed || isUsedTitle(title))) {
-    score += P_USED_NO_NAME;
+  // ──── ティアオフセット適用 ─────────────────────────────────────────────────
+  // 中古・バンドルは通常新品の最高スコア（~2000）を大きく下回るオフセットを加える。
+  // これにより「本人名入り中古」が「グループのみ新品」より上に来るのを防ぐ。
+  if (isUsed) {
+    score += TIER_USED;
+  } else if (isBundle) {
+    score += TIER_BUNDLE;
   }
 
   return score;
@@ -235,23 +265,25 @@ export function calcDisplayScore(
 
 /**
  * 商品リストを本人商品優先でソート。
- * タイスコアの場合は従来ロジック（中古→画像有無→レビュー数）で安定ソートを保つ。
+ *
+ * 並び順:
+ *   1. 本人名入り新品（スコア高い順）
+ *   2. 期別新品
+ *   3. グループ新品
+ *   4. 中古・バンドル（スコア高い順）
+ *
+ * タイスコアの場合は従来ロジック（画像有無→レビュー数）で安定ソートを保つ。
  */
 export function sortProductsByPerson(
   products: RakutenItem[],
   ctx: PersonDisplayContext,
 ): RakutenItem[] {
-  // isUsedByTitle は page.tsx 側と同一ロジック
   return [...products].sort((a, b) => {
     const sa = calcDisplayScore(a, ctx);
     const sb = calcDisplayScore(b, ctx);
     if (sb !== sa) return sb - sa; // スコア降順
 
     // 同点の場合: 既存ロジックで安定化
-    const aUsed = (a.isUsed || isUsedTitle(a.title)) ? 1 : 0;
-    const bUsed = (b.isUsed || isUsedTitle(b.title)) ? 1 : 0;
-    if (aUsed !== bUsed) return aUsed - bUsed;
-
     const aImg = a.imageUrl ? 0 : 1;
     const bImg = b.imageUrl ? 0 : 1;
     if (aImg !== bImg) return aImg - bImg;

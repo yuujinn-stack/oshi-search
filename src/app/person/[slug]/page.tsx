@@ -293,6 +293,7 @@ export default async function PersonPage({ params }: Props) {
     name: person.name,
     groupName: person.group ?? '',
     aliases: (person.config.aliases ?? []).filter((a) => a.length >= 3),
+    generation: personMeta?.generation ?? '',
   };
 
   // ── セクション別商品 ──────────────────────────────────────────────────────
