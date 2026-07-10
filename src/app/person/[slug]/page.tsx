@@ -24,7 +24,6 @@ import {
   sortProductsByPerson,
   calcDisplayTier,
   calcDisplayScore,
-  isUsedByTitle,
   type PersonDisplayContext,
 } from '@/lib/product-display-score';
 import type { WorkRecord } from '@/types/work';
@@ -340,17 +339,6 @@ export default async function PersonPage({ params }: Props) {
     const savedOrder = sources.flatMap((cat) => displayOrders[cat] ?? []);
     const sortedNew  = applyDisplayOrder(newProducts, savedOrder, personCtx);
     const sortedUsed = sortUsedProducts(sectionUsed, personCtx);
-
-    // DEBUG: Preview確認用ログ（本番反映前に削除すること）
-    if (process.env.VERCEL_ENV === 'preview' || process.env.NODE_ENV === 'development') {
-      const debugItems = sortedNew.slice(0, 15).map((p) => ({
-        tier: calcDisplayTier(p, personCtx),
-        score: calcDisplayScore(p, personCtx),
-        isUsed: p.isUsed || isUsedByTitle(p.title),
-        title: p.title.slice(0, 50),
-      }));
-      console.log(`[DISPLAY-ORDER][${person.name}][${label}]`, JSON.stringify(debugItems));
-    }
 
     const newResult: ApiResult = !hasAnyData
       ? { status: 'no_data' as const }
