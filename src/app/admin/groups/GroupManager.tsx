@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { GroupMeta, GroupActivityStatus } from '@/types/group';
-import { GROUP_NAME_TO_SLUG, isAsciiSlug } from '@/lib/group-slug';
+import { GROUP_NAME_TO_SLUG, isAsciiSlug, generateSlugCandidate } from '@/lib/group-slug';
 
 const STATUS_OPTIONS: { value: GroupActivityStatus; label: string }[] = [
   { value: 'active',    label: '活動中' },
@@ -20,8 +20,7 @@ const STATUS_BADGE: Record<GroupActivityStatus, string> = {
   unknown:   'bg-gray-100 text-gray-400',
 };
 
-// slug のクライアントサイドバリデーション
-// currentGroupName: 自分自身との重複を除外するため
+// slug フォーマット・重複チェック（クライアントサイド）
 function validateSlug(slug: string, currentGroupName: string, metas: GroupMeta[]): string {
   if (!slug) return '';
   if (!isAsciiSlug(slug)) {
@@ -32,6 +31,101 @@ function validateSlug(slug: string, currentGroupName: string, metas: GroupMeta[]
   );
   if (dup) return `このslugは「${dup.groupName}」で既に使用されています`;
   return '';
+}
+
+// ─── slug 入力欄（AddForm / EditRow 共通） ────────────────────────────────────
+interface SlugFieldProps {
+  slug: string;
+  onSlugChange: (v: string) => void;
+  groupName: string;
+  metas: GroupMeta[];
+  onAutoGenerate: () => void;
+  /** slug が設定されていない既存グループの場合は true */
+  showCandidateHint?: boolean;
+}
+
+function SlugField({ slug, onSlugChange, groupName, metas, onAutoGenerate, showCandidateHint }: SlugFieldProps) {
+  const candidate = generateSlugCandidate(groupName);
+  const validationErr = validateSlug(slug, groupName, metas);
+  const isDuplicate = validationErr.includes('既に使用');
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1">
+        slug
+        <span className="ml-1 text-gray-400 font-normal text-[11px]">英小文字・数字・ハイフンのみ。例：nogizaka46、equal-love</span>
+      </label>
+      <div className="flex gap-1.5 items-center">
+        <input
+          type="text"
+          value={slug}
+          onChange={(e) => onSlugChange(e.target.value)}
+          placeholder={candidate || '例: nogizaka46'}
+          className={`flex-1 border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 ${
+            slug && !isAsciiSlug(slug)
+              ? 'border-amber-400 focus:ring-amber-300'
+              : isDuplicate
+              ? 'border-red-400 focus:ring-red-300'
+              : 'border-gray-300 focus:ring-indigo-400'
+          }`}
+        />
+        <button
+          type="button"
+          onClick={onAutoGenerate}
+          disabled={!groupName.trim()}
+          className="flex-shrink-0 px-3 py-2 text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-300 rounded-lg hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          title={candidate ? `候補: ${candidate}` : 'グループ名を入力してください'}
+        >
+          自動生成
+        </button>
+      </div>
+
+      {/* バリデーション表示 */}
+      {slug && !isAsciiSlug(slug) && (
+        <p className="text-[11px] text-amber-600 mt-1">
+          英小文字・数字・ハイフンのみ使用できます
+        </p>
+      )}
+      {isDuplicate && (
+        <p className="text-[11px] text-red-600 mt-1">{validationErr}</p>
+      )}
+
+      {/* 候補ヒント（slug が空または固定マッピングと異なる場合） */}
+      {candidate && !isDuplicate && slug !== candidate && (
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-[11px] text-gray-400">
+            候補：
+            <button
+              type="button"
+              onClick={onAutoGenerate}
+              className="ml-0.5 text-indigo-500 hover:underline font-mono"
+            >
+              {candidate}
+            </button>
+          </span>
+        </div>
+      )}
+
+      {/* 現在の slug が有効な場合は URL プレビューリンク */}
+      {isAsciiSlug(slug) && (
+        <a
+          href={`/groups/${slug}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block mt-1 text-[11px] text-indigo-400 hover:underline font-mono"
+        >
+          /groups/{slug} ↗
+        </a>
+      )}
+
+      {/* slug 未設定の既存グループに対するヒント */}
+      {showCandidateHint && !slug && candidate && (
+        <p className="text-[11px] text-amber-600 mt-1">
+          slug未設定です。「自動生成」で候補を入力できます。
+        </p>
+      )}
+    </div>
+  );
 }
 
 // ─── 追加フォーム ──────────────────────────────────────────────────────────────
@@ -55,9 +149,23 @@ function AddForm({ onAdded, metas }: AddFormProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  function autoSlug() {
-    const candidate = GROUP_NAME_TO_SLUG[groupName.trim()] ?? '';
-    setSlug(candidate);
+  function handleAutoGenerate() {
+    const candidate = generateSlugCandidate(groupName);
+    if (!candidate) {
+      setError('グループ名から slug を自動生成できませんでした。手動で入力してください。');
+      return;
+    }
+    // 重複チェック（候補入力時のみ警告 - 保存はしない）
+    const dup = metas.find(
+      (m) => m.groupName !== groupName.trim() && isAsciiSlug(m.slug) && m.slug === candidate,
+    );
+    if (dup) {
+      setSlug(candidate);
+      setError(`候補「${candidate}」は「${dup.groupName}」で既に使用されています。変更してください。`);
+    } else {
+      setSlug(candidate);
+      setError('');
+    }
   }
 
   function reset() {
@@ -123,31 +231,12 @@ function AddForm({ onAdded, metas }: AddFormProps) {
     <div className="mb-6 bg-indigo-50 border border-indigo-200 rounded-2xl p-5">
       <h2 className="font-bold text-indigo-900 text-sm mb-3">グループ追加</h2>
       <form onSubmit={handleSubmit} className="space-y-3">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">グループ名 *</label>
             <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)}
               placeholder="例: 乃木坂46"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              slug
-              <span className="ml-1 text-gray-400 font-normal">（英小文字・数字・ハイフン）</span>
-            </label>
-            <div className="flex gap-1">
-              <input type="text" value={slug} onChange={(e) => setSlug(e.target.value)}
-                placeholder="例: nogizaka46"
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-              <button type="button" onClick={autoSlug}
-                className="px-2 py-2 text-xs text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50"
-                title="グループ名から候補を自動入力">
-                候補
-              </button>
-            </div>
-            {slug && !isAsciiSlug(slug) && (
-              <p className="text-[11px] text-amber-600 mt-0.5">英小文字・数字・ハイフンのみ使用できます</p>
-            )}
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">活動状態</label>
@@ -159,6 +248,14 @@ function AddForm({ onAdded, metas }: AddFormProps) {
             </select>
           </div>
         </div>
+
+        <SlugField
+          slug={slug}
+          onSlugChange={setSlug}
+          groupName={groupName}
+          metas={metas}
+          onAutoGenerate={handleAutoGenerate}
+        />
 
         <div className="grid grid-cols-4 gap-3">
           <div>
@@ -236,7 +333,8 @@ interface EditRowProps {
 }
 
 function EditRow({ record, metas, onSaved, onCancel }: EditRowProps) {
-  const [slug, setSlug] = useState(record.slug ?? '');
+  // 不正な slug（URL エンコード済み日本語など）は入力欄に表示しない
+  const [slug, setSlug] = useState(isAsciiSlug(record.slug) ? record.slug : '');
   const [activityStatus, setActivityStatus] = useState<GroupActivityStatus>(record.activityStatus);
   const [formedAt, setFormedAt] = useState(record.formedAt ?? '');
   const [endedAt, setEndedAt] = useState(record.endedAt ?? '');
@@ -247,6 +345,24 @@ function EditRow({ record, metas, onSaved, onCancel }: EditRowProps) {
   const [note, setNote] = useState(record.note ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  function handleAutoGenerate() {
+    const candidate = generateSlugCandidate(record.groupName);
+    if (!candidate) {
+      setError('グループ名から slug を自動生成できませんでした。手動で入力してください。');
+      return;
+    }
+    const dup = metas.find(
+      (m) => m.groupName !== record.groupName && isAsciiSlug(m.slug) && m.slug === candidate,
+    );
+    if (dup) {
+      setSlug(candidate);
+      setError(`候補「${candidate}」は「${dup.groupName}」で既に使用されています。変更してください。`);
+    } else {
+      setSlug(candidate);
+      setError('');
+    }
+  }
 
   async function handleSave() {
     const slugErr = validateSlug(slug.trim(), record.groupName, metas);
@@ -284,48 +400,18 @@ function EditRow({ record, metas, onSaved, onCancel }: EditRowProps) {
     }
   }
 
-  const slugCandidate = GROUP_NAME_TO_SLUG[record.groupName];
+  const hasInvalidOriginalSlug = record.slug && !isAsciiSlug(record.slug);
 
   return (
     <div className="bg-indigo-50 border-t border-indigo-100 px-4 py-4 space-y-3">
-      {/* slug 欄（最上部に配置） */}
-      <div>
-        <label className="block text-[11px] font-medium text-gray-500 mb-1">
-          slug（URLスラッグ）
-          <span className="ml-1 text-gray-400 font-normal">英小文字・数字・ハイフンのみ</span>
-        </label>
-        <div className="flex gap-2 items-center">
-          <input
-            type="text"
-            value={slug}
-            onChange={(e) => setSlug(e.target.value)}
-            placeholder={slugCandidate ?? '例: nogizaka46'}
-            className="w-64 border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          />
-          {slugCandidate && slug !== slugCandidate && (
-            <button
-              type="button"
-              onClick={() => setSlug(slugCandidate)}
-              className="text-[11px] text-indigo-600 border border-indigo-200 rounded px-2 py-1 hover:bg-indigo-50"
-            >
-              候補を使う: {slugCandidate}
-            </button>
-          )}
-          {slug && isAsciiSlug(slug) && (
-            <a
-              href={`/groups/${slug}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[11px] text-indigo-400 hover:underline"
-            >
-              /groups/{slug} ↗
-            </a>
-          )}
-        </div>
-        {slug && !isAsciiSlug(slug) && (
-          <p className="text-[11px] text-amber-600 mt-0.5">英小文字・数字・ハイフンのみ使用できます</p>
-        )}
-      </div>
+      <SlugField
+        slug={slug}
+        onSlugChange={setSlug}
+        groupName={record.groupName}
+        metas={metas}
+        onAutoGenerate={handleAutoGenerate}
+        showCandidateHint={hasInvalidOriginalSlug || !record.slug}
+      />
 
       <div className="grid grid-cols-4 gap-3">
         <div>
