@@ -3,6 +3,10 @@
 // getImportedPersonNames() を将来のバッチ処理（TMDb/VOD/楽天取得）で使う
 
 import { getRedis } from './redis';
+import { isDbOnlyReadEnabled } from './db-flag';
+import { db } from '@/db/client';
+import { persons as personsTable } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import type { Genre } from '@/types/person';
 import { dbWrite, upsertPersonFromImport, updatePersonFetchStatusInDB } from '@/db/write';
 
@@ -43,6 +47,27 @@ function deserialize(v: unknown): ImportedPerson | null {
 }
 
 export async function getAllImportedPersons(): Promise<ImportedPerson[]> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select().from(personsTable).where(eq(personsTable.source, 'imported'));
+      return rows.map((r): ImportedPerson => ({
+        name:                  r.name,
+        group:                 r.groupName,
+        genre:                 r.genre as Genre,
+        aliases:               (r.aliases ?? []) as string[],
+        tmdbPersonId:          r.tmdbPersonId ?? undefined,
+        description:           r.description ?? undefined,
+        status:                'imported',
+        importedAt:            r.importedAt?.getTime() ?? r.createdAt.getTime(),
+        dataFetchStatus:       r.dataFetchStatus as DataFetchStatus,
+        lastDataFetchedAt:     r.lastDataFetchedAt ? r.lastDataFetchedAt.getTime() : undefined,
+        dataFetchErrorMessage: r.dataFetchError ?? undefined,
+      })).sort((a, b) => b.importedAt - a.importedAt);
+    } catch (err) {
+      console.error('[db-only] getAllImportedPersons failed:', String(err));
+      return [];
+    }
+  }
   const redis = getRedis();
   if (!redis) return [];
   try {
@@ -59,6 +84,23 @@ export async function getAllImportedPersons(): Promise<ImportedPerson[]> {
 
 // Redis エラー時に throw する版（管理画面ページで error/empty を区別するために使う）
 export async function getAllImportedPersonsOrThrow(): Promise<ImportedPerson[]> {
+  if (isDbOnlyReadEnabled()) {
+    // DB-only: エラー時は throw（Redis フォールバックなし）
+    const rows = await db.select().from(personsTable).where(eq(personsTable.source, 'imported'));
+    return rows.map((r): ImportedPerson => ({
+      name:                  r.name,
+      group:                 r.groupName,
+      genre:                 r.genre as Genre,
+      aliases:               (r.aliases ?? []) as string[],
+      tmdbPersonId:          r.tmdbPersonId ?? undefined,
+      description:           r.description ?? undefined,
+      status:                'imported',
+      importedAt:            r.importedAt?.getTime() ?? r.createdAt.getTime(),
+      dataFetchStatus:       r.dataFetchStatus as DataFetchStatus,
+      lastDataFetchedAt:     r.lastDataFetchedAt ? r.lastDataFetchedAt.getTime() : undefined,
+      dataFetchErrorMessage: r.dataFetchError ?? undefined,
+    })).sort((a, b) => b.importedAt - a.importedAt);
+  }
   const redis = getRedis();
   if (!redis) return [];
   const raw = await redis.hgetall(HASH_KEY); // エラー時は throw

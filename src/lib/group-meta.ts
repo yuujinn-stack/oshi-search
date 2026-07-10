@@ -1,5 +1,5 @@
 import { getRedis } from '@/lib/redis';
-import { isDbReadEnabled } from '@/lib/db-flag';
+import { isDbReadEnabled, isDbOnlyReadEnabled } from '@/lib/db-flag';
 import { db } from '@/db/client';
 import { groupMeta as groupMetaTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
@@ -28,6 +28,15 @@ function dbRowToGroupMeta(r: typeof groupMetaTable.$inferSelect): GroupMeta {
 }
 
 export async function getAllGroupMetas(): Promise<GroupMeta[]> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select().from(groupMetaTable);
+      return rows.map(dbRowToGroupMeta).sort((a, b) => a.groupName.localeCompare(b.groupName, 'ja'));
+    } catch (err) {
+      console.error('[db-only] getAllGroupMetas DB error:', String(err));
+      return [];
+    }
+  }
   if (isDbReadEnabled()) {
     try {
       const rows = await db.select().from(groupMetaTable);
@@ -54,6 +63,11 @@ export async function getAllGroupMetas(): Promise<GroupMeta[]> {
 // Redis エラー時に throw する版（グループページのリダイレクト判定で error/empty を区別するために使う）
 // getAllGroupMetas が [] を返すと改名グループが 404 になるため OrThrow で区別する
 export async function getAllGroupMetasOrThrow(): Promise<GroupMeta[]> {
+  if (isDbOnlyReadEnabled()) {
+    // DB-only: エラー時は throw（Redis フォールバックなし）
+    const rows = await db.select().from(groupMetaTable);
+    return rows.map(dbRowToGroupMeta).sort((a, b) => a.groupName.localeCompare(b.groupName, 'ja'));
+  }
   if (isDbReadEnabled()) {
     try {
       const rows = await db.select().from(groupMetaTable);
@@ -76,6 +90,15 @@ export async function getAllGroupMetasOrThrow(): Promise<GroupMeta[]> {
 }
 
 export async function getGroupMeta(groupName: string): Promise<GroupMeta | null> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select().from(groupMetaTable).where(eq(groupMetaTable.groupName, groupName));
+      return rows.length > 0 ? dbRowToGroupMeta(rows[0]) : null;
+    } catch (err) {
+      console.error('[db-only] getGroupMeta DB error:', String(err));
+      return null;
+    }
+  }
   if (isDbReadEnabled()) {
     try {
       const rows = await db.select().from(groupMetaTable).where(eq(groupMetaTable.groupName, groupName));

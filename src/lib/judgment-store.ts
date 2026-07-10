@@ -2,6 +2,10 @@
 // 同じ人物×商品の組み合わせではAIを再実行しない
 
 import { getRedis } from './redis';
+import { isDbOnlyReadEnabled } from './db-flag';
+import { db } from '@/db/client';
+import { verdicts as verdictsTable } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import { dbWrite, upsertVerdict } from '@/db/write';
 
 export type Verdict = 'related' | 'uncertain' | 'unrelated' | 'deleted';
@@ -22,6 +26,26 @@ function hashKey(personName: string): string {
 
 // 人物の全判定結果を取得（ページレンダリング時に1回呼ぶ）
 export async function getAllVerdicts(personName: string): Promise<Record<string, JudgmentRecord>> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select().from(verdictsTable).where(eq(verdictsTable.personName, personName));
+      const result: Record<string, JudgmentRecord> = {};
+      for (const r of rows) {
+        result[r.productId] = {
+          verdict:       r.verdict as Verdict,
+          score:         Number(r.score ?? 0),
+          source:        r.source as JudgmentRecord['source'],
+          reason:        r.reason ?? undefined,
+          timestamp:     r.judgedAt.getTime(),
+          promptVersion: r.promptVersion ?? undefined,
+        };
+      }
+      return result;
+    } catch (err) {
+      console.error('[db-only] getAllVerdicts failed:', String(err));
+      return {};
+    }
+  }
   const redis = getRedis();
   if (!redis) return {};
   try {
@@ -42,6 +66,22 @@ export async function getAllVerdicts(personName: string): Promise<Record<string,
 // Redis エラー時に throw する版（公開人物ページの商品フィルタで error/empty を区別するために使う）
 // getAllVerdicts が {} を返すと承認済み商品が全件非表示になるため、OrThrow で区別する
 export async function getAllVerdictsOrThrow(personName: string): Promise<Record<string, JudgmentRecord>> {
+  if (isDbOnlyReadEnabled()) {
+    // DB-only: エラー時は throw（Redis フォールバックなし）
+    const rows = await db.select().from(verdictsTable).where(eq(verdictsTable.personName, personName));
+    const result: Record<string, JudgmentRecord> = {};
+    for (const r of rows) {
+      result[r.productId] = {
+        verdict:       r.verdict as Verdict,
+        score:         Number(r.score ?? 0),
+        source:        r.source as JudgmentRecord['source'],
+        reason:        r.reason ?? undefined,
+        timestamp:     r.judgedAt.getTime(),
+        promptVersion: r.promptVersion ?? undefined,
+      };
+    }
+    return result;
+  }
   const redis = getRedis();
   if (!redis) return {};
   const raw = await redis.hgetall(hashKey(personName)); // エラー時は throw

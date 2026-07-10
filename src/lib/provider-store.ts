@@ -2,7 +2,7 @@
 // 管理画面からのみ書き込み、ProviderLogo コンポーネントから読み取る
 
 import { getRedis } from './redis';
-import { isDbReadEnabled } from './db-flag';
+import { isDbReadEnabled, isDbOnlyReadEnabled } from './db-flag';
 import { db } from '@/db/client';
 import { vodProviders as vodProvidersTable } from '@/db/schema';
 import { dbWrite, upsertVodProvider } from '@/db/write';
@@ -43,6 +43,15 @@ function redisParseProviders(raw: Record<string, unknown>): ProviderRecord[] {
 }
 
 export async function getAllProviders(): Promise<ProviderRecord[]> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select().from(vodProvidersTable);
+      return rows.map(dbRowToProviderRecord).sort((a, b) => a.slug.localeCompare(b.slug));
+    } catch (err) {
+      console.error('[db-only] getAllProviders DB error:', String(err));
+      return [];
+    }
+  }
   if (isDbReadEnabled()) {
     try {
       const rows = await db.select().from(vodProvidersTable);
@@ -62,6 +71,11 @@ export async function getAllProviders(): Promise<ProviderRecord[]> {
 
 // Redis エラー時に throw する版（管理画面で error/empty を区別するために使う）
 export async function getAllProvidersOrThrow(): Promise<ProviderRecord[]> {
+  if (isDbOnlyReadEnabled()) {
+    // DB-only: エラー時は throw（Redis フォールバックなし）
+    const rows = await db.select().from(vodProvidersTable);
+    return rows.map(dbRowToProviderRecord).sort((a, b) => a.slug.localeCompare(b.slug));
+  }
   if (isDbReadEnabled()) {
     try {
       const rows = await db.select().from(vodProvidersTable);

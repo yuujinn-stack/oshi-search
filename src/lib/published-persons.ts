@@ -4,7 +4,11 @@
 
 import { cache } from 'react';
 import { getRedis } from './redis';
-import type { PersonWithConfig } from '@/types/person';
+import { isDbOnlyReadEnabled } from './db-flag';
+import { db } from '@/db/client';
+import { persons as personsTable } from '@/db/schema';
+import { eq, and, isNotNull } from 'drizzle-orm';
+import type { PersonWithConfig, Genre, PersonConfig } from '@/types/person';
 import { dbWrite, publishPersonInDB, unpublishPersonInDB } from '@/db/write';
 
 const HASH_KEY = 'persons:published';
@@ -16,6 +20,22 @@ export interface PublishedRecord extends PersonWithConfig {
 
 // ── Raw fetch（キャッシュなし）────────────────────────────────────────────────
 export async function getAllPublishedPersonsRaw(): Promise<PublishedRecord[]> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select().from(personsTable)
+        .where(and(eq(personsTable.source, 'imported'), isNotNull(personsTable.publishedAt)));
+      return rows.map((r) => ({
+        name:        r.name,
+        group:       r.groupName,
+        genre:       r.genre as Genre,
+        config:      (r.config ?? {}) as PersonConfig,
+        publishedAt: r.publishedAt!.getTime(),
+      }));
+    } catch (err) {
+      console.error('[db-only] getAllPublishedPersonsRaw failed:', String(err));
+      return [];
+    }
+  }
   const redis = getRedis();
   if (!redis) {
     console.error('[published-persons] getRedis() returned null — check UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN');
@@ -51,6 +71,17 @@ export const getCachedPublishedPersons = cache(getAllPublishedPersonsRaw);
 
 // ── 公開済み人物名の一覧（PersonList の表示判定用）─────────────────────────
 export async function getPublishedPersonNames(): Promise<string[]> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select({ name: personsTable.name })
+        .from(personsTable)
+        .where(and(eq(personsTable.source, 'imported'), isNotNull(personsTable.publishedAt)));
+      return rows.map((r) => r.name);
+    } catch (err) {
+      console.error('[db-only] getPublishedPersonNames failed:', String(err));
+      return [];
+    }
+  }
   const redis = getRedis();
   if (!redis) return [];
   try {
@@ -62,6 +93,13 @@ export async function getPublishedPersonNames(): Promise<string[]> {
 
 // Redis エラー時に throw する版（管理画面 people/import で error/empty を区別するために使う）
 export async function getPublishedPersonNamesOrThrow(): Promise<string[]> {
+  if (isDbOnlyReadEnabled()) {
+    // DB-only: エラー時は throw（Redis フォールバックなし）
+    const rows = await db.select({ name: personsTable.name })
+      .from(personsTable)
+      .where(and(eq(personsTable.source, 'imported'), isNotNull(personsTable.publishedAt)));
+    return rows.map((r) => r.name);
+  }
   const redis = getRedis();
   if (!redis) return [];
   return await redis.hkeys(HASH_KEY); // エラー時は throw

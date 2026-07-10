@@ -2,6 +2,10 @@
 // バッチ・管理画面からのみ書き込み、人物ページから読み取る
 
 import { getRedis } from './redis';
+import { isDbOnlyReadEnabled } from './db-flag';
+import { db } from '@/db/client';
+import { works as worksTable } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { dbWrite, upsertWork } from '@/db/write';
 import type { WorkRecord, WorkStatus } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
@@ -11,8 +15,65 @@ function hashKey(personName: string): string {
   return `works:${personName}`;
 }
 
+// DB行 → WorkRecord マッピング（aiData/vodData JSONB を展開）
+function dbRowToWorkRecord(r: typeof worksTable.$inferSelect): WorkRecord {
+  const ai  = (r.aiData  ?? {}) as Record<string, unknown>;
+  const vod = (r.vodData ?? {}) as Record<string, unknown>;
+  return {
+    id:              r.id,
+    personName:      r.personName,
+    title:           r.title,
+    originalTitle:   r.originalTitle ?? undefined,
+    normalizedTitle: r.normalizedTitle,
+    type:            r.type as WorkRecord['type'],
+    tmdbId:          r.tmdbId ?? undefined,
+    source:          r.source as WorkRecord['source'],
+    releaseYear:     r.releaseYear ?? undefined,
+    roleName:        r.roleName ?? undefined,
+    overview:        r.overview ?? undefined,
+    posterUrl:       r.posterUrl ?? undefined,
+    confidenceScore: Number(r.confidenceScore ?? 0),
+    status:          r.status as WorkRecord['status'],
+    deleted:         r.deleted,
+    deletedAt:       r.deletedAt  ? r.deletedAt.getTime()  : undefined,
+    deletedBy:       r.deletedBy  ?? undefined,
+    checkedAt:       r.checkedAt  ? r.checkedAt.getTime()  : undefined,
+    createdAt:       r.createdAt.getTime(),
+    updatedAt:       r.updatedAt.getTime(),
+    aiDecision:             ai.aiDecision             as WorkRecord['aiDecision'],
+    aiSamePerson:           ai.aiSamePerson           as boolean | undefined,
+    aiReason:               ai.aiReason               as string | undefined,
+    aiRelation:             ai.aiRelation             as WorkRecord['aiRelation'],
+    aiStatusRecommendation: ai.aiStatusRecommendation as WorkRecord['aiDecision'] | undefined,
+    aiNeedsHumanReview:     ai.aiNeedsHumanReview     as boolean | undefined,
+    usedAi:                 ai.usedAi                 as boolean | undefined,
+    tmdbMatchedPersonId:    ai.tmdbMatchedPersonId    as number | undefined,
+    tmdbMatchedPersonName:  ai.tmdbMatchedPersonName  as string | undefined,
+    workDisplayType:        ai.workDisplayType        as WorkRecord['workDisplayType'],
+    vodProviders:    vod.vodProviders    as WorkRecord['vodProviders'],
+    vodUpdatedAt:    vod.vodUpdatedAt    as number | undefined,
+    vodAiCheckedAt:  vod.vodAiCheckedAt  as number | undefined,
+    vodStatus:       vod.vodStatus       as WorkRecord['vodStatus'],
+    nextVodCheckAt:  vod.nextVodCheckAt  as number | undefined,
+    lastVodCheckAt:  vod.lastVodCheckAt  as number | undefined,
+    vodCheckSource:  vod.vodCheckSource  as WorkRecord['vodCheckSource'],
+    vodCheckStatus:  vod.vodCheckStatus  as WorkRecord['vodCheckStatus'],
+    vodCheckError:   vod.vodCheckError   as string | undefined,
+    priorityRecheck: vod.priorityRecheck as boolean | undefined,
+  };
+}
+
 // 人物の全作品を取得
 export async function getAllWorks(personName: string): Promise<WorkRecord[]> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select().from(worksTable).where(eq(worksTable.personName, personName));
+      return rows.map(dbRowToWorkRecord);
+    } catch (err) {
+      console.error('[db-only] getAllWorks failed:', String(err));
+      return [];
+    }
+  }
   const redis = getRedis();
   if (!redis) return [];
   try {
@@ -42,6 +103,17 @@ export async function getPublishedWorks(personName: string): Promise<WorkRecord[
 
 // Redis エラー時に throw する版（人物ページで error/empty を区別するために使う）
 export async function getPublishedWorksOrThrow(personName: string): Promise<WorkRecord[]> {
+  if (isDbOnlyReadEnabled()) {
+    // DB-only: エラー時は throw（Redis フォールバックなし）
+    const rows = await db.select().from(worksTable)
+      .where(and(
+        eq(worksTable.personName, personName),
+        eq(worksTable.status, 'auto_published'),
+        eq(worksTable.deleted, false),
+      ));
+    return rows.map(dbRowToWorkRecord)
+      .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0));
+  }
   const redis = getRedis();
   if (!redis) return [];
   const raw = await redis.hgetall(hashKey(personName)); // エラー時は throw
@@ -133,6 +205,16 @@ export async function softDeleteWorks(personName: string, workIds: string[]): Pr
 
 // 特定の作品を1件取得
 export async function getWork(personName: string, workId: string): Promise<WorkRecord | null> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select().from(worksTable)
+        .where(and(eq(worksTable.personName, personName), eq(worksTable.id, workId)));
+      return rows.length > 0 ? dbRowToWorkRecord(rows[0]) : null;
+    } catch (err) {
+      console.error('[db-only] getWork failed:', String(err));
+      return null;
+    }
+  }
   const redis = getRedis();
   if (!redis) return null;
   try {

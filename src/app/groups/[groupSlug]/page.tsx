@@ -6,7 +6,7 @@ import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts, CATEGORIES } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 import { deduplicateProviders } from '@/lib/vod-dedup';
-import { getRedis } from '@/lib/redis';
+import { getAllPersonMetas } from '@/lib/person-meta';
 import { getAllGroupMetasOrThrow, getAllGroupMetas } from '@/lib/group-meta';
 import { groupHref, groupHrefByName, resolveGroupFromSlug, resolveGroupName, canonicalGroupSlug, SLUG_TO_GROUP_NAME } from '@/lib/group-slug';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
@@ -332,19 +332,7 @@ export default async function GroupsPage({ params }: Props) {
         return { member: m, works, storedProducts, verdicts };
       }),
     ),
-    (async (): Promise<Record<string, PersonMeta>> => {
-      try {
-        const redis = getRedis();
-        if (!redis) return {};
-        const raw = await redis.hgetall('admin:person-meta');
-        if (!raw) return {};
-        const map: Record<string, PersonMeta> = {};
-        for (const [k, v] of Object.entries(raw)) {
-          try { map[k] = (typeof v === 'string' ? JSON.parse(v) : v) as PersonMeta; } catch { /* skip */ }
-        }
-        return map;
-      } catch { return {}; }
-    })(),
+    getAllPersonMetas().catch(() => ({} as Record<string, PersonMeta>)),
   ]);
 
   // シャドーリード

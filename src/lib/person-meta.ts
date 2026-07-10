@@ -1,5 +1,5 @@
 import { getRedis } from '@/lib/redis';
-import { isDbReadEnabled } from '@/lib/db-flag';
+import { isDbReadEnabled, isDbOnlyReadEnabled } from '@/lib/db-flag';
 import { db } from '@/db/client';
 import { personMeta as personMetaTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
@@ -35,6 +35,17 @@ function dbRowToPersonMeta(r: typeof personMetaTable.$inferSelect): PersonMeta {
 }
 
 export async function getAllPersonMetas(): Promise<Record<string, PersonMeta>> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select().from(personMetaTable);
+      const map: Record<string, PersonMeta> = {};
+      for (const r of rows) map[r.personName] = dbRowToPersonMeta(r);
+      return map;
+    } catch (err) {
+      console.error('[db-only] getAllPersonMetas DB error:', String(err));
+      return {};
+    }
+  }
   if (isDbReadEnabled()) {
     try {
       const rows = await db.select().from(personMetaTable);
@@ -60,6 +71,13 @@ export async function getAllPersonMetas(): Promise<Record<string, PersonMeta>> {
 
 // Redis エラー時に throw する版（検索・ジャンルページ等で error/empty を区別するために使う）
 export async function getAllPersonMetasOrThrow(): Promise<Record<string, PersonMeta>> {
+  if (isDbOnlyReadEnabled()) {
+    // DB-only: エラー時は throw（Redis フォールバックなし）
+    const rows = await db.select().from(personMetaTable);
+    const map: Record<string, PersonMeta> = {};
+    for (const r of rows) map[r.personName] = dbRowToPersonMeta(r);
+    return map;
+  }
   if (isDbReadEnabled()) {
     try {
       const rows = await db.select().from(personMetaTable);
@@ -82,6 +100,15 @@ export async function getAllPersonMetasOrThrow(): Promise<Record<string, PersonM
 }
 
 export async function getPersonMeta(name: string): Promise<PersonMeta | null> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select().from(personMetaTable).where(eq(personMetaTable.personName, name));
+      return rows.length > 0 ? dbRowToPersonMeta(rows[0]) : null;
+    } catch (err) {
+      console.error('[db-only] getPersonMeta DB error:', String(err));
+      return null;
+    }
+  }
   if (isDbReadEnabled()) {
     try {
       const rows = await db.select().from(personMetaTable).where(eq(personMetaTable.personName, name));

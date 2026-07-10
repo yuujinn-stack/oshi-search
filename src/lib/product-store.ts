@@ -2,6 +2,10 @@
 // バッチ処理でのみ書き込み、人物ページと管理画面から読み取る
 
 import { getRedis } from './redis';
+import { isDbOnlyReadEnabled } from './db-flag';
+import { db } from '@/db/client';
+import { products as productsTable } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import { dbWrite, upsertProduct } from '@/db/write';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
@@ -108,6 +112,24 @@ export async function updateProductInCategory(
 export async function getAllStoredProducts(
   personName: string
 ): Promise<Partial<Record<ProductCategory, StoredCategoryData>>> {
+  if (isDbOnlyReadEnabled()) {
+    try {
+      const rows = await db.select().from(productsTable).where(eq(productsTable.personName, personName));
+      const result: Partial<Record<ProductCategory, StoredCategoryData>> = {};
+      for (const r of rows) {
+        if ((CATEGORIES as string[]).includes(r.category)) {
+          result[r.category as ProductCategory] = {
+            products: r.items as RakutenItem[],
+            fetchedAt: r.fetchedAt.getTime(),
+          };
+        }
+      }
+      return result;
+    } catch (err) {
+      console.error('[db-only] getAllStoredProducts failed:', String(err));
+      return {};
+    }
+  }
   const redis = getRedis();
   if (!redis) return {};
   try {
@@ -132,6 +154,20 @@ export async function getAllStoredProducts(
 export async function getAllStoredProductsOrThrow(
   personName: string,
 ): Promise<Partial<Record<ProductCategory, StoredCategoryData>>> {
+  if (isDbOnlyReadEnabled()) {
+    // DB-only: エラー時は throw（Redis フォールバックなし）
+    const rows = await db.select().from(productsTable).where(eq(productsTable.personName, personName));
+    const result: Partial<Record<ProductCategory, StoredCategoryData>> = {};
+    for (const r of rows) {
+      if ((CATEGORIES as string[]).includes(r.category)) {
+        result[r.category as ProductCategory] = {
+          products: r.items as RakutenItem[],
+          fetchedAt: r.fetchedAt.getTime(),
+        };
+      }
+    }
+    return result;
+  }
   const redis = getRedis();
   if (!redis) return {};
   const raw = await redis.hgetall(hashKey(personName)); // エラー時は throw

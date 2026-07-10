@@ -6,7 +6,7 @@ import { getPersonWithConfigMerged, getPersonsByGroupMerged } from '@/lib/person
 import { getAllStoredProductsOrThrow, type StoredCategoryData } from '@/lib/product-store';
 import { getAllVerdictsOrThrow } from '@/lib/judgment-store';
 import { getPublishedWorksOrThrow } from '@/lib/work-store';
-import { getRedis } from '@/lib/redis';
+import { getPersonMeta } from '@/lib/person-meta';
 import { getGroupMeta } from '@/lib/group-meta';
 import { groupHref } from '@/lib/group-slug';
 import { deduplicateProviders } from '@/lib/vod-dedup';
@@ -236,15 +236,7 @@ export default async function PersonPage({ params }: Props) {
       getAllStoredProductsOrThrow(person.name),
       getAllVerdictsOrThrow(person.name),
       getPublishedWorksOrThrow(person.name),
-      (async (): Promise<PersonMeta | null> => {
-        try {
-          const redis = getRedis();
-          if (!redis) return null;
-          const raw = await redis.hget<string>('admin:person-meta', person.name);
-          if (!raw) return null;
-          return (typeof raw === 'string' ? JSON.parse(raw) : raw) as PersonMeta;
-        } catch { return null; }
-      })(),
+      getPersonMeta(person.name),
       person.group ? getGroupMeta(person.group) : Promise.resolve(null),
       getAllDisplayOrders(person.name),
     ]);

@@ -2,8 +2,8 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks } from '@/lib/work-store';
 import { getAllImportedPersonsOrThrow } from '@/lib/imported-persons';
 import { getAllStoredProducts } from '@/lib/product-store';
-import { getRedis } from '@/lib/redis';
 import { pingRedis } from '@/lib/redis-health';
+import { getAllPersonMetas } from '@/lib/person-meta';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import WorkCheckPersonSection from './WorkCheckPersonSection';
 import AiSupplementSection from './AiSupplementSection';
@@ -37,17 +37,7 @@ export default async function WorkCheckPage() {
 
   let personMetaMap: Record<string, PersonMeta> = {};
   try {
-    const redis = getRedis();
-    if (redis) {
-      const raw = await redis.hgetall('admin:person-meta');
-      if (raw) {
-        for (const [k, v] of Object.entries(raw)) {
-          try {
-            personMetaMap[k] = (typeof v === 'string' ? JSON.parse(v) : v) as PersonMeta;
-          } catch { /* skip */ }
-        }
-      }
-    }
+    personMetaMap = await getAllPersonMetas();
   } catch { /* ignore */ }
 
   const countResults = await Promise.all(
