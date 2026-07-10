@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { csvDownloadSection } from '@/lib/chatGptPromptUtil';
+import { getCanonicalGenreListStr, buildGenreRulesBlock, buildGenreExamplesBlock } from '@/lib/genre-prompt';
 
 type TargetType = 'group' | 'individual' | 'multiple' | 'free';
 
@@ -57,11 +58,11 @@ function buildPrompt(target: string, targetType: TargetType, opts: PromptOptions
     cols.push('awards');
     cols.push('careerStatus');
     cols.push('roleNote');
-    colNotes.push('- primaryGenre: 2026年現在の主な活動ジャンル（単一 例: 女優 / タレント / アイドル / 歌手）');
-    colNotes.push('  ※ グループ卒業者は現在の職業を記載。現役アイドルはアイドルなど。不明は空欄。');
-    colNotes.push('- genres: ジャンル（現在を先頭に、過去ジャンルは後に カンマ区切り 例: "女優,タレント,元アイドル"）');
-    colNotes.push('- titles: 現在の肩書きを先頭に、過去の役職・旧所属は後に（カンマ区切り 例: "女優,タレント,元欅坂46,元欅坂46キャプテン"）');
-    colNotes.push('- publicRoles: 現在の役職（カンマ区切り 例: "女優,MC"）');
+    colNotes.push('- primaryGenre: 2026年現在の主な活動ジャンル（単一）。grp卒業者は現在の職業を記載。不明は空欄。');
+    colNotes.push('  使用できる値（canonical のみ）: 女優 / 俳優 / アイドル / タレント / 芸人 / 歌手 / アーティスト / YouTuber 等');
+    colNotes.push('- genres: 複数ジャンル（現在を先頭・カンマ区切り canonical 表記のみ 例: 女優,タレント,元アイドル）');
+    colNotes.push('- titles: 世間的な肩書き・称号（カンマ区切り 例: モデル,ラジオパーソナリティ）');
+    colNotes.push('- publicRoles: 役職・番組上の立場（カンマ区切り 例: 司会者,キャスター）※司会者はgenresではなくここに入れる');
     colNotes.push('- awards: 主な受賞歴（カンマ区切り）');
     colNotes.push('- careerStatus: 芸能活動状態（active=活動中 / inactive=活動休止 / retired=引退 / deceased=故人 / unknown=不明）');
     colNotes.push('- roleNote: 現在の活動内容を簡潔に（例: 現在は女優・タレントとして活動。舞台・ドラマ・映画に出演。）');
@@ -100,9 +101,10 @@ function buildPrompt(target: string, targetType: TargetType, opts: PromptOptions
     '- name: 人物名（必須） 例: 賀喜遥香',
     '- groupName: 所属グループ名 例: 乃木坂46',
     '  ※ グループ名は正式名称で統一してください',
-    '- genre: ジャンル（以下のいずれかを使用）',
-    '  坂道 / 芸人 / テレビ / アーティスト / 俳優',
-    '  ※ 坂道グループ（乃木坂46・櫻坂46・日向坂46等）は「坂道」を使用',
+    '- genre: ジャンル（以下のいずれかを使用・表記ゆれ禁止）',
+    `  ${getCanonicalGenreListStr()}`,
+    '  ※ 坂道グループ（乃木坂46・日向坂46・櫻坂46等）は「坂道」を使用',
+    '  ※ グループ名（乃木坂46など）をgenreに入れないこと',
     '- aliases: 別名・読み仮名（複数ある場合はカンマ区切りでダブルクォートで囲む）',
     '  例: "かっきー,賀喜ちゃん,かきちゃん"',
     ...colNotes,
@@ -110,6 +112,13 @@ function buildPrompt(target: string, targetType: TargetType, opts: PromptOptions
     '',
     csvDownloadSection(`${filename}_人物登録.csv`),
     '',
+    ...(opts.includeCareerInfo ? [
+      '',
+      buildGenreRulesBlock(),
+      '',
+      buildGenreExamplesBlock(),
+      '',
+    ] : []),
     '━━━━━━━━━━━━━━━━━━',
     '最重要',
     '━━━━━━━━━━━━━━━━━━',

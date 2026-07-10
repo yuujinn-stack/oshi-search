@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { PreviewRow } from '@/app/api/admin/people-membership-import/route';
 import type { PersonMeta } from '@/lib/person-meta';
 import { csvDownloadSection } from '@/lib/chatGptPromptUtil';
+import { buildGenreRulesBlock, buildGenreExamplesBlock } from '@/lib/genre-prompt';
 
 // ─── フィールドラベル ─────────────────────────────────────────────────────────
 const FIELD_LABEL: Record<string, string> = {
@@ -205,16 +206,25 @@ primaryGenre:
 
 genres:
 ・現在の活動ジャンルを先頭にし、過去のジャンルは後に並べる
+・canonical 表記のみ使用（表記ゆれ禁止）
 ・例: 女優,タレント,元アイドル
 
 titles:
-・現在の肩書き・称号を先頭にし、過去の役職・旧所属は後に並べる
-・例: 女優,タレント,元欅坂46,元欅坂46キャプテン
-・「元〇〇」の形式で過去の所属を含めてよい
+・世間的な肩書き・称号（genres に収まらないもの）
+・例: モデル,ラジオパーソナリティ,声優アイドル
+
+publicRoles:
+・役職・番組上の立場
+・例: 司会者,キャスター,コメンテーター
+・※ 司会者は genres ではなく必ず publicRoles に記載すること
 
 roleNote:
 ・現在どのような活動をしているかを簡潔に記載
 ・例: 現在は女優・タレントとして活動。舞台・ドラマ・映画などに出演。
+
+${buildGenreRulesBlock()}
+
+${buildGenreExamplesBlock()}
 
 ${csv}
 ${csvDownloadSection(`${groupName}_所属情報.csv`)}`;
