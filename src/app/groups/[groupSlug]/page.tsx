@@ -8,7 +8,7 @@ import { getAllVerdicts } from '@/lib/judgment-store';
 import { deduplicateProviders } from '@/lib/vod-dedup';
 import { getRedis } from '@/lib/redis';
 import { getAllGroupMetasOrThrow, getAllGroupMetas } from '@/lib/group-meta';
-import { groupHref, groupHrefByName, resolveGroupFromSlug, canonicalGroupSlug, isAsciiSlug } from '@/lib/group-slug';
+import { groupHref, groupHrefByName, resolveGroupFromSlug, resolveGroupName, canonicalGroupSlug, SLUG_TO_GROUP_NAME } from '@/lib/group-slug';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import PersonCard from '@/components/PersonCard';
 import MemberSection from '@/components/site/MemberSection';
@@ -224,14 +224,18 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { groupSlug } = await params;
   const allGroupMetas = await getAllGroupMetas();
   const meta = resolveGroupFromSlug(groupSlug, allGroupMetas);
-  const groupName = meta?.groupName ?? decodeURIComponent(groupSlug);
+  // resolveGroupName: GroupMeta なし・slug 未設定でも固定マッピングでグループ名を解決
+  const groupName = resolveGroupName(groupSlug, allGroupMetas) ?? decodeURIComponent(groupSlug);
 
   const allPersons = await getAllPersonsMerged();
   const memberCount = allPersons.filter((p) => p.group === groupName).length;
   if (memberCount === 0) return {};
 
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
-  const slug = meta ? canonicalGroupSlug(meta) : encodeURIComponent(groupName);
+  // meta なしでも: groupSlug が固定マッピングにあればそれが canonical slug、なければエンコード
+  const slug = meta
+    ? canonicalGroupSlug(meta)
+    : (SLUG_TO_GROUP_NAME[groupSlug] ? groupSlug : encodeURIComponent(groupName));
 
   const title = `${groupName} | メンバー・出演作品・グッズ・配信情報まとめ`;
   const description = `${groupName}のメンバー${memberCount}人の出演作品・配信中作品・写真集・CD・Blu-ray・グッズをまとめて掲載。楽天で購入・VODで視聴できます。`;
@@ -268,7 +272,10 @@ export default async function GroupsPage({ params }: Props) {
     }
   }
 
-  const groupName = resolvedMeta?.groupName ?? decodeURIComponent(groupSlug);
+  // resolveGroupName: GroupMeta.slug 未設定でも固定マッピングでグループ名を解決
+  const groupName = resolvedMeta?.groupName
+    ?? resolveGroupName(groupSlug, allGroupMetas)
+    ?? decodeURIComponent(groupSlug);
   const groupMeta: GroupMeta | null = resolvedMeta ?? null;
 
   // ── メンバー取得 ──
@@ -513,7 +520,9 @@ export default async function GroupsPage({ params }: Props) {
 
   // ── JSON-LD ──
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
-  const slug = groupMeta ? canonicalGroupSlug(groupMeta) : encodeURIComponent(groupName);
+  const slug = groupMeta
+    ? canonicalGroupSlug(groupMeta)
+    : (SLUG_TO_GROUP_NAME[groupSlug] ? groupSlug : encodeURIComponent(groupName));
   const groupUrl = `${siteOrigin}/groups/${slug}`;
 
   const orgJsonLd = {
