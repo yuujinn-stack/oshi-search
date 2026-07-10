@@ -9,6 +9,7 @@ import type { VodProvider } from '@/types/vod';
 import type { ProductCategory } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
 import { deduplicateProviders, normalizeProviderName } from '@/lib/vod-dedup';
+import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
 import ProviderLogo from '@/components/ProviderLogo';
 import VodTrackLink from '@/components/site/VodTrackLink';
 
@@ -180,6 +181,9 @@ export default async function WorkDetailPage({ params }: Props) {
 
   const relatedWorks = allWorks.filter((w) => w.id !== workId).slice(0, 6);
 
+  const displayWorkType = getDisplayWorkType(work);
+  const displayWorkLabel = DISPLAY_WORK_TYPE_LABEL[displayWorkType];
+
   // 公開用 VOD フィルタ + 重複除去
   const publicProviders = deduplicateProviders(
     (work.vodProviders ?? []).filter((p) => {
@@ -311,7 +315,7 @@ export default async function WorkDetailPage({ params }: Props) {
                 )}
                 <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
                   <span className="bg-gray-100 px-2 py-0.5 rounded-full">
-                    {work.type === 'movie' ? '映画' : 'ドラマ・TV'}
+                    {displayWorkLabel}
                   </span>
                   {work.releaseYear && <span>{work.releaseYear}年</span>}
                   {work.roleName && <span className="text-indigo-500">役: {work.roleName}</span>}
