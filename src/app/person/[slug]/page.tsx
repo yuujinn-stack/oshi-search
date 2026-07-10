@@ -20,7 +20,13 @@ import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
 import { getAllDisplayOrders } from '@/lib/product-order-store';
 import { shadowReadPersonPage } from '@/lib/shadow-read';
-import { sortProductsByPerson, type PersonDisplayContext } from '@/lib/product-display-score';
+import {
+  sortProductsByPerson,
+  calcDisplayTier,
+  calcDisplayScore,
+  isUsedByTitle,
+  type PersonDisplayContext,
+} from '@/lib/product-display-score';
 import type { WorkRecord } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 
@@ -57,16 +63,17 @@ const GENRE_GRADIENT: Record<string, string> = {
 };
 
 // ─── 商品ソート（既存ロジック・変更禁止） ─────────────────────────────────────
-const USED_TITLE_PATTERNS = ['中古', 'used', '古本', '中古品', '目立った傷や汚れ', '傷や汚れあり', 'やや傷や汚れ'];
-function isUsedByTitle(title: string): boolean {
-  const t = title.toLowerCase();
-  return USED_TITLE_PATTERNS.some((pat) => t.includes(pat.toLowerCase()));
-}
-function sortProducts(products: RakutenItem[]): RakutenItem[] {
+// ─ 中古カテゴリ商品（'中古'カテゴリ）をティア＋スコア順にソート ──────────────
+// 本人名入り → 期別 → グループ → その他 の順。
+// これらはすでに「新品」セクションの後に表示されるため tier 3-6 内でのソートになる。
+function sortUsedProducts(products: RakutenItem[], ctx: PersonDisplayContext): RakutenItem[] {
   return [...products].sort((a, b) => {
-    const aUsed = (a.isUsed || isUsedByTitle(a.title)) ? 1 : 0;
-    const bUsed = (b.isUsed || isUsedByTitle(b.title)) ? 1 : 0;
-    if (aUsed !== bUsed) return aUsed - bUsed;
+    const ta = calcDisplayTier(a, ctx);
+    const tb = calcDisplayTier(b, ctx);
+    if (ta !== tb) return ta - tb;
+    const sa = calcDisplayScore(a, ctx);
+    const sb = calcDisplayScore(b, ctx);
+    if (sb !== sa) return sb - sa;
     const aImg = a.imageUrl ? 0 : 1;
     const bImg = b.imageUrl ? 0 : 1;
     if (aImg !== bImg) return aImg - bImg;
@@ -74,21 +81,43 @@ function sortProducts(products: RakutenItem[]): RakutenItem[] {
   });
 }
 
-// Apply saved display order; products not in the order list fall back to sortProductsByPerson
+// ─ 新品商品をティア優先でソート（savedOrder は同一ティア内のみ優先） ──────────
+// 【中古】タイトルの商品が savedOrder に保存されていても、ティア 3+ に分類されるため
+// ティア 0-2（通常新品）の下に必ず来る。
 function applyDisplayOrder(
   products: RakutenItem[],
   savedOrder: string[],
   ctx: PersonDisplayContext,
 ): RakutenItem[] {
-  if (savedOrder.length === 0) return sortProductsByPerson(products, ctx);
-  const added = new Set<string>();
-  const inOrder: RakutenItem[] = [];
-  for (const id of savedOrder) {
-    const p = products.find((x) => x.id === id);
-    if (p && !added.has(p.id)) { inOrder.push(p); added.add(p.id); }
+  // 1. tier 別にグループ化
+  const tierMap = new Map<number, RakutenItem[]>();
+  for (const p of products) {
+    const t = calcDisplayTier(p, ctx);
+    if (!tierMap.has(t)) tierMap.set(t, []);
+    tierMap.get(t)!.push(p);
   }
-  const rest = products.filter((p) => !added.has(p.id));
-  return [...inOrder, ...sortProductsByPerson(rest, ctx)];
+
+  // 2. 各 tier を tier 昇順に並べ、tier 内は savedOrder → スコア降順
+  const result: RakutenItem[] = [];
+  for (const tier of [...tierMap.keys()].sort((a, b) => a - b)) {
+    const group = tierMap.get(tier)!;
+    if (savedOrder.length === 0) {
+      group.sort((a, b) => calcDisplayScore(b, ctx) - calcDisplayScore(a, ctx));
+      result.push(...group);
+    } else {
+      const added = new Set<string>();
+      const inOrder: RakutenItem[] = [];
+      for (const id of savedOrder) {
+        const p = group.find((x) => x.id === id);
+        if (p && !added.has(p.id)) { inOrder.push(p); added.add(p.id); }
+      }
+      const rest = group
+        .filter((p) => !added.has(p.id))
+        .sort((a, b) => calcDisplayScore(b, ctx) - calcDisplayScore(a, ctx));
+      result.push(...inOrder, ...rest);
+    }
+  }
+  return result;
 }
 
 // ─── 商品タイトルによるカテゴリ振り分け ────────────────────────────────────
@@ -309,8 +338,20 @@ export default async function PersonPage({ params }: Props) {
     });
 
     const savedOrder = sources.flatMap((cat) => displayOrders[cat] ?? []);
-    const sortedNew = applyDisplayOrder(newProducts, savedOrder, personCtx);
-    const sortedUsed = sortProducts(sectionUsed);
+    const sortedNew  = applyDisplayOrder(newProducts, savedOrder, personCtx);
+    const sortedUsed = sortUsedProducts(sectionUsed, personCtx);
+
+    // DEBUG: Preview確認用ログ（本番反映前に削除すること）
+    if (process.env.VERCEL_ENV === 'preview' || process.env.NODE_ENV === 'development') {
+      const debugItems = sortedNew.slice(0, 15).map((p) => ({
+        tier: calcDisplayTier(p, personCtx),
+        score: calcDisplayScore(p, personCtx),
+        isUsed: p.isUsed || isUsedByTitle(p.title),
+        title: p.title.slice(0, 50),
+      }));
+      console.log(`[DISPLAY-ORDER][${person.name}][${label}]`, JSON.stringify(debugItems));
+    }
+
     const newResult: ApiResult = !hasAnyData
       ? { status: 'no_data' as const }
       : sortedNew.length > 0

@@ -114,10 +114,71 @@ const S_CAT_MEDIA      = 80;    // Blu-ray/DVD/CD/ライブ
 // ── メイン関数 ─────────────────────────────────────────────────────────────────
 
 /**
+ * 商品の表示ティアを返す（小さい値ほど上位表示）。
+ *
+ * | Tier | 分類                            |
+ * |------|---------------------------------|
+ * |   0  | 本人名あり・新品                 |
+ * |   1  | 期別あり・本人名なし・新品       |
+ * |   2  | グループあり・期別/本人名なし・新品 |
+ * |   3  | 本人名あり・中古                 |
+ * |   4  | 期別あり・本人名なし・中古       |
+ * |   5  | グループあり・期別/本人名なし・中古 |
+ * |   6  | その他中古 / まとめ・ランダム・福袋 |
+ * |   7  | その他（グループ名もない新品）   |
+ *
+ * sortの最優先キーとして使い、同 tier 内のみ calcDisplayScore で細かく順位付けする。
+ */
+export function calcDisplayTier(
+  product: RakutenItem,
+  ctx: PersonDisplayContext,
+): number {
+  const title = product.title ?? '';
+  const isUsed   = product.isUsed || isUsedByTitle(title);
+  const isBundle = isBundleByTitle(title);
+
+  const { name, groupName, generation } = ctx;
+  const nameNormalized = norm(name);
+  const isShortName    = name.length <= 2;
+
+  const hasName: boolean = isShortName
+    ? (
+        title === name ||
+        title === nameNormalized ||
+        title.startsWith(name + ' ') ||
+        title.startsWith(name + '　') ||
+        title.startsWith(nameNormalized + ' ') ||
+        title.startsWith(nameNormalized + '　') ||
+        (' ' + title).includes(' ' + name + ' ') ||
+        (' ' + title).includes(' ' + nameNormalized + ' ')
+      )
+    : includes(title, name);
+
+  const hasGeneration = !!generation && title.includes(generation);
+  const hasGroup      = !!groupName && title.includes(groupName);
+
+  // バンドル（まとめ/ランダム/福袋）は新品でも最下位付近に固定
+  if (isBundle) return 6;
+
+  if (isUsed) {
+    if (hasName)       return 3;
+    if (hasGeneration) return 4;
+    if (hasGroup)      return 5;
+    return 6;
+  }
+
+  // 通常新品
+  if (hasName)       return 0;
+  if (hasGeneration) return 1;
+  if (hasGroup)      return 2;
+  return 7;
+}
+
+/**
  * 商品の表示スコアを計算する。
  *
- * スコアが高いほど人物との関連性が強い本人商品と判断する。
- * 中古・バンドル商品は大きなティアオフセットで常に通常新品の下になる。
+ * スコアが高いほど同一 tier 内での優先度が高い。
+ * tier 間の比較には calcDisplayTier を使うこと（このスコアだけで全体ソートしない）。
  *
  * @param product  - 評価対象の商品
  * @param ctx      - 人物コンテキスト（名前・グループ・別名・期別）
