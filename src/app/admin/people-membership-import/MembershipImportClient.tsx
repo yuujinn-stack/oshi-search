@@ -145,86 +145,43 @@ function useCopy() {
 // ─── ChatGPT送信用テキスト生成 ────────────────────────────────────────────────
 function buildChatGptPrompt(groupName: string, memberNames: string[], csv: string): string {
   const memberList = memberNames.map((n) => `・${n}`).join('\n');
-  return `以下の登録済み人物について、所属情報・活動情報を補完してください。
+  return `以下の登録済み人物の空欄項目を調査・補完し、CSVとして返答してください。
 
 対象グループ：${groupName}
-登録済み人物数：${memberNames.length}人
+対象人物数：${memberNames.length}人
 
 対象人物一覧：
 ${memberList}
 
-補完対象項目：
-・activityStatus（グループ活動状態）
-・generation（期別）
-・joinedAt（加入日）
-・leftAt（卒業/脱退日）
-・currentGroupName（現在のグループ名）
-・formerGroupNames（過去のグループ名）
-・membershipNote（所属備考）
-・primaryGenre（現在の主な活動ジャンル）
-・genres（複数ジャンル）
-・titles（世間的な肩書き・称号）
-・publicRoles（役職）
-・awards（主な受賞歴）
-・careerStatus（芸能活動状態）
-・roleNote（活動補足）
+━━━━━━━━━━━━━━━━━━
+厳守ルール
+━━━━━━━━━━━━━━━━━━
+・推測禁止。公式情報・公式サイト・公式プロフィールのみを使用してください
+・2026年現在の情報のみ記載してください
+・確認できない項目は空欄のままにしてください
+・name 列は変更しないでください
+・返答はCSVのみ（コードブロック可）。説明文・前置きは不要です
+・ヘッダー行・人数は変更しないでください
 
-厳守ルール：
-・推測禁止
-・2026年現在の情報のみ
-・必ず公式発表・公式サイト・公式プロフィールを優先
-・確認できない項目は空欄
-・name列は変更しない
+━━ 値の制約 ━━
+activityStatus: active / graduated / withdrawn / hiatus / retired / unknown
+careerStatus:   active / inactive / retired / deceased / unknown
+generation:     「1期生」「2期生」などで記載（不明は空欄）
+joinedAt / leftAt: YYYY-MM-DD 形式（不明は空欄）
+genres / titles / publicRoles / awards: カンマ区切りで記載
 
-activityStatusは以下のみ使用：
-active / graduated / withdrawn / hiatus / retired / unknown
-
-careerStatusは以下のみ使用：
-active / inactive / retired / deceased / unknown
-
-generationは「1期生」「2期生」などで記載。
-
-joinedAt / leftAt は YYYY-MM-DD 形式（不明は空欄）。
-
-genres / titles / publicRoles / awards はカンマ区切りで記載。
-
-━━ 各フィールドの記載ルール ━━
-
-currentGroupName:
-・2026年現在も現役で所属しているグループのみ記載する
-・卒業済み・脱退済みの場合は空欄（過去の所属は formerGroupNames に記載）
-
-formerGroupNames:
-・過去に在籍したグループをすべてカンマ区切りで記載
-・現役メンバーも前グループがあれば記載
-
-primaryGenre:
-・2026年現在の主な活動ジャンル（単一）
-・グループを卒業した人物は現在の職業を記載（例: 女優 / タレント / モデル）
-・現役アイドルはジャンル名（例: アイドル）を記載
-・不明な場合は空欄
-
-genres:
-・現在の活動ジャンルを先頭にし、過去のジャンルは後に並べる
-・canonical 表記のみ使用（表記ゆれ禁止）
-・例: 女優,タレント,元アイドル
-
-titles:
-・世間的な肩書き・称号（genres に収まらないもの）
-・例: モデル,ラジオパーソナリティ,声優アイドル
-
-publicRoles:
-・役職・番組上の立場
-・例: 司会者,キャスター,コメンテーター
-・※ 司会者は genres ではなく必ず publicRoles に記載すること
-
-roleNote:
-・現在どのような活動をしているかを簡潔に記載
-・例: 現在は女優・タレントとして活動。舞台・ドラマ・映画などに出演。
+━━ 各フィールド補足 ━━
+currentGroupName: 2026年現在も現役所属しているグループのみ記載。卒業済みは空欄。
+formerGroupNames: 過去の所属グループをすべてカンマ区切りで記載。
+roleNote: 現在の活動を簡潔に（例: 現在は女優・タレントとして活動。舞台・ドラマ・映画に出演。）
 
 ${buildGenreRulesBlock()}
 
 ${buildGenreExamplesBlock()}
+
+━━━━━━━━━━━━━━━━━━
+補完対象CSV（以下の空欄を埋めて、同じヘッダー・同じ行数で返してください）
+━━━━━━━━━━━━━━━━━━
 
 ${csv}
 ${csvDownloadSection(`${groupName}_所属情報.csv`)}`;
