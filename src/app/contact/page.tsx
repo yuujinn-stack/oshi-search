@@ -7,17 +7,12 @@ export const metadata: Metadata = {
     '推しサーチへの掲載情報修正、不具合、権利関係などのお問い合わせについてご案内します。',
 };
 
-// お問い合わせ先設定
-// 公開前にメールアドレスまたはフォームURLを設定してください。
-// 未設定（null）の場合は「準備中」として表示されます。
 const CONTACT_CONFIG = {
-  email: null as string | null,        // 例: 'contact@oshi-search.jp'
-  formUrl: null as string | null,      // 例: Googleフォームや外部フォームのURL
+  email: null as string | null,
+  formUrl: 'https://docs.google.com/forms/d/e/1FAIpQLSff-Wqd96TqOVBLbdazMMPDr9rkowkfwTssCQfnftXV95Yu2w/viewform?usp=publish-editor',
 };
 
 export default function ContactPage() {
-  const hasContact = CONTACT_CONFIG.email || CONTACT_CONFIG.formUrl;
-
   return (
     <div className="max-w-3xl mx-auto px-4 py-12">
       {/* パンくず */}
@@ -32,30 +27,24 @@ export default function ContactPage() {
       <div className="space-y-8 text-sm text-gray-700 leading-relaxed">
 
         {/* お問い合わせ先 */}
-        <section className="rounded-xl border border-gray-200 p-5 bg-gray-50">
-          {hasContact ? (
+        <section className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-6 text-center">
+          {CONTACT_CONFIG.formUrl ? (
             <div className="space-y-3">
-              <p className="font-semibold text-gray-800">お問い合わせ窓口</p>
+              <a
+                href={CONTACT_CONFIG.formUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-8 py-3.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 active:bg-indigo-800 transition-colors min-h-[48px]"
+              >
+                お問い合わせフォームを開く
+                <span aria-hidden="true">↗</span>
+              </a>
+              <p className="text-xs text-gray-500">Googleフォームが別タブで開きます</p>
               {CONTACT_CONFIG.email && (
-                <p>
-                  メール：
-                  <a
-                    href={`mailto:${CONTACT_CONFIG.email}`}
-                    className="text-indigo-600 hover:underline ml-1"
-                  >
+                <p className="text-xs text-gray-500">
+                  メールでのお問い合わせ：
+                  <a href={`mailto:${CONTACT_CONFIG.email}`} className="text-indigo-600 hover:underline ml-1">
                     {CONTACT_CONFIG.email}
-                  </a>
-                </p>
-              )}
-              {CONTACT_CONFIG.formUrl && (
-                <p>
-                  <a
-                    href={CONTACT_CONFIG.formUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-indigo-600 hover:underline"
-                  >
-                    お問い合わせフォームはこちら →
                   </a>
                 </p>
               )}
@@ -63,8 +52,8 @@ export default function ContactPage() {
           ) : (
             <div>
               <p className="font-semibold text-gray-800 mb-1">お問い合わせ窓口</p>
-              <p className="text-gray-500">
-                お問い合わせ窓口は現在準備中です。公開前に設定予定です。
+              <p className="text-gray-500 text-xs">
+                お問い合わせ窓口は現在準備中です。
               </p>
             </div>
           )}
