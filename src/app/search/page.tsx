@@ -12,6 +12,7 @@ import type { GroupMeta } from '@/types/group';
 import type { ActivityStatus, PersonWithConfig } from '@/types/person';
 import type { SuggestionItem } from '@/types/search';
 import { shadowReadSearchPage } from '@/lib/shadow-read';
+import { groupHrefByName } from '@/lib/group-slug';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,9 +22,16 @@ interface Props {
 
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const { q } = await searchParams;
+  if (q) {
+    return {
+      title: `「${q}」の検索結果 | 推しサーチ`,
+      robots: 'noindex',
+    };
+  }
   return {
-    title: q ? `「${q}」の検索結果` : '全員一覧',
-    robots: 'noindex',
+    title: '推し・有名人を検索 | 推しサーチ',
+    description:
+      'アイドル・俳優・芸人・タレントなどの人物情報、出演作品、関連商品、配信情報をまとめて検索できます。',
   };
 }
 
@@ -111,6 +119,13 @@ export default async function SearchPage({ searchParams }: Props) {
     }
   } else {
     persons = allPersons;
+  }
+
+  // クエリなし時は最大 100 件に制限（全件レンダリングによる遅延防止）
+  const DISPLAY_LIMIT = 100;
+  const totalPersonCount = persons.length;
+  if (!query && persons.length > DISPLAY_LIMIT) {
+    persons = persons.slice(0, DISPLAY_LIMIT);
   }
 
   // ── グループ検索 ──────────────────────────────────────────────────────────
@@ -204,7 +219,7 @@ export default async function SearchPage({ searchParams }: Props) {
   const suggestions: SuggestionItem[] = [
     ...[...new Set(allPersons.map((p) => p.group).filter(Boolean) as string[])].map((g) => ({
       label: g,
-      href: `/group/${encodeURIComponent(g)}`,
+      href: groupHrefByName(g, allGroupMetas),
       type: 'group' as const,
     })),
     ...allPersons.flatMap((p) => [
@@ -242,7 +257,7 @@ export default async function SearchPage({ searchParams }: Props) {
           <span className="text-sm" style={{ color: 'var(--ds-primary)' }}>
             「{query}」は現在{' '}
             <Link
-              href={`/group/${encodeURIComponent(formerNameMatch.groupName)}`}
+              href={groupHrefByName(formerNameMatch.groupName, allGroupMetas)}
               className="font-semibold hover:underline"
             >
               {formerNameMatch.groupName}
@@ -250,7 +265,7 @@ export default async function SearchPage({ searchParams }: Props) {
             {' '}として活動しています
           </span>
           <Link
-            href={`/group/${encodeURIComponent(formerNameMatch.groupName)}`}
+            href={groupHrefByName(formerNameMatch.groupName, allGroupMetas)}
             className="text-sm font-semibold hover:underline ml-auto"
             style={{ color: 'var(--ds-primary)' }}
           >
@@ -265,9 +280,16 @@ export default async function SearchPage({ searchParams }: Props) {
           {query ? `「${query}」の検索結果` : '全員一覧'}
           {' '}
           <span className="text-base font-normal" style={{ color: 'var(--ds-muted)' }}>
-            {totalCount.toLocaleString()}件
+            {query
+              ? `${totalCount.toLocaleString()}件`
+              : `${totalPersonCount.toLocaleString()}人`}
           </span>
         </h1>
+        {!query && totalPersonCount > persons.length && (
+          <p className="text-xs mt-1" style={{ color: 'var(--ds-muted)' }}>
+            上位 {persons.length} 人を表示中 — 名前・読みで検索するとすべて表示されます
+          </p>
+        )}
       </div>
 
       {/* 検索結果（タブ・ソート・カード） */}
@@ -279,6 +301,43 @@ export default async function SearchPage({ searchParams }: Props) {
         memberCountMap={memberCountMap}
         personStatsMap={personStatsMap}
       />
+
+      {/* 検索結果0件時のナビゲーション */}
+      {persons.length === 0 && matchingGroups.length === 0 && query && (
+        <div className="mt-8 pt-6 border-t" style={{ borderColor: 'var(--ds-border)' }}>
+          <p className="text-sm mb-3" style={{ color: 'var(--ds-muted)' }}>別の探し方：</p>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                { href: '/search', label: '全員一覧' },
+                { href: `/genre/${encodeURIComponent('坂道')}`, label: '🌸 坂道' },
+                { href: `/genre/${encodeURIComponent('芸人')}`, label: '😄 芸人' },
+                { href: `/genre/${encodeURIComponent('女優')}`, label: '🎭 女優' },
+                { href: `/genre/${encodeURIComponent('俳優')}`, label: '🎬 俳優' },
+                { href: `/genre/${encodeURIComponent('アーティスト')}`, label: '🎵 アーティスト' },
+                { href: '/', label: '← トップ' },
+              ] as { href: string; label: string }[]
+            ).map(({ href, label }) => (
+              <Link
+                key={href}
+                href={href}
+                className="text-xs px-3 py-1.5 rounded-lg hover:opacity-80 transition-opacity"
+                style={{
+                  background: 'var(--ds-surface)',
+                  border: '1px solid var(--ds-border)',
+                  color: 'var(--ds-text)',
+                  textDecoration: 'none',
+                  minHeight: '32px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                }}
+              >
+                {label}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
