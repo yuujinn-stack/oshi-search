@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getRedis } from '@/lib/redis';
 import { ensureGroupMeta } from '@/lib/group-meta';
 import { getAllPersonsMerged } from '@/lib/persons';
+import { getAllPersonMetas } from '@/lib/person-meta';
+import { isDbOnlyWriteEnabled } from '@/lib/db-flag';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import type { ActivityStatus, CareerStatus } from '@/types/person';
 import { dbWrite, upsertPersonMeta } from '@/db/write';
@@ -220,21 +222,24 @@ export async function POST(req: Request) {
     const rows = parseCsv(csv);
     if (rows.length === 0) return NextResponse.json({ error: 'データ行がありません' }, { status: 400 });
 
-    const redis = getRedis();
-    if (!redis) return NextResponse.json({ error: 'Redis unavailable' }, { status: 503 });
-
     // 全人物名セット + 全 PersonMeta を取得
-    const [allPersons, rawMetas] = await Promise.all([
-      getAllPersonsMerged(),
-      redis.hgetall(META_KEY),
-    ]);
-    const personNameSet = new Set(allPersons.map((p) => p.name));
-    const metaMap: Record<string, PersonMeta> = {};
-    if (rawMetas) {
-      for (const [k, v] of Object.entries(rawMetas)) {
-        try { metaMap[k] = (typeof v === 'string' ? JSON.parse(v) : v) as PersonMeta; } catch { /* skip */ }
+    let metaMap: Record<string, PersonMeta>;
+    const allPersons = await getAllPersonsMerged();
+    if (isDbOnlyWriteEnabled()) {
+      metaMap = await getAllPersonMetas().catch(() => ({}));
+    } else {
+      const redis = getRedis();
+      if (!redis) return NextResponse.json({ error: 'Redis unavailable' }, { status: 503 });
+      const rawMetas = await redis.hgetall(META_KEY);
+      metaMap = {};
+      if (rawMetas) {
+        for (const [k, v] of Object.entries(rawMetas)) {
+          try { metaMap[k] = (typeof v === 'string' ? JSON.parse(v) : v) as PersonMeta; } catch { /* skip */ }
+        }
       }
     }
+
+    const personNameSet = new Set(allPersons.map((p) => p.name));
 
     const previewRows: PreviewRow[] = rows.map((row) => {
       const name = row['name']?.trim() ?? '';
@@ -268,35 +273,57 @@ export async function POST(req: Request) {
     let groupsCreated = 0;
     const errors: string[] = [];
 
-    for (const preview of previewRows) {
-      if (!preview.found) { skipped++; continue; }
-      if (!preview.hasChanges) {
-        // 変更なしでも Redis 既存メタを DB に同期（デュアルライト実装前のデータ対応）
-        const existingMeta = metaMap[preview.name];
-        if (existingMeta) {
-          dbWrite(`person-meta/${preview.name}`, () => upsertPersonMeta(preview.name, existingMeta));
+    if (isDbOnlyWriteEnabled()) {
+      for (const preview of previewRows) {
+        if (!preview.found || !preview.hasChanges) { skipped++; continue; }
+        try {
+          const newMeta = applyChanges(metaMap[preview.name] ?? {}, preview.changes);
+          await upsertPersonMeta(preview.name, newMeta);
+          const groupsToEnsure = [
+            preview.groupName,
+            preview.changes.find((c) => c.field === 'currentGroupName' && c.action === 'update')?.newValue,
+          ].filter(Boolean) as string[];
+          for (const g of groupsToEnsure) {
+            const created = await ensureGroupMeta(g);
+            if (created) groupsCreated++;
+          }
+          updated++;
+        } catch (err) {
+          errors.push(`${preview.name}: ${String(err)}`);
         }
-        skipped++;
-        continue;
       }
-      try {
-        const newMeta = applyChanges(metaMap[preview.name] ?? {}, preview.changes);
-        await redis.hset(META_KEY, { [preview.name]: JSON.stringify(newMeta) });
-        dbWrite(`person-meta/${preview.name}`, () => upsertPersonMeta(preview.name, newMeta));
-
-        // グループ自動作成
-        const groupsToEnsure = [
-          preview.groupName,
-          preview.changes.find((c) => c.field === 'currentGroupName' && c.action === 'update')?.newValue,
-        ].filter(Boolean) as string[];
-        for (const g of groupsToEnsure) {
-          const created = await ensureGroupMeta(g);
-          if (created) groupsCreated++;
+    } else {
+      const redis = getRedis()!;
+      for (const preview of previewRows) {
+        if (!preview.found) { skipped++; continue; }
+        if (!preview.hasChanges) {
+          // 変更なしでも Redis 既存メタを DB に同期（デュアルライト実装前のデータ対応）
+          const existingMeta = metaMap[preview.name];
+          if (existingMeta) {
+            dbWrite(`person-meta/${preview.name}`, () => upsertPersonMeta(preview.name, existingMeta));
+          }
+          skipped++;
+          continue;
         }
+        try {
+          const newMeta = applyChanges(metaMap[preview.name] ?? {}, preview.changes);
+          await redis.hset(META_KEY, { [preview.name]: JSON.stringify(newMeta) });
+          dbWrite(`person-meta/${preview.name}`, () => upsertPersonMeta(preview.name, newMeta));
 
-        updated++;
-      } catch (err) {
-        errors.push(`${preview.name}: ${String(err)}`);
+          // グループ自動作成
+          const groupsToEnsure = [
+            preview.groupName,
+            preview.changes.find((c) => c.field === 'currentGroupName' && c.action === 'update')?.newValue,
+          ].filter(Boolean) as string[];
+          for (const g of groupsToEnsure) {
+            const created = await ensureGroupMeta(g);
+            if (created) groupsCreated++;
+          }
+
+          updated++;
+        } catch (err) {
+          errors.push(`${preview.name}: ${String(err)}`);
+        }
       }
     }
 

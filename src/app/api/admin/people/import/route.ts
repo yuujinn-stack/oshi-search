@@ -10,6 +10,8 @@ import { enqueuePersonJob } from '@/lib/person-job-queue';
 import { saveImportHistory } from '@/lib/import-history';
 import { getRedis } from '@/lib/redis';
 import { ensureGroupMeta } from '@/lib/group-meta';
+import { getPersonMeta } from '@/lib/person-meta';
+import { isDbOnlyWriteEnabled } from '@/lib/db-flag';
 import type { Genre, ActivityStatus } from '@/types/person';
 import { dbWrite, upsertPersonFromImport, upsertPersonMeta } from '@/db/write';
 
@@ -247,18 +249,14 @@ export async function POST(req: NextRequest) {
     }
 
     // 拡張メタフィールドを person-meta へ保存 + グループ自動作成
-    const redis = getRedis();
-    if (redis) {
-      const metaRows = previewRows.filter((r) => r.action === 'add' && (
-        r.activityStatus || r.generation || r.joinedAt || r.leftAt ||
-        r.currentGroupName || r.formerGroupNames || r.membershipNote
-      ));
+    const metaRows = previewRows.filter((r) => r.action === 'add' && (
+      r.activityStatus || r.generation || r.joinedAt || r.leftAt ||
+      r.currentGroupName || r.formerGroupNames || r.membershipNote
+    ));
+    if (isDbOnlyWriteEnabled()) {
       for (const r of metaRows) {
         try {
-          const existing = await redis.hget<string>(META_KEY, r.name);
-          const current = existing
-            ? ((typeof existing === 'string' ? JSON.parse(existing) : existing) as Record<string, unknown>)
-            : {};
+          const current = (await getPersonMeta(r.name)) ?? {};
           const meta = {
             ...current,
             ...(r.activityStatus   ? { activityStatus: r.activityStatus }     : {}),
@@ -270,19 +268,43 @@ export async function POST(req: NextRequest) {
             ...(r.membershipNote   ? { membershipNote: r.membershipNote }      : {}),
             updatedAt: Date.now(),
           };
-          await redis.hset(META_KEY, { [r.name]: JSON.stringify(meta) });
-          dbWrite(`person-meta/${r.name}`, () => upsertPersonMeta(r.name, meta));
+          await upsertPersonMeta(r.name, meta);
         } catch { /* meta 保存失敗は非致命的 */ }
       }
-      // グループ自動作成（groupName / currentGroupName）
-      const groupNames = new Set(
-        previewRows
-          .filter((r) => r.action === 'add')
-          .flatMap((r) => [r.group, r.currentGroupName].filter(Boolean) as string[]),
-      );
-      for (const g of groupNames) {
-        await ensureGroupMeta(g).catch(() => {});
+    } else {
+      const redis = getRedis();
+      if (redis) {
+        for (const r of metaRows) {
+          try {
+            const existing = await redis.hget<string>(META_KEY, r.name);
+            const current = existing
+              ? ((typeof existing === 'string' ? JSON.parse(existing) : existing) as Record<string, unknown>)
+              : {};
+            const meta = {
+              ...current,
+              ...(r.activityStatus   ? { activityStatus: r.activityStatus }     : {}),
+              ...(r.generation       ? { generation: r.generation }              : {}),
+              ...(r.joinedAt         ? { joinedAt: r.joinedAt }                  : {}),
+              ...(r.leftAt           ? { leftAt: r.leftAt }                      : {}),
+              ...(r.currentGroupName ? { currentGroupName: r.currentGroupName }  : {}),
+              ...(r.formerGroupNames ? { formerGroupNames: r.formerGroupNames }  : {}),
+              ...(r.membershipNote   ? { membershipNote: r.membershipNote }      : {}),
+              updatedAt: Date.now(),
+            };
+            await redis.hset(META_KEY, { [r.name]: JSON.stringify(meta) });
+            dbWrite(`person-meta/${r.name}`, () => upsertPersonMeta(r.name, meta));
+          } catch { /* meta 保存失敗は非致命的 */ }
+        }
       }
+    }
+    // グループ自動作成（groupName / currentGroupName）
+    const groupNames = new Set(
+      previewRows
+        .filter((r) => r.action === 'add')
+        .flatMap((r) => [r.group, r.currentGroupName].filter(Boolean) as string[]),
+    );
+    for (const g of groupNames) {
+      await ensureGroupMeta(g).catch(() => {});
     }
 
     // 登録成功した人物をキューに追加

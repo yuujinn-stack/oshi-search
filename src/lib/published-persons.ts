@@ -4,7 +4,7 @@
 
 import { cache } from 'react';
 import { getRedis } from './redis';
-import { isDbOnlyReadEnabled } from './db-flag';
+import { isDbOnlyReadEnabled, isDbOnlyWriteEnabled } from './db-flag';
 import { db } from '@/db/client';
 import { persons as personsTable } from '@/db/schema';
 import { eq, and, isNotNull } from 'drizzle-orm';
@@ -108,6 +108,12 @@ export async function getPublishedPersonNamesOrThrow(): Promise<string[]> {
 // ── 書き込み ────────────────────────────────────────────────────────────────
 export async function publishPersonsBatch(records: PublishedRecord[]): Promise<void> {
   if (records.length === 0) return;
+  if (isDbOnlyWriteEnabled()) {
+    for (const r of records) {
+      await publishPersonInDB(r.name, r.publishedAt);
+    }
+    return;
+  }
   const redis = getRedis();
   if (!redis) {
     throw new Error('[published-persons] Redis not available — cannot publishPersonsBatch');
@@ -124,6 +130,10 @@ export async function publishPersonsBatch(records: PublishedRecord[]): Promise<v
 }
 
 export async function unpublishPerson(name: string): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await unpublishPersonInDB(name);
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   await redis.hdel(HASH_KEY, name);

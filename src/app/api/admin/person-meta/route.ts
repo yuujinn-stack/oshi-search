@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedis } from '@/lib/redis';
 import { ensureGroupMeta } from '@/lib/group-meta';
+import { getPersonMeta } from '@/lib/person-meta';
 import { dbWrite, upsertPersonMeta } from '@/db/write';
+import { isDbOnlyWriteEnabled } from '@/lib/db-flag';
 import type { PersonPriority } from '@/app/admin/work-check/work-check-types';
 import type { ActivityStatus, CareerStatus } from '@/types/person';
 
@@ -77,16 +79,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'personName required' }, { status: 400 });
   }
 
-  const redis = getRedis();
-  if (!redis) return NextResponse.json({ error: 'Redis not available' }, { status: 503 });
-
-  const existing = await redis.hget<string>(META_KEY, personName);
-  const current: PersonMeta = existing
-    ? ((typeof existing === 'string' ? JSON.parse(existing) : existing) as PersonMeta)
-    : {};
-
-  const updated: PersonMeta = {
-    ...current,
+  const patch = {
     ...(memo !== undefined ? { memo } : {}),
     ...(priority !== undefined ? { priority } : {}),
     ...(activityStatus !== undefined ? { activityStatus } : {}),
@@ -105,6 +98,24 @@ export async function POST(req: NextRequest) {
     ...(roleNote !== undefined ? { roleNote } : {}),
     updatedAt: Date.now(),
   };
+
+  if (isDbOnlyWriteEnabled()) {
+    const current = (await getPersonMeta(personName)) ?? {};
+    const updated: PersonMeta = { ...current, ...patch };
+    await upsertPersonMeta(personName, updated);
+    if (currentGroupName) await ensureGroupMeta(currentGroupName).catch(() => {});
+    return NextResponse.json({ ok: true });
+  }
+
+  const redis = getRedis();
+  if (!redis) return NextResponse.json({ error: 'Redis not available' }, { status: 503 });
+
+  const existing = await redis.hget<string>(META_KEY, personName);
+  const current: PersonMeta = existing
+    ? ((typeof existing === 'string' ? JSON.parse(existing) : existing) as PersonMeta)
+    : {};
+
+  const updated: PersonMeta = { ...current, ...patch };
 
   await redis.hset(META_KEY, { [personName]: JSON.stringify(updated) });
   dbWrite(`person-meta/${personName}`, () => upsertPersonMeta(personName, updated));

@@ -3,12 +3,12 @@
 // getImportedPersonNames() を将来のバッチ処理（TMDb/VOD/楽天取得）で使う
 
 import { getRedis } from './redis';
-import { isDbOnlyReadEnabled } from './db-flag';
+import { isDbOnlyReadEnabled, isDbOnlyWriteEnabled } from './db-flag';
 import { db } from '@/db/client';
 import { persons as personsTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import type { Genre } from '@/types/person';
-import { dbWrite, upsertPersonFromImport, updatePersonFetchStatusInDB } from '@/db/write';
+import { dbWrite, upsertPersonFromImport, updatePersonFetchStatusInDB, deleteImportedPersonInDB } from '@/db/write';
 
 const HASH_KEY = 'imported:persons';
 
@@ -118,8 +118,15 @@ export async function getImportedPersonNames(): Promise<string[]> {
 }
 
 export async function saveImportedPersonsBatch(persons: ImportedPerson[]): Promise<void> {
+  if (persons.length === 0) return;
+  if (isDbOnlyWriteEnabled()) {
+    for (const p of persons) {
+      await upsertPersonFromImport(p);
+    }
+    return;
+  }
   const redis = getRedis();
-  if (!redis || persons.length === 0) return;
+  if (!redis) return;
   const entries: Record<string, string> = {};
   for (const p of persons) {
     entries[p.name] = JSON.stringify(p);
@@ -135,6 +142,13 @@ export async function updateImportedPersonStatus(
   dataFetchStatus: DataFetchStatus,
   errorMessage?: string,
 ): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    const lastDataFetchedAt = dataFetchStatus !== 'not_started' && dataFetchStatus !== 'queued' && dataFetchStatus !== 'processing'
+      ? new Date()
+      : undefined;
+    await updatePersonFetchStatusInDB(name, dataFetchStatus, errorMessage, lastDataFetchedAt);
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   const raw = await redis.hget(HASH_KEY, name);
@@ -159,6 +173,10 @@ export async function updateImportedPersonStatus(
 }
 
 export async function deleteImportedPerson(name: string): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await deleteImportedPersonInDB(name);
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   await redis.hdel(HASH_KEY, name);

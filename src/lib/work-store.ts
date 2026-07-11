@@ -2,7 +2,7 @@
 // バッチ・管理画面からのみ書き込み、人物ページから読み取る
 
 import { getRedis } from './redis';
-import { isDbOnlyReadEnabled } from './db-flag';
+import { isDbOnlyReadEnabled, isDbOnlyWriteEnabled } from './db-flag';
 import { db } from '@/db/client';
 import { works as worksTable } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -131,6 +131,10 @@ export async function getPublishedWorksOrThrow(personName: string): Promise<Work
 
 // 作品を保存（新規・更新どちらも）
 export async function saveWork(work: WorkRecord): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await upsertWork(work);
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   await redis.hset(hashKey(work.personName), { [work.id]: JSON.stringify(work) });
@@ -139,6 +143,13 @@ export async function saveWork(work: WorkRecord): Promise<void> {
 
 // 作品が存在しない場合のみ保存（統合CSVインポートでの重複防止）
 export async function saveWorkIfAbsent(work: WorkRecord): Promise<'created' | 'skipped'> {
+  if (isDbOnlyWriteEnabled()) {
+    const rows = await db.select({ id: worksTable.id }).from(worksTable)
+      .where(and(eq(worksTable.personName, work.personName), eq(worksTable.id, work.id)));
+    if (rows.length > 0) return 'skipped';
+    await upsertWork(work);
+    return 'created';
+  }
   const redis = getRedis();
   if (!redis) return 'skipped';
   const existing = await redis.hget(hashKey(work.personName), work.id);
@@ -154,6 +165,17 @@ export async function updateWorkStatus(
   workId: string,
   status: WorkStatus,
 ): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    const rows = await db.select().from(worksTable)
+      .where(and(eq(worksTable.personName, personName), eq(worksTable.id, workId)));
+    if (!rows.length) return;
+    const work = dbRowToWorkRecord(rows[0]);
+    work.status = status;
+    work.checkedAt = Date.now();
+    work.updatedAt = Date.now();
+    await upsertWork(work);
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   const raw = await redis.hget(hashKey(personName), workId);
@@ -170,6 +192,11 @@ export async function updateWorkStatus(
 
 // 作品を削除（物理削除）
 export async function deleteWork(personName: string, workId: string): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await db.delete(worksTable)
+      .where(and(eq(worksTable.personName, personName), eq(worksTable.id, workId)));
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   await redis.hdel(hashKey(personName), workId);
@@ -177,6 +204,18 @@ export async function deleteWork(personName: string, workId: string): Promise<vo
 
 // 作品を論理削除（deleted フラグをセット）
 export async function softDeleteWork(personName: string, workId: string): Promise<boolean> {
+  if (isDbOnlyWriteEnabled()) {
+    const rows = await db.select().from(worksTable)
+      .where(and(eq(worksTable.personName, personName), eq(worksTable.id, workId)));
+    if (!rows.length) return false;
+    const work = dbRowToWorkRecord(rows[0]);
+    work.deleted = true;
+    work.deletedAt = Date.now();
+    work.deletedBy = 'manual';
+    work.updatedAt = Date.now();
+    await upsertWork(work);
+    return true;
+  }
   const redis = getRedis();
   if (!redis) return false;
   const raw = await redis.hget(hashKey(personName), workId);
@@ -226,6 +265,21 @@ export async function getWork(personName: string, workId: string): Promise<WorkR
   }
 }
 
+// DB-only write 用: DBから1件取得してミューテーション→保存
+async function withWorkFromDB(
+  personName: string,
+  workId: string,
+  mutate: (w: WorkRecord) => boolean,
+): Promise<boolean> {
+  const rows = await db.select().from(worksTable)
+    .where(and(eq(worksTable.personName, personName), eq(worksTable.id, workId)));
+  if (!rows.length) return false;
+  const work = dbRowToWorkRecord(rows[0]);
+  if (!mutate(work)) return false;
+  await upsertWork(work);
+  return true;
+}
+
 // 配信サービス情報を更新（手動プロバイダーは保持し、指定ソースのみ置換）
 // replaceSources で指定したソースのプロバイダーを新しいリストで置き換える
 // 指定外のソース（manualなど）はそのまま残す
@@ -240,6 +294,20 @@ export async function updateWorkVod(
     nextVodCheckAt?: number;
   },
 ): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await withWorkFromDB(personName, workId, (work) => {
+      const replaceSources = options?.replaceSources ?? ['tmdb_watch_provider', 'openai_supplement', 'openai_web_search'];
+      const kept = (work.vodProviders ?? []).filter((p) => !replaceSources.includes(p.source as never));
+      work.vodProviders = [...kept, ...providers];
+      work.vodUpdatedAt = Date.now();
+      if (options?.vodAiCheckedAt) work.vodAiCheckedAt = options.vodAiCheckedAt;
+      if (options?.vodStatus !== undefined) work.vodStatus = options.vodStatus;
+      if (options?.nextVodCheckAt !== undefined) work.nextVodCheckAt = options.nextVodCheckAt;
+      work.updatedAt = Date.now();
+      return true;
+    });
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   const raw = await redis.hget(hashKey(personName), workId);
@@ -266,6 +334,26 @@ export async function upsertManualCsvVodProviders(
   workId: string,
   providers: VodProvider[],
 ): Promise<{ added: number; updated: number }> {
+  if (isDbOnlyWriteEnabled()) {
+    let added = 0;
+    let updated = 0;
+    await withWorkFromDB(personName, workId, (work) => {
+      const existing = work.vodProviders ?? [];
+      for (const p of providers) {
+        const idx = existing.findIndex(
+          (e) => e.source === 'manual_csv' &&
+                 e.providerName.toLowerCase() === p.providerName.toLowerCase(),
+        );
+        if (idx >= 0) { existing[idx] = p; updated++; }
+        else { existing.push(p); added++; }
+      }
+      work.vodProviders = existing;
+      work.vodUpdatedAt = Date.now();
+      work.updatedAt = Date.now();
+      return true;
+    });
+    return { added, updated };
+  }
   const redis = getRedis();
   if (!redis) return { added: 0, updated: 0 };
   const raw = await redis.hget(hashKey(personName), workId);
@@ -305,6 +393,19 @@ export async function syncManualCsvVodProviders(
   workId: string,
   providers: VodProvider[],
 ): Promise<{ removed: number; added: number }> {
+  if (isDbOnlyWriteEnabled()) {
+    let removedCount = 0;
+    await withWorkFromDB(personName, workId, (work) => {
+      const existing = work.vodProviders ?? [];
+      removedCount = existing.filter((p) => p.source === 'manual_csv').length;
+      const nonCsv = existing.filter((p) => p.source !== 'manual_csv');
+      work.vodProviders = [...nonCsv, ...providers];
+      work.vodUpdatedAt = Date.now();
+      work.updatedAt = Date.now();
+      return true;
+    });
+    return { removed: removedCount, added: providers.length };
+  }
   const redis = getRedis();
   if (!redis) return { removed: 0, added: 0 };
   const raw = await redis.hget(hashKey(personName), workId);
@@ -333,6 +434,27 @@ export async function hideVodProvider(
   workId: string,
   identifier: { providerName: string; source: string; type: string },
 ): Promise<boolean> {
+  if (isDbOnlyWriteEnabled()) {
+    let found = false;
+    await withWorkFromDB(personName, workId, (work) => {
+      const providers = work.vodProviders ?? [];
+      const idx = providers.findIndex(
+        (p) =>
+          !p.hidden &&
+          p.providerName === identifier.providerName &&
+          p.source === identifier.source &&
+          p.type === identifier.type,
+      );
+      if (idx < 0) return false;
+      providers[idx] = { ...providers[idx], hidden: true, updatedAt: Date.now() };
+      work.vodProviders = providers;
+      work.vodUpdatedAt = Date.now();
+      work.updatedAt = Date.now();
+      found = true;
+      return true;
+    });
+    return found;
+  }
   const redis = getRedis();
   if (!redis) return false;
   const raw = await redis.hget(hashKey(personName), workId);
@@ -364,6 +486,19 @@ export async function addManualVodProvider(
   workId: string,
   provider: VodProvider,
 ): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await withWorkFromDB(personName, workId, (work) => {
+      const existing = work.vodProviders ?? [];
+      const filtered = existing.filter(
+        (p) => !(p.providerId === provider.providerId && p.source === 'manual'),
+      );
+      work.vodProviders = [...filtered, { ...provider, source: 'manual' }];
+      work.vodUpdatedAt = Date.now();
+      work.updatedAt = Date.now();
+      return true;
+    });
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   const raw = await redis.hget(hashKey(personName), workId);
@@ -389,6 +524,17 @@ export async function removeManualVodProvider(
   workId: string,
   providerId: number,
 ): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await withWorkFromDB(personName, workId, (work) => {
+      work.vodProviders = (work.vodProviders ?? []).filter(
+        (p) => !(p.providerId === providerId && p.source === 'manual'),
+      );
+      work.vodUpdatedAt = Date.now();
+      work.updatedAt = Date.now();
+      return true;
+    });
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   const raw = await redis.hget(hashKey(personName), workId);
@@ -416,6 +562,17 @@ export async function updateWorkVodCheckStatus(
     lastVodCheckAt?: number;
   },
 ): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await withWorkFromDB(personName, workId, (work) => {
+      work.vodCheckStatus = status;
+      if (opts?.source !== undefined) work.vodCheckSource = opts.source;
+      if (opts?.error !== undefined) work.vodCheckError = opts.error;
+      if (opts?.lastVodCheckAt !== undefined) work.lastVodCheckAt = opts.lastVodCheckAt;
+      work.updatedAt = Date.now();
+      return true;
+    });
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   const raw = await redis.hget(hashKey(personName), workId);
@@ -438,6 +595,17 @@ export async function setPriorityRecheck(
   workId: string,
   priority: boolean,
 ): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await withWorkFromDB(personName, workId, (work) => {
+      work.priorityRecheck = priority;
+      if (priority && work.vodCheckStatus !== 'checking') {
+        work.vodCheckStatus = 'needs_recheck';
+      }
+      work.updatedAt = Date.now();
+      return true;
+    });
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   const raw = await redis.hget(hashKey(personName), workId);
@@ -459,6 +627,12 @@ export async function deleteWorksBySource(
   personName: string,
   source: string,
 ): Promise<number> {
+  if (isDbOnlyWriteEnabled()) {
+    const deleted = await db.delete(worksTable)
+      .where(and(eq(worksTable.personName, personName), eq(worksTable.source, source)))
+      .returning({ id: worksTable.id });
+    return deleted.length;
+  }
   const redis = getRedis();
   if (!redis) return 0;
   const all = await getAllWorks(personName);

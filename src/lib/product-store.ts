@@ -2,7 +2,7 @@
 // バッチ処理でのみ書き込み、人物ページと管理画面から読み取る
 
 import { getRedis } from './redis';
-import { isDbOnlyReadEnabled } from './db-flag';
+import { isDbOnlyReadEnabled, isDbOnlyWriteEnabled } from './db-flag';
 import { db } from '@/db/client';
 import { products as productsTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
@@ -31,6 +31,28 @@ export async function storeProducts(
   products: RakutenItem[],
   verdictIds?: Set<string>,
 ): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    let finalProducts = products;
+    if (verdictIds && verdictIds.size > 0) {
+      try {
+        const rows = await db.select().from(productsTable)
+          .where(eq(productsTable.personName, personName));
+        const row = rows.find((r) => r.category === category);
+        if (row) {
+          const existing = row.items as RakutenItem[];
+          const newIds = new Set(products.map((p) => p.id));
+          const preserved = existing.filter((p) => !newIds.has(p.id) && verdictIds.has(p.id));
+          if (preserved.length > 0) {
+            console.log(`[db-only] ${personName}/${category}: verdict済み${preserved.length}件を保持`);
+            finalProducts = [...products, ...preserved];
+          }
+        }
+      } catch { /* 既存データ取得失敗時はそのまま上書き */ }
+    }
+    const fetchedAt = Date.now();
+    await upsertProduct(personName, category, finalProducts, fetchedAt);
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
 
@@ -65,6 +87,18 @@ export async function appendProductToCategory(
   category: ProductCategory,
   product: RakutenItem,
 ): Promise<'created' | 'duplicate'> {
+  if (isDbOnlyWriteEnabled()) {
+    const rows = await db.select().from(productsTable)
+      .where(eq(productsTable.personName, personName));
+    const row = rows.find((r) => r.category === category);
+    let existing: RakutenItem[] = row ? (row.items as RakutenItem[]) : [];
+    const fetchedAt = row ? row.fetchedAt.getTime() : Date.now();
+    const dup = existing.some((p) => p.id === product.id || p.itemUrl === product.itemUrl);
+    if (dup) return 'duplicate';
+    existing = [...existing, product];
+    await upsertProduct(personName, category, existing, fetchedAt);
+    return 'created';
+  }
   const redis = getRedis();
   if (!redis) return 'duplicate';
   const raw = await redis.hget(hashKey(personName), category);
@@ -91,6 +125,18 @@ export async function updateProductInCategory(
   productId: string,
   updates: Partial<RakutenItem>,
 ): Promise<boolean> {
+  if (isDbOnlyWriteEnabled()) {
+    const rows = await db.select().from(productsTable)
+      .where(eq(productsTable.personName, personName));
+    const row = rows.find((r) => r.category === category);
+    if (!row) return false;
+    const items = row.items as RakutenItem[];
+    const idx = items.findIndex((p) => p.id === productId);
+    if (idx === -1) return false;
+    items[idx] = { ...items[idx], ...updates };
+    await upsertProduct(personName, category, items, row.fetchedAt.getTime());
+    return true;
+  }
   const redis = getRedis();
   if (!redis) return false;
   const raw = await redis.hget(hashKey(personName), category);

@@ -1,11 +1,11 @@
 import { getRedis } from '@/lib/redis';
-import { isDbReadEnabled, isDbOnlyReadEnabled } from '@/lib/db-flag';
+import { isDbReadEnabled, isDbOnlyReadEnabled, isDbOnlyWriteEnabled } from '@/lib/db-flag';
 import { db } from '@/db/client';
 import { groupMeta as groupMetaTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import type { GroupMeta } from '@/types/group';
 import type { GroupActivityStatus } from '@/types/group';
-import { dbWrite, upsertGroupMeta } from '@/db/write';
+import { dbWrite, upsertGroupMeta, deleteGroupMetaInDB } from '@/db/write';
 
 const REDIS_KEY = 'admin:groups';
 
@@ -117,14 +117,22 @@ export async function getGroupMeta(groupName: string): Promise<GroupMeta | null>
 }
 
 export async function saveGroupMeta(meta: GroupMeta): Promise<void> {
+  meta.updatedAt = Date.now();
+  if (isDbOnlyWriteEnabled()) {
+    await upsertGroupMeta(meta);
+    return;
+  }
   const redis = getRedis();
   if (!redis) throw new Error('Redis unavailable');
-  meta.updatedAt = Date.now();
   await redis.hset(REDIS_KEY, { [meta.groupName]: JSON.stringify(meta) });
   dbWrite(`group-meta/${meta.groupName}`, () => upsertGroupMeta(meta));
 }
 
 export async function deleteGroupMeta(groupName: string): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await deleteGroupMetaInDB(groupName);
+    return;
+  }
   const redis = getRedis();
   if (!redis) throw new Error('Redis unavailable');
   await redis.hdel(REDIS_KEY, groupName);

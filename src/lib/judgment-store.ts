@@ -2,11 +2,11 @@
 // 同じ人物×商品の組み合わせではAIを再実行しない
 
 import { getRedis } from './redis';
-import { isDbOnlyReadEnabled } from './db-flag';
+import { isDbOnlyReadEnabled, isDbOnlyWriteEnabled } from './db-flag';
 import { db } from '@/db/client';
 import { verdicts as verdictsTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { dbWrite, upsertVerdict } from '@/db/write';
+import { dbWrite, upsertVerdict, deleteVerdictInDB } from '@/db/write';
 
 export type Verdict = 'related' | 'uncertain' | 'unrelated' | 'deleted';
 
@@ -105,6 +105,11 @@ export async function saveVerdict(
   reason?: string,
   promptVersion?: string,
 ): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    const now = Date.now();
+    await upsertVerdict(personName, productId, verdict, score, source, reason, promptVersion, now);
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   const record: JudgmentRecord = { verdict, score, source, reason, timestamp: Date.now(), promptVersion };
@@ -114,6 +119,10 @@ export async function saveVerdict(
 
 // 判定結果を削除（リセット）
 export async function deleteVerdict(personName: string, productId: string): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await deleteVerdictInDB(personName, productId);
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   await redis.hdel(hashKey(personName), productId);
@@ -125,6 +134,14 @@ export async function bulkSaveVerdict(
   productIds: string[],
   verdict: Verdict,
 ): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    if (productIds.length === 0) return;
+    const now = Date.now();
+    for (const id of productIds) {
+      await upsertVerdict(personName, id, verdict, 0, 'manual', undefined, undefined, now);
+    }
+    return;
+  }
   const redis = getRedis();
   if (!redis || productIds.length === 0) return;
   const record: JudgmentRecord = { verdict, score: 0, source: 'manual', timestamp: Date.now() };

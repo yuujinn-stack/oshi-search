@@ -2,10 +2,10 @@
 // 管理画面からのみ書き込み、ProviderLogo コンポーネントから読み取る
 
 import { getRedis } from './redis';
-import { isDbReadEnabled, isDbOnlyReadEnabled } from './db-flag';
+import { isDbReadEnabled, isDbOnlyReadEnabled, isDbOnlyWriteEnabled } from './db-flag';
 import { db } from '@/db/client';
 import { vodProviders as vodProvidersTable } from '@/db/schema';
-import { dbWrite, upsertVodProvider } from '@/db/write';
+import { dbWrite, upsertVodProvider, deleteVodProviderInDB } from '@/db/write';
 
 const HASH_KEY = 'vod:providers';
 
@@ -104,6 +104,10 @@ export async function getActiveProviderLogoMap(): Promise<Record<string, string>
 }
 
 export async function saveProvider(record: ProviderRecord): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await upsertVodProvider(record);
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   await redis.hset(HASH_KEY, { [record.slug]: JSON.stringify(record) });
@@ -111,6 +115,10 @@ export async function saveProvider(record: ProviderRecord): Promise<void> {
 }
 
 export async function deleteProvider(slug: string): Promise<void> {
+  if (isDbOnlyWriteEnabled()) {
+    await deleteVodProviderInDB(slug);
+    return;
+  }
   const redis = getRedis();
   if (!redis) return;
   await redis.hdel(HASH_KEY, slug);

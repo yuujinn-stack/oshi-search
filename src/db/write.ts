@@ -4,7 +4,7 @@
 
 import { db } from './client';
 import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons } from './schema';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import type { WorkRecord } from '@/types/work';
 
 // ── Fire-and-forget ラッパー ──────────────────────────────────────────────────
@@ -389,4 +389,23 @@ export async function unpublishPersonInDB(name: string): Promise<void> {
   await db.update(persons)
     .set({ publishedAt: null, updatedAt: new Date() })
     .where(eq(persons.name, name));
+}
+
+// ── DB専用書き込みモード用 物理削除関数 ─────────────────────────────────────
+
+export async function deleteVerdictInDB(personName: string, productId: string): Promise<void> {
+  await db.delete(verdicts)
+    .where(and(eq(verdicts.personName, personName), eq(verdicts.productId, productId)));
+}
+
+export async function deleteGroupMetaInDB(groupName: string): Promise<void> {
+  await db.delete(groupMeta).where(eq(groupMeta.groupName, groupName));
+}
+
+export async function deleteVodProviderInDB(slug: string): Promise<void> {
+  await db.delete(vodProviders).where(eq(vodProviders.slug, slug));
+}
+
+export async function deleteImportedPersonInDB(name: string): Promise<void> {
+  await db.delete(persons).where(eq(persons.name, name));
 }

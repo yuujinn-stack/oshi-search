@@ -9,3 +9,9 @@ export function isDbReadEnabled(): boolean {
 export function isDbOnlyReadEnabled(): boolean {
   return process.env.DB_ONLY_READ_ENABLED === 'true';
 }
+
+// DB_ONLY_WRITE_ENABLED=true のとき、通常の保存処理はDBのみに書き込む
+// Redisへは一切書き込まない / 未設定・false のときは従来の二重書き込みを維持する
+export function isDbOnlyWriteEnabled(): boolean {
+  return process.env.DB_ONLY_WRITE_ENABLED === 'true';
+}
