@@ -8,6 +8,7 @@ import {
   numeric,
   primaryKey,
   index,
+  serial,
 } from 'drizzle-orm/pg-core';
 
 // ── 人物 ──────────────────────────────────────────────────────────────────────
@@ -122,6 +123,70 @@ export const products = pgTable('products', {
   primaryKey({ columns: [t.personName, t.category] }),
   index('products_person_name_idx').on(t.personName),
 ]);
+
+// ── バッチ実行メタ（batch:meta）─────────────────────────────────────────────
+// シングルトン行 (id=1) として保存
+export const batchMeta = pgTable('batch_meta', {
+  id:          integer('id').primaryKey().default(1),
+  lastRunAt:   timestamp('last_run_at',  { withTimezone: true }).notNull(),
+  personCount: integer('person_count').notNull().default(0),
+  aiJudged:    integer('ai_judged').notNull().default(0),
+  updatedAt:   timestamp('updated_at',   { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ── インポート履歴（import:history）──────────────────────────────────────────
+export const importHistory = pgTable('import_history', {
+  historyId:    text('history_id').primaryKey(),
+  importType:   text('import_type').notNull(),
+  executedAt:   timestamp('executed_at',  { withTimezone: true }).notNull(),
+  fileName:     text('file_name'),
+  totalRows:    integer('total_rows').notNull().default(0),
+  successCount: integer('success_count').notNull().default(0),
+  skipCount:    integer('skip_count').notNull().default(0),
+  errorCount:   integer('error_count').notNull().default(0),
+  durationMs:   integer('duration_ms').notNull().default(0),
+  status:       text('status').notNull(),
+  rows:         jsonb('rows').$type<unknown[]>().notNull().default([]),
+  csvContent:   text('csv_content'),
+  createdAt:    timestamp('created_at',   { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('import_history_executed_at_idx').on(t.executedAt),
+]);
+
+// ── OpenAI使用ログ（openai:usage:YYYY-MM-DD）────────────────────────────────
+export const openaiUsageLogs = pgTable('openai_usage_logs', {
+  id:               serial('id').primaryKey(),
+  loggedAt:         timestamp('logged_at',         { withTimezone: true }).notNull(),
+  feature:          text('feature').notNull(),
+  model:            text('model').notNull(),
+  inputTokens:      integer('input_tokens').notNull().default(0),
+  outputTokens:     integer('output_tokens').notNull().default(0),
+  estimatedCostUsd: numeric('estimated_cost_usd', { precision: 10, scale: 6 }).notNull().default('0'),
+  durationMs:       integer('duration_ms'),
+  personName:       text('person_name'),
+  success:          boolean('success').notNull().default(true),
+  errorMessage:     text('error_message'),
+}, (t) => [
+  index('openai_usage_logs_logged_at_idx').on(t.loggedAt),
+  index('openai_usage_logs_feature_idx').on(t.feature),
+]);
+
+// ── 商品表示順序（product-display-order:{personName}:{category}）──────────
+export const productDisplayOrder = pgTable('product_display_order', {
+  personName: text('person_name').notNull(),
+  category:   text('category').notNull(),
+  orderIds:   jsonb('order_ids').$type<string[]>().notNull().default([]),
+  updatedAt:  timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  primaryKey({ columns: [t.personName, t.category] }),
+]);
+
+// ── 重点配信確認フラグ（vod:intensive:persons）──────────────────────────────
+export const vodIntensivePersons = pgTable('vod_intensive_persons', {
+  personName: text('person_name').primaryKey(),
+  enabledAt:  timestamp('enabled_at',  { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:  timestamp('updated_at',  { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ── AI/手動判定結果（verdicts:{personName}）──────────────────────────────────
 export const verdicts = pgTable('verdicts', {

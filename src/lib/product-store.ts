@@ -1,9 +1,8 @@
 // 楽天APIから取得した商品データを永続保存するモジュール（Neon DB）
 // バッチ処理でのみ書き込み、人物ページと管理画面から読み取る
 
-import { getRedis } from './redis';
 import { db } from '@/db/client';
-import { products as productsTable } from '@/db/schema';
+import { products as productsTable, batchMeta as batchMetaTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { upsertProduct } from '@/db/write';
 import type { RakutenItem } from '@/types/rakuten';
@@ -123,29 +122,32 @@ export async function getAllStoredProductsOrThrow(
   return result;
 }
 
-// バッチの最終実行情報を保存（Redis: batch:meta）
+// バッチの最終実行情報を保存（Neon DB: batch_meta）
 export async function saveBatchMeta(meta: {
   lastRunAt: number;
   personCount: number;
   aiJudged: number;
 }): Promise<void> {
-  const redis = getRedis();
-  if (!redis) return;
-  await redis.set('batch:meta', JSON.stringify(meta), { ex: 60 * 60 * 24 * 30 });
+  const lastRunAt = new Date(meta.lastRunAt);
+  await db.insert(batchMetaTable)
+    .values({ id: 1, lastRunAt, personCount: meta.personCount, aiJudged: meta.aiJudged, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: batchMetaTable.id,
+      set: { lastRunAt, personCount: meta.personCount, aiJudged: meta.aiJudged, updatedAt: new Date() },
+    });
 }
 
-// バッチの最終実行情報を取得（Redis: batch:meta）
+// バッチの最終実行情報を取得（Neon DB: batch_meta）
 export async function getBatchMeta(): Promise<{
   lastRunAt: number;
   personCount: number;
   aiJudged: number;
 } | null> {
-  const redis = getRedis();
-  if (!redis) return null;
   try {
-    const raw = await redis.get<string>('batch:meta');
-    if (!raw) return null;
-    return JSON.parse(typeof raw === 'string' ? raw : JSON.stringify(raw));
+    const rows = await db.select().from(batchMetaTable).limit(1);
+    if (!rows.length) return null;
+    const r = rows[0];
+    return { lastRunAt: r.lastRunAt.getTime(), personCount: r.personCount, aiJudged: r.aiJudged };
   } catch {
     return null;
   }

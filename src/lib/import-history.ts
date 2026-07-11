@@ -1,9 +1,6 @@
-import { getRedis } from './redis';
-
-const LIST_KEY = 'import:history';
-const RECORD_PREFIX = 'import:history:';
-const MAX_HISTORY = 200;
-const TTL = 60 * 60 * 24 * 60; // 60日
+import { db } from '@/db/client';
+import { importHistory as importHistoryTable } from '@/db/schema';
+import { eq, desc } from 'drizzle-orm';
 
 export type ImportType = 'person_csv' | 'work_vod_csv' | 'vod_title_csv';
 export type ImportStatus = 'completed' | 'partial_error' | 'failed';
@@ -36,57 +33,88 @@ function makeHistoryId(): string {
   return `ih_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function parseRecord(raw: unknown): ImportHistory | null {
-  try {
-    return (typeof raw === 'string' ? JSON.parse(raw) : raw) as ImportHistory;
-  } catch {
-    return null;
-  }
-}
-
 export async function saveImportHistory(
   data: Omit<ImportHistory, 'historyId'>,
 ): Promise<string> {
-  const redis = getRedis();
-  if (!redis) return '';
-
   const historyId = makeHistoryId();
-  const record: ImportHistory = { historyId, ...data };
-
-  await redis.set(`${RECORD_PREFIX}${historyId}`, JSON.stringify(record), { ex: TTL });
-  await redis.lpush(LIST_KEY, historyId);
-  await redis.ltrim(LIST_KEY, 0, MAX_HISTORY - 1);
-
+  try {
+    await db.insert(importHistoryTable).values({
+      historyId,
+      importType:   data.importType,
+      executedAt:   new Date(data.executedAt),
+      fileName:     data.fileName ?? null,
+      totalRows:    data.totalRows,
+      successCount: data.successCount,
+      skipCount:    data.skipCount,
+      errorCount:   data.errorCount,
+      durationMs:   data.durationMs,
+      status:       data.status,
+      rows:         data.rows,
+      csvContent:   data.csvContent ?? null,
+    });
+  } catch (err) {
+    console.error('[db] saveImportHistory failed:', String(err));
+  }
   return historyId;
 }
 
 export async function getImportHistoryList(limit = 100): Promise<ImportHistorySummary[]> {
-  const redis = getRedis();
-  if (!redis) return [];
+  try {
+    const rows = await db.select({
+      historyId:    importHistoryTable.historyId,
+      importType:   importHistoryTable.importType,
+      executedAt:   importHistoryTable.executedAt,
+      fileName:     importHistoryTable.fileName,
+      totalRows:    importHistoryTable.totalRows,
+      successCount: importHistoryTable.successCount,
+      skipCount:    importHistoryTable.skipCount,
+      errorCount:   importHistoryTable.errorCount,
+      durationMs:   importHistoryTable.durationMs,
+      status:       importHistoryTable.status,
+    })
+      .from(importHistoryTable)
+      .orderBy(desc(importHistoryTable.executedAt))
+      .limit(limit);
 
-  const ids = await redis.lrange<string>(LIST_KEY, 0, limit - 1);
-  if (!ids || ids.length === 0) return [];
-
-  const records = await Promise.all(
-    ids.map(async (id) => {
-      const raw = await redis.get(`${RECORD_PREFIX}${id}`);
-      if (!raw) return null;
-      const parsed = parseRecord(raw);
-      if (!parsed) return null;
-      // summary only — omit rows and csvContent
-      const { rows: _rows, csvContent: _csv, ...summary } = parsed;
-      return summary as ImportHistorySummary;
-    }),
-  );
-
-  return records.filter((r): r is ImportHistorySummary => r !== null);
+    return rows.map((r) => ({
+      historyId:    r.historyId,
+      importType:   r.importType as ImportType,
+      executedAt:   r.executedAt.getTime(),
+      fileName:     r.fileName ?? undefined,
+      totalRows:    r.totalRows,
+      successCount: r.successCount,
+      skipCount:    r.skipCount,
+      errorCount:   r.errorCount,
+      durationMs:   r.durationMs,
+      status:       r.status as ImportStatus,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export async function getImportHistoryDetail(historyId: string): Promise<ImportHistory | null> {
-  const redis = getRedis();
-  if (!redis) return null;
-
-  const raw = await redis.get(`${RECORD_PREFIX}${historyId}`);
-  if (!raw) return null;
-  return parseRecord(raw);
+  try {
+    const rows = await db.select()
+      .from(importHistoryTable)
+      .where(eq(importHistoryTable.historyId, historyId));
+    if (!rows.length) return null;
+    const r = rows[0];
+    return {
+      historyId:    r.historyId,
+      importType:   r.importType as ImportType,
+      executedAt:   r.executedAt.getTime(),
+      fileName:     r.fileName ?? undefined,
+      totalRows:    r.totalRows,
+      successCount: r.successCount,
+      skipCount:    r.skipCount,
+      errorCount:   r.errorCount,
+      durationMs:   r.durationMs,
+      status:       r.status as ImportStatus,
+      rows:         (r.rows ?? []) as ImportRowResult[],
+      csvContent:   r.csvContent ?? undefined,
+    };
+  } catch {
+    return null;
+  }
 }

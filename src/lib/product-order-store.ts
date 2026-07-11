@@ -1,44 +1,62 @@
-import { getRedis } from './redis';
+import { db } from '@/db/client';
+import { productDisplayOrder } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
 
 const ORDERABLE_CATEGORIES = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD', '中古'] as const;
-
-function orderKey(personName: string, category: string): string {
-  return `product-display-order:${personName}:${category}`;
-}
 
 export async function saveDisplayOrder(
   personName: string,
   category: string,
   order: string[],
 ): Promise<void> {
-  const redis = getRedis();
-  if (!redis) return;
   if (order.length === 0) {
-    await redis.del(orderKey(personName, category));
-  } else {
-    await redis.set(orderKey(personName, category), JSON.stringify(order));
+    await db.delete(productDisplayOrder)
+      .where(and(
+        eq(productDisplayOrder.personName, personName),
+        eq(productDisplayOrder.category, category),
+      ));
+    return;
   }
+  await db.insert(productDisplayOrder)
+    .values({ personName, category, orderIds: order, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: [productDisplayOrder.personName, productDisplayOrder.category],
+      set: { orderIds: order, updatedAt: new Date() },
+    });
 }
 
 export async function getDisplayOrder(
   personName: string,
   category: string,
 ): Promise<string[]> {
-  const redis = getRedis();
-  if (!redis) return [];
-  const raw = await redis.get<string>(orderKey(personName, category));
-  if (!raw) return [];
-  return typeof raw === 'string' ? JSON.parse(raw) : (raw as string[]);
+  try {
+    const rows = await db.select({ orderIds: productDisplayOrder.orderIds })
+      .from(productDisplayOrder)
+      .where(and(
+        eq(productDisplayOrder.personName, personName),
+        eq(productDisplayOrder.category, category),
+      ));
+    return rows.length > 0 ? rows[0].orderIds : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function getAllDisplayOrders(
   personName: string,
 ): Promise<Record<string, string[]>> {
-  const results = await Promise.all(
-    ORDERABLE_CATEGORIES.map(async (cat) => {
-      const order = await getDisplayOrder(personName, cat);
-      return [cat, order] as [string, string[]];
-    }),
-  );
-  return Object.fromEntries(results.filter(([, order]) => (order as string[]).length > 0));
+  try {
+    const rows = await db.select({ category: productDisplayOrder.category, orderIds: productDisplayOrder.orderIds })
+      .from(productDisplayOrder)
+      .where(eq(productDisplayOrder.personName, personName));
+    const result: Record<string, string[]> = {};
+    for (const r of rows) {
+      if ((ORDERABLE_CATEGORIES as readonly string[]).includes(r.category) && r.orderIds.length > 0) {
+        result[r.category] = r.orderIds;
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
 }

@@ -1,4 +1,6 @@
-import { getRedis } from '@/lib/redis';
+import { db } from '@/db/client';
+import { openaiUsageLogs } from '@/db/schema';
+import { and, gte, lte } from 'drizzle-orm';
 import { calcCostUsd } from '@/lib/openai-pricing';
 
 export interface UsageLogEntry {
@@ -14,14 +16,6 @@ export interface UsageLogEntry {
   errorMessage?: string;
 }
 
-// Storage: openai:usage:YYYY-MM-DD — Redis list (LPUSH), TTL 90 days
-const KEY_PREFIX = 'openai:usage:';
-const TTL_SECONDS = 90 * 24 * 60 * 60;
-
-function dayKey(date: Date): string {
-  return `${KEY_PREFIX}${date.toISOString().slice(0, 10)}`;
-}
-
 export async function logOpenAIUsage(params: {
   feature: string;
   model: string;
@@ -32,59 +26,53 @@ export async function logOpenAIUsage(params: {
   success?: boolean;
   errorMessage?: string;
 }): Promise<void> {
-  const redis = getRedis();
-  if (!redis) return;
-
-  const entry: UsageLogEntry = {
-    ts: Date.now(),
-    feature: params.feature,
-    model: params.model,
-    inputTokens: params.inputTokens,
-    outputTokens: params.outputTokens,
-    estimatedCostUsd: calcCostUsd(params.model, params.inputTokens, params.outputTokens),
-    durationMs: params.durationMs,
-    personName: params.personName,
-    success: params.success ?? true,
-    errorMessage: params.errorMessage,
-  };
-
-  const key = dayKey(new Date());
+  const estimatedCostUsd = calcCostUsd(params.model, params.inputTokens, params.outputTokens);
   try {
-    await redis.lpush(key, JSON.stringify(entry));
-    await redis.expire(key, TTL_SECONDS);
+    await db.insert(openaiUsageLogs).values({
+      loggedAt:         new Date(),
+      feature:          params.feature,
+      model:            params.model,
+      inputTokens:      params.inputTokens,
+      outputTokens:     params.outputTokens,
+      estimatedCostUsd: String(estimatedCostUsd),
+      durationMs:       params.durationMs ?? null,
+      personName:       params.personName ?? null,
+      success:          params.success ?? true,
+      errorMessage:     params.errorMessage ?? null,
+    });
   } catch { /* logging failures must never break callers */ }
 }
 
 export async function getUsageLogs(from: Date, to: Date): Promise<UsageLogEntry[]> {
-  const redis = getRedis();
-  if (!redis) return [];
-
   const fromTs = new Date(from);
   fromTs.setHours(0, 0, 0, 0);
   const toTs = new Date(to);
   toTs.setHours(23, 59, 59, 999);
 
-  const keys: string[] = [];
-  const d = new Date(fromTs);
-  while (d <= toTs) {
-    keys.push(dayKey(d));
-    d.setDate(d.getDate() + 1);
-  }
+  try {
+    const rows = await db.select()
+      .from(openaiUsageLogs)
+      .where(and(
+        gte(openaiUsageLogs.loggedAt, fromTs),
+        lte(openaiUsageLogs.loggedAt, toTs),
+      ))
+      .orderBy(openaiUsageLogs.loggedAt);
 
-  const entries: UsageLogEntry[] = [];
-  for (const key of keys) {
-    try {
-      const items = await redis.lrange(key, 0, -1);
-      for (const item of items) {
-        try {
-          const entry = (typeof item === 'string' ? JSON.parse(item) : item) as UsageLogEntry;
-          if (entry.ts >= fromTs.getTime() && entry.ts <= toTs.getTime()) {
-            entries.push(entry);
-          }
-        } catch { /* skip malformed */ }
-      }
-    } catch { /* skip missing keys */ }
+    return rows
+      .map((r) => ({
+        ts:               r.loggedAt.getTime(),
+        feature:          r.feature,
+        model:            r.model,
+        inputTokens:      r.inputTokens,
+        outputTokens:     r.outputTokens,
+        estimatedCostUsd: Number(r.estimatedCostUsd ?? 0),
+        durationMs:       r.durationMs ?? undefined,
+        personName:       r.personName ?? undefined,
+        success:          r.success,
+        errorMessage:     r.errorMessage ?? undefined,
+      }))
+      .sort((a, b) => b.ts - a.ts);
+  } catch {
+    return [];
   }
-
-  return entries.sort((a, b) => b.ts - a.ts);
 }
