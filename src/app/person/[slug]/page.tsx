@@ -20,7 +20,6 @@ import type { ActivityStatus } from '@/types/person';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
 import { getAllDisplayOrders } from '@/lib/product-order-store';
-import { shadowReadPersonPage } from '@/lib/shadow-read';
 import {
   sortProductsByPerson,
   calcDisplayTier,
@@ -252,14 +251,6 @@ export default async function PersonPage({ params }: Props) {
     storedResult.status === 'rejected' ||
     worksResult.status === 'rejected' ||
     verdictsResult.status === 'rejected';
-
-  // シャドーリード: DB件数をRedisと比較してログ出力（ユーザー表示に影響しない）
-  await shadowReadPersonPage(name, {
-    productCategories: Object.keys(storedData).length,
-    verdicts: Object.keys(verdicts).length,
-    publishedWorks: publishedWorks.length,
-    hasPersonMeta: personMeta !== null,
-  });
 
   // ── 中古商品 ──
   const usedCatData = storedData['中古'];

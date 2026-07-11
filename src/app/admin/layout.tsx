@@ -16,15 +16,7 @@ const NAV_ITEMS = [
   { href: '/admin/openai-usage',               label: 'OpenAI利用状況' },
   { href: '/admin/analytics',                  label: '📊 アナリティクス' },
   { href: '/admin/redis-backup',               label: '💾 バックアップ' },
-  { href: '/admin/db-compare',                label: '🔄 DB検証' },
-  { href: '/admin/db-patch-products',         label: '🩹 products補完' },
-  { href: '/admin/db-patch-data',              label: '🔧 works/verdicts補完' },
-  { href: '/admin/db-patch-meta',              label: '🔧 meta補完' },
   { href: '/admin/db-init',                    label: '🗄️ DBスキーマ初期化' },
-  { href: '/admin/db-seed',                    label: '🌱 DBシード' },
-  { href: '/admin/db-diff-products',            label: '🔍 products差分' },
-  { href: '/admin/db-diff-works',              label: '🔍 works差分' },
-  { href: '/admin/db-person-diff',             label: '🔎 人物別差分' },
   { href: '/api/admin/logout',                 label: 'ログアウト', danger: true },
 ] as const;
 
