@@ -1,23 +1,22 @@
 /**
- * DB_ONLY_WRITE_ENABLED フラグのテスト
+ * Redis 削除後の DB 単独書き込みテスト
  *
- * ケースA: true  → DB 書き込み呼び出し、Redis 書き込みは呼ばれない
- * ケースB: false → 両方呼ばれる（既存デュアルライト）
- * ケースC: 未設定 → false と同じ
+ * Redis フォールバックを削除し、全ての書き込みは常に Neon DB のみへ行く。
+ * DB_ONLY_WRITE_ENABLED フラグに関係なく DB 関数が呼ばれ、Redis は呼ばれない。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── モジュールモック ─────────────────────────────────────────────────────────
 
-// db-flag を制御するモック
+// db-flag を制御するモック（フラグ値に関わらず常に DB のみ使うことを確認）
 vi.mock('@/lib/db-flag', () => ({
   isDbReadEnabled:      vi.fn(() => false),
   isDbOnlyReadEnabled:  vi.fn(() => false),
   isDbOnlyWriteEnabled: vi.fn(() => false),
 }));
 
-// Redis モック
+// Redis モック（呼ばれないことを確認するために残す）
 const hset = vi.fn().mockResolvedValue(1);
 const hdel = vi.fn().mockResolvedValue(1);
 const hget = vi.fn();
@@ -79,21 +78,13 @@ vi.mock('drizzle-orm', () => ({
   isNotNull: (a: unknown)       => ({ isNotNull: a }),
 }));
 
-// ── import（モック後に取得）─────────────────────────────────────────────────
-import { isDbOnlyWriteEnabled } from '@/lib/db-flag';
-
-// ── ヘルパー ─────────────────────────────────────────────────────────────────
-function setDbOnlyWrite(val: boolean) {
-  vi.mocked(isDbOnlyWriteEnabled).mockReturnValue(val);
-}
-
 const sampleWork = {
   id: 'work-1',
   personName: '鈴木愛理',
   title: 'テスト作品',
   type: 'movie' as const,
   source: 'tmdb' as const,
-  status: 'approved' as const,
+  status: 'auto_published' as const,
   normalizedTitle: 'テスト作品',
   confidenceScore: 1,
   deleted: false,
@@ -106,36 +97,26 @@ const sampleWork = {
 describe('saveWork', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('A: DB_ONLY_WRITE_ENABLED=true → upsertWork 呼び出し、Redis hset は呼ばれない', async () => {
-    setDbOnlyWrite(true);
+  it('常に upsertWork が呼ばれ、Redis hset は呼ばれない', async () => {
     const { saveWork } = await import('@/lib/work-store');
     await saveWork(sampleWork);
     expect(upsertWork).toHaveBeenCalledOnce();
     expect(hset).not.toHaveBeenCalled();
   });
 
-  it('B: DB_ONLY_WRITE_ENABLED=false → Redis hset も呼ばれる', async () => {
-    setDbOnlyWrite(false);
-    hget.mockResolvedValueOnce(null); // saveWorkIfAbsent ではなく saveWork
+  it('DB_ONLY_WRITE_ENABLED=false でも upsertWork が呼ばれ、Redis は呼ばれない', async () => {
+    // フラグ値に関係なく常に DB のみ
     const { saveWork } = await import('@/lib/work-store');
     await saveWork(sampleWork);
-    expect(hset).toHaveBeenCalled();
-  });
-
-  it('C: 未設定（デフォルト false）→ B と同じ挙動', async () => {
-    setDbOnlyWrite(false);
-    const { saveWork } = await import('@/lib/work-store');
-    await saveWork(sampleWork);
-    expect(hset).toHaveBeenCalled();
-    expect(upsertWork).toHaveBeenCalled(); // dbWrite 経由
+    expect(upsertWork).toHaveBeenCalledOnce();
+    expect(hset).not.toHaveBeenCalled();
   });
 });
 
 describe('deleteWorksBySource', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('A: DB_ONLY_WRITE_ENABLED=true → db.delete 呼び出し、Redis hdel は呼ばれない', async () => {
-    setDbOnlyWrite(true);
+  it('db.delete が呼ばれ、Redis hdel は呼ばれない', async () => {
     mockDeleteReturning.mockResolvedValueOnce([{ id: 'w1' }, { id: 'w2' }]);
     const { deleteWorksBySource } = await import('@/lib/work-store');
     const count = await deleteWorksBySource('鈴木愛理', 'tmdb');
@@ -144,74 +125,44 @@ describe('deleteWorksBySource', () => {
     expect(hdel).not.toHaveBeenCalled();
   });
 
-  it('B: DB_ONLY_WRITE_ENABLED=false → Redis hdel が呼ばれる', async () => {
-    setDbOnlyWrite(false);
-    // getAllWorks → Redis hgetall は別モジュールが担うが、ここでは空を返す
-    mockSelect.mockReturnValue({ from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }) });
+  it('対象なし → 0 件', async () => {
+    mockDeleteReturning.mockResolvedValueOnce([]);
     const { deleteWorksBySource } = await import('@/lib/work-store');
-    // Redis hgetall が null を返す → 0 件
-    hget.mockResolvedValueOnce(null);
     const count = await deleteWorksBySource('鈴木愛理', 'tmdb');
-    expect(count).toBe(0); // targets が 0 件
+    expect(count).toBe(0);
   });
 });
 
 describe('saveVerdict (judgment-store)', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('A: DB_ONLY_WRITE_ENABLED=true → upsertVerdict 呼び出し、Redis hset は呼ばれない', async () => {
-    setDbOnlyWrite(true);
+  it('常に upsertVerdict が呼ばれ、Redis hset は呼ばれない', async () => {
     const { saveVerdict } = await import('@/lib/judgment-store');
     await saveVerdict('鈴木愛理', 'product-1', 'related', 1, 'manual');
     expect(upsertVerdict).toHaveBeenCalledOnce();
     expect(hset).not.toHaveBeenCalled();
-  });
-
-  it('B: DB_ONLY_WRITE_ENABLED=false → Redis hset も呼ばれる', async () => {
-    setDbOnlyWrite(false);
-    const { saveVerdict } = await import('@/lib/judgment-store');
-    await saveVerdict('鈴木愛理', 'product-1', 'related', 1, 'manual');
-    expect(hset).toHaveBeenCalled();
-    expect(upsertVerdict).toHaveBeenCalled(); // dbWrite 経由
   });
 });
 
 describe('deleteVerdict (judgment-store)', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('A: DB_ONLY_WRITE_ENABLED=true → deleteVerdictInDB 呼び出し、Redis hdel は呼ばれない', async () => {
-    setDbOnlyWrite(true);
+  it('常に deleteVerdictInDB が呼ばれ、Redis hdel は呼ばれない', async () => {
     const { deleteVerdict } = await import('@/lib/judgment-store');
     await deleteVerdict('鈴木愛理', 'product-1');
     expect(deleteVerdictInDB).toHaveBeenCalledOnce();
     expect(hdel).not.toHaveBeenCalled();
-  });
-
-  it('B: DB_ONLY_WRITE_ENABLED=false → Redis hdel が呼ばれる', async () => {
-    setDbOnlyWrite(false);
-    const { deleteVerdict } = await import('@/lib/judgment-store');
-    await deleteVerdict('鈴木愛理', 'product-1');
-    expect(hdel).toHaveBeenCalled();
-    expect(deleteVerdictInDB).not.toHaveBeenCalled();
   });
 });
 
 describe('storeProducts (product-store)', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('A: DB_ONLY_WRITE_ENABLED=true → upsertProduct 呼び出し、Redis hset は呼ばれない', async () => {
-    setDbOnlyWrite(true);
+  it('常に upsertProduct が呼ばれ、Redis hset は呼ばれない', async () => {
     mockSelect.mockReturnValue({ from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }) });
     const { storeProducts } = await import('@/lib/product-store');
     await storeProducts('鈴木愛理', '写真集', []);
     expect(upsertProduct).toHaveBeenCalledOnce();
     expect(hset).not.toHaveBeenCalled();
-  });
-
-  it('B: DB_ONLY_WRITE_ENABLED=false → Redis hset が呼ばれる', async () => {
-    setDbOnlyWrite(false);
-    const { storeProducts } = await import('@/lib/product-store');
-    await storeProducts('鈴木愛理', '写真集', []);
-    expect(hset).toHaveBeenCalled();
   });
 });

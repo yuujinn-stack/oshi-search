@@ -1,141 +1,71 @@
-// 公開反映済み人物のストレージ（Redis: persons:published ハッシュ）
+// 公開反映済み人物のストレージ（Neon DB）
 // getAllPersonsMerged() から参照される。公開ページで使う唯一の追加データソース。
 // 管理画面 /admin/people/import の「公開反映」ボタンからのみ書き込む。
 
 import { cache } from 'react';
-import { getRedis } from './redis';
-import { isDbOnlyReadEnabled, isDbOnlyWriteEnabled } from './db-flag';
 import { db } from '@/db/client';
 import { persons as personsTable } from '@/db/schema';
 import { eq, and, isNotNull } from 'drizzle-orm';
 import type { PersonWithConfig, Genre, PersonConfig } from '@/types/person';
-import { dbWrite, publishPersonInDB, unpublishPersonInDB } from '@/db/write';
+import { publishPersonInDB, unpublishPersonInDB } from '@/db/write';
 
-const HASH_KEY = 'persons:published';
-
-// persons:published に保存するレコード（PersonWithConfig + publishedAt）
+// persons テーブルに保存するレコード（PersonWithConfig + publishedAt）
 export interface PublishedRecord extends PersonWithConfig {
   publishedAt: number;
 }
 
 // ── Raw fetch（キャッシュなし）────────────────────────────────────────────────
 export async function getAllPublishedPersonsRaw(): Promise<PublishedRecord[]> {
-  if (isDbOnlyReadEnabled()) {
-    try {
-      const rows = await db.select().from(personsTable)
-        .where(and(eq(personsTable.source, 'imported'), isNotNull(personsTable.publishedAt)));
-      return rows.map((r) => ({
-        name:        r.name,
-        group:       r.groupName,
-        genre:       r.genre as Genre,
-        config:      (r.config ?? {}) as PersonConfig,
-        publishedAt: r.publishedAt!.getTime(),
-      }));
-    } catch (err) {
-      console.error('[db-only] getAllPublishedPersonsRaw failed:', String(err));
-      return [];
-    }
-  }
-  const redis = getRedis();
-  if (!redis) {
-    console.error('[published-persons] getRedis() returned null — check UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN');
-    return [];
-  }
   try {
-    const raw = await redis.hgetall(HASH_KEY);
-    console.log(`[published-persons] hgetall(${HASH_KEY}) keys=${raw ? Object.keys(raw).length : 'null'}`);
-    if (!raw) return [];
-    const records = Object.values(raw)
-      .map((v) => {
-        // Upstash SDK auto-deserializes JSON values from hgetall → v is already an object
-        if (v && typeof v === 'object') return v as PublishedRecord;
-        // Fallback: if somehow still a string, parse manually
-        if (typeof v === 'string') {
-          try { return JSON.parse(v) as PublishedRecord; } catch { return null; }
-        }
-        return null;
-      })
-      .filter((p): p is PublishedRecord => p !== null);
-    console.log(`[published-persons] parsed ${records.length} records: ${records.map((r) => r.name).join(', ')}`);
-    return records;
+    const rows = await db.select().from(personsTable)
+      .where(and(eq(personsTable.source, 'imported'), isNotNull(personsTable.publishedAt)));
+    return rows.map((r) => ({
+      name:        r.name,
+      group:       r.groupName,
+      genre:       r.genre as Genre,
+      config:      (r.config ?? {}) as PersonConfig,
+      publishedAt: r.publishedAt!.getTime(),
+    }));
   } catch (err) {
-    console.error('[published-persons] hgetall failed:', err);
+    console.error('[db] getAllPublishedPersonsRaw failed:', String(err));
     return [];
   }
 }
 
 // ── リクエスト内メモ化版（公開ページから呼ぶ）─────────────────────────────
-// react の cache() でリクエスト内の重複 Redis 呼び出しを防ぐ。
+// react の cache() でリクエスト内の重複 DB 呼び出しを防ぐ。
 // cross-request キャッシュは使わないため、常に最新データを返す。
 export const getCachedPublishedPersons = cache(getAllPublishedPersonsRaw);
 
 // ── 公開済み人物名の一覧（PersonList の表示判定用）─────────────────────────
 export async function getPublishedPersonNames(): Promise<string[]> {
-  if (isDbOnlyReadEnabled()) {
-    try {
-      const rows = await db.select({ name: personsTable.name })
-        .from(personsTable)
-        .where(and(eq(personsTable.source, 'imported'), isNotNull(personsTable.publishedAt)));
-      return rows.map((r) => r.name);
-    } catch (err) {
-      console.error('[db-only] getPublishedPersonNames failed:', String(err));
-      return [];
-    }
-  }
-  const redis = getRedis();
-  if (!redis) return [];
   try {
-    return await redis.hkeys(HASH_KEY);
-  } catch {
-    return [];
-  }
-}
-
-// Redis エラー時に throw する版（管理画面 people/import で error/empty を区別するために使う）
-export async function getPublishedPersonNamesOrThrow(): Promise<string[]> {
-  if (isDbOnlyReadEnabled()) {
-    // DB-only: エラー時は throw（Redis フォールバックなし）
     const rows = await db.select({ name: personsTable.name })
       .from(personsTable)
       .where(and(eq(personsTable.source, 'imported'), isNotNull(personsTable.publishedAt)));
     return rows.map((r) => r.name);
+  } catch (err) {
+    console.error('[db] getPublishedPersonNames failed:', String(err));
+    return [];
   }
-  const redis = getRedis();
-  if (!redis) return [];
-  return await redis.hkeys(HASH_KEY); // エラー時は throw
+}
+
+// DBエラー時に throw する版（管理画面 people/import で error/empty を区別するために使う）
+export async function getPublishedPersonNamesOrThrow(): Promise<string[]> {
+  const rows = await db.select({ name: personsTable.name })
+    .from(personsTable)
+    .where(and(eq(personsTable.source, 'imported'), isNotNull(personsTable.publishedAt)));
+  return rows.map((r) => r.name);
 }
 
 // ── 書き込み ────────────────────────────────────────────────────────────────
 export async function publishPersonsBatch(records: PublishedRecord[]): Promise<void> {
   if (records.length === 0) return;
-  if (isDbOnlyWriteEnabled()) {
-    for (const r of records) {
-      await publishPersonInDB(r.name, r.publishedAt);
-    }
-    return;
-  }
-  const redis = getRedis();
-  if (!redis) {
-    throw new Error('[published-persons] Redis not available — cannot publishPersonsBatch');
-  }
-  const entries: Record<string, string> = {};
   for (const r of records) {
-    entries[r.name] = JSON.stringify(r);
-  }
-  const result = await redis.hset(HASH_KEY, entries);
-  console.log(`[published-persons] hset(${HASH_KEY}) wrote ${records.length} records, result=${result}`);
-  for (const r of records) {
-    dbWrite(`publish-person/${r.name}`, () => publishPersonInDB(r.name, r.publishedAt));
+    await publishPersonInDB(r.name, r.publishedAt);
   }
 }
 
 export async function unpublishPerson(name: string): Promise<void> {
-  if (isDbOnlyWriteEnabled()) {
-    await unpublishPersonInDB(name);
-    return;
-  }
-  const redis = getRedis();
-  if (!redis) return;
-  await redis.hdel(HASH_KEY, name);
-  dbWrite(`unpublish-person/${name}`, () => unpublishPersonInDB(name));
+  await unpublishPersonInDB(name);
 }

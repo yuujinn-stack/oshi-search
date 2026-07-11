@@ -1,5 +1,3 @@
-import { getRedis } from '@/lib/redis';
-import { isDbReadEnabled, isDbOnlyReadEnabled } from '@/lib/db-flag';
 import { db } from '@/db/client';
 import { personMeta as personMetaTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
@@ -8,8 +6,6 @@ import type { PersonPriority } from '@/app/admin/work-check/work-check-types';
 import type { ActivityStatus, CareerStatus } from '@/types/person';
 
 export type { PersonMeta };
-
-const META_KEY = 'admin:person-meta';
 
 // DB行 → PersonMeta マッピング
 function dbRowToPersonMeta(r: typeof personMetaTable.$inferSelect): PersonMeta {
@@ -35,93 +31,31 @@ function dbRowToPersonMeta(r: typeof personMetaTable.$inferSelect): PersonMeta {
 }
 
 export async function getAllPersonMetas(): Promise<Record<string, PersonMeta>> {
-  if (isDbOnlyReadEnabled()) {
-    try {
-      const rows = await db.select().from(personMetaTable);
-      const map: Record<string, PersonMeta> = {};
-      for (const r of rows) map[r.personName] = dbRowToPersonMeta(r);
-      return map;
-    } catch (err) {
-      console.error('[db-only] getAllPersonMetas DB error:', String(err));
-      return {};
-    }
-  }
-  if (isDbReadEnabled()) {
-    try {
-      const rows = await db.select().from(personMetaTable);
-      const map: Record<string, PersonMeta> = {};
-      for (const r of rows) map[r.personName] = dbRowToPersonMeta(r);
-      return map;
-    } catch (err) {
-      console.warn('[db-read] FALLBACK getAllPersonMetas:', String(err));
-    }
-  }
   try {
-    const redis = getRedis();
-    if (!redis) return {};
-    const raw = await redis.hgetall(META_KEY);
-    if (!raw) return {};
-    const map: Record<string, PersonMeta> = {};
-    for (const [k, v] of Object.entries(raw)) {
-      try { map[k] = (typeof v === 'string' ? JSON.parse(v) : v) as PersonMeta; } catch { /* skip */ }
-    }
-    return map;
-  } catch { return {}; }
-}
-
-// Redis エラー時に throw する版（検索・ジャンルページ等で error/empty を区別するために使う）
-export async function getAllPersonMetasOrThrow(): Promise<Record<string, PersonMeta>> {
-  if (isDbOnlyReadEnabled()) {
-    // DB-only: エラー時は throw（Redis フォールバックなし）
     const rows = await db.select().from(personMetaTable);
     const map: Record<string, PersonMeta> = {};
     for (const r of rows) map[r.personName] = dbRowToPersonMeta(r);
     return map;
+  } catch (err) {
+    console.error('[db] getAllPersonMetas failed:', String(err));
+    return {};
   }
-  if (isDbReadEnabled()) {
-    try {
-      const rows = await db.select().from(personMetaTable);
-      const map: Record<string, PersonMeta> = {};
-      for (const r of rows) map[r.personName] = dbRowToPersonMeta(r);
-      return map;
-    } catch (err) {
-      console.warn('[db-read] FALLBACK getAllPersonMetasOrThrow:', String(err));
-    }
-  }
-  const redis = getRedis();
-  if (!redis) return {};
-  const raw = await redis.hgetall(META_KEY); // エラー時は throw
-  if (!raw) return {};
+}
+
+// DBエラー時に throw する版（検索・ジャンルページ等で error/empty を区別するために使う）
+export async function getAllPersonMetasOrThrow(): Promise<Record<string, PersonMeta>> {
+  const rows = await db.select().from(personMetaTable);
   const map: Record<string, PersonMeta> = {};
-  for (const [k, v] of Object.entries(raw)) {
-    try { map[k] = (typeof v === 'string' ? JSON.parse(v) : v) as PersonMeta; } catch { /* skip */ }
-  }
+  for (const r of rows) map[r.personName] = dbRowToPersonMeta(r);
   return map;
 }
 
 export async function getPersonMeta(name: string): Promise<PersonMeta | null> {
-  if (isDbOnlyReadEnabled()) {
-    try {
-      const rows = await db.select().from(personMetaTable).where(eq(personMetaTable.personName, name));
-      return rows.length > 0 ? dbRowToPersonMeta(rows[0]) : null;
-    } catch (err) {
-      console.error('[db-only] getPersonMeta DB error:', String(err));
-      return null;
-    }
-  }
-  if (isDbReadEnabled()) {
-    try {
-      const rows = await db.select().from(personMetaTable).where(eq(personMetaTable.personName, name));
-      if (rows.length > 0) return dbRowToPersonMeta(rows[0]);
-    } catch (err) {
-      console.warn('[db-read] FALLBACK getPersonMeta:', String(err));
-    }
-  }
   try {
-    const redis = getRedis();
-    if (!redis) return null;
-    const raw = await redis.hget<string>(META_KEY, name);
-    if (!raw) return null;
-    return (typeof raw === 'string' ? JSON.parse(raw) : raw) as PersonMeta;
-  } catch { return null; }
+    const rows = await db.select().from(personMetaTable).where(eq(personMetaTable.personName, name));
+    return rows.length > 0 ? dbRowToPersonMeta(rows[0]) : null;
+  } catch (err) {
+    console.error('[db] getPersonMeta failed:', String(err));
+    return null;
+  }
 }

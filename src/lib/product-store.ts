@@ -1,12 +1,11 @@
-// 楽天APIから取得した商品データを Redis に永続保存するモジュール
+// 楽天APIから取得した商品データを永続保存するモジュール（Neon DB）
 // バッチ処理でのみ書き込み、人物ページと管理画面から読み取る
 
 import { getRedis } from './redis';
-import { isDbOnlyReadEnabled, isDbOnlyWriteEnabled } from './db-flag';
 import { db } from '@/db/client';
 import { products as productsTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { dbWrite, upsertProduct } from '@/db/write';
+import { upsertProduct } from '@/db/write';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
 
@@ -15,11 +14,6 @@ export const CATEGORIES: ProductCategory[] = ['写真集', '本・雑誌', 'Blu-
 export interface StoredCategoryData {
   products: RakutenItem[];
   fetchedAt: number; // バッチ実行のタイムスタンプ
-}
-
-// Redis hash key: "products:{personName}" → field: category → value: JSON
-function hashKey(personName: string): string {
-  return `products:${personName}`;
 }
 
 // カテゴリ単位で商品を保存（バッチ処理から呼ぶ）
@@ -31,53 +25,25 @@ export async function storeProducts(
   products: RakutenItem[],
   verdictIds?: Set<string>,
 ): Promise<void> {
-  if (isDbOnlyWriteEnabled()) {
-    let finalProducts = products;
-    if (verdictIds && verdictIds.size > 0) {
-      try {
-        const rows = await db.select().from(productsTable)
-          .where(eq(productsTable.personName, personName));
-        const row = rows.find((r) => r.category === category);
-        if (row) {
-          const existing = row.items as RakutenItem[];
-          const newIds = new Set(products.map((p) => p.id));
-          const preserved = existing.filter((p) => !newIds.has(p.id) && verdictIds.has(p.id));
-          if (preserved.length > 0) {
-            console.log(`[db-only] ${personName}/${category}: verdict済み${preserved.length}件を保持`);
-            finalProducts = [...products, ...preserved];
-          }
-        }
-      } catch { /* 既存データ取得失敗時はそのまま上書き */ }
-    }
-    const fetchedAt = Date.now();
-    await upsertProduct(personName, category, finalProducts, fetchedAt);
-    return;
-  }
-  const redis = getRedis();
-  if (!redis) return;
-
   let finalProducts = products;
-
   if (verdictIds && verdictIds.size > 0) {
-    const raw = await redis.hget(hashKey(personName), category);
-    if (raw) {
-      try {
-        const existing: StoredCategoryData = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    try {
+      const rows = await db.select().from(productsTable)
+        .where(eq(productsTable.personName, personName));
+      const row = rows.find((r) => r.category === category);
+      if (row) {
+        const existing = row.items as RakutenItem[];
         const newIds = new Set(products.map((p) => p.id));
-        const preserved = (existing.products ?? []).filter(
-          (p) => !newIds.has(p.id) && verdictIds.has(p.id),
-        );
+        const preserved = existing.filter((p) => !newIds.has(p.id) && verdictIds.has(p.id));
         if (preserved.length > 0) {
-          console.log(`[store] ${personName}/${category}: verdict済み${preserved.length}件を保持`);
+          console.log(`[db] ${personName}/${category}: verdict済み${preserved.length}件を保持`);
           finalProducts = [...products, ...preserved];
         }
-      } catch { /* 既存データ取得失敗時はそのまま上書き */ }
-    }
+      }
+    } catch { /* 既存データ取得失敗時はそのまま上書き */ }
   }
-
-  const data: StoredCategoryData = { products: finalProducts, fetchedAt: Date.now() };
-  await redis.hset(hashKey(personName), { [category]: JSON.stringify(data) });
-  dbWrite(`products/${personName}/${category}`, () => upsertProduct(personName, category, finalProducts, data.fetchedAt));
+  const fetchedAt = Date.now();
+  await upsertProduct(personName, category, finalProducts, fetchedAt);
 }
 
 // 手動追加: カテゴリに商品を1件追加（既存商品は保持）
@@ -87,34 +53,15 @@ export async function appendProductToCategory(
   category: ProductCategory,
   product: RakutenItem,
 ): Promise<'created' | 'duplicate'> {
-  if (isDbOnlyWriteEnabled()) {
-    const rows = await db.select().from(productsTable)
-      .where(eq(productsTable.personName, personName));
-    const row = rows.find((r) => r.category === category);
-    let existing: RakutenItem[] = row ? (row.items as RakutenItem[]) : [];
-    const fetchedAt = row ? row.fetchedAt.getTime() : Date.now();
-    const dup = existing.some((p) => p.id === product.id || p.itemUrl === product.itemUrl);
-    if (dup) return 'duplicate';
-    existing = [...existing, product];
-    await upsertProduct(personName, category, existing, fetchedAt);
-    return 'created';
-  }
-  const redis = getRedis();
-  if (!redis) return 'duplicate';
-  const raw = await redis.hget(hashKey(personName), category);
-  let existing: StoredCategoryData = { products: [], fetchedAt: Date.now() };
-  if (raw) {
-    try {
-      existing = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    } catch { /* use default */ }
-  }
-  const dup = existing.products.some(
-    (p) => p.id === product.id || p.itemUrl === product.itemUrl,
-  );
+  const rows = await db.select().from(productsTable)
+    .where(eq(productsTable.personName, personName));
+  const row = rows.find((r) => r.category === category);
+  let existing: RakutenItem[] = row ? (row.items as RakutenItem[]) : [];
+  const fetchedAt = row ? row.fetchedAt.getTime() : Date.now();
+  const dup = existing.some((p) => p.id === product.id || p.itemUrl === product.itemUrl);
   if (dup) return 'duplicate';
-  existing.products = [...existing.products, product];
-  await redis.hset(hashKey(personName), { [category]: JSON.stringify(existing) });
-  dbWrite(`products/${personName}/${category}`, () => upsertProduct(personName, category, existing.products, existing.fetchedAt));
+  existing = [...existing, product];
+  await upsertProduct(personName, category, existing, fetchedAt);
   return 'created';
 }
 
@@ -125,83 +72,23 @@ export async function updateProductInCategory(
   productId: string,
   updates: Partial<RakutenItem>,
 ): Promise<boolean> {
-  if (isDbOnlyWriteEnabled()) {
-    const rows = await db.select().from(productsTable)
-      .where(eq(productsTable.personName, personName));
-    const row = rows.find((r) => r.category === category);
-    if (!row) return false;
-    const items = row.items as RakutenItem[];
-    const idx = items.findIndex((p) => p.id === productId);
-    if (idx === -1) return false;
-    items[idx] = { ...items[idx], ...updates };
-    await upsertProduct(personName, category, items, row.fetchedAt.getTime());
-    return true;
-  }
-  const redis = getRedis();
-  if (!redis) return false;
-  const raw = await redis.hget(hashKey(personName), category);
-  if (!raw) return false;
-  try {
-    const existing: StoredCategoryData = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    const idx = existing.products.findIndex((p) => p.id === productId);
-    if (idx === -1) return false;
-    existing.products[idx] = { ...existing.products[idx], ...updates };
-    await redis.hset(hashKey(personName), { [category]: JSON.stringify(existing) });
-    dbWrite(`products/${personName}/${category}`, () => upsertProduct(personName, category, existing.products, existing.fetchedAt));
-    return true;
-  } catch {
-    return false;
-  }
+  const rows = await db.select().from(productsTable)
+    .where(eq(productsTable.personName, personName));
+  const row = rows.find((r) => r.category === category);
+  if (!row) return false;
+  const items = row.items as RakutenItem[];
+  const idx = items.findIndex((p) => p.id === productId);
+  if (idx === -1) return false;
+  items[idx] = { ...items[idx], ...updates };
+  await upsertProduct(personName, category, items, row.fetchedAt.getTime());
+  return true;
 }
 
 // 人物の全カテゴリを一括取得（人物ページレンダリング時）
 export async function getAllStoredProducts(
   personName: string
 ): Promise<Partial<Record<ProductCategory, StoredCategoryData>>> {
-  if (isDbOnlyReadEnabled()) {
-    try {
-      const rows = await db.select().from(productsTable).where(eq(productsTable.personName, personName));
-      const result: Partial<Record<ProductCategory, StoredCategoryData>> = {};
-      for (const r of rows) {
-        if ((CATEGORIES as string[]).includes(r.category)) {
-          result[r.category as ProductCategory] = {
-            products: r.items as RakutenItem[],
-            fetchedAt: r.fetchedAt.getTime(),
-          };
-        }
-      }
-      return result;
-    } catch (err) {
-      console.error('[db-only] getAllStoredProducts failed:', String(err));
-      return {};
-    }
-  }
-  const redis = getRedis();
-  if (!redis) return {};
   try {
-    const raw = await redis.hgetall(hashKey(personName));
-    if (!raw) return {};
-    const result: Partial<Record<ProductCategory, StoredCategoryData>> = {};
-    for (const [k, v] of Object.entries(raw)) {
-      if ((CATEGORIES as string[]).includes(k)) {
-        try {
-          const parsed = typeof v === 'string' ? JSON.parse(v) : v;
-          result[k as ProductCategory] = parsed as StoredCategoryData;
-        } catch { /* 壊れたデータはスキップ */ }
-      }
-    }
-    return result;
-  } catch {
-    return {};
-  }
-}
-
-// Redis エラー時に throw する版（人物ページで error/empty を区別するために使う）
-export async function getAllStoredProductsOrThrow(
-  personName: string,
-): Promise<Partial<Record<ProductCategory, StoredCategoryData>>> {
-  if (isDbOnlyReadEnabled()) {
-    // DB-only: エラー時は throw（Redis フォールバックなし）
     const rows = await db.select().from(productsTable).where(eq(productsTable.personName, personName));
     const result: Partial<Record<ProductCategory, StoredCategoryData>> = {};
     for (const r of rows) {
@@ -213,24 +100,30 @@ export async function getAllStoredProductsOrThrow(
       }
     }
     return result;
+  } catch (err) {
+    console.error('[db] getAllStoredProducts failed:', String(err));
+    return {};
   }
-  const redis = getRedis();
-  if (!redis) return {};
-  const raw = await redis.hgetall(hashKey(personName)); // エラー時は throw
-  if (!raw) return {};
+}
+
+// DBエラー時に throw する版（人物ページで error/empty を区別するために使う）
+export async function getAllStoredProductsOrThrow(
+  personName: string,
+): Promise<Partial<Record<ProductCategory, StoredCategoryData>>> {
+  const rows = await db.select().from(productsTable).where(eq(productsTable.personName, personName));
   const result: Partial<Record<ProductCategory, StoredCategoryData>> = {};
-  for (const [k, v] of Object.entries(raw)) {
-    if ((CATEGORIES as string[]).includes(k)) {
-      try {
-        const parsed = typeof v === 'string' ? JSON.parse(v) : v;
-        result[k as ProductCategory] = parsed as StoredCategoryData;
-      } catch { /* 壊れたデータはスキップ */ }
+  for (const r of rows) {
+    if ((CATEGORIES as string[]).includes(r.category)) {
+      result[r.category as ProductCategory] = {
+        products: r.items as RakutenItem[],
+        fetchedAt: r.fetchedAt.getTime(),
+      };
     }
   }
   return result;
 }
 
-// バッチの最終実行情報を保存
+// バッチの最終実行情報を保存（Redis: batch:meta）
 export async function saveBatchMeta(meta: {
   lastRunAt: number;
   personCount: number;
@@ -241,7 +134,7 @@ export async function saveBatchMeta(meta: {
   await redis.set('batch:meta', JSON.stringify(meta), { ex: 60 * 60 * 24 * 30 });
 }
 
-// バッチの最終実行情報を取得
+// バッチの最終実行情報を取得（Redis: batch:meta）
 export async function getBatchMeta(): Promise<{
   lastRunAt: number;
   personCount: number;
