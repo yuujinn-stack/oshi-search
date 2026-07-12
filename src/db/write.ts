@@ -4,7 +4,7 @@
 
 import { db } from './client';
 import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons } from './schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import type { WorkRecord } from '@/types/work';
 
 // ── Fire-and-forget ラッパー ──────────────────────────────────────────────────
@@ -159,36 +159,43 @@ export async function upsertWork(work: WorkRecord): Promise<void> {
     });
 }
 
-// CSVインポート用バッチ書き込み: vodData のみを並列更新
-// syncMode=true の場合はトランザクションで原子的に実行
+// CSVインポート用バルク書き込み
+// INSERT ... VALUES (多行) ON CONFLICT DO UPDATE SET vod_data = excluded.vod_data
+// → W 作品を 1 SQL で処理。syncMode=true の場合はトランザクションで原子的に実行。
+// 大量行でも chunk 単位で分割するため SQL サイズが肥大しない。
+const BULK_UPSERT_CHUNK = 500;
+
 export async function batchUpsertWorkVodData(
   workList: WorkRecord[],
   wrapInTransaction: boolean,
 ): Promise<void> {
   if (workList.length === 0) return;
 
+  const upsertChunk = (
+    client: Pick<typeof db, 'insert'>,
+    chunk: WorkRecord[],
+  ) =>
+    client
+      .insert(works)
+      .values(chunk.map(buildWorkRow))
+      .onConflictDoUpdate({
+        target: [works.personName, works.id],
+        set: {
+          vodData:   sql`excluded.vod_data`,
+          updatedAt: sql`excluded.updated_at`,
+        },
+      });
+
   if (wrapInTransaction) {
     await db.transaction(async (tx) => {
-      await Promise.all(
-        workList.map((w) => {
-          const { vodData } = buildWorkRow(w);
-          return tx
-            .update(works)
-            .set({ vodData, updatedAt: new Date() })
-            .where(and(eq(works.personName, w.personName), eq(works.id, w.id)));
-        }),
-      );
+      for (let i = 0; i < workList.length; i += BULK_UPSERT_CHUNK) {
+        await upsertChunk(tx, workList.slice(i, i + BULK_UPSERT_CHUNK));
+      }
     });
   } else {
-    await Promise.all(
-      workList.map((w) => {
-        const { vodData } = buildWorkRow(w);
-        return db
-          .update(works)
-          .set({ vodData, updatedAt: new Date() })
-          .where(and(eq(works.personName, w.personName), eq(works.id, w.id)));
-      }),
-    );
+    for (let i = 0; i < workList.length; i += BULK_UPSERT_CHUNK) {
+      await upsertChunk(db, workList.slice(i, i + BULK_UPSERT_CHUNK));
+    }
   }
 }
 
