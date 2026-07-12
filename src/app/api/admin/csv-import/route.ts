@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllPersonsMerged } from '@/lib/persons';
-import { getAllWorks, upsertManualCsvVodProviders, syncManualCsvVodProviders } from '@/lib/work-store';
+import { getWorksForPersons } from '@/lib/work-store';
+import { batchUpsertWorkVodData } from '@/db/write';
 import { normalizeProviderName, VOD_SOURCE_PRIORITY, VOD_SOURCE_LABEL } from '@/lib/vod-dedup';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 import type { WorkRecord } from '@/types/work';
@@ -118,6 +118,29 @@ function lookupService(name: string): { id: number; logoPath?: string } {
   return key ? SERVICE_LOOKUP[key] : { id: stringHash(name) };
 }
 
+// unchanged skip 用: 個別プロバイダーの変更チェック
+function isProviderChanged(old: VodProvider, next: VodProvider): boolean {
+  return (
+    old.type !== next.type ||
+    old.confidence !== next.confidence ||
+    (old.sourceUrl ?? '') !== (next.sourceUrl ?? '') ||
+    (old.note ?? '') !== (next.note ?? '')
+  );
+}
+
+// 同期モード変更チェック: 既存 manual_csv と新プロバイダー集合を比較
+function isSyncChanged(existingManualCsv: VodProvider[], incoming: VodProvider[]): boolean {
+  if (existingManualCsv.length !== incoming.length) return true;
+  const byName = new Map(
+    existingManualCsv.map((p) => [normalizeProviderName(p.providerName), p]),
+  );
+  for (const p of incoming) {
+    const old = byName.get(normalizeProviderName(p.providerName));
+    if (!old || isProviderChanged(old, p)) return true;
+  }
+  return false;
+}
+
 // ─────────────────────────────────────────
 // 型定義
 // ─────────────────────────────────────────
@@ -143,6 +166,8 @@ export interface ImportPreviewRow {
 // ─────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const tStart = Date.now();
+
   const body = await req.json().catch(() => ({}));
   const {
     csvContent,
@@ -202,26 +227,29 @@ export async function POST(req: NextRequest) {
     note:             header.indexOf('note'),
   };
 
-  // ── 全作品を (personName + workId) → WorkRecord でインデックス化 ──
-  // キー: "${personName}:${workId}"（同一 workId でも人物が異なれば別エントリ）
-  const persons = await getAllPersonsMerged();
-  const workMap = new Map<string, WorkRecord>();
-  for (const person of persons) {
-    const works = await getAllWorks(person.name);
-    for (const w of works) {
-      workMap.set(`${w.personName}:${w.id}`, w);
-    }
+  // ── 第1パス: CSVから人物名を収集 → 1クエリでバッチロード ──
+  const dataRows = rows.slice(1);
+  const uniquePersonNames = new Set<string>();
+  for (const row of dataRows) {
+    const csvPersonId = COL.personId >= 0 ? (row[COL.personId] ?? '').trim() : '';
+    const eff = csvPersonId || bodyPersonName;
+    if (eff) uniquePersonNames.add(eff);
   }
 
-  // ── CSV データ行をパース・バリデーション ──
+  // キー: "${personName}:${workId}"
+  const workMap = await getWorksForPersons([...uniquePersonNames]);
+  const tLoaded = Date.now();
+  console.log(
+    `[VOD CSV IMPORT] load: ${tLoaded - tStart}ms | persons: ${uniquePersonNames.size} | works: ${workMap.size}`,
+  );
+
+  // ── 第2パス: CSV データ行をパース・バリデーション ──
   const previewRows: ImportPreviewRow[] = [];
   // 重複除去キー: personName + workId + vodService
   const seenInCsv = new Set<string>();
-  // 同期モード用: workキーごとにCSVに登場したvodServiceを記録
-  // Map<"personName:workId", Set<vodService.toLowerCase()>>
+  // 同期モード用: workキーごとにCSVに登場した正規化vodServiceを記録
   const csvServicesPerWork = new Map<string, Set<string>>();
 
-  const dataRows = rows.slice(1);
   for (let i = 0; i < dataRows.length; i++) {
     const row = dataRows[i];
     const get = (col: number) => (col >= 0 ? (row[col] ?? '').trim() : '');
@@ -318,7 +346,6 @@ export async function POST(req: NextRequest) {
     }
 
     // 同期モード用: 追加・更新・スキップ いずれもCSVに「このサービスが含まれている」として記録
-    // （スキップ分もCSVの意思表示として扱い、sync時に不用意に削除しない）
     if (rowAction === 'add' || rowAction === 'update' || rowAction === 'skip') {
       if (!csvServicesPerWork.has(mapKey)) csvServicesPerWork.set(mapKey, new Set());
       csvServicesPerWork.get(mapKey)!.add(normalizedVodService);
@@ -341,17 +368,16 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 同期モード: CSVにない既存 manual_csv 配信先を削除予定行として追加 ──
-  // 対象: CSVに登場した personName + workId の組み合わせのみ
-  // TMDb / AI / manual ソースは対象外
   if (syncMode) {
     for (const [mapKey, csvServices] of csvServicesPerWork) {
       const work = workMap.get(mapKey);
       if (!work) continue;
       for (const p of (work.vodProviders ?? [])) {
-        if (p.source !== 'manual_csv') continue; // TMDb/AI/manual は触れない
-        if (!csvServices.has(p.providerName.toLowerCase())) {
+        if (p.source !== 'manual_csv') continue;
+        // normalizeProviderName で統一比較（toLowerCase だけでは不十分）
+        if (!csvServices.has(normalizeProviderName(p.providerName))) {
           previewRows.push({
-            rowNum: 0, // CSV 由来でない行
+            rowNum: 0,
             workId: work.id,
             personName: work.personName,
             title: work.title,
@@ -377,6 +403,9 @@ export async function POST(req: NextRequest) {
   const errorCount  = previewRows.filter((r) => r.action === 'error').length;
 
   if (!commit) {
+    console.log(
+      `[VOD CSV IMPORT] preview: ${Date.now() - tStart}ms | add:${addCount} update:${updateCount} delete:${deleteCount} skip:${skipCount} error:${errorCount}`,
+    );
     return NextResponse.json({
       syncMode,
       addCount,
@@ -389,8 +418,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ── コミット ──
-  // (personName + workId) ごとに add/update 行をグループ化
+  // ── コミット: 作品ごとにインメモリで変更を計算し、変更ある作品のみバッチ更新 ──
   const workGroups = new Map<string, ImportPreviewRow[]>();
   for (const row of previewRows) {
     if (row.action !== 'add' && row.action !== 'update') continue;
@@ -399,11 +427,13 @@ export async function POST(req: NextRequest) {
     workGroups.get(groupKey)!.push(row);
   }
 
+  const today = new Date().toISOString().slice(0, 10);
+  const worksToSave: WorkRecord[] = [];
   let savedWorkCount = 0;
   let savedProviderCount = 0;
+  let unchangedProviders = 0;
   let deletedProviderCount = 0;
   const errors: string[] = [];
-  const today = new Date().toISOString().slice(0, 10);
 
   for (const [groupKey, importRows] of workGroups) {
     const work = workMap.get(groupKey);
@@ -416,51 +446,95 @@ export async function POST(req: NextRequest) {
       const serviceInfo = lookupService(row.vodService);
       const providerType = TYPE_MAP[row.availabilityType.toLowerCase()] ?? 'flatrate';
       return {
-        providerId: serviceInfo.id,
+        providerId:   serviceInfo.id,
         providerName: row.vodService,
-        logoPath: serviceInfo.logoPath,
-        type: providerType,
-        countryCode: 'JP',
-        source: 'manual_csv' as const,
-        sourceLabel: 'CSV調査',
-        confidence: (['high', 'medium', 'low'].includes(row.confidence)
+        logoPath:     serviceInfo.logoPath,
+        type:         providerType,
+        countryCode:  'JP',
+        source:       'manual_csv' as const,
+        sourceLabel:  'CSV調査',
+        confidence:   (['high', 'medium', 'low'].includes(row.confidence)
           ? row.confidence
           : 'medium') as 'high' | 'medium' | 'low',
-        sourceUrl: row.sourceUrl || undefined,
-        checkedDate: row.checkedDate || today,
-        note: row.note || undefined,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        sourceUrl:    row.sourceUrl || undefined,
+        checkedDate:  row.checkedDate || today,
+        note:         row.note || undefined,
+        createdAt:    Date.now(),
+        updatedAt:    Date.now(),
       };
     });
 
-    try {
-      if (syncMode) {
-        // 同期モード: manual_csv を providers で完全置換（TMDb/AI/manual は保持）
-        const { removed, added } = await syncManualCsvVodProviders(
-          work.personName,
-          work.id,
-          providers,
-        );
+    if (syncMode) {
+      // 同期モード: manual_csv を providers で完全置換（TMDb/AI/manual は保持）
+      const existing = work.vodProviders ?? [];
+      const existingManualCsv = existing.filter((p) => p.source === 'manual_csv');
+      const nonCsv = existing.filter((p) => p.source !== 'manual_csv');
+
+      if (isSyncChanged(existingManualCsv, providers)) {
+        const netDeleted = Math.max(0, existingManualCsv.length - providers.length);
+        worksToSave.push({
+          ...work,
+          vodProviders: [...nonCsv, ...providers],
+          vodUpdatedAt: Date.now(),
+          updatedAt:    Date.now(),
+        });
         savedWorkCount++;
-        savedProviderCount += added;
-        deletedProviderCount += removed - added; // 実質削除数（新規追加分を引く）
+        savedProviderCount  += providers.length;
+        deletedProviderCount += netDeleted;
       } else {
-        // 追加/更新モード: 既存 manual_csv はそのまま、CSV 分だけ upsert
-        const { added, updated } = await upsertManualCsvVodProviders(
-          work.personName,
-          work.id,
-          providers,
+        unchangedProviders += providers.length;
+      }
+    } else {
+      // 追加/更新モード: 既存 manual_csv はそのまま、CSV 分だけ upsert（変更なしはスキップ）
+      const newProviders = [...(work.vodProviders ?? [])];
+      let workChanged = false;
+
+      for (const p of providers) {
+        const normName = normalizeProviderName(p.providerName);
+        const idx = newProviders.findIndex(
+          (e) => e.source === 'manual_csv' && normalizeProviderName(e.providerName) === normName,
         );
-        if (added + updated > 0) {
-          savedWorkCount++;
-          savedProviderCount += added + updated;
+        if (idx >= 0) {
+          if (isProviderChanged(newProviders[idx], p)) {
+            newProviders[idx] = p;
+            savedProviderCount++;
+            workChanged = true;
+          } else {
+            unchangedProviders++;
+          }
+        } else {
+          newProviders.push(p);
+          savedProviderCount++;
+          workChanged = true;
         }
       }
-    } catch (err) {
-      errors.push(`workId=${work.id} (${work.personName}): ${String(err)}`);
+
+      if (workChanged) {
+        worksToSave.push({
+          ...work,
+          vodProviders: newProviders,
+          vodUpdatedAt: Date.now(),
+          updatedAt:    Date.now(),
+        });
+        savedWorkCount++;
+      }
     }
   }
+
+  const tDiff = Date.now();
+
+  // バッチ書き込み（同期モードはトランザクション）
+  try {
+    await batchUpsertWorkVodData(worksToSave, syncMode);
+  } catch (err) {
+    errors.push(`DB書き込みエラー: ${String(err)}`);
+  }
+
+  const tWrite = Date.now();
+  const elapsedMs = tWrite - tStart;
+  console.log(
+    `[VOD CSV IMPORT] diff: ${tDiff - tLoaded}ms | write: ${tWrite - tDiff}ms (${worksToSave.length}works) | total: ${elapsedMs}ms`,
+  );
 
   return NextResponse.json({
     syncMode,
@@ -468,5 +542,7 @@ export async function POST(req: NextRequest) {
     savedProviderCount,
     deletedProviderCount,
     errors,
+    unchangedProviders,
+    elapsedMs,
   });
 }

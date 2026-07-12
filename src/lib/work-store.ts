@@ -2,7 +2,7 @@
 
 import { db } from '@/db/client';
 import { works as worksTable } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { upsertWork } from '@/db/write';
 import type { WorkRecord, WorkStatus } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
@@ -53,6 +53,28 @@ function dbRowToWorkRecord(r: typeof worksTable.$inferSelect): WorkRecord {
     vodCheckError:   vod.vodCheckError   as string | undefined,
     priorityRecheck: vod.priorityRecheck as boolean | undefined,
   };
+}
+
+// CSV インポート用: 複数人物の全作品を1クエリでバッチロード
+// Returns Map<"personName:workId", WorkRecord>
+export async function getWorksForPersons(
+  personNames: string[],
+): Promise<Map<string, WorkRecord>> {
+  if (personNames.length === 0) return new Map();
+  try {
+    const rows = await db.select()
+      .from(worksTable)
+      .where(inArray(worksTable.personName, personNames));
+    const map = new Map<string, WorkRecord>();
+    for (const r of rows) {
+      const w = dbRowToWorkRecord(r);
+      map.set(`${w.personName}:${w.id}`, w);
+    }
+    return map;
+  } catch (err) {
+    console.error('[db] getWorksForPersons failed:', String(err));
+    return new Map();
+  }
 }
 
 // 人物の全作品を取得

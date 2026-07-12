@@ -40,6 +40,8 @@ interface ImportCommitResult {
   savedProviderCount: number;
   deletedProviderCount: number;
   errors: string[];
+  unchangedProviders?: number;
+  elapsedMs?: number;
 }
 
 interface ImportError {
@@ -75,17 +77,21 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
   const [csvContent, setCsvContent] = useState<string | null>(null);
   const [fileName, setFileName] = useState('');
   const [importing, setImporting] = useState(false);
+  const [importStage, setImportStage] = useState('');
   const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null);
   const [importCommitResult, setImportCommitResult] = useState<ImportCommitResult | null>(null);
   const [importError, setImportError] = useState<ImportError | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  // ダブルサブミット防止: Reactの再レンダリング前に同期的にチェック
+  const isSubmitting = useRef(false);
 
   const importPersonParam = importPerson || undefined;
   const importTotal = (importPreview?.addCount ?? 0) + (importPreview?.updateCount ?? 0);
   const importDeleteCount = importPreview?.deleteCount ?? 0;
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (importing) return;
     const file = e.target.files?.[0];
     if (!file) return;
     const text = await file.text();
@@ -97,8 +103,10 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
   }
 
   async function handleImportPreview() {
-    if (!csvContent) return;
+    if (!csvContent || isSubmitting.current) return;
+    isSubmitting.current = true;
     setImporting(true);
+    setImportStage('対象作品を確認しています...');
     setImportError(null);
     try {
       const res = await fetch('/api/admin/csv-import', {
@@ -120,12 +128,16 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
     } catch {
       setImportError({ error: '通信エラーが発生しました' });
     }
+    setImportStage('');
     setImporting(false);
+    isSubmitting.current = false;
   }
 
   async function handleImportCommit() {
-    if (!csvContent || !importPreview) return;
+    if (!csvContent || !importPreview || isSubmitting.current) return;
+    isSubmitting.current = true;
     setImporting(true);
+    setImportStage('データベースへ保存しています...');
     setImportError(null);
     try {
       const res = await fetch('/api/admin/csv-import', {
@@ -151,10 +163,13 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
     } catch {
       setImportError({ error: '通信エラーが発生しました' });
     }
+    setImportStage('');
     setImporting(false);
+    isSubmitting.current = false;
   }
 
   function handleImportReset() {
+    if (importing) return;
     setImportPreview(null);
     setCsvContent(null);
     setFileName('');
@@ -188,8 +203,9 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
         <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
           <button
             type="button"
+            disabled={importing}
             onClick={() => { setImportMode('upsert'); setImportPreview(null); setImportError(null); }}
-            className={`px-3 py-1.5 transition-colors ${
+            className={`px-3 py-1.5 transition-colors disabled:cursor-not-allowed ${
               importMode === 'upsert'
                 ? 'bg-slate-700 text-white font-medium'
                 : 'text-gray-500 hover:bg-gray-50'
@@ -199,8 +215,9 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
           </button>
           <button
             type="button"
+            disabled={importing}
             onClick={() => { setImportMode('sync'); setImportPreview(null); setImportError(null); }}
-            className={`px-3 py-1.5 border-l border-gray-200 transition-colors ${
+            className={`px-3 py-1.5 border-l border-gray-200 transition-colors disabled:cursor-not-allowed ${
               importMode === 'sync'
                 ? 'bg-red-600 text-white font-medium'
                 : 'text-gray-500 hover:bg-gray-50'
@@ -228,19 +245,21 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
       {/* 対象人物セレクター */}
       <div className="flex items-center gap-2">
         <label className="text-[11px] text-gray-600 font-medium whitespace-nowrap">対象人物:</label>
-        <PersonCombobox
-          persons={persons}
-          value={importPerson}
-          onChange={(name) => {
-            setImportPerson(name);
-            setImportPreview(null);
-            setImportError(null);
-          }}
-          allowEmpty
-          emptyLabel="CSVのpersonId列を使用"
-          placeholder="人物名・グループ名で検索..."
-          className="w-64"
-        />
+        <div className={importing ? 'pointer-events-none opacity-50' : ''}>
+          <PersonCombobox
+            persons={persons}
+            value={importPerson}
+            onChange={(name) => {
+              setImportPerson(name);
+              setImportPreview(null);
+              setImportError(null);
+            }}
+            allowEmpty
+            emptyLabel="CSVのpersonId列を使用"
+            placeholder="人物名・グループ名で検索..."
+            className="w-64"
+          />
+        </div>
         {importPerson && (
           <span className="text-[11px] text-orange-600 font-medium">
             → {importPerson} の作品のみ対象
@@ -254,21 +273,27 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
           ref={fileRef}
           type="file"
           accept=".csv,text/csv"
+          disabled={importing}
           onChange={handleFileChange}
-          className="text-xs text-gray-600 file:mr-2 file:text-xs file:border file:border-gray-200 file:rounded-lg file:px-2 file:py-1 file:bg-gray-50 file:text-gray-600 file:cursor-pointer hover:file:bg-gray-100"
+          className={`text-xs text-gray-600 file:mr-2 file:text-xs file:border file:border-gray-200 file:rounded-lg file:px-2 file:py-1 file:bg-gray-50 file:text-gray-600 file:cursor-pointer hover:file:bg-gray-100 ${importing ? 'opacity-50 cursor-not-allowed' : ''}`}
         />
         {csvContent && !importPreview && (
           <button
             onClick={handleImportPreview}
             disabled={importing}
-            className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 font-medium"
+            className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
           >
-            {importing ? '確認中...' : 'プレビュー確認'}
+            {importing ? importStage || '処理中...' : 'プレビュー確認'}
           </button>
         )}
       </div>
 
-      {fileName && (
+      {/* 処理中インジケーター */}
+      {importing && importStage && (
+        <p className="text-[11px] text-blue-600 font-medium animate-pulse">{importStage}</p>
+      )}
+
+      {fileName && !importing && (
         <p className="text-[10px] text-gray-400">読み込み: {fileName}</p>
       )}
 
@@ -309,10 +334,16 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
           </p>
           <p>
             配信先 追加/更新: {importCommitResult.savedProviderCount}件
+            {(importCommitResult.unchangedProviders ?? 0) > 0 && (
+              <span className="text-gray-500 ml-2">変更なし: {importCommitResult.unchangedProviders}件</span>
+            )}
             {importCommitResult.syncMode && importCommitResult.deletedProviderCount > 0 && (
               <span className="text-red-600 ml-2">削除: {importCommitResult.deletedProviderCount}件</span>
             )}
           </p>
+          {importCommitResult.elapsedMs !== undefined && (
+            <p className="text-gray-500">処理時間: {importCommitResult.elapsedMs}ms</p>
+          )}
           {importCommitResult.errors.length > 0 && (
             <p className="text-orange-600">
               エラー {importCommitResult.errors.length}件: {importCommitResult.errors.slice(0, 2).join(' / ')}
@@ -415,14 +446,14 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
               <button
                 onClick={handleImportCommit}
                 disabled={importing}
-                className={`text-xs px-4 py-2 rounded-lg transition-colors disabled:opacity-50 font-bold text-white ${
+                className={`text-xs px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-bold text-white ${
                   importPreview.syncMode
                     ? 'bg-red-600 hover:bg-red-700'
                     : 'bg-green-600 hover:bg-green-700'
                 }`}
               >
                 {importing
-                  ? '保存中...'
+                  ? importStage || '保存中...'
                   : importPreview.syncMode
                     ? `同期モード実行（追加/更新${importTotal}件・削除${importDeleteCount}件）`
                     : `インポート実行（${importTotal}件保存）`
@@ -433,7 +464,8 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
             )}
             <button
               onClick={handleImportReset}
-              className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+              disabled={importing}
+              className="text-xs text-gray-400 hover:text-gray-600 transition-colors disabled:cursor-not-allowed"
             >
               キャンセル
             </button>

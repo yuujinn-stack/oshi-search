@@ -159,6 +159,39 @@ export async function upsertWork(work: WorkRecord): Promise<void> {
     });
 }
 
+// CSVインポート用バッチ書き込み: vodData のみを並列更新
+// syncMode=true の場合はトランザクションで原子的に実行
+export async function batchUpsertWorkVodData(
+  workList: WorkRecord[],
+  wrapInTransaction: boolean,
+): Promise<void> {
+  if (workList.length === 0) return;
+
+  if (wrapInTransaction) {
+    await db.transaction(async (tx) => {
+      await Promise.all(
+        workList.map((w) => {
+          const { vodData } = buildWorkRow(w);
+          return tx
+            .update(works)
+            .set({ vodData, updatedAt: new Date() })
+            .where(and(eq(works.personName, w.personName), eq(works.id, w.id)));
+        }),
+      );
+    });
+  } else {
+    await Promise.all(
+      workList.map((w) => {
+        const { vodData } = buildWorkRow(w);
+        return db
+          .update(works)
+          .set({ vodData, updatedAt: new Date() })
+          .where(and(eq(works.personName, w.personName), eq(works.id, w.id)));
+      }),
+    );
+  }
+}
+
 // ── 人物メタ（person_meta）────────────────────────────────────────────────────
 
 export interface PersonMetaInput {
