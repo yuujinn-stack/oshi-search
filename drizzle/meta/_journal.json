@@ -15,6 +15,13 @@
       "when": 1752393600000,
       "tag": "0001_add_og_image_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1752480000000,
+      "tag": "0002_system_usage_snapshots",
+      "breakpoints": true
     }
   ]
 }

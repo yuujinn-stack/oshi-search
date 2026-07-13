@@ -193,6 +193,22 @@ export const vodIntensivePersons = pgTable('vod_intensive_persons', {
   updatedAt:  timestamp('updated_at',  { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ── システム使用量スナップショット ─────────────────────────────────────────────
+export const systemUsageSnapshots = pgTable('system_usage_snapshots', {
+  id:          serial('id').primaryKey(),
+  service:     text('service').notNull(),
+  metric:      text('metric').notNull(),
+  value:       numeric('value').notNull(),
+  unit:        text('unit').notNull(),
+  source:      text('source').notNull(),
+  isEstimated: boolean('is_estimated').notNull().default(false),
+  metadata:    jsonb('metadata').$type<Record<string, unknown>>(),
+  recordedAt:  timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('sus_service_metric_recorded_idx').on(t.service, t.metric, t.recordedAt),
+  index('sus_recorded_at_idx').on(t.recordedAt),
+]);
+
 // ── AI/手動判定結果（verdicts:{personName}）──────────────────────────────────
 export const verdicts = pgTable('verdicts', {
   personName:    text('person_name').notNull(),

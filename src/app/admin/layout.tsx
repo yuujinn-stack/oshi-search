@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: '/admin/people-membership-import',   label: '所属CSV' },
   { href: '/admin/work-import',                label: '作品CSV' },
   { href: '/admin/import-history',             label: 'インポート履歴' },
+  { href: '/admin/system-usage',               label: '🖥️ システム使用量' },
   { href: '/admin/openai-usage',               label: 'OpenAI利用状況' },
   { href: '/admin/analytics',                  label: '📊 アナリティクス' },
   { href: '/admin/redis-backup',               label: '💾 バックアップ' },
