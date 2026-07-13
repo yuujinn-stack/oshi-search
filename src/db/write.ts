@@ -4,7 +4,7 @@
 
 import { db } from './client';
 import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons } from './schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import type { WorkRecord } from '@/types/work';
 
 // ── Fire-and-forget ラッパー ──────────────────────────────────────────────────
@@ -408,4 +408,46 @@ export async function deleteVodProviderInDB(slug: string): Promise<void> {
 
 export async function deleteImportedPersonInDB(name: string): Promise<void> {
   await db.delete(persons).where(eq(persons.name, name));
+}
+
+// VOD配信データを一括 UPDATE（CSVインポート用）
+// wrapInTransaction=true (同期モード): db.transaction + Promise.all → Neon が1HTTPリクエストに束ねる
+// wrapInTransaction=false (追加/更新モード): CTE json_array_elements で1SQLに束ねる
+export async function batchUpdateVodData(
+  workList: Array<{ personName: string; id: string; vodData: Record<string, unknown> }>,
+  wrapInTransaction: boolean,
+): Promise<void> {
+  if (workList.length === 0) return;
+  if (wrapInTransaction) {
+    await db.transaction(async (tx) => {
+      await Promise.all(
+        workList.map((w) =>
+          tx.update(works)
+            .set({ vodData: w.vodData, updatedAt: new Date() })
+            .where(and(eq(works.personName, w.personName), eq(works.id, w.id))),
+        ),
+      );
+    });
+  } else {
+    const CHUNK = 500;
+    for (let i = 0; i < workList.length; i += CHUNK) {
+      const chunk = workList.slice(i, i + CHUNK);
+      const batchJson = JSON.stringify(
+        chunk.map((w) => ({ person_name: w.personName, id: w.id, vod_data: w.vodData })),
+      );
+      await db.execute(sql`
+        WITH _u AS (
+          SELECT
+            elem->>'person_name' AS pn,
+            elem->>'id'          AS id,
+            elem->'vod_data'     AS vd
+          FROM jsonb_array_elements(${batchJson}::jsonb) AS elem
+        )
+        UPDATE works
+        SET vod_data = _u.vd, updated_at = NOW()
+        FROM _u
+        WHERE works.person_name = _u.pn AND works.id = _u.id
+      `);
+    }
+  }
 }

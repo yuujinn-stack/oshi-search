@@ -2,7 +2,7 @@
 
 import { db } from '@/db/client';
 import { works as worksTable } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { upsertWork } from '@/db/write';
 import type { WorkRecord, WorkStatus } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
@@ -343,6 +343,36 @@ export async function setPriorityRecheck(
     work.updatedAt = Date.now();
     return true;
   });
+}
+
+// CSVインポート用: 指定された (personName, workId) ペアのみ vodData 含む最小列で取得
+export async function getWorksForImport(
+  pairs: Array<{ personName: string; workId: string }>,
+): Promise<Map<string, { id: string; personName: string; title: string; vodData: Record<string, unknown> }>> {
+  if (pairs.length === 0) return new Map();
+  const personNames = [...new Set(pairs.map((p) => p.personName))];
+  const workIds = [...new Set(pairs.map((p) => p.workId))];
+  const pairSet = new Set(pairs.map((p) => `${p.personName}:${p.workId}`));
+  const rows = await db.select({
+    id: worksTable.id,
+    personName: worksTable.personName,
+    title: worksTable.title,
+    vodData: worksTable.vodData,
+  }).from(worksTable)
+    .where(and(inArray(worksTable.personName, personNames), inArray(worksTable.id, workIds)));
+  const map = new Map<string, { id: string; personName: string; title: string; vodData: Record<string, unknown> }>();
+  for (const r of rows) {
+    const key = `${r.personName}:${r.id}`;
+    if (pairSet.has(key)) {
+      map.set(key, {
+        id: r.id,
+        personName: r.personName,
+        title: r.title ?? '',
+        vodData: (r.vodData ?? {}) as Record<string, unknown>,
+      });
+    }
+  }
+  return map;
 }
 
 // source別に一括削除（AI補完作品を再実行する際に使用）

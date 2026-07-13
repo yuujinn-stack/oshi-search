@@ -80,6 +80,7 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
   const [importError, setImportError] = useState<ImportError | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const isSubmitting = useRef(false);
 
   const importPersonParam = importPerson || undefined;
   const importTotal = (importPreview?.addCount ?? 0) + (importPreview?.updateCount ?? 0);
@@ -97,7 +98,8 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
   }
 
   async function handleImportPreview() {
-    if (!csvContent) return;
+    if (!csvContent || isSubmitting.current) return;
+    isSubmitting.current = true;
     setImporting(true);
     setImportError(null);
     try {
@@ -121,21 +123,26 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
       setImportError({ error: '通信エラーが発生しました' });
     }
     setImporting(false);
+    isSubmitting.current = false;
   }
 
   async function handleImportCommit() {
-    if (!csvContent || !importPreview) return;
+    if (!importPreview || isSubmitting.current) return;
+    isSubmitting.current = true;
     setImporting(true);
     setImportError(null);
     try {
+      const rowsForSave = importPreview.previewRows.filter(
+        (r) => r.action === 'add' || r.action === 'update' || r.action === 'delete',
+      );
       const res = await fetch('/api/admin/csv-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          csvContent,
           commit: true,
           personName: importPersonParam,
           syncMode: importMode === 'sync',
+          normalizedRows: rowsForSave,
         }),
       });
       const data = await res.json();
@@ -152,6 +159,7 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
       setImportError({ error: '通信エラーが発生しました' });
     }
     setImporting(false);
+    isSubmitting.current = false;
   }
 
   function handleImportReset() {
@@ -188,8 +196,9 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
         <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
           <button
             type="button"
+            disabled={importing}
             onClick={() => { setImportMode('upsert'); setImportPreview(null); setImportError(null); }}
-            className={`px-3 py-1.5 transition-colors ${
+            className={`px-3 py-1.5 transition-colors disabled:opacity-50 ${
               importMode === 'upsert'
                 ? 'bg-slate-700 text-white font-medium'
                 : 'text-gray-500 hover:bg-gray-50'
@@ -199,8 +208,9 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
           </button>
           <button
             type="button"
+            disabled={importing}
             onClick={() => { setImportMode('sync'); setImportPreview(null); setImportError(null); }}
-            className={`px-3 py-1.5 border-l border-gray-200 transition-colors ${
+            className={`px-3 py-1.5 border-l border-gray-200 transition-colors disabled:opacity-50 ${
               importMode === 'sync'
                 ? 'bg-red-600 text-white font-medium'
                 : 'text-gray-500 hover:bg-gray-50'
