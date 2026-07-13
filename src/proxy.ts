@@ -1,69 +1,83 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { verifySessionToken, validateSecretStrength, checkCsrfOrigin, SESSION_COOKIE } from '@/lib/session';
 
-// Unicode 対応の base64 エンコード（日本語パスワードでも btoa() が throw しない）
-// TextEncoder で UTF-8 バイト列に変換してから base64 化する
-function computeSessionToken(password: string): string {
-  const secret = process.env.ADMIN_SESSION_SECRET ?? 'oshi-admin-secret';
-  const combined = `${password}:${secret}`;
-  const bytes = new TextEncoder().encode(combined);
-  let binary = '';
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary).replace(/=/g, '');
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function isPublicAdminPath(pathname: string): boolean {
+  return pathname === '/admin/login' || pathname.startsWith('/api/admin/login');
 }
 
-// /admin 以下の認証保護
-export function proxy(req: NextRequest) {
+async function validateAdminSession(req: NextRequest): Promise<boolean> {
+  const secret = process.env.ADMIN_SESSION_SECRET;
+  if (!validateSecretStrength(secret)) return false;
+
+  const cookie = req.cookies.get(SESSION_COOKIE);
+  if (!cookie?.value) return false;
+
+  const result = await verifySessionToken(cookie.value, secret);
+  return result.valid;
+}
+
+export async function proxy(req: NextRequest) {
   try {
     const { pathname } = req.nextUrl;
 
-    // /admin/** への全リクエストを認証チェック
-    if (pathname.startsWith('/admin')) {
-      if (pathname === '/admin/login') return NextResponse.next();
-
-      const adminPassword = process.env.ADMIN_PASSWORD;
-      if (!adminPassword) {
-        return new NextResponse('ADMIN_PASSWORD が設定されていません', { status: 503 });
-      }
-
-      const cookie = req.cookies.get('admin-session');
-      const expected = computeSessionToken(adminPassword);
-
-      if (!cookie || cookie.value !== expected) {
-        const loginUrl = req.nextUrl.clone();
-        loginUrl.pathname = '/admin/login';
-        return NextResponse.redirect(loginUrl);
-      }
+    // Cron routes bypass this proxy entirely (CRON_SECRET auth in each handler)
+    if (pathname.startsWith('/api/cron')) {
+      return NextResponse.next();
     }
 
-    // /api/admin/** への認証チェック（login と logout を除く）
-    if (
-      pathname.startsWith('/api/admin') &&
-      !pathname.startsWith('/api/admin/login') &&
-      !pathname.startsWith('/api/admin/logout')
-    ) {
-      const adminPassword = process.env.ADMIN_PASSWORD;
-      if (!adminPassword) {
-        return NextResponse.json({ error: 'ADMIN_PASSWORD が未設定です' }, { status: 503 });
+    // Login page/API: always accessible without session
+    if (isPublicAdminPath(pathname)) {
+      return NextResponse.next();
+    }
+
+    // ── Admin pages (/admin/*) ─────────────────────────────────────────────
+    if (pathname.startsWith('/admin')) {
+      const authed = await validateAdminSession(req);
+      if (!authed) {
+        const loginUrl = req.nextUrl.clone();
+        loginUrl.pathname = '/admin/login';
+        loginUrl.search = '';
+        return NextResponse.redirect(loginUrl);
+      }
+      return NextResponse.next();
+    }
+
+    // ── Admin API (/api/admin/*) ───────────────────────────────────────────
+    if (pathname.startsWith('/api/admin')) {
+      // CSRF origin check on write methods
+      if (WRITE_METHODS.has(req.method)) {
+        const originOk = checkCsrfOrigin(
+          req.headers.get('origin'),
+          req.headers.get('host'),
+        );
+        if (!originOk) {
+          return NextResponse.json({ error: '不正なOriginです' }, { status: 403 });
+        }
       }
 
-      const cookie = req.cookies.get('admin-session');
-      const expected = computeSessionToken(adminPassword);
-
-      if (!cookie || cookie.value !== expected) {
+      const authed = await validateAdminSession(req);
+      if (!authed) {
         return NextResponse.json({ error: '認証が必要です' }, { status: 401 });
       }
+
+      return NextResponse.next();
     }
 
     return NextResponse.next();
   } catch (err) {
-    // プロキシ例外をキャッチしてログに残し、ログインページへリダイレクト
-    console.error('[proxy] unexpected error:', err);
-    const loginUrl = req.nextUrl.clone();
-    loginUrl.pathname = '/admin/login';
-    loginUrl.searchParams.set('err', '1');
-    return NextResponse.redirect(loginUrl);
+    console.error('[proxy] error:', err instanceof Error ? err.message : 'unknown');
+    const { pathname } = req.nextUrl;
+    if (pathname.startsWith('/admin')) {
+      const loginUrl = req.nextUrl.clone();
+      loginUrl.pathname = '/admin/login';
+      return NextResponse.redirect(loginUrl);
+    }
+    if (pathname.startsWith('/api/admin')) {
+      return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    }
+    return NextResponse.next();
   }
 }
 

@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
+import { SESSION_COOKIE } from '@/lib/session';
+
+// Auth is enforced by middleware — this handler only clears the cookie.
+export async function POST() {
+  const res = NextResponse.json({ ok: true });
+  res.cookies.delete(SESSION_COOKIE);
+  return res;
+}
 
 export async function GET() {
-  const res = NextResponse.redirect(
-    new URL('/admin/login', process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000')
-  );
-  res.cookies.delete('admin-session');
-  return res;
+  return NextResponse.json({ error: 'Method Not Allowed' }, { status: 405, headers: { Allow: 'POST' } });
 }

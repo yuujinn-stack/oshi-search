@@ -1,3 +1,4 @@
+'use client';
 import type { ReactNode } from 'react';
 
 export const dynamic = 'force-dynamic';
@@ -18,8 +19,12 @@ const NAV_ITEMS = [
   { href: '/admin/analytics',                  label: '📊 アナリティクス' },
   { href: '/admin/redis-backup',               label: '💾 バックアップ' },
   { href: '/admin/db-init',                    label: '🗄️ DBスキーマ初期化' },
-  { href: '/api/admin/logout',                 label: 'ログアウト', danger: true },
 ] as const;
+
+async function handleLogout() {
+  await fetch('/api/admin/logout', { method: 'POST' });
+  window.location.href = '/admin/login';
+}
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
   return (
@@ -33,22 +38,22 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
           <span className="text-slate-400 text-[10px] font-bold mr-2 whitespace-nowrap py-2">
             管理
           </span>
-          {NAV_ITEMS.map(({ href, label, ...rest }) => {
-            const isDanger = 'danger' in rest && rest.danger;
-            return (
-              <a
-                key={href}
-                href={href}
-                className={`whitespace-nowrap px-3 py-2 text-xs font-medium transition-colors rounded-sm ${
-                  isDanger
-                    ? 'text-red-400 hover:text-red-300 hover:bg-slate-700'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-700'
-                }`}
-              >
-                {label}
-              </a>
-            );
-          })}
+          {NAV_ITEMS.map(({ href, label }) => (
+            <a
+              key={href}
+              href={href}
+              className="whitespace-nowrap px-3 py-2 text-xs font-medium transition-colors rounded-sm text-slate-300 hover:text-white hover:bg-slate-700"
+            >
+              {label}
+            </a>
+          ))}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="whitespace-nowrap px-3 py-2 text-xs font-medium transition-colors rounded-sm text-red-400 hover:text-red-300 hover:bg-slate-700"
+          >
+            ログアウト
+          </button>
         </div>
       </nav>
       {children}
