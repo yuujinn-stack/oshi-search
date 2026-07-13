@@ -2,18 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getWork, saveWork } from '@/lib/work-store';
 
 // POST /api/admin/og-image-fetch
-// body: { personName, workId, debug? }
-// posterUrl が空の作品に対して vodProviders の officialUrl / sourceUrl から
-// OG画像を取得して posterUrl に保存する。管理画面ボタン押下時のみ実行。
+// body: { personName, workId, debug?, force? }
+//
+// TMDb画像・posterUrlとは独立したogImageUrlフィールドに保存する。
+// force=false: ogImageUrl未設定の作品のみ対象
+// force=true : ogImageUrlが存在しても再取得して上書き（作品カードの「再取得」用）
 //
 // レスポンス:
-//   成功:   { ok: true, posterUrl, source, videoId? }
-//   取得不要: { ok: true, skipped: true, reason: 'posterUrl既存' }
-//   失敗:   { ok: false, reason: string }
+//   成功:       { ok: true, ogImageUrl, ogSourceUrl, source, videoId? }
+//   スキップ:   { ok: true, skipped: true, reason: 'ogImageUrl既存' }
+//   URL候補なし: { ok: false, skipped: true, reason: 'URL候補なし' }
+//   取得失敗:   { ok: false, reason: string }
 
 // ─── YouTube 動画ID バリデーション ───────────────────────────────────────────────
-// 有効なYouTube動画IDは11文字の [A-Za-z0-9_-]。
-// "videoseries" はプレイリスト埋め込みキーワードであり動画IDではない（11文字未満）。
 function isValidYouTubeVideoId(id: string | null | undefined): id is string {
   return !!id && /^[A-Za-z0-9_-]{11}$/.test(id);
 }
@@ -26,18 +27,7 @@ function isYouTubeUrl(url: string): boolean {
   } catch { return false; }
 }
 
-// ─── URL から YouTube 動画ID を抽出（URL自体がYouTubeの場合）────────────────────
-// 対応形式:
-//   youtube.com/watch?v=ID
-//   youtu.be/ID
-//   youtube.com/shorts/ID
-//   youtube.com/live/ID
-//   youtube.com/embed/ID   ※ embed/videoseries（プレイリスト）は除外
-//   youtube.com/v/ID
-// null を返すケース:
-//   youtube.com/embed/videoseries?list=...  （プレイリスト埋め込み）
-//   youtube.com/playlist?list=...
-//   youtube.com/channel/...  youtube.com/c/...  youtube.com/@...
+// ─── URL から YouTube 動画ID を抽出 ──────────────────────────────────────────
 function extractYouTubeVideoId(url: string): string | null {
   try {
     const u = new URL(url);
@@ -47,22 +37,16 @@ function extractYouTubeVideoId(url: string): string | null {
     }
     if (u.hostname.includes('youtube.com')) {
       const path = u.pathname;
-      // チャンネル・プレイリストページは動画IDを持たない
       if (
         path.startsWith('/channel/') ||
         path.startsWith('/c/') ||
         path.startsWith('/@') ||
         path === '/playlist'
       ) return null;
-
-      // watch?v= が最優先（v パラメータがない場合は null = プレイリストのみ等）
       const v = u.searchParams.get('v');
       if (v !== null) return isValidYouTubeVideoId(v) ? v : null;
-
-      // shorts/live/embed/v パスから抽出（embed/videoseries は11文字チェックで除外される）
       const m = path.match(/\/(shorts|live|embed|v)\/([^/?]+)/);
       if (m?.[2]) return isValidYouTubeVideoId(m[2]) ? m[2] : null;
-
       return null;
     }
     return null;
@@ -71,9 +55,7 @@ function extractYouTubeVideoId(url: string): string | null {
   }
 }
 
-// ─── HTML 内から YouTube 動画ID を抽出（公式記事の埋め込みURL対応）──────────────
-// グローバルマッチで複数候補を試し、最初に有効な11文字IDを返す。
-// "videoseries" などはバリデーションで除外されるため、次の候補に自動で進む。
+// ─── HTML 内から YouTube 動画ID を抽出 ─────────────────────────────────────────
 function extractYouTubeIdFromHtml(html: string): string | null {
   const patterns = [
     /youtube\.com\/embed\/([^"'/?&\s]+)/g,
@@ -92,9 +74,6 @@ function extractYouTubeIdFromHtml(html: string): string | null {
 }
 
 // ─── YouTube サムネイルURL ───────────────────────────────────────────────────
-// hqdefault.jpg (480×360) は全動画で必ず存在する。
-// maxresdefault.jpg は存在しない動画でも img.youtube.com が HTTP 200 を返すため
-// HEAD リクエストによる判定が不安定。管理画面補完用途では hqdefault を固定で使う。
 function youTubeThumbnailUrl(videoId: string): string {
   return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
 }
@@ -110,12 +89,9 @@ function resolveUrl(imageUrl: string, baseUrl: string): string {
 }
 
 // ─── ページHTMLを取得して画像を探す ────────────────────────────────────────────
-// 優先順位:
-//   1. HTML内の YouTube 埋め込みURL → hqdefault.jpg を返す
-//   2. og:image / twitter:image メタタグ
 type PageExtractResult =
-  | { ok: true; source: 'youtube_embed'; posterUrl: string; videoId: string }
-  | { ok: true; source: 'og'; posterUrl: string }
+  | { ok: true; source: 'youtube_embed'; ogImageUrl: string; videoId: string }
+  | { ok: true; source: 'og'; ogImageUrl: string }
   | { ok: false; reason: 'HTML取得失敗' | 'YouTube IDなし・OG画像なし' };
 
 async function fetchPageAndExtract(
@@ -141,19 +117,23 @@ async function fetchPageAndExtract(
       return { ok: false, reason: 'HTML取得失敗' };
     }
 
+    const contentType = res.headers.get('content-type') ?? '';
+    if (!contentType.includes('text/html') && !contentType.includes('application/xhtml')) {
+      log.push(`[page] Content-Type=${contentType} → HTMLではない`);
+      return { ok: false, reason: 'HTML取得失敗' };
+    }
+
     const html = (await res.text()).slice(0, 100_000);
 
-    // ── 優先1: HTML内にYouTube埋め込みURLがあれば動画IDを抽出 ──
     log.push(`[page] YouTube埋め込みを検索中...`);
     const ytId = extractYouTubeIdFromHtml(html);
     if (ytId) {
-      const posterUrl = youTubeThumbnailUrl(ytId);
-      log.push(`[page] YouTube埋め込み発見 videoId=${ytId} → ${posterUrl}`);
-      return { ok: true, source: 'youtube_embed', posterUrl, videoId: ytId };
+      const ogImageUrl = youTubeThumbnailUrl(ytId);
+      log.push(`[page] YouTube埋め込み発見 videoId=${ytId} → ${ogImageUrl}`);
+      return { ok: true, source: 'youtube_embed', ogImageUrl, videoId: ytId };
     }
     log.push(`[page] YouTube埋め込みなし → OGタグを検索`);
 
-    // ── 優先2: og:image ──
     const ogPatterns = [
       /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
       /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
@@ -161,13 +141,12 @@ async function fetchPageAndExtract(
     for (const pattern of ogPatterns) {
       const m = html.match(pattern);
       if (m?.[1]) {
-        const posterUrl = resolveUrl(m[1], url);
-        log.push(`[page] og:image=${posterUrl}`);
-        return { ok: true, source: 'og', posterUrl };
+        const ogImageUrl = resolveUrl(m[1], url);
+        log.push(`[page] og:image=${ogImageUrl}`);
+        return { ok: true, source: 'og', ogImageUrl };
       }
     }
 
-    // ── 優先3: twitter:image ──
     const twitterPatterns = [
       /<meta[^>]+(?:name|property)=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']/i,
       /<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']twitter:image(?::src)?["']/i,
@@ -175,9 +154,9 @@ async function fetchPageAndExtract(
     for (const pattern of twitterPatterns) {
       const m = html.match(pattern);
       if (m?.[1]) {
-        const posterUrl = resolveUrl(m[1], url);
-        log.push(`[page] twitter:image=${posterUrl}`);
-        return { ok: true, source: 'og', posterUrl };
+        const ogImageUrl = resolveUrl(m[1], url);
+        log.push(`[page] twitter:image=${ogImageUrl}`);
+        return { ok: true, source: 'og', ogImageUrl };
       }
     }
 
@@ -201,6 +180,8 @@ export async function POST(req: NextRequest) {
     force?: boolean;
   };
 
+  const isDev = process.env.NODE_ENV === 'development';
+
   if (!personName || !workId) {
     return NextResponse.json({ error: 'personName, workId が必要です' }, { status: 400 });
   }
@@ -212,9 +193,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '作品が見つかりません' }, { status: 404 });
   }
 
-  // force=true の場合は posterUrl 既存でも再取得して上書き
-  if (work.posterUrl && !force) {
-    return NextResponse.json({ ok: true, skipped: true, reason: 'posterUrl既存' });
+  // force=false: ogImageUrl が既存ならスキップ（TMDb posterUrl は無視）
+  if (work.ogImageUrl && !force) {
+    return NextResponse.json({ ok: true, skipped: true, reason: 'ogImageUrl既存' });
   }
 
   // URL候補収集: officialUrl → sourceUrl の順（重複除去）
@@ -233,70 +214,93 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (isDev) {
+    log.push(`[debug] personName=${personName} workId=${workId} force=${force}`);
+    log.push(`[debug] posterUrl=${work.posterUrl ?? 'なし'} ogImageUrl=${work.ogImageUrl ?? 'なし'}`);
+    log.push(`[debug] URL候補=${urlCandidates.join(', ') || 'なし'}`);
+  }
+
   if (urlCandidates.length === 0) {
     log.push(`URL候補なし`);
-    const res: Record<string, unknown> = { ok: false, reason: 'URL候補なし' };
-    if (debug) res.log = log;
+    const now = Date.now();
+    work.ogImageStatus = 'skipped';
+    work.ogImageFetchedAt = now;
+    work.ogImageError = 'URL候補なし';
+    work.updatedAt = now;
+    await saveWork(work);
+    const res: Record<string, unknown> = { ok: false, skipped: true, reason: 'URL候補なし' };
+    if (debug || isDev) res.log = log;
     return NextResponse.json(res);
   }
 
   log.push(`candidates=${urlCandidates.length}`);
 
-  // 最後の失敗理由を保持（全URL試行後も成功しなかった場合に返す）
   let lastFailReason = 'YouTube IDなし・OG画像なし';
 
   for (const url of urlCandidates) {
     log.push(`url=${url}`);
 
-    // ─ パスA: URL自体がYouTube → hqdefault を即保存 ─
+    // パスA: URL自体がYouTube → hqdefault を即保存
     const ytId = extractYouTubeVideoId(url);
     if (ytId) {
-      const posterUrl = youTubeThumbnailUrl(ytId);
-      log.push(`[yt] url直接 videoId=${ytId} → ${posterUrl}`);
-      work.posterUrl = posterUrl;
-      work.updatedAt = Date.now();
+      const ogImageUrl = youTubeThumbnailUrl(ytId);
+      log.push(`[yt] url直接 videoId=${ytId} → ${ogImageUrl}`);
+      const now = Date.now();
+      work.ogImageUrl = ogImageUrl;
+      work.ogSourceUrl = url;
+      work.ogImageFetchedAt = now;
+      work.ogImageStatus = 'success';
+      work.ogImageError = undefined;
+      work.updatedAt = now;
       await saveWork(work);
       const response: Record<string, unknown> = {
-        ok: true,
-        posterUrl,
-        source: 'youtube',
-        videoId: ytId,
+        ok: true, ogImageUrl, ogSourceUrl: url, source: 'youtube', videoId: ytId,
       };
-      if (debug) response.log = log;
+      if (debug || isDev) response.log = log;
       return NextResponse.json(response);
     }
 
-    // ─ パスA': YouTube URLだが有効な動画IDが取れなかった（プレイリスト/チャンネル等）─
-    // YouTubeページのOG画像はチャンネルバナー等になるため、HTMLフェッチは行わない
+    // パスA': YouTube URLだが有効なvideo IDなし（プレイリスト/チャンネル等）
     if (isYouTubeUrl(url)) {
       lastFailReason = 'プレイリスト/チャンネルURLのため動画サムネイル取得不可';
-      log.push(`[yt] YouTube URLだが有効なvideo IDなし（プレイリスト/チャンネル）→ スキップ`);
+      log.push(`[yt] YouTube URLだが有効なvideo IDなし → スキップ`);
       continue;
     }
 
-    // ─ パスB: 非YouTube URL → ページHTMLをフェッチして探す ─
-    //   B-1. HTML内YouTube埋め込み → hqdefault
-    //   B-2. og:image / twitter:image → OG画像
+    // パスB: 非YouTube URL → ページHTMLをフェッチ
     const result = await fetchPageAndExtract(url, log);
     if (result.ok) {
-      work.posterUrl = result.posterUrl;
-      work.updatedAt = Date.now();
+      const now = Date.now();
+      work.ogImageUrl = result.ogImageUrl;
+      work.ogSourceUrl = url;
+      work.ogImageFetchedAt = now;
+      work.ogImageStatus = 'success';
+      work.ogImageError = undefined;
+      work.updatedAt = now;
       await saveWork(work);
       const response: Record<string, unknown> = {
         ok: true,
-        posterUrl: result.posterUrl,
+        ogImageUrl: result.ogImageUrl,
+        ogSourceUrl: url,
         source: result.source,
         ...(result.source === 'youtube_embed' ? { videoId: result.videoId } : {}),
       };
-      if (debug) response.log = log;
+      if (debug || isDev) response.log = log;
       return NextResponse.json(response);
     }
 
-    // 失敗理由を更新（複数URLがある場合は最後の理由を使う）
     lastFailReason = result.reason;
   }
 
+  // 全URL失敗
+  const now = Date.now();
+  work.ogImageStatus = 'failed';
+  work.ogImageFetchedAt = now;
+  work.ogImageError = lastFailReason;
+  work.updatedAt = now;
+  await saveWork(work);
+
   const response: Record<string, unknown> = { ok: false, reason: lastFailReason };
-  if (debug) response.log = log;
+  if (debug || isDev) response.log = log;
   return NextResponse.json(response);
 }

@@ -97,8 +97,14 @@ export default function WorkCard({
   const [sourceUrlResult, setSourceUrlResult] = useState<string | null>(null);
   const [showUrlEdit, setShowUrlEdit] = useState(false);
 
-  // img.youtube.com/vi/videoseries/... のような壊れたposterUrlを検出
-  const isPosterBroken = !!work.posterUrl && /\/vi\/videoseries\//.test(work.posterUrl);
+  // img.youtube.com/vi/videoseries/... のような壊れたURLを検出（ogImageUrl優先でチェック）
+  const displayImageUrl = work.ogImageUrl ?? work.posterUrl;
+  const isPosterBroken = !!displayImageUrl && /\/vi\/videoseries\//.test(displayImageUrl);
+
+  // OG画像ステータス表示用
+  const ogFetchedDate = work.ogImageFetchedAt
+    ? new Date(work.ogImageFetchedAt).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : null;
 
   const handleOgFetch = useCallback(async () => {
     setOgFetching(true);
@@ -165,11 +171,11 @@ export default function WorkCard({
           style={{ pointerEvents: 'none' }}
         />
       )}
-      {/* ポスター */}
+      {/* ポスター（ogImageUrl > posterUrl の順で表示） */}
       <div className="flex flex-col items-center gap-1 flex-shrink-0">
-        {work.posterUrl && !isPosterBroken ? (
+        {displayImageUrl && !isPosterBroken ? (
           <img
-            src={work.posterUrl}
+            src={displayImageUrl}
             alt=""
             className="w-10 h-14 object-cover rounded"
           />
@@ -179,8 +185,8 @@ export default function WorkCard({
           </div>
         )}
 
-        {/* posterUrl なし: OG取得ボタン */}
-        {!work.posterUrl && (
+        {/* ogImageUrl 未取得: OG取得ボタン（TMDb posterUrl の有無に関係なく表示） */}
+        {!work.ogImageUrl && (
           <button
             onClick={handleOgFetch}
             disabled={ogFetching}
@@ -190,7 +196,7 @@ export default function WorkCard({
             {ogFetching ? '取得中' : 'OG取得'}
           </button>
         )}
-        {!work.posterUrl && ogTried && !ogFetching && (
+        {!work.ogImageUrl && ogTried && !ogFetching && (
           <span
             className="text-[9px] text-gray-400 whitespace-nowrap text-center leading-tight"
             title={ogFailReason ?? undefined}
@@ -199,8 +205,8 @@ export default function WorkCard({
           </span>
         )}
 
-        {/* posterUrl あり（壊れを含む）: 再取得ボタン */}
-        {work.posterUrl && (
+        {/* OG再取得ボタン（ogImageUrlあり or posterUrl壊れ時） */}
+        {(work.ogImageUrl || isPosterBroken) && (
           <>
             {isPosterBroken && !ogForceFetching && !ogForceResult && (
               <span className="text-[9px] text-red-400 whitespace-nowrap">URL壊れています</span>
@@ -208,7 +214,7 @@ export default function WorkCard({
             <button
               onClick={handleOgForceFetch}
               disabled={ogForceFetching}
-              title="posterUrl を上書きして画像を再取得"
+              title="OG画像を再取得（ogImageUrlを上書き）"
               className={`text-[9px] disabled:opacity-40 whitespace-nowrap ${
                 isPosterBroken
                   ? 'text-red-400 hover:text-teal-600 font-medium'
@@ -298,6 +304,31 @@ export default function WorkCard({
               手動確認済
             </span>
           )}
+          {/* OG画像ステータスバッジ */}
+          {work.ogImageStatus === 'success' ? (
+            <span
+              className="bg-teal-50 text-teal-600 px-1.5 py-0.5 rounded text-[9px]"
+              title={`OG取得済: ${work.ogImageUrl ?? ''}\n取得元: ${work.ogSourceUrl ?? ''}\n${ogFetchedDate ? `取得日: ${ogFetchedDate}` : ''}`}
+            >
+              OG済 {ogFetchedDate}
+            </span>
+          ) : work.ogImageStatus === 'failed' ? (
+            <span
+              className="bg-red-50 text-red-400 px-1.5 py-0.5 rounded text-[9px]"
+              title={`OG取得失敗: ${work.ogImageError ?? ''}${ogFetchedDate ? ` (${ogFetchedDate})` : ''}`}
+            >
+              OG失敗: {work.ogImageError ?? '不明'}
+            </span>
+          ) : work.ogImageStatus === 'skipped' ? (
+            <span
+              className="bg-gray-50 text-gray-400 px-1.5 py-0.5 rounded text-[9px]"
+              title={`OGスキップ: ${work.ogImageError ?? ''}`}
+            >
+              OGスキップ
+            </span>
+          ) : !work.ogImageUrl && !work.ogImageStatus ? (
+            <span className="text-gray-300 px-1.5 py-0.5 rounded text-[9px]">OG未取得</span>
+          ) : null}
           <span
             className={`px-1 py-0.5 rounded ${
               work.usedAi

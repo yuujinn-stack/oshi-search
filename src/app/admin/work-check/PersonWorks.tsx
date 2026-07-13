@@ -72,6 +72,7 @@ export default function PersonWorks({
   const [ogBulkResult, setOgBulkResult] = useState<{
     total: number; success: number; failed: number; skipped: number;
     failures: { title: string; reason: string }[];
+    message?: string;
   } | null>(null);
   const [intensiveModalOpen, setIntensiveModalOpen] = useState(false);
   const [intensiveCronEnabled, setIntensiveCronEnabled] = useState<boolean | null>(null);
@@ -270,13 +271,14 @@ export default function PersonWorks({
   }
 
   async function handleBulkOgFetch() {
-    const allWorks = works ?? [];
+    // フィルター後の表示中作品を対象にする（全作品ではなく現在のフィルター条件に従う）
+    const targetWorks = filteredWorks;
 
-    // ── デバッグ: 対象・除外の分類をコンソールに出力 ──
     const excluded: { title: string; reason: string }[] = [];
-    const eligible = allWorks.filter((w) => {
-      if (w.posterUrl) {
-        excluded.push({ title: w.title, reason: `posterUrl既存(${w.posterUrl.slice(0, 40)}...)` });
+    const eligible = targetWorks.filter((w) => {
+      // ogImageUrl 取得済み（TMDb posterUrl は無関係）
+      if (w.ogImageUrl) {
+        excluded.push({ title: w.title, reason: `ogImageUrl既存` });
         return false;
       }
       const hasUrl = (w.vodProviders ?? []).some((p) => p.officialUrl || p.sourceUrl);
@@ -290,21 +292,29 @@ export default function PersonWorks({
       return true;
     });
 
+    // デバッグ情報（コンソール）
     console.group('[OG一括取得] 対象判定');
-    console.log(`総作品数: ${allWorks.length}`);
+    console.log(`フィルター後作品数: ${targetWorks.length} / 全作品数: ${(works ?? []).length}`);
+    console.log(`  statusFilter=${statusFilter} sourceFilter=${sourceFilter}`);
     console.log(`対象(eligible): ${eligible.length}件`);
     eligible.forEach((w) => {
       const urls = (w.vodProviders ?? [])
         .flatMap((p) => [p.officialUrl, p.sourceUrl].filter(Boolean))
         .join(', ');
-      console.log(`  ✅ ${w.title} | posterUrl=${w.posterUrl ?? 'なし'} | urls=${urls}`);
+      console.log(`  ✅ ${w.title} | posterUrl=${w.posterUrl ?? 'なし'} | ogImageUrl=${w.ogImageUrl ?? 'なし'} | urls=${urls}`);
     });
-    console.log(`除外: ${excluded.length}件`);
+    console.log(`除外: ${excluded.length}件（ogImageUrl既存: ${excluded.filter(e=>e.reason==='ogImageUrl既存').length}件 / URL候補なし: ${excluded.filter(e=>e.reason.startsWith('URL候補なし')).length}件）`);
     excluded.forEach((e) => console.log(`  ❌ ${e.title}（${e.reason}）`));
     console.groupEnd();
 
     if (eligible.length === 0) {
-      setOgBulkResult({ total: 0, success: 0, failed: 0, skipped: 0, failures: [] });
+      const alreadyFetched = excluded.filter((e) => e.reason === 'ogImageUrl既存').length;
+      const missingUrl = excluded.filter((e) => e.reason.startsWith('URL候補なし')).length;
+      let message = 'OG画像取得対象がありません';
+      if (targetWorks.length === 0) message = '現在のフィルター条件に一致する作品がありません';
+      else if (alreadyFetched === excluded.length) message = `OG画像取得済みの作品のみです（${alreadyFetched}件）`;
+      else if (missingUrl === excluded.length) message = `取得元URLがある作品がありません（${missingUrl}件がURL未設定）`;
+      setOgBulkResult({ total: 0, success: 0, failed: 0, skipped: 0, failures: [], message });
       return;
     }
 
@@ -328,13 +338,13 @@ export default function PersonWorks({
         });
         if (res.ok) {
           const data = (await res.json()) as {
-            ok: boolean; skipped?: boolean; posterUrl?: string; reason?: string;
+            ok: boolean; skipped?: boolean; ogImageUrl?: string; reason?: string;
           };
-          if (data.ok === false) {
+          if (data.skipped) {
+            skipped++;
+          } else if (data.ok === false) {
             failed++;
             failures.push({ title: work.title, reason: data.reason ?? '取得失敗' });
-          } else if (data.skipped) {
-            skipped++;
           } else {
             success++;
           }
@@ -364,7 +374,7 @@ export default function PersonWorks({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ personName, workId }),
       });
-      const data = (await res.json()) as { ok: boolean; reason?: string; skipped?: boolean };
+      const data = (await res.json()) as { ok: boolean; reason?: string; skipped?: boolean; ogImageUrl?: string };
       await loadWorks();
       return data;
     } catch {
@@ -372,7 +382,7 @@ export default function PersonWorks({
     }
   }
 
-  // force=true で posterUrl 上書き再取得
+  // force=true で ogImageUrl を上書き再取得
   async function handleOgImageForceFetch(workId: string): Promise<{ ok: boolean; reason?: string } | null> {
     try {
       const res = await fetch('/api/admin/og-image-fetch', {
@@ -380,7 +390,7 @@ export default function PersonWorks({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ personName, workId, force: true }),
       });
-      const data = (await res.json()) as { ok: boolean; reason?: string; skipped?: boolean };
+      const data = (await res.json()) as { ok: boolean; reason?: string; skipped?: boolean; ogImageUrl?: string };
       await loadWorks();
       return data;
     } catch {
@@ -899,20 +909,33 @@ export default function PersonWorks({
             </div>
           )}
           {!ogBulkRunning && ogBulkResult && (
-            <div className="text-xs px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700 space-y-1">
-              <p className="font-medium">🖼 OG画像取得完了</p>
-              <div className="flex gap-3">
-                <span>対象: {ogBulkResult.total}件</span>
-                <span>成功: {ogBulkResult.success}件</span>
-                <span>失敗: {ogBulkResult.failed}件</span>
-                <span>スキップ: {ogBulkResult.skipped}件</span>
-              </div>
-              {ogBulkResult.failures.length > 0 && (
-                <ul className="text-indigo-400 space-y-0.5 mt-1">
-                  {ogBulkResult.failures.map((f, i) => (
-                    <li key={i}>・ {f.title}（{f.reason}）</li>
-                  ))}
-                </ul>
+            <div className={`text-xs px-3 py-2 rounded-lg space-y-1 ${
+              ogBulkResult.total === 0
+                ? 'bg-yellow-50 text-yellow-700'
+                : 'bg-indigo-50 text-indigo-700'
+            }`}>
+              {ogBulkResult.total === 0 ? (
+                <>
+                  <p className="font-medium">🖼 OG画像一括取得: 対象0件</p>
+                  <p className="text-yellow-600">{ogBulkResult.message ?? 'OG画像取得対象がありません'}</p>
+                </>
+              ) : (
+                <>
+                  <p className="font-medium">🖼 OG画像取得完了</p>
+                  <div className="flex gap-3">
+                    <span>対象: {ogBulkResult.total}件</span>
+                    <span>成功: {ogBulkResult.success}件</span>
+                    <span>失敗: {ogBulkResult.failed}件</span>
+                    <span>スキップ: {ogBulkResult.skipped}件</span>
+                  </div>
+                  {ogBulkResult.failures.length > 0 && (
+                    <ul className="text-indigo-400 space-y-0.5 mt-1">
+                      {ogBulkResult.failures.map((f, i) => (
+                        <li key={i}>・ {f.title}（{f.reason}）</li>
+                      ))}
+                    </ul>
+                  )}
+                </>
               )}
             </div>
           )}

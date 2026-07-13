@@ -38,6 +38,12 @@ export interface WorkRecord {
   roleName?: string;
   overview?: string;
   posterUrl?: string;
+  // OG画像（posterUrl / TMDb画像とは独立して管理）
+  ogImageUrl?: string;
+  ogSourceUrl?: string;
+  ogImageFetchedAt?: number;
+  ogImageStatus?: 'success' | 'failed' | 'skipped';
+  ogImageError?: string;
   confidenceScore: number;     // 参考値のみ（公開判定には使わない）
   status: WorkStatus;
   // AI判定詳細

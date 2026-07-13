@@ -49,7 +49,9 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
   const displayLabel = DISPLAY_WORK_TYPE_LABEL[displayType];
   const displayIcon  = DISPLAY_WORK_TYPE_ICON[displayType];
   const workDetailUrl = `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
-  const posterLayout = work.posterUrl ? getPosterLayout(work.posterUrl) : null;
+  // 画像優先順位: OG画像 > TMDb/posterUrl > プレースホルダー
+  const displayPosterUrl = work.ogImageUrl ?? work.posterUrl;
+  const posterLayout = displayPosterUrl ? getPosterLayout(displayPosterUrl) : null;
 
   // 公開ページ用フィルタ:
   //   confidence=low の AI ソースは非表示
@@ -100,11 +102,11 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
     <div className="work-card-root">
       {/* ポスター（クリックで作品詳細へ） */}
       <Link href={workDetailUrl} className="block">
-        {work.posterUrl && posterLayout ? (
+        {displayPosterUrl && posterLayout ? (
           <div className={posterLayout.container}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={work.posterUrl}
+              src={displayPosterUrl}
               alt={work.title}
               className={posterLayout.img}
               loading="lazy"
@@ -231,7 +233,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
         <Link
           href={workDetailUrl}
           className="work-card-detail-btn"
-          onClick={() => trackWorkClick(work.id, work.title, work.personName, work.type, work.posterUrl ?? '')}
+          onClick={() => trackWorkClick(work.id, work.title, work.personName, work.type, displayPosterUrl ?? '')}
         >
           作品詳細 →
         </Link>
