@@ -2,9 +2,9 @@
 // Redis が正本。DB 書き込みは Redis 成功後に fire-and-forget で実行する。
 // 失敗時は console.warn('[dual-write] DB_ERR ...') のみ出力し、本番処理を失敗扱いにしない。
 
-import { db } from './client';
+import { db, neonSql } from './client';
 import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons } from './schema';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import type { WorkRecord } from '@/types/work';
 
 // ── Fire-and-forget ラッパー ──────────────────────────────────────────────────
@@ -422,8 +422,11 @@ export async function deleteImportedPersonInDB(name: string): Promise<void> {
 
 // VOD配信データを一括 UPDATE（CSVインポート用）
 // 両モードとも CTE json_array_elements を使い1チャンク=1 SQL文。
-// wrapInTransaction=true (同期モード): db.transaction で原子性を確保しつつ CTE UPDATE
-// wrapInTransaction=false (追加/更新モード): CTE UPDATE をそのまま実行
+//
+// ※ drizzle-orm/neon-http は db.transaction() を非対応（実行時例外）。
+//    wrapInTransaction=true (同期モード): neonSql.transaction() で HTTP バッチ API を使用。
+//      複数クエリを1リクエストでアトミックに実行（BEGIN/COMMIT はバッチ API が自動付与）。
+//    wrapInTransaction=false (追加/更新モード): 各チャンクを直列実行。
 export async function batchUpdateVodData(
   workList: Array<{ personName: string; id: string; vodData: Record<string, unknown> }>,
   wrapInTransaction: boolean,
@@ -431,11 +434,12 @@ export async function batchUpdateVodData(
   if (workList.length === 0) return;
   const CHUNK = 500;
 
+  // neonSql tagged template → NeonQueryPromise（await するか .transaction() に渡す）
   const buildCTE = (chunk: typeof workList) => {
     const batchJson = JSON.stringify(
       chunk.map((w) => ({ person_name: w.personName, id: w.id, vod_data: w.vodData })),
     );
-    return sql`
+    return neonSql`
       WITH _u AS (
         SELECT
           elem->>'person_name' AS pn,
@@ -451,14 +455,16 @@ export async function batchUpdateVodData(
   };
 
   if (wrapInTransaction) {
-    await db.transaction(async (tx) => {
-      for (let i = 0; i < workList.length; i += CHUNK) {
-        await tx.execute(buildCTE(workList.slice(i, i + CHUNK)));
-      }
-    });
+    // neonSql.transaction() は Neon HTTP バッチ API を使い全チャンクをアトミックに実行する。
+    // 途中で1件でも失敗した場合は全ロールバック。
+    const chunks: ReturnType<typeof buildCTE>[] = [];
+    for (let i = 0; i < workList.length; i += CHUNK) {
+      chunks.push(buildCTE(workList.slice(i, i + CHUNK)));
+    }
+    await neonSql.transaction(chunks);
   } else {
     for (let i = 0; i < workList.length; i += CHUNK) {
-      await db.execute(buildCTE(workList.slice(i, i + CHUNK)));
+      await buildCTE(workList.slice(i, i + CHUNK));
     }
   }
 }

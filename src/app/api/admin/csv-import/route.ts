@@ -4,6 +4,9 @@ import { batchUpdateVodData } from '@/db/write';
 import { normalizeProviderName, VOD_SOURCE_PRIORITY, VOD_SOURCE_LABEL } from '@/lib/vod-dedup';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 
+// Vercel 実行時間上限（秒）。同期モードで大量作品を処理する場合のタイムアウト対策。
+export const maxDuration = 60;
+
 // POST /api/admin/csv-import
 // Preview: { csvContent: string, commit: false, personName?: string, syncMode?: boolean }
 // Save:    { commit: true, personName?: string, syncMode?: boolean, normalizedRows: ImportPreviewRow[] }
@@ -258,7 +261,16 @@ export async function POST(req: NextRequest) {
     }
 
     if (worksToUpdate.length > 0) {
-      await batchUpdateVodData(worksToUpdate, syncMode);
+      try {
+        await batchUpdateVodData(worksToUpdate, syncMode);
+      } catch (dbErr) {
+        const msg = String(dbErr);
+        console.error(`[VOD CSV IMPORT] batchUpdateVodData failed: ${msg}`);
+        return NextResponse.json(
+          { error: `DB更新中にエラーが発生しました: ${msg}` },
+          { status: 500 },
+        );
+      }
     }
 
     const elapsed = Date.now() - t0;
