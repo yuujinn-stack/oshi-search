@@ -30,13 +30,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     try {
       const res = await fetch('/api/admin/logout', {
         method: 'POST',
-        credentials: 'include', // Ensures cookies are sent and Set-Cookie response is applied
+        credentials: 'include',
       });
-      // X-Logout-Debug is a safe custom header (no sensitive data) — helps diagnose cookie deletion in DevTools
-      console.log(
-        '[logout] status:', res.status,
-        'debug:', res.headers.get('x-logout-debug') ?? 'none',
-      );
       if (!res.ok) {
         setLogoutError(`ログアウトに失敗しました (${res.status})。再試行してください。`);
         setLoggingOut(false);

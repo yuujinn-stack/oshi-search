@@ -6,8 +6,6 @@ interface Props {
   children?: React.ReactNode;
 }
 
-// Replaces <a href="/api/admin/logout"> GET links.
-// Uses fetch POST so the proxy's CSRF check passes and the Set-Cookie is applied.
 export function LogoutButton({ className, children = 'ログアウト' }: Props) {
   const [pending, setPending] = useState(false);
 
@@ -19,10 +17,6 @@ export function LogoutButton({ className, children = 'ログアウト' }: Props)
         method: 'POST',
         credentials: 'include',
       });
-      console.log(
-        '[logout] status:', res.status,
-        'debug:', res.headers.get('x-logout-debug') ?? 'none',
-      );
       if (res.ok) {
         window.location.href = '/admin/login';
         return;

@@ -22,16 +22,7 @@ function buildDeleteCookieHeader(path: string): string {
 // default path (/api/admin — RFC6265 default for cookies set at /api/admin/login).
 // This handles any old cookies that may have been set without an explicit Path.
 export async function POST() {
-  const secure = process.env.NODE_ENV === 'production';
-
-  console.log(
-    `[logout] clearing ${SESSION_COOKIE} — path=/ path=/api/admin secure=${secure}`,
-  );
-
-  const headers = new Headers({
-    'Content-Type': 'application/json',
-    'X-Logout-Debug': `name=${SESSION_COOKIE}; path=/; secure=${secure}; max-age=0`,
-  });
+  const headers = new Headers({ 'Content-Type': 'application/json' });
   headers.append('Set-Cookie', buildDeleteCookieHeader('/'));
   headers.append('Set-Cookie', buildDeleteCookieHeader('/api/admin'));
 
