@@ -317,15 +317,36 @@ describe('GET/POST /api/admin/logout — ルートハンドラー単体', () => 
     const body = await res.json();
     expect(body.ok).toBe(true);
 
+    // Node.js Headers combines multiple Set-Cookie with ', ' — still verifiable
     const setCookie = res.headers.get('set-cookie') ?? '';
-    // Cookie name present
     expect(setCookie).toContain('admin-session=');
-    // path=/ must be set (must match login's path to actually delete the cookie)
+    // path=/ must be present (matches login's path)
     expect(setCookie.toLowerCase()).toContain('path=/');
-    // Expiry: Max-Age=0 or Expires=epoch
-    const hasMaxAge0 = /max-age=0/i.test(setCookie);
-    const hasExpiredDate = /expires=Thu,\s*01 Jan 1970/i.test(setCookie);
-    expect(hasMaxAge0 || hasExpiredDate).toBe(true);
+    // Must use raw Max-Age=0 (not relying on cookie library's maxAge handling)
+    expect(/max-age=0/i.test(setCookie)).toBe(true);
+    // Must also set Expires to epoch as belt-and-suspenders
+    expect(/expires=Thu,?\s*0?1 Jan 1970/i.test(setCookie)).toBe(true);
+  });
+
+  it('logoutレスポンスに X-Logout-Debug ヘッダーが含まれる', async () => {
+    const { POST } = await import('@/app/api/admin/logout/route');
+    const res = await POST();
+    const debug = res.headers.get('x-logout-debug') ?? '';
+    expect(debug).toContain('admin-session');
+    expect(debug).toContain('path=/');
+    // No token values in the debug header
+    expect(debug).not.toMatch(/[0-9a-f]{32,}/);
+  });
+
+  it('path=/ と path=/api/admin の2つの Set-Cookie が含まれる', async () => {
+    const { POST } = await import('@/app/api/admin/logout/route');
+    const res = await POST();
+    // Headers.getSetCookie() returns array of individual Set-Cookie headers
+    // Fallback: count occurrences in combined header string
+    const raw = res.headers.get('set-cookie') ?? '';
+    // Both paths should appear
+    expect(raw.toLowerCase()).toContain('path=/');
+    expect(raw.toLowerCase()).toContain('path=/api/admin');
   });
 });
 
@@ -454,5 +475,69 @@ describe('GET /api/admin/db-info — 情報漏洩チェック', () => {
     expect(raw).not.toContain('user=');
     // Should be a generic message
     expect(raw).toContain('データベース接続に失敗しました');
+  });
+});
+
+// ── /api/debug-logout — 公開デバッグエンドポイント ──────────────────────────
+
+describe('GET /api/debug-logout', () => {
+  beforeEach(() => { vi.resetModules(); });
+
+  it('admin-session Cookieがない場合 cookiePresent=false', async () => {
+    const { GET } = await import('@/app/api/debug-logout/route');
+    const req = new NextRequest(`${BASE_URL}/api/debug-logout`);
+    const res = await GET(req);
+    const body = await res.json();
+    expect(body.cookiePresent).toBe(false);
+    expect(body.cookieCount).toBe(0);
+  });
+
+  it('admin-session Cookieがある場合 cookiePresent=true', async () => {
+    const { GET } = await import('@/app/api/debug-logout/route');
+    const req = new NextRequest(`${BASE_URL}/api/debug-logout`, {
+      headers: { Cookie: 'admin-session=sometoken' },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    const res = await GET(req);
+    const body = await res.json();
+    expect(body.cookiePresent).toBe(true);
+    expect(body.cookieCount).toBe(1);
+  });
+
+  it('同名Cookieが複数ある場合 cookieCount=2 (path違いの残存Cookie検出)', async () => {
+    const { GET } = await import('@/app/api/debug-logout/route');
+    // Browsers send multiple cookies with same name (different paths) as one Cookie header
+    const req = new NextRequest(`${BASE_URL}/api/debug-logout`, {
+      headers: { Cookie: 'admin-session=token1; admin-session=token2' },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    const res = await GET(req);
+    const body = await res.json();
+    expect(body.cookieCount).toBe(2);
+    expect(body.cookiePresent).toBe(true);
+  });
+
+  it('vercelEnv と nodeEnv を返す', async () => {
+    vi.stubEnv('VERCEL_ENV', 'preview');
+    vi.stubEnv('NODE_ENV', 'production');
+    const { GET } = await import('@/app/api/debug-logout/route');
+    const req = new NextRequest(`${BASE_URL}/api/debug-logout`);
+    const res = await GET(req);
+    const body = await res.json();
+    expect(body.vercelEnv).toBe('preview');
+    expect(body.nodeEnv).toBe('production');
+    vi.unstubAllEnvs();
+  });
+
+  it('cookiePresent は Cookie値を露出しない', async () => {
+    const { GET } = await import('@/app/api/debug-logout/route');
+    const req = new NextRequest(`${BASE_URL}/api/debug-logout`, {
+      headers: { Cookie: 'admin-session=secret_token_value' },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    const res = await GET(req);
+    const body = await res.json();
+    const raw = JSON.stringify(body);
+    expect(raw).not.toContain('secret_token_value');
   });
 });

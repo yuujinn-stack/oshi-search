@@ -28,12 +28,21 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     setLogoutError(null);
     setLoggingOut(true);
     try {
-      const res = await fetch('/api/admin/logout', { method: 'POST' });
+      const res = await fetch('/api/admin/logout', {
+        method: 'POST',
+        credentials: 'include', // Ensures cookies are sent and Set-Cookie response is applied
+      });
+      // X-Logout-Debug is a safe custom header (no sensitive data) — helps diagnose cookie deletion in DevTools
+      console.log(
+        '[logout] status:', res.status,
+        'debug:', res.headers.get('x-logout-debug') ?? 'none',
+      );
       if (!res.ok) {
         setLogoutError(`ログアウトに失敗しました (${res.status})。再試行してください。`);
         setLoggingOut(false);
         return;
       }
+      // Navigate after awaiting the fetch — browser has committed the Set-Cookie by this point.
       window.location.href = '/admin/login';
     } catch {
       setLogoutError('ネットワークエラーが発生しました。再試行してください。');
