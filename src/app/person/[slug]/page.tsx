@@ -217,6 +217,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title,
     description,
+    alternates: {
+      canonical: `https://oshi-search.jp/person/${encodeURIComponent(name)}`,
+    },
     openGraph: { title, description, type: 'profile' },
   };
 }

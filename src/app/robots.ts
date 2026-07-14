@@ -6,9 +6,10 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: '/',
-        disallow: '/search?',
+        disallow: ['/admin/', '/api/', '/search?'],
       },
     ],
-    sitemap: `${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp'}/sitemap.xml`,
+    // 本番ドメイン固定: Preview環境のrobots.txtでも本番sitemapを参照させる
+    sitemap: 'https://oshi-search.jp/sitemap.xml',
   };
 }

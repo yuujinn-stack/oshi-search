@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllGroupMetas } from '@/lib/group-meta';
+import { groupHref, groupHrefByName } from '@/lib/group-slug';
 import SearchForm from './SearchForm';
 import type { SuggestionItem } from '@/types/search';
 
@@ -25,15 +26,15 @@ export default async function Header() {
   const groupNames = new Set(persons.map((p) => p.group).filter(Boolean) as string[]);
   const groupSuggestions: SuggestionItem[] = [];
   for (const name of groupNames) {
-    groupSuggestions.push({ label: name, href: `/group/${encodeURIComponent(name)}`, type: 'group' });
+    groupSuggestions.push({ label: name, href: groupHrefByName(name, groupMetas), type: 'group' });
   }
   // allGroupMetas の旧名・改名前も追加
   for (const g of groupMetas) {
     for (const former of g.formerNames ?? []) {
-      groupSuggestions.push({ label: former, sublabel: `現: ${g.groupName}`, href: `/group/${encodeURIComponent(g.groupName)}`, type: 'group' });
+      groupSuggestions.push({ label: former, sublabel: `現: ${g.groupName}`, href: groupHref(g), type: 'group' });
     }
     if (g.renamedFrom) {
-      groupSuggestions.push({ label: g.renamedFrom, sublabel: `現: ${g.groupName}`, href: `/group/${encodeURIComponent(g.groupName)}`, type: 'group' });
+      groupSuggestions.push({ label: g.renamedFrom, sublabel: `現: ${g.groupName}`, href: groupHref(g), type: 'group' });
     }
   }
 
