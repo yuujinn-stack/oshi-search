@@ -1,7 +1,6 @@
 'use client';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
-
-export const dynamic = 'force-dynamic';
 
 const NAV_ITEMS = [
   { href: '/admin/people/import',              label: '人物登録' },
@@ -21,12 +20,27 @@ const NAV_ITEMS = [
   { href: '/admin/db-init',                    label: '🗄️ DBスキーマ初期化' },
 ] as const;
 
-async function handleLogout() {
-  await fetch('/api/admin/logout', { method: 'POST' });
-  window.location.href = '/admin/login';
-}
-
 export default function AdminLayout({ children }: { children: ReactNode }) {
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  async function handleLogout() {
+    setLogoutError(null);
+    setLoggingOut(true);
+    try {
+      const res = await fetch('/api/admin/logout', { method: 'POST' });
+      if (!res.ok) {
+        setLogoutError(`ログアウトに失敗しました (${res.status})。再試行してください。`);
+        setLoggingOut(false);
+        return;
+      }
+      window.location.href = '/admin/login';
+    } catch {
+      setLogoutError('ネットワークエラーが発生しました。再試行してください。');
+      setLoggingOut(false);
+    }
+  }
+
   return (
     <>
       {/* 管理メニューバー */}
@@ -50,11 +64,17 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={handleLogout}
-            className="whitespace-nowrap px-3 py-2 text-xs font-medium transition-colors rounded-sm text-red-400 hover:text-red-300 hover:bg-slate-700"
+            disabled={loggingOut}
+            className="whitespace-nowrap px-3 py-2 text-xs font-medium transition-colors rounded-sm text-red-400 hover:text-red-300 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            ログアウト
+            {loggingOut ? 'ログアウト中...' : 'ログアウト'}
           </button>
         </div>
+        {logoutError && (
+          <div className="max-w-7xl mx-auto px-3 pb-2">
+            <p className="text-xs text-red-400">{logoutError}</p>
+          </div>
+        )}
       </nav>
       {children}
     </>

@@ -300,7 +300,7 @@ describe('POST /api/admin/login', () => {
 
 // ── Logout API route tests ───────────────────────────────────────────────────
 
-describe('GET/POST /api/admin/logout', () => {
+describe('GET/POST /api/admin/logout — ルートハンドラー単体', () => {
   beforeEach(() => { vi.resetModules(); });
 
   it('GETリクエストは405を返す', async () => {
@@ -310,15 +310,110 @@ describe('GET/POST /api/admin/logout', () => {
     expect(res.headers.get('Allow')).toBe('POST');
   });
 
-  it('POSTリクエストは200でCookieを削除する', async () => {
+  it('logoutレスポンスのSet-Cookieでadmin-sessionが期限切れになる', async () => {
     const { POST } = await import('@/app/api/admin/logout/route');
     const res = await POST();
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    // Cookie should be cleared (maxAge=0 or deleted)
+
     const setCookie = res.headers.get('set-cookie') ?? '';
+    // Cookie name present
     expect(setCookie).toContain('admin-session=');
+    // path=/ must be set (must match login's path to actually delete the cookie)
+    expect(setCookie.toLowerCase()).toContain('path=/');
+    // Expiry: Max-Age=0 or Expires=epoch
+    const hasMaxAge0 = /max-age=0/i.test(setCookie);
+    const hasExpiredDate = /expires=Thu,\s*01 Jan 1970/i.test(setCookie);
+    expect(hasMaxAge0 || hasExpiredDate).toBe(true);
+  });
+});
+
+describe('logout — proxyを通したCSRF・認証テスト', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.stubEnv('ADMIN_SESSION_SECRET', VALID_SECRET);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('不正Originのlogoutは403', async () => {
+    const { proxy: middleware } = await import('@/proxy');
+    const token = await createValidToken();
+    const req = new NextRequest(`${BASE_URL}/api/admin/logout`, {
+      method: 'POST',
+      headers: {
+        Cookie: `admin-session=${token}`,
+        Origin: 'https://evil.com',
+        Host: 'localhost:3000',
+      },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    const res = await middleware(req);
+    expect(res.status).toBe(403);
+  });
+
+  it('正常Preview Originのlogoutはproxyを通過する (403ではない)', async () => {
+    const { proxy: middleware } = await import('@/proxy');
+    const token = await createValidToken();
+    const req = new NextRequest(`https://oshi-search-abc.vercel.app/api/admin/logout`, {
+      method: 'POST',
+      headers: {
+        Cookie: `admin-session=${token}`,
+        Origin: 'https://oshi-search-abc.vercel.app',
+        Host: 'oshi-search-abc.vercel.app',
+      },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    const res = await middleware(req);
+    expect(res.status).not.toBe(403);
+  });
+
+  it('正常Production Originのlogoutはproxyを通過する (403ではない)', async () => {
+    const { proxy: middleware } = await import('@/proxy');
+    const token = await createValidToken();
+    const req = new NextRequest(`https://www.mysite.com/api/admin/logout`, {
+      method: 'POST',
+      headers: {
+        Cookie: `admin-session=${token}`,
+        Origin: 'https://www.mysite.com',
+        Host: 'www.mysite.com',
+      },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    const res = await middleware(req);
+    expect(res.status).not.toBe(403);
+  });
+});
+
+describe('logout — ログアウト後は管理APIに入れない', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.stubEnv('ADMIN_SESSION_SECRET', VALID_SECRET);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('ログイン後に有効Cookieで管理APIへアクセスできる', async () => {
+    const { proxy: middleware } = await import('@/proxy');
+    const token = await createValidToken();
+    const req = makeRequestWithCookie('/api/admin/db-info', token);
+    const res = await middleware(req);
+    expect(res.status).not.toBe(401);
+  });
+
+  it('POST logout後にCookieなしで管理APIへアクセスすると401', async () => {
+    const { proxy: middleware } = await import('@/proxy');
+    // ブラウザはlogout後にCookieを削除する → 次のリクエストはCookieなし
+    const req = makeRequest('/api/admin/db-info');
+    const res = await middleware(req);
+    expect(res.status).toBe(401);
   });
 });
 
