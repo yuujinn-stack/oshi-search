@@ -5,6 +5,7 @@ import { getAllStoredProducts } from '@/lib/product-store';
 import { pingRedis } from '@/lib/redis-health';
 import { getAllPersonMetas } from '@/lib/person-meta';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
+import { LogoutButton } from '@/components/admin/LogoutButton';
 import WorkCheckPersonSection from './WorkCheckPersonSection';
 import AiSupplementSection from './AiSupplementSection';
 import ChatGptPromptSection from './ChatGptPromptSection';
@@ -170,9 +171,7 @@ export default async function WorkCheckPage() {
           <a href="/admin/groups" className="text-gray-400 hover:underline">
             グループ管理
           </a>
-          <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500 transition-colors">
-            ログアウト
-          </a>
+          <LogoutButton className="text-gray-400 hover:text-red-500 transition-colors" />
         </div>
       </div>
 

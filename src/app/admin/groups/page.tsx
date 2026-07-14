@@ -1,4 +1,5 @@
 import { getAllGroupMetasOrThrow } from '@/lib/group-meta';
+import { LogoutButton } from '@/components/admin/LogoutButton';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import GroupManager from './GroupManager';
 
@@ -26,7 +27,7 @@ export default async function AdminGroupsPage() {
           <a href="/admin/people-membership-import" className="text-indigo-600 hover:underline">所属CSV更新 →</a>
           <a href="/admin/rakuten-search" className="text-indigo-600 hover:underline font-medium">楽天商品検索 →</a>
           <a href="/admin/product-check" className="text-gray-400 hover:underline">商品確認</a>
-          <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">ログアウト</a>
+          <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
 

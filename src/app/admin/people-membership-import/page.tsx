@@ -1,5 +1,6 @@
 import { getAllPersonsMerged } from '@/lib/persons';
 import MembershipImportClient from './MembershipImportClient';
+import { LogoutButton } from '@/components/admin/LogoutButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +30,7 @@ export default async function PeopleMembershipImportPage() {
           <a href="/admin/people/import" className="text-indigo-600 hover:underline">人物登録 →</a>
           <a href="/admin/groups" className="text-gray-400 hover:underline">グループ管理</a>
           <a href="/admin/product-check" className="text-gray-400 hover:underline">商品確認</a>
-          <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">ログアウト</a>
+          <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
 

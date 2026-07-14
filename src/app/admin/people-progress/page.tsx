@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { getAllImportedPersonsOrThrow } from '@/lib/imported-persons';
 import { getAllWorks } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
+import { LogoutButton } from '@/components/admin/LogoutButton';
 import { pingRedis } from '@/lib/redis-health';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import PeopleProgressClient from './PeopleProgressClient';
@@ -112,9 +113,7 @@ export default async function PeopleProgressPage() {
           <a href="/admin/groups" className="text-gray-400 hover:underline">
             グループ管理
           </a>
-          <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">
-            ログアウト
-          </a>
+          <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
       <PeopleProgressClient data={progressList} />

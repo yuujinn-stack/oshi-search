@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { LogoutButton } from '@/components/admin/LogoutButton';
 import { USD_TO_JPY, FEATURE_LABELS } from '@/lib/openai-pricing';
 import type { DayStat, FeatureStat, ModelStat } from '@/app/api/admin/openai-usage/route';
 import type { UsageLogEntry } from '@/lib/openai-usage';
@@ -165,7 +166,7 @@ export default function OpenAIUsageClient() {
         <div className="flex items-center gap-3 mt-1 text-xs flex-wrap">
           <a href="/admin/work-check" className="text-indigo-600 hover:underline">作品管理 →</a>
           <a href="/admin/product-check" className="text-indigo-600 hover:underline">商品管理 →</a>
-          <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">ログアウト</a>
+          <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
 

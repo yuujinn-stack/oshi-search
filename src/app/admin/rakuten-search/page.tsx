@@ -3,6 +3,7 @@ import { getAllPersonMetasOrThrow } from '@/lib/person-meta';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import RakutenSearchClient from './RakutenSearchClient';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
+import { LogoutButton } from '@/components/admin/LogoutButton';
 import { createGroupList } from './group-utils';
 
 export const dynamic = 'force-dynamic';
@@ -45,7 +46,7 @@ export default async function RakutenSearchPage() {
           <a href="/admin/product-check" className="text-indigo-600 hover:underline">商品確認 →</a>
           <a href="/admin/work-check" className="text-gray-400 hover:underline">作品管理</a>
           <a href="/admin/people-progress" className="text-gray-400 hover:underline">人物進捗</a>
-          <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">ログアウト</a>
+          <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
       <RakutenSearchClient persons={personOptions} groups={groups} metaMap={metaMap} />

@@ -1,4 +1,5 @@
 import { getImportHistoryList } from '@/lib/import-history';
+import { LogoutButton } from '@/components/admin/LogoutButton';
 import ImportHistoryClient from './ImportHistoryClient';
 
 export const dynamic = 'force-dynamic';
@@ -26,9 +27,7 @@ export default async function ImportHistoryPage() {
           <a href="/admin/work-import" className="text-indigo-600 hover:underline">
             作品・配信追加
           </a>
-          <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">
-            ログアウト
-          </a>
+          <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
 

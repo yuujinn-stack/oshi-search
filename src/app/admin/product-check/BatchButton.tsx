@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { LogoutButton } from '@/components/admin/LogoutButton';
 
 interface Props {
   personNames: string[];
@@ -161,9 +162,9 @@ export default function BatchButton({ personNames }: Props) {
               {summary.needsRelogin && (
                 <>
                   <br />
-                  <a href="/api/admin/logout" className="underline font-bold">
+                  <LogoutButton className="underline font-bold">
                     ログアウトする
-                  </a>
+                  </LogoutButton>
                 </>
               )}
             </>

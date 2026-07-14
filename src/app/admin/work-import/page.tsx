@@ -1,4 +1,5 @@
 import WorkVodImportForm from './WorkVodImportForm';
+import { LogoutButton } from '@/components/admin/LogoutButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,9 +27,7 @@ export default function WorkImportPage() {
           <a href="/admin/groups" className="text-gray-400 hover:underline">
             グループ管理
           </a>
-          <a href="/api/admin/logout" className="text-gray-400 hover:text-red-500">
-            ログアウト
-          </a>
+          <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
 

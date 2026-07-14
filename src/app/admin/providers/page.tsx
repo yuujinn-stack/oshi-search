@@ -1,4 +1,5 @@
 import { getAllProvidersOrThrow } from '@/lib/provider-store';
+import { LogoutButton } from '@/components/admin/LogoutButton';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import ProviderManager from './ProviderManager';
 
@@ -28,9 +29,7 @@ export default async function AdminProvidersPage() {
           <a href="/admin/work-check" className="text-xs text-indigo-600 hover:underline">
             作品管理 →
           </a>
-          <a href="/api/admin/logout" className="text-xs text-gray-400 hover:text-red-500">
-            ログアウト
-          </a>
+          <LogoutButton className="text-xs text-gray-400 hover:text-red-500" />
         </div>
       </div>
 
