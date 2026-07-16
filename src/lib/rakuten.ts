@@ -27,6 +27,72 @@ const BASE_BOOKS = 'https://openapi.rakuten.co.jp/services/api';
 // Origin: 楽天APIのアプリ登録ドメイン検証用, accessKey: ヘッダー名を正確に "accessKey" で送信（クエリパラメータと併用）
 const AUTH_HEADERS = { Origin: SITE_URL, accessKey: ACCESS_KEY };
 
+// 診断用メタ情報: 秘密値を一切含まない（文字数と送信有無のみ）
+const AUTH_DIAG = Object.freeze({
+  hasApplicationId: APP_ID.length > 0,
+  applicationIdLength: APP_ID.length,
+  hasAccessKey: ACCESS_KEY.length > 0,
+  accessKeyLength: ACCESS_KEY.length,
+  applicationIdQuerySent: APP_ID.length > 0,
+  accessKeyHeaderSent: ('accessKey' in AUTH_HEADERS) && ACCESS_KEY.length > 0,
+  accessKeyQuerySent: ACCESS_KEY.length > 0,
+});
+
+/**
+ * 楽天APIが非2xxを返したとき、秘密値を一切含まない構造化ログを1件 console.error で出力する。
+ * pathname のみ記録しクエリ文字列（applicationId・accessKey の値）はログに含めない。
+ */
+export async function logRakutenUpstreamError(
+  res: Response,
+  requestUrl: string,
+  authDiag: {
+    hasApplicationId: boolean;
+    applicationIdLength: number;
+    hasAccessKey: boolean;
+    accessKeyLength: number;
+    applicationIdQuerySent: boolean;
+    accessKeyHeaderSent: boolean;
+    accessKeyQuerySent: boolean;
+  },
+): Promise<void> {
+  // クエリ文字列を除外した pathname のみ取得（値をログに残さない）
+  let pathname = '';
+  let apiVersion = '';
+  try {
+    const u = new URL(requestUrl);
+    pathname = u.pathname;
+    const m = pathname.match(/\/(\d{8})(\/|$)/);
+    if (m?.[1]) apiVersion = m[1];
+  } catch { /* ignore invalid URL */ }
+
+  // レスポンスボディを安全に読み取る（失敗しても処理を止めない）
+  let rawBody = '';
+  try { rawBody = await res.text(); } catch { /* ignore read error */ }
+
+  // 楽天APIのエラーコード・説明文を安全に抽出（値の存在チェックのみ）
+  let upstreamErrorCode: string | null = null;
+  let upstreamErrorMessage: string | null = null;
+  try {
+    const j = JSON.parse(rawBody) as Record<string, unknown>;
+    if (typeof j.error === 'string') upstreamErrorCode = j.error;
+    if (typeof j.error_description === 'string') upstreamErrorMessage = j.error_description;
+  } catch { /* not JSON */ }
+
+  console.error(JSON.stringify({
+    event: 'rakuten_api_upstream_error',
+    hostname: 'openapi.rakuten.co.jp',
+    pathname,
+    apiVersion,
+    method: 'GET',
+    ...authDiag,
+    upstreamStatus: res.status,
+    responseContentType: res.headers.get('content-type'),
+    upstreamErrorCode,
+    upstreamErrorMessage,
+    responseExcerpt: rawBody.slice(0, 300),
+  }));
+}
+
 function ichibaUrl(endpoint: string, params: Record<string, string>): string {
   return `${BASE_ICHIBA}/${endpoint}?${new URLSearchParams(params)}`;
 }
@@ -80,21 +146,22 @@ async function fetchBooksPages(
 
   for (let page = 1; page <= maxPages; page++) {
     console.log(`[rakuten] Books(${paramKey})検索: ${paramKey}="${paramValue}" page=${page}`);
+    const reqUrl = booksUrl('BooksBook/Search/20170404', {
+      applicationId: APP_ID,
+      accessKey: ACCESS_KEY,
+      affiliateId: AFFILIATE_ID,
+      [paramKey]: paramValue,
+      hits: '30',
+      sort: 'standard',
+      outOfStockFlag: '1',
+      page: String(page),
+    });
     const res = await fetch(
-      booksUrl('BooksBook/Search/20170404', {
-        applicationId: APP_ID,
-        accessKey: ACCESS_KEY,
-        affiliateId: AFFILIATE_ID,
-        [paramKey]: paramValue,
-        hits: '30',
-        sort: 'standard',
-        outOfStockFlag: '1',
-        page: String(page),
-      }),
+      reqUrl,
       { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
     );
     if (!res.ok) {
-      console.log(`[rakuten] Books(${paramKey})エラー: HTTP ${res.status} ${paramKey}="${paramValue}" page=${page}`);
+      await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
       throw new RakutenApiError(res.status);
     }
     const data: RakutenBooksResponse = await res.json();
@@ -260,21 +327,22 @@ async function fetchDvd(
     const items: RakutenItem[] = [];
     for (let page = 1; page <= 2; page++) {
       console.log(`[rakuten] DVD検索: artistName="${artistName}" page=${page}`);
+      const reqUrl = booksUrl('BooksDVD/Search/20130522', {
+        applicationId: APP_ID,
+        accessKey: ACCESS_KEY,
+        affiliateId: AFFILIATE_ID,
+        artistName,
+        hits: '30',
+        sort: 'standard',
+        outOfStockFlag: '1',
+        page: String(page),
+      } as Record<string, string>);
       const res = await fetch(
-        booksUrl('BooksDVD/Search/20130522', {
-          applicationId: APP_ID,
-          accessKey: ACCESS_KEY,
-          affiliateId: AFFILIATE_ID,
-          artistName,
-          hits: '30',
-          sort: 'standard',
-          outOfStockFlag: '1',
-          page: String(page),
-        } as Record<string, string>),
+        reqUrl,
         { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
       );
       if (!res.ok) {
-        console.log(`[rakuten] DVD APIエラー: HTTP ${res.status} artistName="${artistName}" page=${page}`);
+        await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
         throw new RakutenApiError(res.status);
       }
       const data: RakutenDvdResponse = await res.json();
@@ -353,21 +421,22 @@ async function fetchCd(
     const items: RakutenItem[] = [];
     for (let page = 1; page <= maxPages; page++) {
       console.log(`[rakuten] CD検索: artistName="${artistName}" page=${page}`);
+      const reqUrl = booksUrl('BooksCD/Search/20130522', {
+        applicationId: APP_ID,
+        accessKey: ACCESS_KEY,
+        affiliateId: AFFILIATE_ID,
+        artistName,
+        hits: '30',
+        sort: 'standard',
+        outOfStockFlag: '1',
+        page: String(page),
+      } as Record<string, string>);
       const res = await fetch(
-        booksUrl('BooksCD/Search/20130522', {
-          applicationId: APP_ID,
-          accessKey: ACCESS_KEY,
-          affiliateId: AFFILIATE_ID,
-          artistName,
-          hits: '30',
-          sort: 'standard',
-          outOfStockFlag: '1',
-          page: String(page),
-        } as Record<string, string>),
+        reqUrl,
         { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
       );
       if (!res.ok) {
-        console.log(`[rakuten] CD APIエラー: HTTP ${res.status} artistName="${artistName}" page=${page}`);
+        await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
         throw new RakutenApiError(res.status);
       }
       const data: RakutenDvdResponse = await res.json();
@@ -451,20 +520,21 @@ async function fetchIchiba(
     const items: RakutenItem[] = [];
     for (let page = 1; page <= 2; page++) {
       console.log(`[rakuten] Ichiba検索: keyword="${keyword}" page=${page}`);
+      const reqUrl = ichibaUrl('IchibaItem/Search/20260701', {
+        applicationId: APP_ID,
+        accessKey: ACCESS_KEY,
+        affiliateId: AFFILIATE_ID,
+        keyword,
+        hits: '30',
+        sort: '-reviewCount',
+        page: String(page),
+      });
       const res = await fetch(
-        ichibaUrl('IchibaItem/Search/20260701', {
-          applicationId: APP_ID,
-          accessKey: ACCESS_KEY,
-          affiliateId: AFFILIATE_ID,
-          keyword,
-          hits: '30',
-          sort: '-reviewCount',
-          page: String(page),
-        }),
+        reqUrl,
         { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
       );
       if (!res.ok) {
-        console.log(`[rakuten] Ichiba APIエラー: HTTP ${res.status} keyword="${keyword}" page=${page}`);
+        await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
         throw new RakutenApiError(res.status);
       }
       const data: RakutenIchibaResponse = await res.json();
@@ -547,20 +617,21 @@ async function fetchUsed(
     const items: RakutenItem[] = [];
     for (let page = 1; page <= 1; page++) {
       console.log(`[rakuten] 中古検索: keyword="${keyword}" page=${page}`);
+      const reqUrl = ichibaUrl('IchibaItem/Search/20260701', {
+        applicationId: APP_ID,
+        accessKey: ACCESS_KEY,
+        affiliateId: AFFILIATE_ID,
+        keyword,
+        hits: '30',
+        sort: '-reviewCount',
+        page: String(page),
+      });
       const res = await fetch(
-        ichibaUrl('IchibaItem/Search/20260701', {
-          applicationId: APP_ID,
-          accessKey: ACCESS_KEY,
-          affiliateId: AFFILIATE_ID,
-          keyword,
-          hits: '30',
-          sort: '-reviewCount',
-          page: String(page),
-        }),
+        reqUrl,
         { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
       );
       if (!res.ok) {
-        console.log(`[rakuten] 中古 APIエラー: HTTP ${res.status} keyword="${keyword}" page=${page}`);
+        await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
         throw new RakutenApiError(res.status);
       }
       const data: RakutenIchibaResponse = await res.json();
