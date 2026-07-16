@@ -43,6 +43,13 @@ export interface PersonBatchResult {
   excluded: number;            // 除外キーワード一致でスキップした商品数
   usedSuppressed: number;      // 中古dedup: 新品と重複して除外した商品数
   membershipFiltered: number;  // 卒業後グループ商品候補として確認待ちにした商品数
+  // --- 追加診断フィールド ---
+  fetchFailed: number;         // 楽天APIエラーになったカテゴリ数（0=全カテゴリ正常）
+  aiFailed: number;            // AI判定エラー件数（aiQueued - aiJudged）
+  aiKeyMissing: boolean;       // true=OPENAI_API_KEY未設定でAI判定スキップ
+  relatedCount: number;        // AI判定で related になった件数
+  unrelatedCount: number;      // AI判定で unrelated になった件数
+  uncertainCount: number;      // AI判定で uncertain になった件数（auto含む）
   error?: string;
 }
 
@@ -65,7 +72,13 @@ export async function processPerson(
   const all = getAllPersonsWithConfig();
   const person = configOverride ?? all.find((p) => p.name === personName);
   if (!person) {
-    return { personName, stored: 0, aiJudged: 0, aiQueued: 0, skipped: 0, excluded: 0, usedSuppressed: 0, membershipFiltered: 0, error: '人物が見つかりません' };
+    return {
+      personName, stored: 0, aiJudged: 0, aiQueued: 0, skipped: 0, excluded: 0,
+      usedSuppressed: 0, membershipFiltered: 0,
+      fetchFailed: 0, aiFailed: 0, aiKeyMissing: false,
+      relatedCount: 0, unrelatedCount: 0, uncertainCount: 0,
+      error: '人物が見つかりません',
+    };
   }
 
   const excludeKeywords = person.config.excludeKeywords ?? [];
@@ -79,6 +92,10 @@ export async function processPerson(
   let excluded = 0;
   let usedSuppressed = 0;
   let membershipFiltered = 0;
+  let fetchFailed = 0;
+  let relatedCount = 0;
+  let unrelatedCount = 0;
+  let uncertainCount = 0;
   const toJudge: RakutenItem[] = [];
 
   const apiKeyStatus = process.env.OPENAI_API_KEY
@@ -98,6 +115,10 @@ export async function processPerson(
     const result = await getProductsByCategory(
       person.name, person.group, cat, person.config, 'no-store'
     );
+    if (result.status === 'error') {
+      fetchFailed++;
+      console.log(`[batch] ${cat}: 楽天APIエラー (fetchFailed=${fetchFailed})`);
+    }
     let products = result.status === 'ok' ? result.products : [];
 
     // 中古カテゴリ: 同一タイトルの新品が既に取得済みなら除外し、保存件数を上限内に制限
@@ -270,10 +291,14 @@ export async function processPerson(
   console.log(`[batch] --- 全カテゴリ集計: 取得=${stored} 新規(AI対象)=${toJudge.length} スキップ=${skipped} 除外=${excluded} ---`);
   console.log(`[batch] --- AI判定チェック: OPENAI_API_KEY=${apiKeyStatus} ---`);
 
+  let aiKeyMissing = false;
+
   if (toJudge.length === 0) {
     console.log(`[batch] AI判定なし: 全商品が判定済みまたは除外KW一致`);
   } else if (!process.env.OPENAI_API_KEY) {
-    console.log(`[batch] ★AI判定スキップ: OPENAI_API_KEY が未設定★`);
+    // APIキー未設定: AI対象あり・判定スキップ → aiKeyMissing フラグで呼び出し元に通知
+    aiKeyMissing = true;
+    console.log(`[batch] ★AI判定スキップ: OPENAI_API_KEY が未設定 (対象=${toJudge.length}件)★`);
   } else {
     const effectiveLimit = Math.min(MAX_AI_PER_PERSON, aiLimit ?? MAX_AI_PER_PERSON);
     const batch = toJudge.slice(0, effectiveLimit);
@@ -302,7 +327,7 @@ export async function processPerson(
       console.log(`[batch]   AI→${result.verdict} score=${result.score} reason="${result.reason}" | "${product.title.slice(0, 40)}"`);
       console.log(`[PUBLIC_FILTER] itemTitle:"${product.title.slice(0, 60)}" category:${product.category} label:${result.verdict} score:${result.score} isPublic:${displayable} excludeReason:${displayable ? 'none' : `verdict=${result.verdict} score=${result.score}`}`);
       if (isTracked(product.title)) {
-        trackLog(`🤖 ステップ5: AI判定完了 → Redis保存`);
+        trackLog(`🤖 ステップ5: AI判定完了 → DB保存`);
         trackLog(`   title="${product.title}"`);
         trackLog(`   id=${id} | verdict=${result.verdict} | score=${result.score}`);
         trackLog(`   reason="${result.reason}"`);
@@ -312,6 +337,9 @@ export async function processPerson(
         person.name, id, result.verdict, result.score, 'ai', result.reason, PROMPT_VERSION
       );
       aiJudged++;
+      if (result.verdict === 'related') relatedCount++;
+      else if (result.verdict === 'unrelated') unrelatedCount++;
+      else uncertainCount++;
     }
 
     if (aiJudged < aiQueued) {
@@ -319,8 +347,12 @@ export async function processPerson(
     }
   }
 
-  console.log(`[batch] ===== 完了: ${personName} 取得=${stored} AI対象=${aiQueued} AI完了=${aiJudged} スキップ=${skipped} 除外=${excluded} 中古抑制=${usedSuppressed} 卒業後候補=${membershipFiltered} =====`);
-  return { personName, stored, aiJudged, aiQueued, skipped, excluded, usedSuppressed, membershipFiltered };
+  const aiFailed = Math.max(0, aiQueued - aiJudged);
+  console.log(`[batch] ===== 完了: ${personName} 取得=${stored} fetchFailed=${fetchFailed} AI対象=${aiQueued} AI完了=${aiJudged} aiFailed=${aiFailed} aiKeyMissing=${aiKeyMissing} related=${relatedCount} unrelated=${unrelatedCount} uncertain=${uncertainCount} スキップ=${skipped} 除外=${excluded} 中古抑制=${usedSuppressed} 卒業後候補=${membershipFiltered} =====`);
+  return {
+    personName, stored, aiJudged, aiQueued, skipped, excluded, usedSuppressed, membershipFiltered,
+    fetchFailed, aiFailed, aiKeyMissing, relatedCount, unrelatedCount, uncertainCount,
+  };
 }
 
 // 全人物を処理（Cron/管理画面から呼ぶ）
@@ -338,13 +370,10 @@ export async function processAllPersons(): Promise<BatchSummary> {
     } catch (err) {
       results.push({
         personName: person.name,
-        stored: 0,
-        aiJudged: 0,
-        aiQueued: 0,
-        skipped: 0,
-        excluded: 0,
-        usedSuppressed: 0,
-        membershipFiltered: 0,
+        stored: 0, aiJudged: 0, aiQueued: 0, skipped: 0, excluded: 0,
+        usedSuppressed: 0, membershipFiltered: 0,
+        fetchFailed: 0, aiFailed: 0, aiKeyMissing: false,
+        relatedCount: 0, unrelatedCount: 0, uncertainCount: 0,
         error: String(err),
       });
     }

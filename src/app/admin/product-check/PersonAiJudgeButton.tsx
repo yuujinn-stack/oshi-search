@@ -7,9 +7,16 @@ type Status = 'idle' | 'running' | 'done' | 'error';
 interface Result {
   aiJudged: number;
   aiQueued: number;
+  aiFailed: number;
+  aiKeyMissing: boolean;
   stored: number;
   skipped: number;
   excluded: number;
+  relatedCount: number;
+  unrelatedCount: number;
+  uncertainCount: number;
+  fetchFailed: number;
+  message?: string;
 }
 
 export default function PersonAiJudgeButton({ personName }: { personName: string }) {
@@ -42,11 +49,18 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
       }
 
       setResult({
-        aiJudged: data.person.aiJudged ?? 0,
-        aiQueued: data.person.aiQueued ?? 0,
-        stored: data.person.stored ?? 0,
-        skipped: data.person.skipped ?? 0,
-        excluded: data.person.excluded ?? 0,
+        aiJudged:       data.person.aiJudged       ?? 0,
+        aiQueued:       data.person.aiQueued        ?? 0,
+        aiFailed:       data.person.aiFailed        ?? 0,
+        aiKeyMissing:   data.person.aiKeyMissing    ?? false,
+        stored:         data.person.stored          ?? 0,
+        skipped:        data.person.skipped         ?? 0,
+        excluded:       data.person.excluded        ?? 0,
+        relatedCount:   data.person.relatedCount    ?? 0,
+        unrelatedCount: data.person.unrelatedCount  ?? 0,
+        uncertainCount: data.person.uncertainCount  ?? 0,
+        fetchFailed:    data.person.fetchFailed     ?? 0,
+        message:        data.person.message,
       });
       setStatus('done');
     } catch (err) {
@@ -73,23 +87,53 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
         🔄 再判定
       </button>
 
-      {status === 'done' && result && (
-        <span className="text-xs whitespace-nowrap space-x-1.5">
-          <span className="text-gray-500">取得{result.stored}</span>
-          <span className="text-gray-400">skip{result.skipped}</span>
-          {result.excluded > 0 && <span className="text-orange-500">除外{result.excluded}</span>}
-          <span className="text-blue-500">AI対象{result.aiQueued}</span>
-          <span className={result.aiJudged < result.aiQueued ? 'text-red-500' : 'text-green-600'}>
-            完了{result.aiJudged}
+      {status === 'done' && result && (() => {
+        // エラーケースを優先表示
+        if (result.aiKeyMissing) {
+          return (
+            <span className="text-xs text-red-500 whitespace-nowrap" title="OPENAI_API_KEYが設定されていないためAI判定をスキップしました">
+              ⚠ AIキー未設定 (取得{result.stored})
+            </span>
+          );
+        }
+        if (result.fetchFailed > 0 && result.stored === 0) {
+          return (
+            <span className="text-xs text-red-500 whitespace-nowrap" title={result.message}>
+              ⚠ 楽天APIエラー({result.fetchFailed}件)
+            </span>
+          );
+        }
+        if (result.stored === 0 && result.skipped === 0 && result.fetchFailed === 0) {
+          return (
+            <span className="text-xs text-gray-400 whitespace-nowrap" title="楽天API未設定またはヒット0件">
+              取得0 (API未設定/0件)
+            </span>
+          );
+        }
+        return (
+          <span className="text-xs whitespace-nowrap space-x-1.5">
+            <span className="text-gray-500">取得{result.stored}</span>
+            <span className="text-gray-400">skip{result.skipped}</span>
+            {result.excluded > 0 && <span className="text-orange-500">除外{result.excluded}</span>}
+            {result.fetchFailed > 0 && <span className="text-orange-500">取得エラー{result.fetchFailed}</span>}
+            <span className="text-blue-500">AI対象{result.aiQueued}</span>
+            {result.aiQueued === 0 && result.stored > 0 ? (
+              <span className="text-amber-600">（全件判定済み）</span>
+            ) : (
+              <span className={result.aiFailed > 0 ? 'text-red-500' : 'text-green-600'}>
+                完了{result.aiJudged}
+                {result.aiFailed > 0 && ` (失敗${result.aiFailed})`}
+              </span>
+            )}
+            {result.aiQueued > 0 && (
+              <span className="text-gray-400">
+                related:{result.relatedCount} unrelated:{result.unrelatedCount} uncertain:{result.uncertainCount}
+              </span>
+            )}
           </span>
-          {result.aiJudged === 0 && result.stored > 0 && result.aiQueued === 0 && (
-            <span className="text-amber-600">（全件判定済み）</span>
-          )}
-          {result.aiJudged < result.aiQueued && result.aiQueued > 0 && (
-            <span className="text-red-500">⚠AIエラー</span>
-          )}
-        </span>
-      )}
+        );
+      })()}
+
       {status === 'error' && (
         <span className="text-xs text-red-500 max-w-[120px] truncate" title={errorMsg}>
           失敗: {errorMsg.slice(0, 30)}

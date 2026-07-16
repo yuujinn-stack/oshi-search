@@ -11,6 +11,10 @@ interface FetchResult {
   skipped: number;
   excluded: number;
   usedSuppressed: number;
+  fetchFailed: number;
+  aiFailed: number;
+  aiKeyMissing: boolean;
+  message?: string;
 }
 
 export default function PersonRakutenFetchButton({ personName }: { personName: string }) {
@@ -39,7 +43,6 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
         return;
       }
 
-      // person.error は processPerson 内で人物が見つからなかった場合にセットされる
       if (data.person?.error) {
         setErrorMsg(data.person.error);
         setStatus('error');
@@ -47,12 +50,16 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
       }
 
       setResult({
-        stored: data.person.stored ?? 0,
-        aiJudged: data.person.aiJudged ?? 0,
-        aiQueued: data.person.aiQueued ?? 0,
-        skipped: data.person.skipped ?? 0,
-        excluded: data.person.excluded ?? 0,
-        usedSuppressed: data.person.usedSuppressed ?? 0,
+        stored:          data.person.stored          ?? 0,
+        aiJudged:        data.person.aiJudged        ?? 0,
+        aiQueued:        data.person.aiQueued        ?? 0,
+        skipped:         data.person.skipped         ?? 0,
+        excluded:        data.person.excluded        ?? 0,
+        usedSuppressed:  data.person.usedSuppressed  ?? 0,
+        fetchFailed:     data.person.fetchFailed     ?? 0,
+        aiFailed:        data.person.aiFailed        ?? 0,
+        aiKeyMissing:    data.person.aiKeyMissing    ?? false,
+        message:         data.person.message,
       });
       setStatus('done');
     } catch (err) {
@@ -72,21 +79,43 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
         {status === 'running' ? '⏳ 取得中...' : '🔃 楽天再取得'}
       </button>
 
-      {status === 'done' && result && (
-        <span className="text-xs whitespace-nowrap flex items-center gap-1.5">
-          <span className="text-teal-600 font-medium">取得{result.stored}</span>
-          {result.skipped > 0 && <span className="text-gray-400">判定済skip{result.skipped}</span>}
-          {result.excluded > 0 && <span className="text-orange-500">除外KW{result.excluded}</span>}
-          {result.usedSuppressed > 0 && <span className="text-blue-500">中古抑制{result.usedSuppressed}</span>}
-          {result.aiQueued > 0 ? (
-            <span className={result.aiJudged < result.aiQueued ? 'text-red-500' : 'text-green-600'}>
-              AI判定{result.aiJudged}/{result.aiQueued}
+      {status === 'done' && result && (() => {
+        // エラー区別表示
+        if (result.fetchFailed > 0 && result.stored === 0) {
+          return (
+            <span className="text-xs text-red-500 whitespace-nowrap" title={result.message}>
+              ⚠ 楽天APIエラー({result.fetchFailed}件)
             </span>
-          ) : result.stored > 0 ? (
-            <span className="text-gray-400">AI対象なし</span>
-          ) : null}
-        </span>
-      )}
+          );
+        }
+        if (result.stored === 0 && result.skipped === 0 && result.fetchFailed === 0) {
+          return (
+            <span className="text-xs text-gray-400 whitespace-nowrap" title="楽天API未設定またはヒット0件">
+              取得0 (API未設定/0件)
+            </span>
+          );
+        }
+        return (
+          <span className="text-xs whitespace-nowrap flex items-center gap-1.5">
+            <span className="text-teal-600 font-medium">取得{result.stored}</span>
+            {result.skipped > 0 && <span className="text-gray-400">判定済skip{result.skipped}</span>}
+            {result.excluded > 0 && <span className="text-orange-500">除外KW{result.excluded}</span>}
+            {result.usedSuppressed > 0 && <span className="text-blue-500">中古抑制{result.usedSuppressed}</span>}
+            {result.fetchFailed > 0 && <span className="text-orange-500">取得エラー{result.fetchFailed}</span>}
+            {result.aiKeyMissing ? (
+              <span className="text-red-500">⚠AIキー未設定</span>
+            ) : result.aiQueued > 0 ? (
+              <span className={result.aiFailed > 0 ? 'text-red-500' : 'text-green-600'}>
+                AI判定{result.aiJudged}/{result.aiQueued}
+                {result.aiFailed > 0 && ` (失敗${result.aiFailed})`}
+              </span>
+            ) : result.stored > 0 ? (
+              <span className="text-gray-400">AI対象なし(全判定済)</span>
+            ) : null}
+          </span>
+        );
+      })()}
+
       {status === 'error' && (
         <span className="text-xs text-red-500 max-w-[160px] truncate" title={errorMsg}>
           失敗: {errorMsg.slice(0, 40)}

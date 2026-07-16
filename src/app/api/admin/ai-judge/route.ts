@@ -37,5 +37,25 @@ export async function POST(req: NextRequest) {
 
   const result = await processPerson(body.personName, body.forceRejudge ?? false, personConfig);
   revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
-  return NextResponse.json({ ok: true, person: result });
+
+  // レスポンスに診断メッセージを付与（ログと UI 表示の手がかりに）
+  let message = '';
+  if (result.error) {
+    message = result.error;
+  } else if (result.fetchFailed > 0 && result.stored === 0) {
+    message = `楽天API取得エラー (${result.fetchFailed}カテゴリ)`;
+  } else if (result.aiKeyMissing) {
+    message = 'OPENAI_API_KEY 未設定: AI判定をスキップしました';
+  } else if (result.aiFailed > 0) {
+    message = `AI判定 ${result.aiQueued}件中 ${result.aiFailed}件がエラーになりました`;
+  } else if (result.stored === 0 && result.skipped === 0 && result.fetchFailed === 0) {
+    message = '楽天API取得0件（API未設定またはヒットなし）';
+  } else if (result.aiQueued === 0 && result.stored > 0) {
+    message = `取得${result.stored}件（全件判定済みのためAI判定スキップ）`;
+  } else {
+    message = `取得${result.stored}件 AI判定${result.aiJudged}/${result.aiQueued}件`;
+  }
+  console.log(`[ai-judge] operation:person-fetch-judge personName:${body.personName} stored:${result.stored} fetchFailed:${result.fetchFailed} aiQueued:${result.aiQueued} aiJudged:${result.aiJudged} aiFailed:${result.aiFailed} aiKeyMissing:${result.aiKeyMissing} message:"${message}"`);
+
+  return NextResponse.json({ ok: true, person: { ...result, message } });
 }
