@@ -1,15 +1,22 @@
 /**
- * src/lib/rakuten.ts の getProductsByCategory 直接テスト
+ * src/lib/rakuten.ts の直接テスト
  *
- * 検証項目:
+ * getProductsByCategory 検証項目:
  *  - API設定不足（config_missing）: APP_ID/ACCESS_KEY が空 or スペースのみ
  *  - 上流APIエラー（upstream_error）: 403/401/429/500
  *  - 正常取得（ok / empty）
  *  - ネットワーク障害（error）
  *  - エンドポイントバージョン（20260701）
  *  - リクエスト構造（accessKey をヘッダーとクエリパラメータの両方に含む）
+ *
+ * logRakutenUpstreamError 検証項目:
+ *  - 構造化ログの全フィールドが正しく出力される
+ *  - pathname のみ記録しクエリ文字列は含まない
+ *  - 非JSONボディ対応
+ *  - responseExcerpt 300文字切り捨て
+ *  - apiVersion 抽出（Ichiba / Books）
  */
-import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
 
 describe('getProductsByCategory', () => {
   type Module = typeof import('@/lib/rakuten');
@@ -153,5 +160,130 @@ describe('getProductsByCategory', () => {
     const calledUrl = String(fetchSpy.mock.calls[0]?.[0] ?? '');
     expect(calledUrl).toContain('applicationId=');
     expect(calledUrl).toContain('accessKey=');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// logRakutenUpstreamError テスト
+// ─────────────────────────────────────────────────────────────────────────────
+describe('logRakutenUpstreamError', () => {
+  type Module = typeof import('@/lib/rakuten');
+  let logRakutenUpstreamError: Module['logRakutenUpstreamError'];
+
+  beforeAll(async () => {
+    vi.resetModules();
+    const mod = await vi.importActual<Module>('@/lib/rakuten');
+    logRakutenUpstreamError = mod.logRakutenUpstreamError;
+  });
+
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const DIAG = {
+    hasApplicationId: true,
+    applicationIdLength: 10,
+    hasAccessKey: true,
+    accessKeyLength: 32,
+    applicationIdQuerySent: true,
+    accessKeyHeaderSent: true,
+    accessKeyQuerySent: true,
+  };
+
+  function makeRes(body: string, status: number, contentType = 'application/json') {
+    return new Response(body, { status, headers: { 'content-type': contentType } });
+  }
+
+  it('[L1] 403 + JSONエラーボディ → 全フィールドを含む構造化ログを出力する', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await logRakutenUpstreamError(
+      makeRes('{"error":"wrong_parameter","error_description":"applicationId is wrong"}', 403),
+      'https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701?applicationId=test&accessKey=key',
+      DIAG,
+    );
+    expect(spy).toHaveBeenCalledOnce();
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.event).toBe('rakuten_api_upstream_error');
+    expect(logged.hostname).toBe('openapi.rakuten.co.jp');
+    expect(logged.pathname).toBe('/ichibams/api/IchibaItem/Search/20260701');
+    expect(logged.apiVersion).toBe('20260701');
+    expect(logged.method).toBe('GET');
+    expect(logged.upstreamStatus).toBe(403);
+    expect(logged.upstreamErrorCode).toBe('wrong_parameter');
+    expect(logged.upstreamErrorMessage).toBe('applicationId is wrong');
+    expect(logged.responseContentType).toBe('application/json');
+  });
+
+  it('[L2] pathname にクエリ文字列（秘密値）が含まれない', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await logRakutenUpstreamError(
+      makeRes('{}', 403),
+      'https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701?applicationId=SECRET_APP&accessKey=SECRET_KEY',
+      DIAG,
+    );
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.pathname).not.toContain('SECRET_APP');
+    expect(logged.pathname).not.toContain('SECRET_KEY');
+    expect(logged.pathname).not.toContain('applicationId');
+    expect(logged.pathname).not.toContain('accessKey');
+    expect(logged.pathname).toBe('/ichibams/api/IchibaItem/Search/20260701');
+  });
+
+  it('[L3] 非JSONボディのとき upstreamErrorCode・upstreamErrorMessage は null', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await logRakutenUpstreamError(
+      makeRes('<html>Forbidden</html>', 403, 'text/html'),
+      'https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701',
+      DIAG,
+    );
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.upstreamErrorCode).toBeNull();
+    expect(logged.upstreamErrorMessage).toBeNull();
+    expect(logged.responseContentType).toBe('text/html');
+  });
+
+  it('[L4] responseExcerpt は 300 文字で切り捨てる', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await logRakutenUpstreamError(
+      makeRes('A'.repeat(500), 429),
+      'https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701',
+      DIAG,
+    );
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.responseExcerpt.length).toBe(300);
+    expect(logged.upstreamStatus).toBe(429);
+  });
+
+  it('[L5] BooksBook API の apiVersion を正しく抽出する（20170404）', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await logRakutenUpstreamError(
+      makeRes('{}', 403),
+      'https://openapi.rakuten.co.jp/services/api/BooksBook/Search/20170404?keyword=test',
+      DIAG,
+    );
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.apiVersion).toBe('20170404');
+    expect(logged.pathname).toBe('/services/api/BooksBook/Search/20170404');
+  });
+
+  it('[L6] authDiag の全フィールドがログに展開される', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await logRakutenUpstreamError(
+      makeRes('{}', 500),
+      'https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701',
+      DIAG,
+    );
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.hasApplicationId).toBe(true);
+    expect(logged.applicationIdLength).toBe(10);
+    expect(logged.hasAccessKey).toBe(true);
+    expect(logged.accessKeyLength).toBe(32);
+    expect(logged.applicationIdQuerySent).toBe(true);
+    expect(logged.accessKeyHeaderSent).toBe(true);
+    expect(logged.accessKeyQuerySent).toBe(true);
   });
 });
