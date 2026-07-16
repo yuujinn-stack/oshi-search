@@ -286,4 +286,121 @@ describe('logRakutenUpstreamError', () => {
     expect(logged.accessKeyHeaderSent).toBe(true);
     expect(logged.accessKeyQuerySent).toBe(true);
   });
+
+  it('[L7] フラット形式 errorCode(数値)/errorMessage → upstreamErrorCode・upstreamErrorMessage に変換される', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await logRakutenUpstreamError(
+      makeRes('{"errorCode":403,"errorMessage":"Invalid application ID"}', 403),
+      'https://openapi.rakuten.co.jp/services/api/BooksBook/Search/20170404',
+      DIAG,
+    );
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.upstreamErrorCode).toBe('403');
+    expect(logged.upstreamErrorMessage).toBe('Invalid application ID');
+  });
+
+  it('[L8] フラット形式 errorCode(文字列) → upstreamErrorCode に変換される', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await logRakutenUpstreamError(
+      makeRes('{"errorCode":"forbidden","errorMessage":"Access denied"}', 403),
+      'https://openapi.rakuten.co.jp/services/api/BooksBook/Search/20170404',
+      DIAG,
+    );
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.upstreamErrorCode).toBe('forbidden');
+    expect(logged.upstreamErrorMessage).toBe('Access denied');
+  });
+
+  it('[L9] 入れ子形式 errors.errorCode(数値)/errors.errorMessage → 正しく解析される（Books 403 実形式）', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await logRakutenUpstreamError(
+      makeRes('{"errors":{"errorCode":403,"errorMessage":"Unauthorized access"}}', 403),
+      'https://openapi.rakuten.co.jp/services/api/BooksBook/Search/20170404',
+      DIAG,
+    );
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.upstreamErrorCode).toBe('403');
+    expect(logged.upstreamErrorMessage).toBe('Unauthorized access');
+  });
+
+  it('[L10] フラット形式が存在するとき入れ子形式より優先される', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await logRakutenUpstreamError(
+      makeRes('{"errorCode":401,"errorMessage":"flat message","errors":{"errorCode":403,"errorMessage":"nested message"}}', 401),
+      'https://openapi.rakuten.co.jp/services/api/BooksBook/Search/20170404',
+      DIAG,
+    );
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.upstreamErrorCode).toBe('401');
+    expect(logged.upstreamErrorMessage).toBe('flat message');
+  });
+
+  it('[L11] errors が配列のとき例外にならず upstreamErrorCode・upstreamErrorMessage は null', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      logRakutenUpstreamError(
+        makeRes('{"errors":[{"errorCode":403}]}', 403),
+        'https://openapi.rakuten.co.jp/services/api/BooksBook/Search/20170404',
+        DIAG,
+      ),
+    ).resolves.toBeUndefined();
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.upstreamErrorCode).toBeNull();
+    expect(logged.upstreamErrorMessage).toBeNull();
+  });
+
+  it('[L12] errors が文字列のとき例外にならず upstreamErrorCode・upstreamErrorMessage は null', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      logRakutenUpstreamError(
+        makeRes('{"errors":"Forbidden"}', 403),
+        'https://openapi.rakuten.co.jp/services/api/BooksBook/Search/20170404',
+        DIAG,
+      ),
+    ).resolves.toBeUndefined();
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.upstreamErrorCode).toBeNull();
+    expect(logged.upstreamErrorMessage).toBeNull();
+  });
+
+  it('[L13] authDiag のログ出力に applicationId・accessKey の実値が含まれない', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const sensitiveAppId = 'MY_SECRET_APP_ID_12345';
+    const sensitiveKey = 'MY_SECRET_ACCESS_KEY_67890';
+    const diagWithLengths = {
+      hasApplicationId: true,
+      applicationIdLength: sensitiveAppId.length,
+      hasAccessKey: true,
+      accessKeyLength: sensitiveKey.length,
+      applicationIdQuerySent: true,
+      accessKeyHeaderSent: true,
+      accessKeyQuerySent: true,
+    };
+    await logRakutenUpstreamError(
+      makeRes('{}', 403),
+      'https://openapi.rakuten.co.jp/services/api/BooksBook/Search/20170404',
+      diagWithLengths,
+    );
+    const logStr = spy.mock.calls[0][0] as string;
+    expect(logStr).not.toContain(sensitiveAppId);
+    expect(logStr).not.toContain(sensitiveKey);
+    const logged = JSON.parse(logStr);
+    expect(logged.applicationIdLength).toBe(sensitiveAppId.length);
+    expect(logged.accessKeyLength).toBe(sensitiveKey.length);
+  });
+
+  it('[L14] status 200 が渡されても例外にならず event フィールドが出力される', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      logRakutenUpstreamError(
+        makeRes('{"Items":[]}', 200),
+        'https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701',
+        DIAG,
+      ),
+    ).resolves.toBeUndefined();
+    expect(spy).toHaveBeenCalledOnce();
+    const logged = JSON.parse(spy.mock.calls[0][0] as string);
+    expect(logged.event).toBe('rakuten_api_upstream_error');
+    expect(logged.upstreamStatus).toBe(200);
+  });
 });
