@@ -9,9 +9,9 @@ import type {
 import type { PersonConfig } from '@/types/person';
 import { calcScore } from './scoring';
 
-const APP_ID = process.env.RAKUTEN_APP_ID ?? '';
-const ACCESS_KEY = process.env.RAKUTEN_ACCESS_KEY ?? '';
-const AFFILIATE_ID = process.env.RAKUTEN_AFFILIATE_ID ?? '';
+const APP_ID = (process.env.RAKUTEN_APP_ID ?? '').trim();
+const ACCESS_KEY = (process.env.RAKUTEN_ACCESS_KEY ?? '').trim();
+const AFFILIATE_ID = (process.env.RAKUTEN_AFFILIATE_ID ?? '').trim();
 
 // 楽天APIが 4xx/5xx を返した場合に throw して getProductsByCategory の catch で捕捉する
 class RakutenApiError extends Error {
@@ -24,7 +24,8 @@ const REVALIDATE = 86400; // 24h
 
 const BASE_ICHIBA = 'https://openapi.rakuten.co.jp/ichibams/api';
 const BASE_BOOKS = 'https://openapi.rakuten.co.jp/services/api';
-const AUTH_HEADERS = { Origin: SITE_URL };
+// Origin: 楽天APIのアプリ登録ドメイン検証用, accessKey: ヘッダー名を正確に "accessKey" で送信（クエリパラメータと併用）
+const AUTH_HEADERS = { Origin: SITE_URL, accessKey: ACCESS_KEY };
 
 function ichibaUrl(endpoint: string, params: Record<string, string>): string {
   return `${BASE_ICHIBA}/${endpoint}?${new URLSearchParams(params)}`;
@@ -451,7 +452,7 @@ async function fetchIchiba(
     for (let page = 1; page <= 2; page++) {
       console.log(`[rakuten] Ichiba検索: keyword="${keyword}" page=${page}`);
       const res = await fetch(
-        ichibaUrl('IchibaItem/Search/20260401', {
+        ichibaUrl('IchibaItem/Search/20260701', {
           applicationId: APP_ID,
           accessKey: ACCESS_KEY,
           affiliateId: AFFILIATE_ID,
@@ -547,7 +548,7 @@ async function fetchUsed(
     for (let page = 1; page <= 1; page++) {
       console.log(`[rakuten] 中古検索: keyword="${keyword}" page=${page}`);
       const res = await fetch(
-        ichibaUrl('IchibaItem/Search/20260401', {
+        ichibaUrl('IchibaItem/Search/20260701', {
           applicationId: APP_ID,
           accessKey: ACCESS_KEY,
           affiliateId: AFFILIATE_ID,
@@ -622,8 +623,8 @@ export async function getProductsByCategory(
   cacheMode: RequestCache = 'default',
 ): Promise<ApiResult> {
   // 呼び出し時点の env を参照（module load 後に設定される CI/test 環境でも正しく動作する）
-  const appId = process.env.RAKUTEN_APP_ID ?? '';
-  const accessKey = process.env.RAKUTEN_ACCESS_KEY ?? '';
+  const appId = (process.env.RAKUTEN_APP_ID ?? '').trim();
+  const accessKey = (process.env.RAKUTEN_ACCESS_KEY ?? '').trim();
   if (!appId || !accessKey) return { status: 'config_missing' };
 
   try {
