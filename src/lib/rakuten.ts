@@ -70,12 +70,35 @@ export async function logRakutenUpstreamError(
   try { rawBody = await res.text(); } catch { /* ignore read error */ }
 
   // 楽天APIのエラーコード・説明文を安全に抽出（値の存在チェックのみ）
+  // 優先順: フラット (errorCode/errorMessage) → 入れ子 (errors.errorCode/errorMessage) → 旧Ichiba形式 (error/error_description)
   let upstreamErrorCode: string | null = null;
   let upstreamErrorMessage: string | null = null;
   try {
     const j = JSON.parse(rawBody) as Record<string, unknown>;
-    if (typeof j.error === 'string') upstreamErrorCode = j.error;
-    if (typeof j.error_description === 'string') upstreamErrorMessage = j.error_description;
+
+    // 1. フラット形式: errorCode / errorMessage（数値・文字列どちらも文字列に変換）
+    if (typeof j.errorCode === 'string') upstreamErrorCode = j.errorCode;
+    else if (typeof j.errorCode === 'number') upstreamErrorCode = String(j.errorCode);
+    if (typeof j.errorMessage === 'string') upstreamErrorMessage = j.errorMessage;
+
+    // 2. 入れ子形式: errors.errorCode / errors.errorMessage（errors がオブジェクトの場合のみ）
+    if (upstreamErrorCode === null || upstreamErrorMessage === null) {
+      const errors = j.errors;
+      if (errors !== null && typeof errors === 'object' && !Array.isArray(errors)) {
+        const e = errors as Record<string, unknown>;
+        if (upstreamErrorCode === null) {
+          if (typeof e.errorCode === 'string') upstreamErrorCode = e.errorCode;
+          else if (typeof e.errorCode === 'number') upstreamErrorCode = String(e.errorCode);
+        }
+        if (upstreamErrorMessage === null && typeof e.errorMessage === 'string') {
+          upstreamErrorMessage = e.errorMessage;
+        }
+      }
+    }
+
+    // 3. 旧 Ichiba 形式: error / error_description（後方互換）
+    if (upstreamErrorCode === null && typeof j.error === 'string') upstreamErrorCode = j.error;
+    if (upstreamErrorMessage === null && typeof j.error_description === 'string') upstreamErrorMessage = j.error_description;
   } catch { /* not JSON */ }
 
   console.error(JSON.stringify({
