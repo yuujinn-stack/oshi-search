@@ -88,6 +88,8 @@ export interface ProductCardProps {
 
 export type ApiResult =
   | { status: 'ok'; products: RakutenItem[] }
-  | { status: 'empty' }     // バッチ済みだが関連商品なし
-  | { status: 'no_data' }   // バッチ未実行（初回セットアップ中）
-  | { status: 'error' };
+  | { status: 'empty' }                                  // API設定済み・検索結果0件
+  | { status: 'config_missing' }                         // RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEY 未設定または空
+  | { status: 'upstream_error'; httpStatus: number }     // 楽天APIが4xx/5xxを返した
+  | { status: 'no_data' }                                // バッチ未実行（初回セットアップ中）
+  | { status: 'error' };                                 // ネットワーク障害・タイムアウト等

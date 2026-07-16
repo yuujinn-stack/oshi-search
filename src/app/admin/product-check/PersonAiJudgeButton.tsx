@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-type Status = 'idle' | 'running' | 'done' | 'error';
+type Status = 'idle' | 'running' | 'done' | 'error' | 'config_missing';
 
 interface Result {
   aiJudged: number;
@@ -16,6 +16,7 @@ interface Result {
   unrelatedCount: number;
   uncertainCount: number;
   fetchFailed: number;
+  upstreamHttpStatus?: number;
   message?: string;
 }
 
@@ -43,24 +44,39 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
       const data = await res.json();
 
       if (!res.ok || !data.ok) {
+        if (data.status === 'config_missing') {
+          setStatus('config_missing');
+          return;
+        }
+        if (data.status === 'upstream_error') {
+          setErrorMsg(`楽天API ${data.httpStatus} エラー`);
+          setStatus('error');
+          return;
+        }
+        if (data.status === 'network_error') {
+          setErrorMsg('接続失敗（タイムアウト等）');
+          setStatus('error');
+          return;
+        }
         setErrorMsg(data.error ?? `HTTP ${res.status}`);
         setStatus('error');
         return;
       }
 
       setResult({
-        aiJudged:       data.person.aiJudged       ?? 0,
-        aiQueued:       data.person.aiQueued        ?? 0,
-        aiFailed:       data.person.aiFailed        ?? 0,
-        aiKeyMissing:   data.person.aiKeyMissing    ?? false,
-        stored:         data.person.stored          ?? 0,
-        skipped:        data.person.skipped         ?? 0,
-        excluded:       data.person.excluded        ?? 0,
-        relatedCount:   data.person.relatedCount    ?? 0,
-        unrelatedCount: data.person.unrelatedCount  ?? 0,
-        uncertainCount: data.person.uncertainCount  ?? 0,
-        fetchFailed:    data.person.fetchFailed     ?? 0,
-        message:        data.person.message,
+        aiJudged:           data.person.aiJudged           ?? 0,
+        aiQueued:           data.person.aiQueued           ?? 0,
+        aiFailed:           data.person.aiFailed           ?? 0,
+        aiKeyMissing:       data.person.aiKeyMissing       ?? false,
+        stored:             data.person.stored             ?? 0,
+        skipped:            data.person.skipped            ?? 0,
+        excluded:           data.person.excluded           ?? 0,
+        relatedCount:       data.person.relatedCount       ?? 0,
+        unrelatedCount:     data.person.unrelatedCount     ?? 0,
+        uncertainCount:     data.person.uncertainCount     ?? 0,
+        fetchFailed:        data.person.fetchFailed        ?? 0,
+        upstreamHttpStatus: data.person.upstreamHttpStatus,
+        message:            data.person.message,
       });
       setStatus('done');
     } catch (err) {
@@ -87,8 +103,15 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
         🔄 再判定
       </button>
 
+      {/* API設定不足 — 専用表示 */}
+      {status === 'config_missing' && (
+        <span className="text-xs text-orange-600 whitespace-nowrap font-medium" title="RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEY が未設定です">
+          ⚠ API設定不足
+        </span>
+      )}
+
+      {/* 正常完了 */}
       {status === 'done' && result && (() => {
-        // エラーケースを優先表示
         if (result.aiKeyMissing) {
           return (
             <span className="text-xs text-red-500 whitespace-nowrap" title="OPENAI_API_KEYが設定されていないためAI判定をスキップしました">
@@ -100,13 +123,14 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
           return (
             <span className="text-xs text-red-500 whitespace-nowrap" title={result.message}>
               ⚠ 楽天APIエラー({result.fetchFailed}件)
+              {result.upstreamHttpStatus && ` HTTP${result.upstreamHttpStatus}`}
             </span>
           );
         }
         if (result.stored === 0 && result.skipped === 0 && result.fetchFailed === 0) {
           return (
-            <span className="text-xs text-gray-400 whitespace-nowrap" title="楽天API未設定またはヒット0件">
-              取得0 (API未設定/0件)
+            <span className="text-xs text-gray-400 whitespace-nowrap" title={result.message}>
+              API正常・0件
             </span>
           );
         }
@@ -134,9 +158,10 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
         );
       })()}
 
+      {/* エラー */}
       {status === 'error' && (
-        <span className="text-xs text-red-500 max-w-[120px] truncate" title={errorMsg}>
-          失敗: {errorMsg.slice(0, 30)}
+        <span className="text-xs text-red-500 max-w-[160px] truncate" title={errorMsg}>
+          ⚠ {errorMsg.slice(0, 40)}
         </span>
       )}
     </div>

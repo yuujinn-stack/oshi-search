@@ -44,12 +44,14 @@ export interface PersonBatchResult {
   usedSuppressed: number;      // 中古dedup: 新品と重複して除外した商品数
   membershipFiltered: number;  // 卒業後グループ商品候補として確認待ちにした商品数
   // --- 追加診断フィールド ---
-  fetchFailed: number;         // 楽天APIエラーになったカテゴリ数（0=全カテゴリ正常）
-  aiFailed: number;            // AI判定エラー件数（aiQueued - aiJudged）
-  aiKeyMissing: boolean;       // true=OPENAI_API_KEY未設定でAI判定スキップ
-  relatedCount: number;        // AI判定で related になった件数
-  unrelatedCount: number;      // AI判定で unrelated になった件数
-  uncertainCount: number;      // AI判定で uncertain になった件数（auto含む）
+  fetchFailed: number;             // 楽天APIエラーになったカテゴリ数（upstream_error / error）
+  aiFailed: number;                // AI判定エラー件数（aiQueued - aiJudged）
+  aiKeyMissing: boolean;           // true=OPENAI_API_KEY未設定でAI判定スキップ
+  relatedCount: number;            // AI判定で related になった件数
+  unrelatedCount: number;          // AI判定で unrelated になった件数
+  uncertainCount: number;          // AI判定で uncertain になった件数（auto含む）
+  rakutenConfigMissing: boolean;   // true=RAKUTEN_APP_ID/ACCESS_KEY が未設定または空文字
+  upstreamHttpStatus?: number;     // 楽天APIが返した最初の 4xx/5xx ステータスコード
   error?: string;
 }
 
@@ -77,6 +79,7 @@ export async function processPerson(
       usedSuppressed: 0, membershipFiltered: 0,
       fetchFailed: 0, aiFailed: 0, aiKeyMissing: false,
       relatedCount: 0, unrelatedCount: 0, uncertainCount: 0,
+      rakutenConfigMissing: false,
       error: '人物が見つかりません',
     };
   }
@@ -96,6 +99,8 @@ export async function processPerson(
   let relatedCount = 0;
   let unrelatedCount = 0;
   let uncertainCount = 0;
+  let rakutenConfigMissing = false;
+  let upstreamHttpStatus: number | undefined = undefined;
   const toJudge: RakutenItem[] = [];
 
   const apiKeyStatus = process.env.OPENAI_API_KEY
@@ -115,9 +120,19 @@ export async function processPerson(
     const result = await getProductsByCategory(
       person.name, person.group, cat, person.config, 'no-store'
     );
-    if (result.status === 'error') {
+    if (result.status === 'config_missing') {
+      // 全カテゴリ同じ結果になるため早期脱出（変数名のみログ出力・値は出さない）
+      rakutenConfigMissing = true;
+      console.log(`[batch] 楽天API設定不足: RAKUTEN_APP_ID または RAKUTEN_ACCESS_KEY が未設定 (${personName})`);
+      break;
+    }
+    if (result.status === 'upstream_error') {
       fetchFailed++;
-      console.log(`[batch] ${cat}: 楽天APIエラー (fetchFailed=${fetchFailed})`);
+      if (upstreamHttpStatus === undefined) upstreamHttpStatus = result.httpStatus;
+      console.log(`[batch] ${cat}: 楽天API upstreamエラー HTTP ${result.httpStatus} (fetchFailed=${fetchFailed})`);
+    } else if (result.status === 'error') {
+      fetchFailed++;
+      console.log(`[batch] ${cat}: 楽天APIネットワークエラー (fetchFailed=${fetchFailed})`);
     }
     let products = result.status === 'ok' ? result.products : [];
 
@@ -148,7 +163,19 @@ export async function processPerson(
       }
     }
 
-    await storeProducts(person.name, cat, products, existingVerdictIds);
+    try {
+      await storeProducts(person.name, cat, products, existingVerdictIds);
+    } catch (err) {
+      console.error(`[batch] DB保存失敗 cat=${cat} personName=${personName}: ${String(err)}`);
+      return {
+        personName, stored, aiJudged: 0, aiQueued: 0, skipped, excluded,
+        usedSuppressed, membershipFiltered,
+        fetchFailed, aiFailed: 0, aiKeyMissing: false,
+        relatedCount: 0, unrelatedCount: 0, uncertainCount: 0,
+        rakutenConfigMissing: false, upstreamHttpStatus,
+        error: `DB保存失敗: ${cat}`,
+      };
+    }
     stored += products.length;
 
     // storeProducts 完了後ログ（ステップ2）
@@ -348,10 +375,11 @@ export async function processPerson(
   }
 
   const aiFailed = Math.max(0, aiQueued - aiJudged);
-  console.log(`[batch] ===== 完了: ${personName} 取得=${stored} fetchFailed=${fetchFailed} AI対象=${aiQueued} AI完了=${aiJudged} aiFailed=${aiFailed} aiKeyMissing=${aiKeyMissing} related=${relatedCount} unrelated=${unrelatedCount} uncertain=${uncertainCount} スキップ=${skipped} 除外=${excluded} 中古抑制=${usedSuppressed} 卒業後候補=${membershipFiltered} =====`);
+  console.log(`[batch] ===== 完了: ${personName} 取得=${stored} fetchFailed=${fetchFailed} upstreamHttpStatus=${upstreamHttpStatus ?? '-'} rakutenConfigMissing=${rakutenConfigMissing} AI対象=${aiQueued} AI完了=${aiJudged} aiFailed=${aiFailed} aiKeyMissing=${aiKeyMissing} related=${relatedCount} unrelated=${unrelatedCount} uncertain=${uncertainCount} スキップ=${skipped} 除外=${excluded} 中古抑制=${usedSuppressed} 卒業後候補=${membershipFiltered} =====`);
   return {
     personName, stored, aiJudged, aiQueued, skipped, excluded, usedSuppressed, membershipFiltered,
     fetchFailed, aiFailed, aiKeyMissing, relatedCount, unrelatedCount, uncertainCount,
+    rakutenConfigMissing, upstreamHttpStatus,
   };
 }
 
@@ -374,6 +402,7 @@ export async function processAllPersons(): Promise<BatchSummary> {
         usedSuppressed: 0, membershipFiltered: 0,
         fetchFailed: 0, aiFailed: 0, aiKeyMissing: false,
         relatedCount: 0, unrelatedCount: 0, uncertainCount: 0,
+        rakutenConfigMissing: false,
         error: String(err),
       });
     }

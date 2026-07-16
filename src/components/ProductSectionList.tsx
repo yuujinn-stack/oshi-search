@@ -24,7 +24,7 @@ function EmptyState({ children }: { children: string }) {
 export default function ProductSectionList({ result }: Props) {
   const [showAll, setShowAll] = useState(false);
 
-  if (result.status === 'error') {
+  if (result.status === 'error' || result.status === 'config_missing' || result.status === 'upstream_error') {
     return <EmptyState>現在商品情報を取得できません</EmptyState>;
   }
   if (result.status === 'no_data') {

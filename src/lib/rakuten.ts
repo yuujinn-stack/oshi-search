@@ -12,6 +12,13 @@ import { calcScore } from './scoring';
 const APP_ID = process.env.RAKUTEN_APP_ID ?? '';
 const ACCESS_KEY = process.env.RAKUTEN_ACCESS_KEY ?? '';
 const AFFILIATE_ID = process.env.RAKUTEN_AFFILIATE_ID ?? '';
+
+// 楽天APIが 4xx/5xx を返した場合に throw して getProductsByCategory の catch で捕捉する
+class RakutenApiError extends Error {
+  constructor(public readonly httpStatus: number) {
+    super(`楽天API HTTP ${httpStatus}`);
+  }
+}
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 const REVALIDATE = 86400; // 24h
 
@@ -87,7 +94,7 @@ async function fetchBooksPages(
     );
     if (!res.ok) {
       console.log(`[rakuten] Books(${paramKey})エラー: HTTP ${res.status} ${paramKey}="${paramValue}" page=${page}`);
-      break;
+      throw new RakutenApiError(res.status);
     }
     const data: RakutenBooksResponse = await res.json();
     if (data.error) {
@@ -267,7 +274,7 @@ async function fetchDvd(
       );
       if (!res.ok) {
         console.log(`[rakuten] DVD APIエラー: HTTP ${res.status} artistName="${artistName}" page=${page}`);
-        break;
+        throw new RakutenApiError(res.status);
       }
       const data: RakutenDvdResponse = await res.json();
       if (data.error) {
@@ -360,7 +367,7 @@ async function fetchCd(
       );
       if (!res.ok) {
         console.log(`[rakuten] CD APIエラー: HTTP ${res.status} artistName="${artistName}" page=${page}`);
-        break;
+        throw new RakutenApiError(res.status);
       }
       const data: RakutenDvdResponse = await res.json();
       if (data.error) {
@@ -457,7 +464,7 @@ async function fetchIchiba(
       );
       if (!res.ok) {
         console.log(`[rakuten] Ichiba APIエラー: HTTP ${res.status} keyword="${keyword}" page=${page}`);
-        break;
+        throw new RakutenApiError(res.status);
       }
       const data: RakutenIchibaResponse = await res.json();
       if (data.error) {
@@ -553,7 +560,7 @@ async function fetchUsed(
       );
       if (!res.ok) {
         console.log(`[rakuten] 中古 APIエラー: HTTP ${res.status} keyword="${keyword}" page=${page}`);
-        break;
+        throw new RakutenApiError(res.status);
       }
       const data: RakutenIchibaResponse = await res.json();
       if (data.error) {
@@ -614,7 +621,10 @@ export async function getProductsByCategory(
   config: PersonConfig = {},
   cacheMode: RequestCache = 'default',
 ): Promise<ApiResult> {
-  if (!APP_ID || !ACCESS_KEY) return { status: 'empty' };
+  // 呼び出し時点の env を参照（module load 後に設定される CI/test 環境でも正しく動作する）
+  const appId = process.env.RAKUTEN_APP_ID ?? '';
+  const accessKey = process.env.RAKUTEN_ACCESS_KEY ?? '';
+  if (!appId || !accessKey) return { status: 'config_missing' };
 
   try {
     let products: RakutenItem[];
@@ -643,7 +653,10 @@ export async function getProductsByCategory(
     // スコアで降順ソートして返す（フィルタリングは呼び出し元で行う）
     const sorted = products.sort((a, b) => b.relevanceScore - a.relevanceScore);
     return sorted.length > 0 ? { status: 'ok', products: sorted } : { status: 'empty' };
-  } catch {
+  } catch (err) {
+    if (err instanceof RakutenApiError) {
+      return { status: 'upstream_error', httpStatus: err.httpStatus };
+    }
     return { status: 'error' };
   }
 }

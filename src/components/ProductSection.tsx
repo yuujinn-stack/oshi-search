@@ -8,7 +8,7 @@ interface Props {
 
 // 既存コードとの互換性のために残しているが、person/[slug]/page.tsx からは直接使われていない
 export default function ProductSection({ result }: Props) {
-  if (result.status === 'error') {
+  if (result.status === 'error' || result.status === 'config_missing' || result.status === 'upstream_error') {
     return (
       <div className="py-6 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">
         現在商品情報を取得できません
