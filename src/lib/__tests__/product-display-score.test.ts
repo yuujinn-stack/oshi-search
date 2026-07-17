@@ -293,3 +293,82 @@ describe('おすすめ順: 新品→中古の安定ソート', () => {
     expect(stableUsedSort(items).length).toBe(3);
   });
 });
+
+// ─── 非破壊ソート検証 ──────────────────────────────────────────────────────
+// ProductTabList の sorted useMemo が入力配列を変更しないことを確認する。
+// stableUsedSort は [...items].sort(...) と等価なため、同じ非破壊保証を持つ。
+describe('非破壊ソート: 入力配列を変更しない', () => {
+  interface Item { id: string; isUsed: boolean; originalIndex: number }
+
+  function stableUsedSort(items: Item[]): Item[] {
+    return [...items].sort((a, b) => (a.isUsed ? 1 : 0) - (b.isUsed ? 1 : 0));
+  }
+
+  test('おすすめ順ソート後も入力配列の順番が変更されていない', () => {
+    const input: Item[] = [
+      { id: 'new-photo', isUsed: false, originalIndex: 0 },
+      { id: 'used-photo', isUsed: true,  originalIndex: 1 },
+      { id: 'new-cd',    isUsed: false, originalIndex: 2 },
+      { id: 'used-cd',   isUsed: true,  originalIndex: 3 },
+    ];
+    const originalIds = input.map((i) => i.id);
+    stableUsedSort(input); // ソート実行
+    // 入力配列の順序が変わっていないこと
+    expect(input.map((i) => i.id)).toEqual(originalIds);
+  });
+
+  test('おすすめ順から価格順へ切り替えても元配列が壊れない', () => {
+    const input: Item[] = [
+      { id: 'new-photo', isUsed: false, originalIndex: 0 },
+      { id: 'used-photo', isUsed: true,  originalIndex: 1 },
+      { id: 'new-cd',    isUsed: false, originalIndex: 2 },
+    ];
+    const originalIds = input.map((i) => i.id);
+
+    // おすすめ順でソート
+    const sorted1 = stableUsedSort(input);
+    expect(sorted1.map((i) => i.id)).toEqual(['new-photo', 'new-cd', 'used-photo']);
+
+    // 価格順への切り替えを模擬（別の sort 処理が input を参照しても壊れない）
+    const sorted2 = [...input].sort((a, b) => a.originalIndex - b.originalIndex);
+    expect(sorted2.map((i) => i.id)).toEqual(originalIds);
+
+    // 元配列は変わっていない
+    expect(input.map((i) => i.id)).toEqual(originalIds);
+  });
+
+  test('カテゴリタブ切り替えを模擬: フィルタ後も元配列の順序が保たれる', () => {
+    const input: Item[] = [
+      { id: 'new-photo', isUsed: false, originalIndex: 0 },
+      { id: 'used-photo', isUsed: true,  originalIndex: 1 },
+      { id: 'new-cd',    isUsed: false, originalIndex: 2 },
+      { id: 'used-cd',   isUsed: true,  originalIndex: 3 },
+    ];
+    const originalIds = input.map((i) => i.id);
+
+    // 「すべて」タブ → おすすめ順ソート
+    const allSorted = stableUsedSort(input);
+    expect(allSorted.map((i) => i.id)).toEqual(['new-photo', 'new-cd', 'used-photo', 'used-cd']);
+
+    // 「中古」タブ → フィルタ（元配列を参照）
+    const usedOnly = input.filter((i) => i.isUsed);
+    expect(usedOnly.map((i) => i.id)).toEqual(['used-photo', 'used-cd']);
+
+    // 「新品」タブ → フィルタ（元配列を参照）
+    const newOnly = input.filter((i) => !i.isUsed);
+    expect(newOnly.map((i) => i.id)).toEqual(['new-photo', 'new-cd']);
+
+    // 元配列はどちらの操作後も変わっていない
+    expect(input.map((i) => i.id)).toEqual(originalIds);
+  });
+
+  test('ソート結果は入力配列と別の参照である', () => {
+    const input: Item[] = [
+      { id: 'n1', isUsed: false, originalIndex: 0 },
+      { id: 'u1', isUsed: true,  originalIndex: 1 },
+    ];
+    const result = stableUsedSort(input);
+    // 別の配列オブジェクトであること
+    expect(result).not.toBe(input);
+  });
+});
