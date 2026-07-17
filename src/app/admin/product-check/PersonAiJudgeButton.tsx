@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 
-type Status = 'idle' | 'running' | 'done' | 'error' | 'config_missing';
+type Status = 'idle' | 'running' | 'done' | 'error' | 'config_missing' | 'rate_limited';
 
 interface Result {
   aiJudged: number;
   aiQueued: number;
+  autoApproved: number;
   aiFailed: number;
   aiKeyMissing: boolean;
   stored: number;
@@ -16,6 +17,7 @@ interface Result {
   unrelatedCount: number;
   uncertainCount: number;
   fetchFailed: number;
+  failedCategories: string[];
   upstreamHttpStatus?: number;
   message?: string;
 }
@@ -48,6 +50,10 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
           setStatus('config_missing');
           return;
         }
+        if (data.status === 'rate_limited') {
+          setStatus('rate_limited');
+          return;
+        }
         if (data.status === 'upstream_error') {
           setErrorMsg(`楽天API ${data.httpStatus} エラー`);
           setStatus('error');
@@ -66,6 +72,7 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
       setResult({
         aiJudged:           data.person.aiJudged           ?? 0,
         aiQueued:           data.person.aiQueued           ?? 0,
+        autoApproved:       data.person.autoApproved       ?? 0,
         aiFailed:           data.person.aiFailed           ?? 0,
         aiKeyMissing:       data.person.aiKeyMissing       ?? false,
         stored:             data.person.stored             ?? 0,
@@ -75,6 +82,7 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
         unrelatedCount:     data.person.unrelatedCount     ?? 0,
         uncertainCount:     data.person.uncertainCount     ?? 0,
         fetchFailed:        data.person.fetchFailed        ?? 0,
+        failedCategories:   data.person.failedCategories   ?? [],
         upstreamHttpStatus: data.person.upstreamHttpStatus,
         message:            data.person.message,
       });
@@ -110,6 +118,13 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
         </span>
       )}
 
+      {/* 429 レート制限 */}
+      {status === 'rate_limited' && (
+        <span className="text-xs text-amber-600 whitespace-nowrap" title="HTTP 429 Too Many Requests — しばらく時間を置いてから再実行してください">
+          ⏳ 利用制限中 — しばらく待ってから再実行してください
+        </span>
+      )}
+
       {/* 正常完了 */}
       {status === 'done' && result && (() => {
         if (result.aiKeyMissing) {
@@ -121,8 +136,11 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
         }
         if (result.fetchFailed > 0 && result.stored === 0) {
           return (
-            <span className="text-xs text-red-500 whitespace-nowrap" title={result.message}>
-              ⚠ 楽天APIエラー({result.fetchFailed}件)
+            <span
+              className="text-xs text-red-500 whitespace-nowrap"
+              title={result.failedCategories.length > 0 ? `失敗カテゴリ: ${result.failedCategories.join(', ')}` : result.message}
+            >
+              ⚠ 検索失敗{result.fetchFailed}カテゴリ
               {result.upstreamHttpStatus && ` HTTP${result.upstreamHttpStatus}`}
             </span>
           );
@@ -139,16 +157,24 @@ export default function PersonAiJudgeButton({ personName }: { personName: string
             <span className="text-gray-500">取得{result.stored}</span>
             <span className="text-gray-400">skip{result.skipped}</span>
             {result.excluded > 0 && <span className="text-orange-500">除外{result.excluded}</span>}
-            {result.fetchFailed > 0 && <span className="text-orange-500">取得エラー{result.fetchFailed}</span>}
+            {result.fetchFailed > 0 && (
+              <span
+                className="text-orange-500"
+                title={result.failedCategories.length > 0 ? `失敗カテゴリ: ${result.failedCategories.join(', ')}` : undefined}
+              >
+                検索失敗{result.fetchFailed}カテゴリ
+              </span>
+            )}
+            {result.autoApproved > 0 && <span className="text-blue-600">自動承認{result.autoApproved}</span>}
             <span className="text-blue-500">AI対象{result.aiQueued}</span>
-            {result.aiQueued === 0 && result.stored > 0 ? (
+            {result.aiQueued === 0 && result.stored > 0 && result.autoApproved === 0 ? (
               <span className="text-amber-600">（全件判定済み）</span>
-            ) : (
+            ) : result.aiQueued > 0 ? (
               <span className={result.aiFailed > 0 ? 'text-red-500' : 'text-green-600'}>
                 完了{result.aiJudged}
                 {result.aiFailed > 0 && ` (失敗${result.aiFailed})`}
               </span>
-            )}
+            ) : null}
             {result.aiQueued > 0 && (
               <span className="text-gray-400">
                 related:{result.relatedCount} unrelated:{result.unrelatedCount} uncertain:{result.uncertainCount}

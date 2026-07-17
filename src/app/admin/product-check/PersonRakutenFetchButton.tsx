@@ -3,18 +3,21 @@
 import { useState } from 'react';
 
 // 'config_missing': API設定不足で503が返った
+// 'rate_limited': 楽天API 429 Too Many Requests
 // 'done': 正常完了（0件含む）
 // 'error': その他エラー
-type Status = 'idle' | 'running' | 'done' | 'error' | 'config_missing';
+type Status = 'idle' | 'running' | 'done' | 'error' | 'config_missing' | 'rate_limited';
 
 interface FetchResult {
   stored: number;
   aiJudged: number;
   aiQueued: number;
+  autoApproved: number;
   skipped: number;
   excluded: number;
   usedSuppressed: number;
   fetchFailed: number;
+  failedCategories: string[];
   aiFailed: number;
   aiKeyMissing: boolean;
   upstreamHttpStatus?: number;
@@ -47,6 +50,11 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
           setStatus('config_missing');
           return;
         }
+        // 429 レート制限: 連打させないよう専用表示（ボタンは再押下可）
+        if (data.status === 'rate_limited') {
+          setStatus('rate_limited');
+          return;
+        }
         // upstream_error: 楽天APIが 4xx/5xx を返した
         if (data.status === 'upstream_error') {
           setErrorMsg(`楽天API ${data.httpStatus} エラー`);
@@ -68,10 +76,12 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
         stored:             data.person.stored             ?? 0,
         aiJudged:           data.person.aiJudged           ?? 0,
         aiQueued:           data.person.aiQueued           ?? 0,
+        autoApproved:       data.person.autoApproved       ?? 0,
         skipped:            data.person.skipped            ?? 0,
         excluded:           data.person.excluded           ?? 0,
         usedSuppressed:     data.person.usedSuppressed     ?? 0,
         fetchFailed:        data.person.fetchFailed        ?? 0,
+        failedCategories:   data.person.failedCategories   ?? [],
         aiFailed:           data.person.aiFailed           ?? 0,
         aiKeyMissing:       data.person.aiKeyMissing       ?? false,
         upstreamHttpStatus: data.person.upstreamHttpStatus,
@@ -102,6 +112,13 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
         </span>
       )}
 
+      {/* 429 レート制限 */}
+      {status === 'rate_limited' && (
+        <span className="text-xs text-amber-600 whitespace-nowrap" title="HTTP 429 Too Many Requests — しばらく時間を置いてから再実行してください">
+          ⏳ 利用制限中 — しばらく待ってから再実行してください
+        </span>
+      )}
+
       {/* 正常完了 */}
       {status === 'done' && result && (() => {
         // 楽天APIが正常に0件を返した（設定不足とは別）
@@ -112,23 +129,31 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
             </span>
           );
         }
-        // 楽天APIエラー（部分的にせよ0件取得）
+        // 楽天APIエラーで全件取得失敗
         if (result.fetchFailed > 0 && result.stored === 0) {
           return (
-            <span className="text-xs text-red-500 whitespace-nowrap" title={result.message}>
-              ⚠ 楽天APIエラー({result.fetchFailed}件)
+            <span className="text-xs text-red-500 whitespace-nowrap" title={result.failedCategories.length > 0 ? `失敗カテゴリ: ${result.failedCategories.join(', ')}` : result.message}>
+              ⚠ 検索失敗{result.fetchFailed}カテゴリ
               {result.upstreamHttpStatus && ` HTTP${result.upstreamHttpStatus}`}
             </span>
           );
         }
-        // 正常取得（0件超）
+        // 正常取得（0件超）または部分成功
         return (
           <span className="text-xs whitespace-nowrap flex items-center gap-1.5">
             <span className="text-teal-600 font-medium">取得{result.stored}</span>
             {result.skipped > 0 && <span className="text-gray-400">判定済skip{result.skipped}</span>}
             {result.excluded > 0 && <span className="text-orange-500">除外KW{result.excluded}</span>}
             {result.usedSuppressed > 0 && <span className="text-blue-500">中古抑制{result.usedSuppressed}</span>}
-            {result.fetchFailed > 0 && <span className="text-orange-500">取得エラー{result.fetchFailed}</span>}
+            {result.fetchFailed > 0 && (
+              <span
+                className="text-orange-500"
+                title={result.failedCategories.length > 0 ? `失敗カテゴリ: ${result.failedCategories.join(', ')}` : undefined}
+              >
+                検索失敗{result.fetchFailed}カテゴリ
+              </span>
+            )}
+            {result.autoApproved > 0 && <span className="text-blue-600">自動承認{result.autoApproved}</span>}
             {result.aiKeyMissing ? (
               <span className="text-red-500">⚠AIキー未設定</span>
             ) : result.aiQueued > 0 ? (
@@ -136,8 +161,8 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
                 AI判定{result.aiJudged}/{result.aiQueued}
                 {result.aiFailed > 0 && ` (失敗${result.aiFailed})`}
               </span>
-            ) : result.stored > 0 ? (
-              <span className="text-gray-400">AI対象なし(全判定済)</span>
+            ) : result.stored > 0 && result.autoApproved === 0 ? (
+              <span className="text-gray-400">AI判定対象なし</span>
             ) : null}
           </span>
         );
