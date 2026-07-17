@@ -98,6 +98,11 @@ export default function BatchButton({ personNames }: Props) {
       } catch (err) {
         errors.push({ name, error: String(err) });
       }
+
+      // processAllPersons() の300ms待機と同じ間隔を維持（楽天API 429連鎖防止）
+      if (i < personNames.length - 1) {
+        await new Promise((r) => setTimeout(r, 300));
+      }
     }
 
     const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
