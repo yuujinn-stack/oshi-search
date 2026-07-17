@@ -112,6 +112,14 @@ const CREATE_STATEMENTS = [
     PRIMARY KEY (person_name, product_id)
   )`,
   sql`CREATE INDEX IF NOT EXISTS verdicts_person_name_idx ON verdicts (person_name)`,
+  sql`CREATE TABLE IF NOT EXISTS batch_lock (
+    lock_key     TEXT PRIMARY KEY NOT NULL,
+    owner_id     TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'running',
+    acquired_at  TIMESTAMPTZ NOT NULL,
+    heartbeat_at TIMESTAMPTZ NOT NULL,
+    expires_at   TIMESTAMPTZ NOT NULL
+  )`,
 ];
 
 // ── ALTER TABLE ADD COLUMN IF NOT EXISTS ─────────────────────────────────────
@@ -199,7 +207,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE verdicts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
 ];
 
-const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts'];
+const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock'];
 
 async function getTableCounts(): Promise<Record<string, number | string>> {
   const counts: Record<string, number | string> = {};
@@ -222,7 +230,7 @@ async function getExistingColumns(): Promise<Record<string, string[]>> {
       SELECT table_name, column_name
       FROM information_schema.columns
       WHERE table_schema = 'public'
-        AND table_name = ANY(ARRAY['persons','person_meta','group_meta','vod_providers','works','products','verdicts'])
+        AND table_name = ANY(ARRAY['persons','person_meta','group_meta','vod_providers','works','products','verdicts','batch_lock'])
       ORDER BY table_name, ordinal_position
     `);
     const rows = result as unknown as Array<{ table_name: string; column_name: string }>;

@@ -209,6 +209,18 @@ export const systemUsageSnapshots = pgTable('system_usage_snapshots', {
   index('sus_recorded_at_idx').on(t.recordedAt),
 ]);
 
+// ── 一括実行ロック（batch_lock）─────────────────────────────────────────────
+// product-check-bulk の同時実行を1セッションに制限するための lease テーブル
+// expires_at < NOW() または status IN ('completed','failed') なら再取得可能
+export const batchLock = pgTable('batch_lock', {
+  lockKey:     text('lock_key').primaryKey(),
+  ownerId:     text('owner_id').notNull(),
+  status:      text('status').notNull().default('running'), // 'running' | 'completed' | 'failed'
+  acquiredAt:  timestamp('acquired_at',  { withTimezone: true }).notNull(),
+  heartbeatAt: timestamp('heartbeat_at', { withTimezone: true }).notNull(),
+  expiresAt:   timestamp('expires_at',   { withTimezone: true }).notNull(),
+});
+
 // ── AI/手動判定結果（verdicts:{personName}）──────────────────────────────────
 export const verdicts = pgTable('verdicts', {
   personName:    text('person_name').notNull(),
