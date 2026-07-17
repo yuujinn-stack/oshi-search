@@ -59,12 +59,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // ── 楽天API 429 レート制限（全カテゴリ取得0件） ──────────────────────────
+  if (result.fetchFailed > 0 && result.stored === 0 && result.upstreamHttpStatus === 429) {
+    console.log(`[ai-judge] operation:rakuten_refetch personName:${body.personName} status:rate_limited fetchFailed:${result.fetchFailed} durationMs:${durationMs}`);
+    return NextResponse.json(
+      {
+        ok: false,
+        status: 'rate_limited',
+        error: '楽天APIの一時的な利用制限です。しばらく待ってから再実行してください。',
+        httpStatus: 429,
+        failedCategories: result.failedCategories,
+      },
+      { status: 429 },
+    );
+  }
+
   // ── 楽天API upstream エラー（全カテゴリ取得0件） ─────────────────────────
   if (result.fetchFailed > 0 && result.stored === 0 && result.upstreamHttpStatus !== undefined) {
     const httpStatus = result.upstreamHttpStatus;
     console.log(`[ai-judge] operation:rakuten_refetch personName:${body.personName} status:upstream_error upstreamHttpStatus:${httpStatus} fetchFailed:${result.fetchFailed} durationMs:${durationMs}`);
     return NextResponse.json(
-      { ok: false, status: 'upstream_error', error: `楽天APIが ${httpStatus} を返しました`, httpStatus },
+      { ok: false, status: 'upstream_error', error: `楽天APIが ${httpStatus} を返しました`, httpStatus, failedCategories: result.failedCategories },
       { status: 502 },
     );
   }
@@ -73,7 +88,7 @@ export async function POST(req: NextRequest) {
   if (result.fetchFailed > 0 && result.stored === 0 && result.upstreamHttpStatus === undefined) {
     console.log(`[ai-judge] operation:rakuten_refetch personName:${body.personName} status:network_error fetchFailed:${result.fetchFailed} durationMs:${durationMs}`);
     return NextResponse.json(
-      { ok: false, status: 'network_error', error: '楽天APIへの接続に失敗しました（タイムアウトまたはネットワーク障害）' },
+      { ok: false, status: 'network_error', error: '楽天APIへの接続に失敗しました（タイムアウトまたはネットワーク障害）', failedCategories: result.failedCategories },
       { status: 500 },
     );
   }
@@ -89,35 +104,47 @@ export async function POST(req: NextRequest) {
 
   revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
 
+  // ── 正常系ステータス判定 ──────────────────────────────────────────────────
+  // partial_success: 一部カテゴリ取得成功 + 一部失敗（fetchFailed > 0 && stored > 0）
+  const apiStatus: 'success' | 'partial_success' | 'no_targets' =
+    result.fetchFailed > 0 && result.stored > 0
+      ? 'partial_success'
+      : result.stored === 0 && result.skipped === 0 && result.fetchFailed === 0
+        ? 'no_targets'
+        : 'success';
+
   // ── 正常系メッセージ生成 ──────────────────────────────────────────────────
   let message = '';
   if (result.error) {
     message = result.error;
-  } else if (result.fetchFailed > 0 && result.stored === 0) {
-    message = `楽天API取得エラー (${result.fetchFailed}カテゴリ)`;
+  } else if (apiStatus === 'partial_success') {
+    message = `取得${result.stored}件 / 検索失敗${result.fetchFailed}カテゴリ (${result.failedCategories.join(', ')})`;
   } else if (result.aiKeyMissing) {
     message = 'OPENAI_API_KEY 未設定: AI判定をスキップしました';
   } else if (result.aiFailed > 0) {
     message = `AI判定 ${result.aiQueued}件中 ${result.aiFailed}件がエラーになりました`;
-  } else if (result.stored === 0 && result.skipped === 0 && result.fetchFailed === 0) {
+  } else if (apiStatus === 'no_targets') {
     message = '楽天API正常・該当商品0件';
-  } else if (result.aiQueued === 0 && result.stored > 0) {
+  } else if (result.aiQueued === 0 && result.autoApproved === 0 && result.stored > 0) {
     message = `取得${result.stored}件（全件判定済みのためAI判定スキップ）`;
+  } else if (result.autoApproved > 0 && result.aiQueued === 0) {
+    message = `取得${result.stored}件 自動承認${result.autoApproved}件`;
   } else {
-    message = `取得${result.stored}件 AI判定${result.aiJudged}/${result.aiQueued}件`;
+    message = `取得${result.stored}件 自動承認${result.autoApproved}件 AI判定${result.aiJudged}/${result.aiQueued}件`;
   }
 
   console.log([
     `[ai-judge] operation:rakuten_refetch`,
     `personName:${body.personName}`,
-    `status:ok`,
+    `status:${apiStatus}`,
     `fetched:${result.stored}`,
     `skipped:${result.skipped}`,
     `excluded:${result.excluded}`,
+    `autoApproved:${result.autoApproved}`,
     `fetchFailed:${result.fetchFailed}`,
+    `failedCategories:${result.failedCategories.join(',') || '-'}`,
     `upstreamHttpStatus:${result.upstreamHttpStatus ?? '-'}`,
     `targeted:${result.aiQueued}`,
-    `processed:${result.aiJudged}`,
     `succeeded:${result.aiJudged}`,
     `failed:${result.aiFailed}`,
     `related:${result.relatedCount}`,
@@ -126,5 +153,5 @@ export async function POST(req: NextRequest) {
     `durationMs:${durationMs}`,
   ].join(' '));
 
-  return NextResponse.json({ ok: true, person: { ...result, message } });
+  return NextResponse.json({ ok: true, status: apiStatus, person: { ...result, message } });
 }

@@ -394,6 +394,137 @@ describe('processPerson()', () => {
       expect(r.rakutenConfigMissing).toBe(false);
     });
   });
+
+  // ── テスト14: 自動承認あり（aiJudged/aiQueued 不変条件の検証） ────────────────
+  describe('テスト14: 自動承認あり', () => {
+    beforeEach(() => {
+      process.env.OPENAI_API_KEY = 'sk-test-key';
+
+      const items = [makeItem('item-auto', '自動承認商品'), makeItem('item-ai', 'AI判定商品')];
+      vi.mocked(getProductsByCategory).mockImplementation(
+        (_name, _group, cat) =>
+          cat === '写真集'
+            ? Promise.resolve({ status: 'ok', products: items })
+            : Promise.resolve({ status: 'empty' }),
+      );
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      // item-auto は自動承認、item-ai は通常 AI 判定
+      vi.mocked(shouldAutoApprove).mockImplementation((p) => p.id === 'item-auto');
+      vi.mocked(judgeProducts).mockResolvedValue([
+        { id: 'item-ai', result: { verdict: 'related', score: 85, reason: 'ok' } },
+      ]);
+    });
+
+    it('autoApproved=1 aiQueued=1 aiJudged=1（自動承認分は aiJudged に含まれない）', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.autoApproved).toBe(1);
+      expect(r.aiQueued).toBe(1);
+      expect(r.aiJudged).toBe(1);
+    });
+
+    it('不変条件: aiJudged <= aiQueued', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.aiJudged).toBeLessThanOrEqual(r.aiQueued);
+    });
+
+    it('aiFailed=0', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.aiFailed).toBe(0);
+    });
+  });
+
+  // ── テスト15: 全商品が自動承認（aiQueued=0 のとき aiJudged も 0）─────────────
+  describe('テスト15: 全商品が自動承認', () => {
+    beforeEach(() => {
+      process.env.OPENAI_API_KEY = 'sk-test-key';
+
+      const items = [makeItem('item-a'), makeItem('item-b')];
+      vi.mocked(getProductsByCategory).mockImplementation(
+        (_name, _group, cat) =>
+          cat === '写真集'
+            ? Promise.resolve({ status: 'ok', products: items })
+            : Promise.resolve({ status: 'empty' }),
+      );
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(shouldAutoApprove).mockReturnValue(true);
+      vi.mocked(judgeProducts).mockResolvedValue([]);
+    });
+
+    it('autoApproved=2 aiQueued=0 aiJudged=0', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.autoApproved).toBe(2);
+      expect(r.aiQueued).toBe(0);
+      expect(r.aiJudged).toBe(0);
+    });
+
+    it('不変条件: aiJudged <= aiQueued（どちらも0）', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.aiJudged).toBeLessThanOrEqual(r.aiQueued);
+    });
+
+    it('judgeProducts は呼ばれない', async () => {
+      await processPerson('テスト人物');
+      expect(judgeProducts).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── テスト16: 一部カテゴリ失敗（部分成功 = failedCategories に失敗分が入る）───
+  describe('テスト16: 一部カテゴリ取得失敗（部分成功）', () => {
+    beforeEach(() => {
+      process.env.OPENAI_API_KEY = 'sk-test-key';
+
+      const item = makeItem('item-ok');
+      vi.mocked(getProductsByCategory).mockImplementation(
+        (_name, _group, cat) => {
+          if (cat === '写真集') return Promise.resolve({ status: 'ok', products: [item] });
+          if (cat === '本・雑誌') return Promise.resolve({ status: 'upstream_error', httpStatus: 403 });
+          if (cat === 'CD') return Promise.resolve({ status: 'error' });
+          return Promise.resolve({ status: 'empty' });
+        },
+      );
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockResolvedValue([
+        { id: 'item-ok', result: { verdict: 'related', score: 85, reason: 'ok' } },
+      ]);
+    });
+
+    it('fetchFailed=2 stored>0（部分成功）', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.fetchFailed).toBe(2);
+      expect(r.stored).toBeGreaterThan(0);
+    });
+
+    it('failedCategories に "本・雑誌" と "CD" が含まれる', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.failedCategories).toContain('本・雑誌');
+      expect(r.failedCategories).toContain('CD');
+    });
+
+    it('failedCategories に成功カテゴリ "写真集" が含まれない', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.failedCategories).not.toContain('写真集');
+    });
+  });
+
+  // ── テスト17: 楽天APIが429を返す（rate_limited 検証用） ─────────────────────
+  describe('テスト17: 楽天APIが429を返す（全カテゴリ）', () => {
+    beforeEach(() => {
+      vi.mocked(getProductsByCategory).mockResolvedValue({ status: 'upstream_error', httpStatus: 429 });
+      vi.mocked(judgeProducts).mockResolvedValue([]);
+    });
+
+    it('fetchFailed=6 upstreamHttpStatus=429 stored=0', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.fetchFailed).toBe(6);
+      expect(r.upstreamHttpStatus).toBe(429);
+      expect(r.stored).toBe(0);
+    });
+
+    it('failedCategories に全カテゴリが含まれる', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.failedCategories).toHaveLength(6);
+    });
+  });
 });
 
 // ── ソースコードアサーション（曖昧表示の残留チェック） ──────────────────────────
@@ -437,6 +568,46 @@ describe('UIコード品質チェック', () => {
       'utf-8',
     );
     expect(src).toContain('API正常・0件');
+  });
+
+  it('PersonRakutenFetchButton に "取得エラー" が存在しない（検索失敗カテゴリ表記に統一）', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/app/admin/product-check/PersonRakutenFetchButton.tsx'),
+      'utf-8',
+    );
+    expect(src).not.toContain('取得エラー');
+  });
+
+  it('PersonRakutenFetchButton に "利用制限" メッセージが含まれる（429対応）', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/app/admin/product-check/PersonRakutenFetchButton.tsx'),
+      'utf-8',
+    );
+    expect(src).toContain('利用制限');
+  });
+
+  it('PersonAiJudgeButton に "取得エラー" が存在しない（検索失敗カテゴリ表記に統一）', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/app/admin/product-check/PersonAiJudgeButton.tsx'),
+      'utf-8',
+    );
+    expect(src).not.toContain('取得エラー');
+  });
+
+  it('PersonAiJudgeButton に "利用制限" メッセージが含まれる（429対応）', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/app/admin/product-check/PersonAiJudgeButton.tsx'),
+      'utf-8',
+    );
+    expect(src).toContain('利用制限');
   });
 });
 
