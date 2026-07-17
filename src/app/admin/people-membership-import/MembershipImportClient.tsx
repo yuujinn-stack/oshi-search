@@ -338,12 +338,204 @@ function CsvActions({
   );
 }
 
+// ─── 複数人更新サブセクション ─────────────────────────────────────────────────
+const MAX_MULTI_PERSONS = 100;
+
+function MultiPersonTemplateSubsection({
+  persons,
+  onUseCsv,
+}: {
+  persons: Array<{ name: string; group: string; genre?: string; aliases?: string[] }>;
+  onUseCsv: (csv: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<Array<{ name: string; group: string }>>([]);
+  const [loading, setLoading] = useState(false);
+  const [csv, setCsv] = useState('');
+  const [error, setError] = useState('');
+
+  const selectedNames = useMemo(() => new Set(selected.map((s) => s.name)), [selected]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return persons
+      .filter((p) => !selectedNames.has(p.name))
+      .filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.group.toLowerCase().includes(q) ||
+          (p.genre?.toLowerCase().includes(q) ?? false) ||
+          (p.aliases?.some((a) => a.toLowerCase().includes(q)) ?? false),
+      )
+      .slice(0, 10);
+  }, [query, persons, selectedNames]);
+
+  function addPerson(p: { name: string; group: string }) {
+    if (selectedNames.has(p.name)) return;
+    if (selected.length >= MAX_MULTI_PERSONS) {
+      setError(`最大${MAX_MULTI_PERSONS}人まで選択できます。一部解除してから追加してください。`);
+      return;
+    }
+    setSelected((prev) => [...prev, { name: p.name, group: p.group }]);
+    setQuery('');
+    setCsv('');
+    setError('');
+  }
+
+  function removePerson(name: string) {
+    setSelected((prev) => prev.filter((s) => s.name !== name));
+    setCsv('');
+  }
+
+  function clearAll() {
+    setSelected([]);
+    setCsv('');
+    setError('');
+  }
+
+  async function generate() {
+    if (selected.length === 0) return;
+    setLoading(true); setError(''); setCsv('');
+    try {
+      const param = selected.map((s) => encodeURIComponent(s.name)).join(',');
+      const res = await fetch(`/api/admin/people-membership-import?persons=${param}`);
+      const data = await res.json() as {
+        members?: Array<{ name: string; group: string; meta: PersonMeta | null }>;
+        error?: string;
+      };
+      if (!res.ok) { setError(data.error ?? 'エラーが発生しました'); return; }
+      const members = data.members ?? [];
+      if (members.length === 0) { setError('人物データを取得できませんでした'); return; }
+      setCsv(generateCsvFromMembers(members));
+    } catch { setError('通信エラーが発生しました'); }
+    finally { setLoading(false); }
+  }
+
+  const atLimit = selected.length >= MAX_MULTI_PERSONS;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-gray-500">
+        グループや所属に関係なく複数人を選択してCSVテンプレートを生成します。
+        ChatGPTで補完後、② にインポートします。
+      </p>
+
+      {/* 選択カウント + 全解除 */}
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold text-slate-700">
+          選択中{' '}
+          <span className={selected.length > 0 ? 'text-indigo-600' : 'text-gray-400'}>
+            {selected.length}人
+          </span>
+          {atLimit && (
+            <span className="ml-2 text-xs text-amber-600 font-normal">（上限）</span>
+          )}
+        </span>
+        {selected.length > 0 && (
+          <button
+            onClick={clearAll}
+            className="text-xs text-red-400 hover:text-red-600 transition-colors"
+          >
+            選択をすべて解除
+          </button>
+        )}
+      </div>
+
+      {/* 選択済みチップ */}
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-2 p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
+          {selected.map((p) => (
+            <span
+              key={p.name}
+              className="inline-flex items-center gap-1 bg-white border border-indigo-200 text-indigo-800 text-xs font-medium px-2.5 py-1 rounded-full shadow-sm"
+            >
+              {p.name}
+              {p.group && (
+                <span className="text-indigo-400 text-[10px] hidden sm:inline">({p.group})</span>
+              )}
+              <button
+                onClick={() => removePerson(p.name)}
+                className="ml-0.5 text-indigo-300 hover:text-indigo-600 font-bold leading-none"
+                aria-label={`${p.name}を解除`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* 検索ボックス */}
+      <div className="relative">
+        <label className="block text-xs font-medium text-gray-600 mb-1">
+          人物を検索して追加（名前・別名・グループ・ジャンル）
+        </label>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setError(''); }}
+          placeholder="例: 橋本環奈 / 乃木坂 / アイドル / かんな"
+          disabled={atLimit}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-50 disabled:text-gray-400"
+        />
+        {filtered.length > 0 && (
+          <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+            {filtered.map((p) => (
+              <button
+                key={p.name}
+                onClick={() => addPerson(p)}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left hover:bg-indigo-50 transition-colors"
+              >
+                <span className="font-medium text-slate-700">{p.name}</span>
+                {p.group && <span className="text-xs text-gray-400">{p.group}</span>}
+                {p.genre && !p.group && (
+                  <span className="text-xs text-gray-300">{p.genre}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {atLimit && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          最大{MAX_MULTI_PERSONS}人に達しました。追加するには、選択済みから一部解除してください。
+        </p>
+      )}
+
+      <button
+        onClick={generate}
+        disabled={loading || selected.length === 0}
+        className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+      >
+        {loading ? '生成中…' : 'テンプレートを生成'}
+      </button>
+
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {error}
+        </p>
+      )}
+
+      {csv && selected.length > 0 && (
+        <CsvActions
+          csv={csv}
+          label={`複数人更新 · ${selected.length}人`}
+          memberNames={selected.map((s) => s.name)}
+          onUseCsv={onUseCsv}
+        />
+      )}
+    </div>
+  );
+}
+
 // ─── 個人更新サブセクション ───────────────────────────────────────────────────
 function PersonTemplateSubsection({
   persons,
   onUseCsv,
 }: {
-  persons: Array<{ name: string; group: string }>;
+  persons: Array<{ name: string; group: string; genre?: string; aliases?: string[] }>;
   onUseCsv: (csv: string) => void;
 }) {
   const [query, setQuery] = useState('');
@@ -461,10 +653,10 @@ function TemplateSection({
   onUseCsv,
 }: {
   groups: string[];
-  persons: Array<{ name: string; group: string }>;
+  persons: Array<{ name: string; group: string; genre?: string; aliases?: string[] }>;
   onUseCsv: (csv: string) => void;
 }) {
-  const [mode, setMode] = useState<'group' | 'person'>('group');
+  const [mode, setMode] = useState<'group' | 'person' | 'multi'>('group');
   const [selectedGroup, setSelectedGroup] = useState('');
   const [loading, setLoading] = useState(false);
   const [csv, setCsv] = useState('');
@@ -509,8 +701,12 @@ function TemplateSection({
       </p>
 
       {/* モード切替 */}
-      <div className="flex gap-4">
-        {([['group', 'グループ更新'], ['person', '個人更新']] as const).map(([val, label]) => (
+      <div className="flex gap-4 flex-wrap">
+        {([
+          ['group', 'グループ更新'],
+          ['person', '個人更新'],
+          ['multi', '複数人更新'],
+        ] as const).map(([val, label]) => (
           <label key={val} className="flex items-center gap-1.5 cursor-pointer select-none text-sm font-medium text-slate-700">
             <input
               type="radio"
@@ -524,6 +720,11 @@ function TemplateSection({
           </label>
         ))}
       </div>
+
+      {/* 複数人更新モード */}
+      {mode === 'multi' && (
+        <MultiPersonTemplateSubsection persons={persons} onUseCsv={onUseCsv} />
+      )}
 
       {/* 個人更新モード */}
       {mode === 'person' && (
@@ -629,6 +830,18 @@ type Step = 'input' | 'preview' | 'done';
 
 // ── 人物ごとの差分カード ─────────────────────────────────────────────────────
 function DiffCard({ row }: { row: PreviewRow }) {
+  if (row.duplicate) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 opacity-70">
+        <p className="text-xs font-medium text-amber-700">
+          {row.name}
+          {row.groupName && <span className="font-normal ml-1">({row.groupName})</span>}
+          <span className="ml-2 text-[10px] bg-amber-200 text-amber-600 px-1.5 py-0.5 rounded-full">重複行・スキップ</span>
+        </p>
+      </div>
+    );
+  }
+
   if (!row.found) {
     return (
       <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 opacity-60">
@@ -976,7 +1189,7 @@ function ImportSection({
 // ─── メインコンポーネント ────────────────────────────────────────────────────
 interface Props {
   groups: string[];
-  persons: Array<{ name: string; group: string }>;
+  persons: Array<{ name: string; group: string; genre?: string; aliases?: string[] }>;
 }
 
 export default function MembershipImportClient({ groups, persons }: Props) {
