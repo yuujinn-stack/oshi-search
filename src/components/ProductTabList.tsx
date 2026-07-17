@@ -48,7 +48,8 @@ export default function ProductTabList({ items, personSlug = '' }: { items: Prod
     if (sort === 'price-asc')  return base.sort((a, b) => a.product.price - b.product.price);
     if (sort === 'price-desc') return base.sort((a, b) => b.product.price - a.product.price);
     if (sort === 'review')     return base.sort((a, b) => b.product.reviewAverage - a.product.reviewAverage);
-    return base; // default
+    // おすすめ順: 新品・通常商品を中古より前に（安定ソート・入力配列を変更しない）
+    return [...base].sort((a, b) => (a.isUsed ? 1 : 0) - (b.isUsed ? 1 : 0));
   }, [filtered, sort]);
 
   const displayed = showAll ? sorted : sorted.slice(0, INITIAL_COUNT);
