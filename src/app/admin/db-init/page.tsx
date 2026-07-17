@@ -109,7 +109,10 @@ export default function DbInitPage() {
                   {Object.entries(result.counts).map(([table, count]) => (
                     <tr key={table} className="border-b last:border-0">
                       <td className="py-1 font-mono text-xs">{table}</td>
-                      <td className={`py-1 text-right text-xs ${typeof count === 'string' ? 'text-red-500' : ''}`}>
+                      <td className={`py-1 text-right text-xs ${
+                        count === '未作成' ? 'text-amber-600' :
+                        typeof count === 'string' ? 'text-red-500' : ''
+                      }`}>
                         {count}
                       </td>
                     </tr>
