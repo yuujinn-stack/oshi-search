@@ -5,6 +5,8 @@ import type { PreviewRow } from '@/app/api/admin/people-membership-import/route'
 import type { PersonMeta } from '@/lib/person-meta';
 import { csvDownloadSection } from '@/lib/chatGptPromptUtil';
 import { buildGenreRulesBlock, buildGenreExamplesBlock } from '@/lib/genre-prompt';
+import { DEFAULT_GENRE_ORDER } from '@/lib/genre-utils';
+import { normalizeTag } from '@/lib/person-display-tags';
 
 // ─── フィールドラベル ─────────────────────────────────────────────────────────
 const FIELD_LABEL: Record<string, string> = {
@@ -1186,6 +1188,296 @@ function ImportSection({
   return null;
 }
 
+// ─── ③ ジャンル直接編集セクション ───────────────────────────────────────────
+function GenreEditSection({
+  persons,
+}: {
+  persons: Array<{ name: string; group: string; genre?: string; aliases?: string[] }>;
+}) {
+  const [query, setQuery] = useState('');
+  const [selectedPerson, setSelectedPerson] = useState<{ name: string; group: string } | null>(null);
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [primaryGenre, setPrimaryGenre] = useState('');
+  const [genres, setGenres] = useState<string[]>([]);
+  const [genreInput, setGenreInput] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState<'saved' | null>(null);
+  const [saveError, setSaveError] = useState('');
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q || selectedPerson) return [];
+    return persons
+      .filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.group.toLowerCase().includes(q) ||
+          (p.aliases?.some((a) => a.toLowerCase().includes(q)) ?? false),
+      )
+      .slice(0, 8);
+  }, [query, persons, selectedPerson]);
+
+  const genreSuggestions = useMemo(() => {
+    const q = genreInput.trim().toLowerCase();
+    const genreSet = new Set(genres);
+    if (!q) return (DEFAULT_GENRE_ORDER as readonly string[]).filter((g) => !genreSet.has(g)).slice(0, 6);
+    return (DEFAULT_GENRE_ORDER as readonly string[])
+      .filter((g) => g.toLowerCase().includes(q) && !genreSet.has(g))
+      .slice(0, 8);
+  }, [genreInput, genres]);
+
+  async function fetchMeta(name: string): Promise<boolean> {
+    try {
+      const res = await fetch(
+        `/api/admin/people-membership-import?person=${encodeURIComponent(name)}`,
+      );
+      const data = await res.json() as { members?: Array<{ meta: PersonMeta | null }> };
+      const meta = data.members?.[0]?.meta ?? {};
+      setPrimaryGenre(meta.primaryGenre ?? '');
+      setGenres(meta.genres ?? []);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function loadMeta(person: { name: string; group: string }) {
+    setSelectedPerson(person);
+    setQuery('');
+    setSaveResult(null);
+    setSaveError('');
+    setMetaLoading(true);
+    const ok = await fetchMeta(person.name);
+    if (!ok) setSaveError('メタデータの取得に失敗しました');
+    setMetaLoading(false);
+  }
+
+  function clearPerson() {
+    setSelectedPerson(null);
+    setQuery('');
+    setPrimaryGenre('');
+    setGenres([]);
+    setSaveResult(null);
+    setSaveError('');
+  }
+
+  function addGenre(g: string) {
+    const norm = normalizeTag(g.trim());
+    if (!norm || genres.includes(norm)) return;
+    setGenres((prev) => [...prev, norm]);
+    setGenreInput('');
+  }
+
+  function removeGenre(g: string) {
+    setGenres((prev) => prev.filter((x) => x !== g));
+  }
+
+  async function save() {
+    if (!selectedPerson) return;
+    setSaving(true);
+    setSaveResult(null);
+    setSaveError('');
+    try {
+      const res = await fetch('/api/admin/person-meta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          personName: selectedPerson.name,
+          primaryGenre: primaryGenre.trim() || undefined,
+          genres,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json() as { error?: string };
+        setSaveError(d.error ?? '保存に失敗しました');
+        return;
+      }
+      setSaveResult('saved');
+      // 保存後に再取得して値を確認
+      await fetchMeta(selectedPerson.name);
+    } catch {
+      setSaveError('通信エラーが発生しました');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-gray-500">
+        人物を選択して <code className="bg-gray-100 px-1 rounded">primaryGenre</code>・
+        <code className="bg-gray-100 px-1 rounded">genres</code> を直接編集・保存します。
+        検索結果カードのジャンル表示に即時反映されます。
+      </p>
+
+      {/* 人物検索 */}
+      {!selectedPerson ? (
+        <div className="relative">
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            人物を検索（名前・グループ・別名）
+          </label>
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="例: 平手友梨奈 / 乃木坂46"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          {filtered.length > 0 && (
+            <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+              {filtered.map((p) => (
+                <button
+                  key={p.name}
+                  onClick={() => loadMeta(p)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left hover:bg-indigo-50 transition-colors"
+                >
+                  <span className="font-medium text-slate-700">{p.name}</span>
+                  {p.group && <span className="text-xs text-gray-400">{p.group}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2.5">
+          <span className="text-sm font-semibold text-indigo-800">{selectedPerson.name}</span>
+          {selectedPerson.group && (
+            <span className="text-xs text-indigo-500">{selectedPerson.group}</span>
+          )}
+          <button
+            onClick={clearPerson}
+            className="ml-auto text-xs text-gray-400 hover:text-gray-600"
+          >
+            ✕ 変更
+          </button>
+        </div>
+      )}
+
+      {metaLoading && <p className="text-xs text-gray-400 animate-pulse">読み込み中…</p>}
+
+      {selectedPerson && !metaLoading && (
+        <div className="space-y-4 border border-gray-200 rounded-xl p-4">
+          {/* primaryGenre */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              primaryGenre
+              <span className="ml-1 font-normal text-gray-400">（主ジャンル・1つだけ）</span>
+            </label>
+            <input
+              type="text"
+              value={primaryGenre}
+              onChange={(e) => setPrimaryGenre(e.target.value)}
+              placeholder="例: 女優 / アーティスト / 歌手"
+              list="primary-genre-datalist"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+            <datalist id="primary-genre-datalist">
+              {(DEFAULT_GENRE_ORDER as readonly string[]).map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
+            <p className="text-[10px] text-gray-400 mt-1">
+              空欄で保存すると primaryGenre を削除します
+            </p>
+          </div>
+
+          {/* genres */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              genres
+              <span className="ml-1 font-normal text-gray-400">（複数可・カンマ区切りで保存）</span>
+            </label>
+
+            {/* 現在のジャンルチップ */}
+            {genres.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5 mb-2 p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg">
+                {genres.map((g) => (
+                  <span
+                    key={g}
+                    className="inline-flex items-center gap-1 bg-white border border-indigo-200 text-indigo-800 text-xs font-medium px-2 py-0.5 rounded-full shadow-sm"
+                  >
+                    {g}
+                    <button
+                      onClick={() => removeGenre(g)}
+                      className="text-indigo-300 hover:text-indigo-600 ml-0.5 font-bold leading-none"
+                      aria-label={`${g}を削除`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                <button
+                  onClick={() => setGenres([])}
+                  className="text-[10px] text-red-400 hover:text-red-600 ml-auto self-center"
+                >
+                  全クリア
+                </button>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400 mb-2 italic">ジャンル未設定</p>
+            )}
+
+            {/* ジャンル追加インput */}
+            <div className="relative">
+              <input
+                type="text"
+                value={genreInput}
+                onChange={(e) => setGenreInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && genreInput.trim()) {
+                    e.preventDefault();
+                    addGenre(genreInput.trim());
+                  }
+                }}
+                placeholder="ジャンルを入力してEnterで追加 / クリックでも追加"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+              {genreInput.trim() && genreSuggestions.length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+                  {genreSuggestions.map((g) => (
+                    <button
+                      key={g}
+                      onClick={() => addGenre(g)}
+                      className="w-full px-4 py-2 text-sm text-left hover:bg-indigo-50 transition-colors text-slate-700"
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <p className="text-[10px] text-gray-400 mt-1">
+              Enterで追加。重複は自動除外。canonical表記（女優・俳優・歌手 など）が推奨されます。
+            </p>
+          </div>
+
+          {/* 保存 */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={save}
+              disabled={saving}
+              className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              {saving ? '保存中…' : 'ジャンルを保存'}
+            </button>
+            {saveResult === 'saved' && (
+              <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 flex items-center gap-1">
+                <span>✓</span> 保存しました（再取得済み）
+              </p>
+            )}
+          </div>
+
+          {saveError && (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              {saveError}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── メインコンポーネント ────────────────────────────────────────────────────
 interface Props {
   groups: string[];
@@ -1228,6 +1520,19 @@ export default function MembershipImportClient({ groups, persons }: Props) {
           <div className="px-5 py-5">
             <ImportSection externalCsv={importCsv} onCsvChange={setImportCsv} />
           </div>
+        </div>
+      </div>
+
+      {/* ③ ジャンル直接編集 */}
+      <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <p className="font-bold text-slate-800 text-sm">③ ジャンル直接編集</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            人物ごとに primaryGenre・genres を直接編集します。CSVなしで即時保存できます。
+          </p>
+        </div>
+        <div className="px-5 py-5">
+          <GenreEditSection persons={persons} />
         </div>
       </div>
     </div>
