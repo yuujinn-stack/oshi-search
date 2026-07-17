@@ -6,14 +6,17 @@ import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import type { ActivityStatus, CareerStatus } from '@/types/person';
 import { upsertPersonMeta } from '@/db/write';
 
-// ── GET: グループメンバー or 個人 + 既存メタを返す（テンプレート生成用）──────
+export const MAX_MULTI_PERSONS = 100;
+
+// ── GET: グループメンバー or 個人 or 複数人 + 既存メタを返す（テンプレート生成用）──
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const group = searchParams.get('group');
   const personName = searchParams.get('person');
+  const personsParam = searchParams.get('persons');
 
-  if (!group && !personName) {
-    return NextResponse.json({ error: 'group または person が必要です' }, { status: 400 });
+  if (!group && !personName && !personsParam) {
+    return NextResponse.json({ error: 'group・person・persons のいずれかが必要です' }, { status: 400 });
   }
 
   try {
@@ -21,6 +24,30 @@ export async function GET(req: Request) {
       getAllPersonsMerged(),
       getAllPersonMetas().catch(() => ({} as Record<string, PersonMeta>)),
     ]);
+
+    // 複数人モード: ?persons=name1,name2,...
+    if (personsParam) {
+      const rawNames = personsParam.split(',').map((s) => s.trim()).filter(Boolean);
+      // 重複を除去してから上限チェック
+      const uniqueNames = [...new Set(rawNames)];
+      if (uniqueNames.length === 0) {
+        return NextResponse.json({ error: '人物名が指定されていません' }, { status: 400 });
+      }
+      if (uniqueNames.length > MAX_MULTI_PERSONS) {
+        return NextResponse.json(
+          { error: `一度に選択できるのは${MAX_MULTI_PERSONS}人までです` },
+          { status: 400 },
+        );
+      }
+      const personMap = new Map(allPersons.map((p) => [p.name, p]));
+      const members = uniqueNames
+        .filter((name) => personMap.has(name))
+        .map((name) => {
+          const p = personMap.get(name)!;
+          return { name: p.name, group: p.group ?? '', meta: metaMap[name] ?? null };
+        });
+      return NextResponse.json({ members });
+    }
 
     if (personName) {
       const person = allPersons.find((p) => p.name === personName);
@@ -109,6 +136,7 @@ export interface PreviewRow {
   changes: FieldChange[];
   hasChanges: boolean;
   error?: string;
+  duplicate?: boolean;
 }
 
 function computeChanges(row: Record<string, string>, existing: PersonMeta): FieldChange[] {
@@ -207,9 +235,14 @@ export async function POST(req: Request) {
 
     const personNameSet = new Set(allPersons.map((p) => p.name));
 
+    const seenNames = new Set<string>();
     const previewRows: PreviewRow[] = rows.map((row) => {
       const name = row['name']?.trim() ?? '';
       if (!name) return { name: '(空)', found: false, groupName: '', changes: [], hasChanges: false, error: 'name 列が空' };
+      if (seenNames.has(name)) {
+        return { name, found: false, groupName: row['groupName']?.trim() ?? '', changes: [], hasChanges: false, duplicate: true };
+      }
+      seenNames.add(name);
       const found = personNameSet.has(name);
       const existing = metaMap[name] ?? {};
       const changes = found ? computeChanges(row, existing) : [];
@@ -227,8 +260,8 @@ export async function POST(req: Request) {
         rows: previewRows,
         summary: {
           total: previewRows.length,
-          toUpdate: previewRows.filter((r) => r.found && r.hasChanges).length,
-          toSkip: previewRows.filter((r) => !r.found || !r.hasChanges).length,
+          toUpdate: previewRows.filter((r) => r.found && r.hasChanges && !r.duplicate).length,
+          toSkip: previewRows.filter((r) => !r.found || !r.hasChanges || r.duplicate).length,
         },
       });
     }
@@ -240,7 +273,7 @@ export async function POST(req: Request) {
     const errors: string[] = [];
 
     for (const preview of previewRows) {
-      if (!preview.found || !preview.hasChanges) { skipped++; continue; }
+      if (!preview.found || !preview.hasChanges || preview.duplicate) { skipped++; continue; }
       try {
         const newMeta = applyChanges(metaMap[preview.name] ?? {}, preview.changes);
         await upsertPersonMeta(preview.name, newMeta);

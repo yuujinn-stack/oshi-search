@@ -12,7 +12,12 @@ export default async function PeopleMembershipImportPage() {
     groups = [...new Set(allPersons.map((p) => p.group).filter(Boolean))].sort((a, b) =>
       a.localeCompare(b, 'ja'),
     );
-    persons = allPersons.map((p) => ({ name: p.name, group: p.group ?? '' }));
+    persons = allPersons.map((p) => ({
+      name: p.name,
+      group: p.group ?? '',
+      genre: p.genre ?? '',
+      aliases: (p.config?.aliases ?? []) as string[],
+    }));
   } catch { /* Redis 未接続時は空 */ }
 
   return (
