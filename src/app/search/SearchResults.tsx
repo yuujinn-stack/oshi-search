@@ -6,7 +6,7 @@ import type { PersonWithConfig, ActivityStatus } from '@/types/person';
 import type { PersonMeta } from '@/lib/person-meta';
 import type { GroupMeta } from '@/types/group';
 import { groupHref } from '@/lib/group-slug';
-import { normalizeTag } from '@/lib/person-display-tags';
+import { normalizeTag, buildInfoGenreList } from '@/lib/person-display-tags';
 
 // ─── 型定義 ──────────────────────────────────────────────────────────────────
 export interface PersonStats {
@@ -42,11 +42,22 @@ const GENRE_GRADIENT: Record<string, string> = {
   '俳優': 'from-emerald-400 to-green-600',
 };
 const GENRE_BADGE_CLS: Record<string, string> = {
-  '坂道': 'bg-pink-100 text-pink-700',
-  '芸人': 'bg-yellow-100 text-yellow-700',
-  'テレビ': 'bg-blue-100 text-blue-700',
+  '坂道':        'bg-pink-100 text-pink-700',
+  'アイドル':    'bg-pink-100 text-pink-700',
+  '元アイドル':  'bg-orange-100 text-orange-700',
+  '芸人':        'bg-yellow-100 text-yellow-700',
+  'テレビ':      'bg-blue-100 text-blue-700',
+  'タレント':    'bg-sky-100 text-sky-700',
+  'バラエティ':  'bg-sky-100 text-sky-700',
   'アーティスト': 'bg-purple-100 text-purple-700',
-  '俳優': 'bg-green-100 text-green-700',
+  '歌手':        'bg-violet-100 text-violet-700',
+  '俳優':        'bg-green-100 text-green-700',
+  '女優':        'bg-rose-100 text-rose-700',
+  'モデル':      'bg-teal-100 text-teal-700',
+  'グラビア':    'bg-teal-100 text-teal-700',
+  '声優':        'bg-indigo-100 text-indigo-700',
+  'YouTuber':    'bg-red-100 text-red-600',
+  'インフルエンサー': 'bg-red-100 text-red-600',
 };
 const GROUP_STATUS_LABEL: Record<string, string> = {
   active: '活動中', renamed: '改名', disbanded: '解散', hiatus: '活動休止',
@@ -74,7 +85,12 @@ function SearchPersonCard({
   const initial = person.name[0];
   const displayGenre = normalizeTag(person.genre) ?? person.genre;
   const gradient = GENRE_GRADIENT[displayGenre] ?? GENRE_GRADIENT[person.genre] ?? 'from-indigo-400 to-violet-500';
-  const badgeCls = GENRE_BADGE_CLS[displayGenre] ?? GENRE_BADGE_CLS[person.genre] ?? 'bg-gray-100 text-gray-600';
+  // primaryGenre → genres → genre の優先順で最大4件（重複除去）
+  const genreBadges = buildInfoGenreList({
+    genre: person.genre,
+    primaryGenre: meta?.primaryGenre,
+    genres: meta?.genres,
+  }).slice(0, 4);
   const status = meta?.activityStatus;
   const statusLabel = status ? ACTIVITY_LABEL[status] : undefined;
   const statusCls = status ? ACTIVITY_BADGE_CLS[status] : '';
@@ -112,9 +128,14 @@ function SearchPersonCard({
 
           {/* ジャンル・活動状態バッジ */}
           <div className="flex flex-wrap gap-1">
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${badgeCls}`}>
-              {displayGenre}
-            </span>
+            {genreBadges.map((badge) => (
+              <span
+                key={badge}
+                className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${GENRE_BADGE_CLS[badge] ?? 'bg-gray-100 text-gray-600'}`}
+              >
+                {badge}
+              </span>
+            ))}
             {statusLabel && statusCls && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusCls}`}>
                 {statusLabel}
