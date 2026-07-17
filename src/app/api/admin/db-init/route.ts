@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { sql } from 'drizzle-orm';
-import { db } from '@/db/client';
+import { db, neonSql } from '@/db/client';
 
 export const dynamic = 'force-dynamic';
 
@@ -209,35 +209,62 @@ const ALTER_STATEMENTS = [
 
 const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock'];
 
+// drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
+// 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。
+// 直接配列として扱うと rows[0] が undefined になるため、.rows を明示的に取り出す。
+type FullResult<T> = { rows: T[] };
+
 async function getTableCounts(): Promise<Record<string, number | string>> {
+  // neonSql で存在するテーブル名を先に取得する（array パラメータが使えるため安全）
+  let existingTables: Set<string>;
+  try {
+    const rows = await neonSql`
+      SELECT tablename::text AS tablename
+      FROM pg_tables
+      WHERE schemaname = 'public'
+        AND tablename = ANY(${TABLE_NAMES})
+    `;
+    existingTables = new Set(rows.map((r) => r.tablename as string));
+  } catch {
+    existingTables = new Set();
+  }
+
   const counts: Record<string, number | string> = {};
   for (const t of TABLE_NAMES) {
+    // テーブルが存在しない場合は「未作成」と表示
+    if (!existingTables.has(t)) {
+      counts[t] = '未作成';
+      continue;
+    }
     try {
+      // db.execute() の戻り値から .rows を取り出して件数を取得する
       const result = await db.execute(sql.raw(`SELECT COUNT(*) AS cnt FROM ${t}`));
-      const rows = result as unknown as Array<{ cnt: string }>;
-      counts[t] = Number(rows[0]?.cnt ?? 0);
-    } catch (e) {
-      counts[t] = `error: ${String(e).slice(0, 80)}`;
+      const rows = (result as unknown as FullResult<{ cnt: string | number }>).rows;
+      counts[t] = Number(rows?.[0]?.cnt ?? 0);
+    } catch {
+      counts[t] = 'エラー';
     }
   }
   return counts;
 }
 
 // information_schema から各テーブルの実カラム一覧を取得する
+// neonSql を使うことで戻り値を直接配列として扱える
 async function getExistingColumns(): Promise<Record<string, string[]>> {
   try {
-    const result = await db.execute(sql`
-      SELECT table_name, column_name
+    const rows = await neonSql`
+      SELECT table_name::text, column_name::text
       FROM information_schema.columns
       WHERE table_schema = 'public'
-        AND table_name = ANY(ARRAY['persons','person_meta','group_meta','vod_providers','works','products','verdicts','batch_lock'])
+        AND table_name = ANY(${TABLE_NAMES})
       ORDER BY table_name, ordinal_position
-    `);
-    const rows = result as unknown as Array<{ table_name: string; column_name: string }>;
+    `;
     const map: Record<string, string[]> = {};
     for (const r of rows) {
-      if (!map[r.table_name]) map[r.table_name] = [];
-      map[r.table_name].push(r.column_name);
+      const tableName = r.table_name as string;
+      const columnName = r.column_name as string;
+      if (!map[tableName]) map[tableName] = [];
+      map[tableName].push(columnName);
     }
     return map;
   } catch {
