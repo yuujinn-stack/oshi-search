@@ -1,11 +1,16 @@
 /**
- * 復旧 API のルートハンドラーテスト
- * - DATA_RECOVERY_EXECUTION_ENABLED ゲート（403）
- * - dry-run 時の DB 非書き込み
- * - 101件以上の拒否（400）
- * - 冪等性キーの二重実行拒否（409）
- * - confirmToken 不一致の拒否（400）
- * - 429/upstream_error 時に storeProducts が空配列を受け取り既存データを保持
+ * 復旧 API のルートハンドラーテスト + 純粋関数テスト
+ *
+ * カバー範囲:
+ *   - VERCEL_ENV=production かつ DATA_RECOVERY_EXECUTION_ENABLED=true のみ実行許可
+ *   - VERCEL_ENV=preview / development → 必ず 403
+ *   - dry-run 時の DB 非書き込み
+ *   - 101件以上の拒否（400）
+ *   - 冪等性キーの二重実行拒否（409）
+ *   - confirmToken 不一致の拒否（400）
+ *   - 429/upstream_error 時に storeProducts が空配列を受け取り既存データを保持
+ *   - canExecuteWorkRecovery / canExecuteProductRecovery 純粋関数
+ *   - decideBulkVerdictCsvHandling 純粋関数（キャンセル時 API 未呼び出し保証）
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -60,6 +65,13 @@ vi.mock('@/lib/redis', () => ({
 import { POST as workRecoveryPost } from '@/app/api/admin/work-recovery/route';
 import { POST as productRecoveryPost } from '@/app/api/admin/product-recovery/route';
 
+// ── 純粋関数のインポート ──────────────────────────────────────────────────────
+import {
+  canExecuteWorkRecovery,
+  canExecuteProductRecovery,
+} from '@/lib/recovery-guard';
+import { decideBulkVerdictCsvHandling } from '@/lib/bulk-verdict-guard';
+
 // ── ヘルパー ──────────────────────────────────────────────────────────────────
 function makePost(url: string, body: object): Request {
   return new Request(`http://localhost${url}`, {
@@ -91,10 +103,45 @@ describe('POST /api/admin/work-recovery', () => {
 
   afterEach(() => {
     delete process.env.DATA_RECOVERY_EXECUTION_ENABLED;
+    delete process.env.VERCEL_ENV;
   });
 
-  // ── 403: execution flag 未設定 ────────────────────────────────────────────
-  it('DATA_RECOVERY_EXECUTION_ENABLED 未設定で実行 → 403', async () => {
+  // ── 403: VERCEL_ENV 未設定（ローカル環境） ────────────────────────────────
+  it('VERCEL_ENV 未設定で実行 → 403', async () => {
+    delete process.env.VERCEL_ENV;
+    delete process.env.DATA_RECOVERY_EXECUTION_ENABLED;
+    const req = makePost('/api/admin/work-recovery', VALID_EXEC_BODY);
+    const res = await workRecoveryPost(req as never);
+    expect(res.status).toBe(403);
+    const body = await res.json() as { error: string };
+    expect(body.error).toMatch(/本番環境|VERCEL_ENV/);
+  });
+
+  // ── 403: VERCEL_ENV=preview → Preview 環境では実行不可 ───────────────────
+  it('VERCEL_ENV=preview で実行 → 403 (Preview禁止)', async () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'true';
+    const req = makePost('/api/admin/work-recovery', VALID_EXEC_BODY);
+    const res = await workRecoveryPost(req as never);
+    expect(res.status).toBe(403);
+    const body = await res.json() as { error: string };
+    expect(body.error).toMatch(/Preview/);
+  });
+
+  // ── 403: VERCEL_ENV=development → 開発環境も実行不可 ─────────────────────
+  it('VERCEL_ENV=development で実行 → 403', async () => {
+    process.env.VERCEL_ENV = 'development';
+    process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'true';
+    const req = makePost('/api/admin/work-recovery', VALID_EXEC_BODY);
+    const res = await workRecoveryPost(req as never);
+    expect(res.status).toBe(403);
+    const body = await res.json() as { error: string };
+    expect(body.error).toMatch(/開発環境/);
+  });
+
+  // ── 403: VERCEL_ENV=production だがフラグ未設定 ───────────────────────────
+  it('VERCEL_ENV=production かつ DATA_RECOVERY_EXECUTION_ENABLED 未設定 → 403', async () => {
+    process.env.VERCEL_ENV = 'production';
     delete process.env.DATA_RECOVERY_EXECUTION_ENABLED;
     const req = makePost('/api/admin/work-recovery', VALID_EXEC_BODY);
     const res = await workRecoveryPost(req as never);
@@ -105,6 +152,7 @@ describe('POST /api/admin/work-recovery', () => {
 
   // ── 403: execution flag = false ───────────────────────────────────────────
   it('DATA_RECOVERY_EXECUTION_ENABLED=false で実行 → 403', async () => {
+    process.env.VERCEL_ENV = 'production';
     process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'false';
     const req = makePost('/api/admin/work-recovery', VALID_EXEC_BODY);
     const res = await workRecoveryPost(req as never);
@@ -132,6 +180,7 @@ describe('POST /api/admin/work-recovery', () => {
 
   // ── 400: 101件以上拒否 ────────────────────────────────────────────────────
   it('101件の workIds を指定 → 400', async () => {
+    process.env.VERCEL_ENV = 'production';
     process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'true';
     const ids = Array.from({ length: 101 }, (_, i) => `w-${i.toString().padStart(3, '0')}`);
     const req = makePost('/api/admin/work-recovery', {
@@ -146,6 +195,7 @@ describe('POST /api/admin/work-recovery', () => {
 
   // ── 409: 冪等性キーの二重実行拒否 ────────────────────────────────────────
   it('同一 idempotencyKey の二度目実行 → 409', async () => {
+    process.env.VERCEL_ENV = 'production';
     process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'true';
     mockHasIdempotencyKey.mockResolvedValueOnce(true);
     const req = makePost('/api/admin/work-recovery', VALID_EXEC_BODY);
@@ -157,6 +207,7 @@ describe('POST /api/admin/work-recovery', () => {
 
   // ── 400: confirmToken 不一致 ──────────────────────────────────────────────
   it('confirmToken が "RECOVER" でない → 400', async () => {
+    process.env.VERCEL_ENV = 'production';
     process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'true';
     const req = makePost('/api/admin/work-recovery', {
       ...VALID_EXEC_BODY,
@@ -193,19 +244,42 @@ describe('POST /api/admin/product-recovery', () => {
 
   afterEach(() => {
     delete process.env.DATA_RECOVERY_EXECUTION_ENABLED;
+    delete process.env.VERCEL_ENV;
   });
 
   // ── 503: Redis 未接続 ─────────────────────────────────────────────────────
   it('Redis 未接続 → 503', async () => {
+    process.env.VERCEL_ENV = 'production';
+    process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'true';
     mockGetRedis.mockReturnValue(null);
     const req = makePost('/api/admin/product-recovery', VALID_EXEC_BODY);
-    process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'true';
     const res = await productRecoveryPost(req as never);
     expect(res.status).toBe(503);
   });
 
+  // ── 403: VERCEL_ENV=preview → Preview 環境では実行不可 ───────────────────
+  it('VERCEL_ENV=preview で実行 → 403 (Preview禁止)', async () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'true';
+    const req = makePost('/api/admin/product-recovery', VALID_EXEC_BODY);
+    const res = await productRecoveryPost(req as never);
+    expect(res.status).toBe(403);
+    const body = await res.json() as { error: string };
+    expect(body.error).toMatch(/Preview/);
+  });
+
+  // ── 403: VERCEL_ENV=development → 開発環境も実行不可 ─────────────────────
+  it('VERCEL_ENV=development で実行 → 403', async () => {
+    process.env.VERCEL_ENV = 'development';
+    process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'true';
+    const req = makePost('/api/admin/product-recovery', VALID_EXEC_BODY);
+    const res = await productRecoveryPost(req as never);
+    expect(res.status).toBe(403);
+  });
+
   // ── 403: execution flag 未設定 ────────────────────────────────────────────
   it('DATA_RECOVERY_EXECUTION_ENABLED 未設定で実行 → 403', async () => {
+    process.env.VERCEL_ENV = 'production';
     delete process.env.DATA_RECOVERY_EXECUTION_ENABLED;
     const req = makePost('/api/admin/product-recovery', VALID_EXEC_BODY);
     const res = await productRecoveryPost(req as never);
@@ -232,6 +306,7 @@ describe('POST /api/admin/product-recovery', () => {
 
   // ── 409: 冪等性キーの二重実行拒否 ────────────────────────────────────────
   it('同一 idempotencyKey の二度目実行 → 409', async () => {
+    process.env.VERCEL_ENV = 'production';
     process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'true';
     const redisMock = { hgetall: vi.fn().mockResolvedValue({}) };
     mockGetRedis.mockReturnValue(redisMock);
@@ -246,6 +321,7 @@ describe('POST /api/admin/product-recovery', () => {
 
   // ── 400: confirmToken 不一致 ──────────────────────────────────────────────
   it('confirmToken が "RECOVER_PRODUCTS" でない → 400', async () => {
+    process.env.VERCEL_ENV = 'production';
     process.env.DATA_RECOVERY_EXECUTION_ENABLED = 'true';
     const req = makePost('/api/admin/product-recovery', {
       ...VALID_EXEC_BODY,
@@ -321,6 +397,10 @@ describe('POST /api/admin/product-recovery', () => {
 // ── storeProducts の 429/error 耐性（明示的なラベル付きテスト） ─────────────
 
 describe('storeProducts — 429/upstream_error 耐性', () => {
+  afterEach(() => {
+    delete process.env.VERCEL_ENV;
+  });
+
   it('0件取得 + 既存あり = スキップして既存保持（429・タイムアウト時と同等）', async () => {
     const { storeProducts } = await import('@/lib/product-store');
     const { upsertProduct } = await import('@/db/write');
@@ -338,5 +418,140 @@ describe('storeProducts — 429/upstream_error 耐性', () => {
     expect(stats.skippedBecauseError).toBe(true);
     expect(stats.retainedExistingCount).toBe(1);
     expect(stats.fetchedCount).toBe(0);
+  });
+});
+
+// ── canExecuteWorkRecovery 純粋関数テスト ─────────────────────────────────────
+
+describe('canExecuteWorkRecovery — 純粋関数', () => {
+  const BASE = {
+    confirmInput:    'RECOVER',
+    reason:          '復旧テスト',
+    selectedCount:   5,
+    recoveryEnabled: true,
+  };
+
+  it('全条件揃い → true', () => {
+    expect(canExecuteWorkRecovery(BASE)).toBe(true);
+  });
+
+  it('confirmInput が "RECOVER" でない → false（キャンセル相当）', () => {
+    expect(canExecuteWorkRecovery({ ...BASE, confirmInput: '' })).toBe(false);
+    expect(canExecuteWorkRecovery({ ...BASE, confirmInput: 'WRONG' })).toBe(false);
+  });
+
+  it('reason が空 → false', () => {
+    expect(canExecuteWorkRecovery({ ...BASE, reason: '' })).toBe(false);
+    expect(canExecuteWorkRecovery({ ...BASE, reason: '   ' })).toBe(false);
+  });
+
+  it('selectedCount が 0 → false', () => {
+    expect(canExecuteWorkRecovery({ ...BASE, selectedCount: 0 })).toBe(false);
+  });
+
+  it('recoveryEnabled=false（Preview 等）→ false', () => {
+    expect(canExecuteWorkRecovery({ ...BASE, recoveryEnabled: false })).toBe(false);
+  });
+});
+
+// ── canExecuteProductRecovery 純粋関数テスト ──────────────────────────────────
+
+describe('canExecuteProductRecovery — 純粋関数', () => {
+  const BASE = {
+    confirmInput:     'RECOVER_PRODUCTS',
+    reason:           '商品復旧テスト',
+    idempotencyKey:   'key-001',
+    recoverableCount: 3,
+    recoveryEnabled:  true,
+  };
+
+  it('全条件揃い → true', () => {
+    expect(canExecuteProductRecovery(BASE)).toBe(true);
+  });
+
+  it('confirmInput が "RECOVER_PRODUCTS" でない → false（キャンセル相当）', () => {
+    expect(canExecuteProductRecovery({ ...BASE, confirmInput: '' })).toBe(false);
+    expect(canExecuteProductRecovery({ ...BASE, confirmInput: 'RECOVER' })).toBe(false);
+  });
+
+  it('reason が空 → false', () => {
+    expect(canExecuteProductRecovery({ ...BASE, reason: '' })).toBe(false);
+  });
+
+  it('idempotencyKey が空 → false', () => {
+    expect(canExecuteProductRecovery({ ...BASE, idempotencyKey: '' })).toBe(false);
+    expect(canExecuteProductRecovery({ ...BASE, idempotencyKey: '   ' })).toBe(false);
+  });
+
+  it('recoverableCount が 0 → false', () => {
+    expect(canExecuteProductRecovery({ ...BASE, recoverableCount: 0 })).toBe(false);
+  });
+
+  it('recoveryEnabled=false（Preview 等）→ false', () => {
+    expect(canExecuteProductRecovery({ ...BASE, recoveryEnabled: false })).toBe(false);
+  });
+});
+
+// ── decideBulkVerdictCsvHandling 純粋関数テスト ───────────────────────────────
+// キャンセル時に fetch が呼ばれないことの根拠: proceed=false のとき
+// PersonWorks.tsx の handleBulkWorkVerdict は即 return するため fetch に到達しない
+
+describe('decideBulkVerdictCsvHandling — CSV 一括非表示キャンセル', () => {
+  // ── キャンセル: 全件 CSV → proceed=false (API 未呼び出し) ─────────────────
+  it('全件 CSV + キャンセル → proceed=false（API 呼ばない）', () => {
+    const result = decideBulkVerdictCsvHandling('hidden', 3, 3, false);
+    expect(result.proceed).toBe(false);
+    expect(result.includeManualCsv).toBe(false);
+  });
+
+  // ── キャンセル: CSV + 非CSV 混在 → proceed=true, includeManualCsv=false ──
+  it('CSV + 非CSV 混在 + キャンセル → proceed=true, CSV除外で続行', () => {
+    const result = decideBulkVerdictCsvHandling('hidden', 5, 2, false);
+    expect(result.proceed).toBe(true);
+    expect(result.includeManualCsv).toBe(false);
+  });
+
+  // ── 確認: 全件 CSV + OK → proceed=true, includeManualCsv=true ────────────
+  it('全件 CSV + OK → proceed=true, includeManualCsv=true', () => {
+    const result = decideBulkVerdictCsvHandling('hidden', 3, 3, true);
+    expect(result.proceed).toBe(true);
+    expect(result.includeManualCsv).toBe(true);
+  });
+
+  // ── CSV 0件 → 確認なしで続行 ────────────────────────────────────────────
+  it('CSV 0件 → 常に proceed=true, includeManualCsv=false', () => {
+    const result = decideBulkVerdictCsvHandling('hidden', 5, 0, false);
+    expect(result.proceed).toBe(true);
+    expect(result.includeManualCsv).toBe(false);
+  });
+
+  // ── status が hidden 以外 → 確認不要 ─────────────────────────────────────
+  it('status=auto_published は CSV 確認不要', () => {
+    const result = decideBulkVerdictCsvHandling('auto_published', 5, 5, false);
+    expect(result.proceed).toBe(true);
+    expect(result.includeManualCsv).toBe(false);
+  });
+
+  // ── 作品復旧の最終確認キャンセル（confirmInput 不一致）= fetch 未呼び出し ─
+  it('作品復旧: confirmInput 不一致 → canExecuteWorkRecovery=false（API 呼ばない）', () => {
+    const result = canExecuteWorkRecovery({
+      confirmInput:    '',
+      reason:          '理由あり',
+      selectedCount:   3,
+      recoveryEnabled: true,
+    });
+    expect(result).toBe(false);
+  });
+
+  // ── 商品復旧の最終確認キャンセル（confirmInput 不一致）= fetch 未呼び出し ─
+  it('商品復旧: confirmInput 不一致 → canExecuteProductRecovery=false（API 呼ばない）', () => {
+    const result = canExecuteProductRecovery({
+      confirmInput:     '',
+      reason:           '理由あり',
+      idempotencyKey:   'key-001',
+      recoverableCount: 3,
+      recoveryEnabled:  true,
+    });
+    expect(result).toBe(false);
   });
 });

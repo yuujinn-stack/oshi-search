@@ -12,6 +12,7 @@ import VodIntensiveModal from './VodIntensiveModal';
 import VodResearchModal from './VodResearchModal';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
 import ManualWorkModal from './ManualWorkModal';
+import { decideBulkVerdictCsvHandling } from '@/lib/bulk-verdict-guard';
 
 interface Props {
   personName: string;
@@ -617,24 +618,15 @@ export default function PersonWorks({
         (w) => selectedInView.includes(w.id) && w.source === 'manual_csv',
       ).length;
       if (csvCount > 0) {
-        const nonCsvCount = selectedInView.length - csvCount;
         const confirmed = window.confirm(
           `⚠️ 選択中 ${selectedInView.length} 件のうち ${csvCount} 件が CSV登録作品です。\n\n` +
           `CSV登録作品は手動登録のため、非表示にすると復旧に手間がかかります。\n\n` +
           `「OK」 → 全 ${selectedInView.length} 件（CSV含む）を非表示にする\n` +
           `「キャンセル」 → 操作を中止`,
         );
-        if (!confirmed) {
-          if (nonCsvCount > 0) {
-            // CSV以外のみ対象にして続行
-            // includeManualCsv=false のまま進める（APIがCSVを除外する）
-          } else {
-            // CSVのみ選択の場合は何もしない
-            return;
-          }
-        } else {
-          includeManualCsv = true;
-        }
+        const decision = decideBulkVerdictCsvHandling(status, selectedInView.length, csvCount, confirmed);
+        if (!decision.proceed) return;
+        includeManualCsv = decision.includeManualCsv;
       }
     }
 

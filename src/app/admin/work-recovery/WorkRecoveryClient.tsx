@@ -1,14 +1,19 @@
 'use client';
 
 import { useState, useMemo, useCallback } from 'react';
+import { canExecuteWorkRecovery } from '@/lib/recovery-guard';
 import type { WorkRecoveryItem } from '@/app/api/admin/work-recovery/route';
 
 interface Props {
-  initialWorks: WorkRecoveryItem[];
-  initialTotal: number;
+  initialWorks:       WorkRecoveryItem[];
+  initialTotal:       number;
+  recoveryEnabled:    boolean;
+  recoveryBlockReason: string | null;
 }
 
-export default function WorkRecoveryClient({ initialWorks, initialTotal }: Props) {
+export default function WorkRecoveryClient({
+  initialWorks, initialTotal, recoveryEnabled, recoveryBlockReason,
+}: Props) {
   const [works, setWorks]       = useState<WorkRecoveryItem[]>(initialWorks);
   const [total, setTotal]       = useState(initialTotal);
   const [page, setPage]         = useState(1);
@@ -107,7 +112,7 @@ export default function WorkRecoveryClient({ initialWorks, initialTotal }: Props
   }
 
   async function handleExecute() {
-    if (confirmInput !== 'RECOVER' || !reason.trim() || selectedWorks.length === 0) return;
+    if (!canExecuteWorkRecovery({ confirmInput, reason, selectedCount: selectedWorks.length, recoveryEnabled })) return;
     setExecuting(true);
     setError('');
     const idempotencyKey = `recovery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -148,6 +153,16 @@ export default function WorkRecoveryClient({ initialWorks, initialTotal }: Props
 
   return (
     <div className="space-y-6">
+      {/* ── 実行不可バナー ── */}
+      {!recoveryEnabled && recoveryBlockReason && (
+        <div className="px-4 py-3 bg-yellow-50 border border-yellow-200 rounded-xl text-sm text-yellow-700">
+          ⚠️ {recoveryBlockReason}
+          {recoveryBlockReason.includes('Preview') && (
+            <span className="ml-1 font-semibold">Dry-run は利用可能です。</span>
+          )}
+        </div>
+      )}
+
       {/* ── 検索・フィルター ── */}
       <div className="flex flex-wrap gap-3 items-center">
         <input
@@ -333,14 +348,16 @@ export default function WorkRecoveryClient({ initialWorks, initialTotal }: Props
                       onClick={() => void handleExecute()}
                       disabled={
                         executing ||
-                        confirmInput !== 'RECOVER' ||
-                        !reason.trim() ||
-                        multiPersonWarning
+                        multiPersonWarning ||
+                        !canExecuteWorkRecovery({ confirmInput, reason, selectedCount: selectedWorks.length, recoveryEnabled })
                       }
                       className="self-start px-5 py-2 text-sm bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-semibold disabled:opacity-40 transition-colors"
                     >
                       {executing ? '実行中...' : `${dryRunResult.length} 件を復旧実行`}
                     </button>
+                    {!recoveryEnabled && recoveryBlockReason && (
+                      <p className="text-xs text-yellow-600">⚠️ {recoveryBlockReason}</p>
+                    )}
                     <p className="text-xs text-red-500">
                       ⚠️ この操作は取り消せません。必ず dry-run 結果を確認してから実行してください。
                     </p>

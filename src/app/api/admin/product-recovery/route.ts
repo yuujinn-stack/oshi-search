@@ -9,6 +9,7 @@ import { products as productsTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { upsertProduct, hasIdempotencyKey, insertWorkStatusHistory } from '@/db/write';
 import { getRedis } from '@/lib/redis';
+import { getRecoveryBlockReason } from '@/lib/recovery-guard';
 import type { RakutenItem } from '@/types/rakuten';
 
 export const dynamic = 'force-dynamic';
@@ -267,11 +268,10 @@ export async function POST(req: NextRequest) {
 
   // ── 実行モードのバリデーション ────────────────────────────────────────────
   if (!dryRun) {
-    if (process.env.DATA_RECOVERY_EXECUTION_ENABLED !== 'true') {
-      return NextResponse.json(
-        { error: 'DATA_RECOVERY_EXECUTION_ENABLED=true が設定されていないため実行できません' },
-        { status: 403 },
-      );
+    // 実行環境ゲート（VERCEL_ENV=production かつ DATA_RECOVERY_EXECUTION_ENABLED=true のみ許可）
+    const blockReason = getRecoveryBlockReason();
+    if (blockReason) {
+      return NextResponse.json({ error: blockReason }, { status: 403 });
     }
     if (!reason?.trim()) {
       return NextResponse.json({ error: '実行には reason が必��です' }, { status: 400 });

@@ -1,12 +1,14 @@
 'use client';
 
 import { useState } from 'react';
+import { canExecuteProductRecovery } from '@/lib/recovery-guard';
 import type { OrphanStat, OrphanVerdict, ProductRecoveryCandidate } from '@/app/api/admin/product-recovery/route';
 
 interface Props {
-  initialStats:      OrphanStat[];
-  initialTotal:      number;
-  recoveryEnabled:   boolean;
+  initialStats:       OrphanStat[];
+  initialTotal:       number;
+  recoveryEnabled:    boolean;
+  recoveryBlockReason: string | null;
 }
 
 interface DryRunResult {
@@ -24,7 +26,9 @@ interface ExecResult {
   idempotencyKey: string;
 }
 
-export default function ProductRecoveryClient({ initialStats, initialTotal, recoveryEnabled }: Props) {
+export default function ProductRecoveryClient({
+  initialStats, initialTotal, recoveryEnabled, recoveryBlockReason,
+}: Props) {
   const [stats]             = useState<OrphanStat[]>(initialStats);
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
   const [detail, setDetail] = useState<OrphanVerdict[] | null>(null);
@@ -146,9 +150,8 @@ export default function ProductRecoveryClient({ initialStats, initialTotal, reco
 
   // ── 実行 ──────────────────────────────────────────────────────────────────
   async function runExec() {
-    if (!selectedPerson || !dryRunResult || dryRunResult.recoverableCount === 0) return;
-    if (confirmInput !== 'RECOVER_PRODUCTS') return;
-    if (!reason.trim() || !idempotencyKey.trim()) return;
+    if (!selectedPerson || !dryRunResult) return;
+    if (!canExecuteProductRecovery({ confirmInput, reason, idempotencyKey, recoverableCount: dryRunResult.recoverableCount, recoveryEnabled })) return;
     setExecLoading(true);
     setExecError('');
     const res = await fetch('/api/admin/product-recovery', {
@@ -175,13 +178,13 @@ export default function ProductRecoveryClient({ initialStats, initialTotal, reco
     setExecLoading(false);
   }
 
-  const canExec =
-    !!dryRunResult &&
-    dryRunResult.recoverableCount > 0 &&
-    confirmInput === 'RECOVER_PRODUCTS' &&
-    reason.trim().length > 0 &&
-    idempotencyKey.trim().length > 0 &&
-    recoveryEnabled;
+  const canExec = !!dryRunResult && canExecuteProductRecovery({
+    confirmInput,
+    reason,
+    idempotencyKey,
+    recoverableCount: dryRunResult.recoverableCount,
+    recoveryEnabled,
+  });
 
   return (
     <div className="space-y-6">
@@ -192,9 +195,12 @@ export default function ProductRecoveryClient({ initialStats, initialTotal, reco
         <span className="text-xs text-orange-500">（商品データが DB に存在しない verdict — 孤立状態）</span>
       </div>
 
-      {!recoveryEnabled && (
+      {!recoveryEnabled && recoveryBlockReason && (
         <div className="px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-xl text-xs text-yellow-700">
-          ⚠️ <strong>DATA_RECOVERY_EXECUTION_ENABLED</strong> 未設定 — 調査のみ可能。実行するには環境変数を設定してください。
+          ⚠️ {recoveryBlockReason}
+          {recoveryBlockReason.includes('Preview') && (
+            <span className="ml-1">Dry-run のみ利用可能です。</span>
+          )}
         </div>
       )}
 
@@ -379,7 +385,7 @@ export default function ProductRecoveryClient({ initialStats, initialTotal, reco
                   )}
                   {dryRunResult.recoverableCount > 0 && !recoveryEnabled && (
                     <p className="text-yellow-600 text-[10px]">
-                      ⚠️ DATA_RECOVERY_EXECUTION_ENABLED が未設定のため実行できません
+                      ⚠️ {recoveryBlockReason ?? '実行不可（dry-run のみ）'}
                     </p>
                   )}
                 </div>

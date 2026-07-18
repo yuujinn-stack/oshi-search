@@ -1,6 +1,7 @@
 import { neonSql } from '@/db/client';
 import WorkRecoveryClient from './WorkRecoveryClient';
 import ProductRecoveryClient from './ProductRecoveryClient';
+import { isRecoveryExecutionAllowed, getRecoveryBlockReason } from '@/lib/recovery-guard';
 import type { WorkRecoveryItem } from '@/app/api/admin/work-recovery/route';
 import type { OrphanStat } from '@/app/api/admin/product-recovery/route';
 
@@ -82,7 +83,8 @@ export default async function WorkRecoveryPage({ searchParams }: Props) {
     }
   }
 
-  const recoveryEnabled = process.env.DATA_RECOVERY_EXECUTION_ENABLED === 'true';
+  const recoveryEnabled    = isRecoveryExecutionAllowed();
+  const recoveryBlockReason = getRecoveryBlockReason();
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -93,23 +95,18 @@ export default async function WorkRecoveryPage({ searchParams }: Props) {
         </p>
       </div>
 
-      {/* 環境変数ステータス（作品タブのみ関係） */}
-      {activeTab === 'works' && (
-        <div className={`mb-4 px-4 py-3 rounded-xl border text-sm ${
-          recoveryEnabled
-            ? 'bg-green-50 border-green-200 text-green-700'
-            : 'bg-yellow-50 border-yellow-200 text-yellow-700'
-        }`}>
-          {recoveryEnabled ? (
-            <>✅ <strong>DATA_RECOVERY_EXECUTION_ENABLED=true</strong> — 実行モードが有効です</>
-          ) : (
-            <>
-              ⚠️ <strong>DATA_RECOVERY_EXECUTION_ENABLED</strong> が未設定のため実行不可（dry-run のみ）。
-              実行するには環境変数を <code className="font-mono">true</code> に設定してください。
-            </>
-          )}
-        </div>
-      )}
+      {/* 実行環境ステータス */}
+      <div className={`mb-4 px-4 py-3 rounded-xl border text-sm ${
+        recoveryEnabled
+          ? 'bg-green-50 border-green-200 text-green-700'
+          : 'bg-yellow-50 border-yellow-200 text-yellow-700'
+      }`}>
+        {recoveryEnabled ? (
+          <>✅ <strong>VERCEL_ENV=production</strong> かつ <strong>DATA_RECOVERY_EXECUTION_ENABLED=true</strong> — 実行モードが有効です</>
+        ) : (
+          <>⚠️ {recoveryBlockReason ?? '実行不可（dry-run のみ）'}</>
+        )}
+      </div>
 
       {/* タブナビゲーション */}
       <div className="flex gap-1 mb-6 border-b border-gray-200">
@@ -152,7 +149,12 @@ export default async function WorkRecoveryPage({ searchParams }: Props) {
             DB エラー: {worksError}
           </div>
         ) : (
-          <WorkRecoveryClient initialWorks={initialWorks} initialTotal={initialTotal} />
+          <WorkRecoveryClient
+            initialWorks={initialWorks}
+            initialTotal={initialTotal}
+            recoveryEnabled={recoveryEnabled}
+            recoveryBlockReason={recoveryBlockReason}
+          />
         )
       )}
 
@@ -162,7 +164,12 @@ export default async function WorkRecoveryPage({ searchParams }: Props) {
             DB エラー: {orphanError}
           </div>
         ) : (
-          <ProductRecoveryClient initialStats={orphanStats} initialTotal={orphanTotal} recoveryEnabled={recoveryEnabled} />
+          <ProductRecoveryClient
+            initialStats={orphanStats}
+            initialTotal={orphanTotal}
+            recoveryEnabled={recoveryEnabled}
+            recoveryBlockReason={recoveryBlockReason}
+          />
         )
       )}
     </div>
