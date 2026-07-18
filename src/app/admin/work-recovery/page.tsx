@@ -162,7 +162,7 @@ export default async function WorkRecoveryPage({ searchParams }: Props) {
             DB エラー: {orphanError}
           </div>
         ) : (
-          <ProductRecoveryClient initialStats={orphanStats} initialTotal={orphanTotal} />
+          <ProductRecoveryClient initialStats={orphanStats} initialTotal={orphanTotal} recoveryEnabled={recoveryEnabled} />
         )
       )}
     </div>
