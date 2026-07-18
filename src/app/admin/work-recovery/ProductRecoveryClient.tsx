@@ -2,7 +2,12 @@
 
 import { useState } from 'react';
 import { canExecuteProductRecovery } from '@/lib/recovery-guard';
-import type { OrphanStat, OrphanVerdict, ProductRecoveryCandidate } from '@/app/api/admin/product-recovery/route';
+import type {
+  OrphanStat,
+  OrphanVerdict,
+  ProductRecoveryCandidate,
+  IdDiagResult,
+} from '@/app/api/admin/product-recovery/route';
 
 interface Props {
   initialStats:       OrphanStat[];
@@ -55,6 +60,11 @@ export default function ProductRecoveryClient({
   const [reason, setReason]               = useState('');
   const [confirmInput, setConfirmInput]   = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState('');
+
+  // ── ID 診断 ────────────────────────────────────────────────────────────────
+  const [diagResult, setDiagResult]       = useState<IdDiagResult | null>(null);
+  const [diagLoading, setDiagLoading]     = useState(false);
+  const [diagError, setDiagError]         = useState('');
 
   // ── 人物の孤立 verdict 詳細を取得 ─────────────────────────────────────────
   async function loadDetail(personName: string) {
@@ -118,6 +128,24 @@ export default function ProductRecoveryClient({
 
   function selectAll()   { setSelectedIds(new Set(classAItems.map((v) => v.productId))); setDryRunResult(null); }
   function deselectAll() { setSelectedIds(new Set()); setDryRunResult(null); }
+
+  // ── ID 診断: E判定の orphan productId と Redis item を照合（読み取り専用）──
+  async function runIdDiagnosis() {
+    if (!selectedPerson) return;
+    setDiagLoading(true);
+    setDiagError('');
+    setDiagResult(null);
+    const res = await fetch(
+      `/api/admin/product-recovery?type=id-diagnosis&personName=${encodeURIComponent(selectedPerson)}`,
+    );
+    const data = (await res.json()) as IdDiagResult & { error?: string };
+    if (res.ok) {
+      setDiagResult(data);
+    } else {
+      setDiagError(data.error ?? 'ID診断に失敗しました');
+    }
+    setDiagLoading(false);
+  }
 
   // ── 候補をまとめる ─────────────────────────────────────────────────────────
   function buildCandidates(): ProductRecoveryCandidate[] {
@@ -391,6 +419,137 @@ export default function ProductRecoveryClient({
                 </div>
               )}
 
+              {/* ── ID 診断パネル（読み取り専用） ── */}
+              {redisResult && redisResult.summary.classE > 0 && (
+                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200">
+                    <span className="text-xs font-semibold text-gray-700">
+                      🔬 ID診断（E判定 {redisResult.summary.classE} 件）— 読み取り専用
+                    </span>
+                    <button
+                      onClick={() => void runIdDiagnosis()}
+                      disabled={diagLoading}
+                      className="ml-auto px-3 py-1 text-xs bg-gray-700 hover:bg-gray-800 text-white rounded disabled:opacity-50"
+                    >
+                      {diagLoading ? '診断中...' : 'ID照合診断を実行'}
+                    </button>
+                  </div>
+
+                  {diagError && (
+                    <div className="px-3 py-2 text-xs text-red-600 bg-red-50">{diagError}</div>
+                  )}
+
+                  {diagResult && (
+                    <div className="p-3 space-y-4 text-xs">
+                      {/* サマリー */}
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div className="px-2 py-1.5 bg-gray-50 rounded">
+                          <div className="text-gray-500">Redis商品数</div>
+                          <div className="font-bold text-gray-800">{diagResult.summary.redisItemTotal} 件</div>
+                        </div>
+                        <div className={`px-2 py-1.5 rounded ${diagResult.summary.redisItemsWithNoId > 0 ? 'bg-red-50' : 'bg-green-50'}`}>
+                          <div className="text-gray-500">id フィールド欠損</div>
+                          <div className={`font-bold ${diagResult.summary.redisItemsWithNoId > 0 ? 'text-red-700' : 'text-green-700'}`}>
+                            {diagResult.summary.redisItemsWithNoId} 件
+                            {diagResult.summary.redisItemsWithNoId > 0 && ' ⚠️'}
+                          </div>
+                        </div>
+                        <div className={`px-2 py-1.5 rounded ${diagResult.summary.no_match === diagResult.summary.diagnosedCount ? 'bg-red-50' : 'bg-yellow-50'}`}>
+                          <div className="text-gray-500">no_match（先頭10件）</div>
+                          <div className={`font-bold ${diagResult.summary.no_match === diagResult.summary.diagnosedCount ? 'text-red-700' : 'text-yellow-700'}`}>
+                            {diagResult.summary.no_match} / {diagResult.summary.diagnosedCount}
+                          </div>
+                        </div>
+                        <div className={`px-2 py-1.5 rounded ${diagResult.summary.suffix_match > 0 || diagResult.summary.item_code_match > 0 ? 'bg-orange-50' : 'bg-gray-50'}`}>
+                          <div className="text-gray-500">suffix / prefix不一致</div>
+                          <div className="font-bold text-orange-700">
+                            {diagResult.summary.suffix_match + diagResult.summary.item_code_match}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 判定 */}
+                      <IdDiagVerdict summary={diagResult.summary} />
+
+                      {/* E判定orphanId vs Redis 比較表 */}
+                      <div>
+                        <p className="font-semibold text-gray-600 mb-1">
+                          E判定 先頭{diagResult.summary.diagnosedCount}件の照合結果
+                        </p>
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full text-[10px] border border-gray-200 rounded">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-2 py-1 text-left text-gray-500 whitespace-nowrap">orphan productId</th>
+                                <th className="px-2 py-1 text-left text-gray-500 whitespace-nowrap">suffix</th>
+                                <th className="px-2 py-1 text-left text-gray-500 whitespace-nowrap">照合結果</th>
+                                <th className="px-2 py-1 text-left text-gray-500 whitespace-nowrap">マッチしたid</th>
+                                <th className="px-2 py-1 text-left text-gray-500 whitespace-nowrap">商品タイトル</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {diagResult.diagnoses.map((d) => (
+                                <tr key={d.orphanId} className="border-t border-gray-100">
+                                  <td className="px-2 py-1 font-mono text-gray-600 whitespace-nowrap">{d.orphanId}</td>
+                                  <td className="px-2 py-1 font-mono text-gray-500 whitespace-nowrap">{d.suffix}</td>
+                                  <td className="px-2 py-1 whitespace-nowrap">
+                                    <MatchBadge type={d.matchType} />
+                                  </td>
+                                  <td className="px-2 py-1 font-mono text-gray-500 whitespace-nowrap max-w-[120px] truncate">
+                                    {d.matchedId ?? '—'}
+                                  </td>
+                                  <td className="px-2 py-1 text-gray-700 max-w-[140px] truncate" title={d.matchedTitle ?? ''}>
+                                    {d.matchedTitle ?? '—'}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* Redis サンプル（id フィールドと itemUrl を確認） */}
+                      <div>
+                        <p className="font-semibold text-gray-600 mb-1">
+                          Redis 商品サンプル（カテゴリ別先頭3件）
+                        </p>
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full text-[10px] border border-gray-200 rounded">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-2 py-1 text-left text-gray-500">カテゴリ</th>
+                                <th className="px-2 py-1 text-left text-gray-500">item.id</th>
+                                <th className="px-2 py-1 text-left text-gray-500">URLの末尾セグメント</th>
+                                <th className="px-2 py-1 text-left text-gray-500">商品タイトル</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {diagResult.redisSample.map((s, i) => (
+                                <tr key={i} className="border-t border-gray-100">
+                                  <td className="px-2 py-1 text-gray-500 whitespace-nowrap">{s.category}</td>
+                                  <td className={`px-2 py-1 font-mono whitespace-nowrap ${!s.id ? 'text-red-600 font-semibold' : 'text-gray-600'}`}>
+                                    {s.id ?? '(null)'}
+                                  </td>
+                                  <td className="px-2 py-1 font-mono text-gray-500 whitespace-nowrap">{s.lastSegment || '(空)'}</td>
+                                  <td className="px-2 py-1 text-gray-700 max-w-[140px] truncate" title={s.title}>
+                                    {s.title}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {diagResult.summary.redisItemsWithNoId > 0 && (
+                          <p className="mt-1 text-[10px] text-red-600">
+                            ⚠️ {diagResult.summary.redisItemsWithNoId} 件の Redis 商品に id フィールドがありません（stableId 導入前に保存されたデータの可能性）
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {execError && (
                 <div className="text-xs text-red-600 px-3 py-2 bg-red-50 rounded-lg">{execError}</div>
               )}
@@ -459,6 +618,73 @@ export default function ProductRecoveryClient({
           <span><ClassBadge cls="pending" /> 未確認（「Redis をスキャン」で分類）</span>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── ID診断用コンポーネント ─────────────────────────────────────────────────────
+
+type MatchType = 'exact_id_match' | 'normalized_url_match' | 'item_code_match' | 'suffix_match' | 'no_match';
+
+function MatchBadge({ type }: { type: MatchType }) {
+  const map: Record<MatchType, string> = {
+    exact_id_match:       'bg-green-100 text-green-700',
+    normalized_url_match: 'bg-blue-100 text-blue-700',
+    item_code_match:      'bg-orange-100 text-orange-700',
+    suffix_match:         'bg-yellow-100 text-yellow-700',
+    no_match:             'bg-red-100 text-red-700',
+  };
+  const labels: Record<MatchType, string> = {
+    exact_id_match:       'exact_id ✓',
+    normalized_url_match: 'url_match',
+    item_code_match:      'prefix違い',
+    suffix_match:         'suffix一致',
+    no_match:             'no_match ✗',
+  };
+  return (
+    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap ${map[type]}`}>
+      {labels[type]}
+    </span>
+  );
+}
+
+function IdDiagVerdict({ summary }: {
+  summary: IdDiagResult['summary'];
+}) {
+  const allNoMatch    = summary.no_match === summary.diagnosedCount && summary.diagnosedCount > 0;
+  const hasSuffixHit  = summary.suffix_match > 0 || summary.item_code_match > 0;
+  const hasNoIdField  = summary.redisItemsWithNoId > 0;
+  const hasRedisItems = summary.redisItemTotal > 0;
+
+  let verdict = '';
+  let color   = '';
+
+  if (!hasRedisItems) {
+    verdict = '⚠️ Redis に商品データなし — 真のデータ消失';
+    color   = 'text-red-700 bg-red-50 border-red-200';
+  } else if (hasNoIdField && summary.redisItemsWithNoId === summary.redisItemTotal) {
+    verdict = '🔴 Redis 全商品に id フィールドなし — stableId 導入前のデータ保存が原因（IDフォーマット不一致）';
+    color   = 'text-orange-700 bg-orange-50 border-orange-200';
+  } else if (hasNoIdField) {
+    verdict = '🟠 一部の Redis 商品に id フィールドなし — 古い保存データと新しいデータが混在（ID不一致の可能性）';
+    color   = 'text-orange-700 bg-orange-50 border-orange-200';
+  } else if (allNoMatch && !hasSuffixHit) {
+    verdict = '🔴 完全な no_match — Redis に同一商品なし（真のデータ消失または楽天URLの大幅変更）';
+    color   = 'text-red-700 bg-red-50 border-red-200';
+  } else if (hasSuffixHit) {
+    verdict = '🟠 suffix/prefix 不一致あり — 同一商品がカテゴリ違いまたはprefix変更で別IDになっている可能性';
+    color   = 'text-orange-700 bg-orange-50 border-orange-200';
+  } else if (summary.exact_id_match > 0) {
+    verdict = '🟢 一部 exact_id_match あり — 診断対象外の verdict に問題がある可能性';
+    color   = 'text-green-700 bg-green-50 border-green-200';
+  } else {
+    verdict = '⚠️ 判定不明 — 上のデータを確認してください';
+    color   = 'text-yellow-700 bg-yellow-50 border-yellow-200';
+  }
+
+  return (
+    <div className={`px-3 py-2 border rounded text-[11px] font-semibold ${color}`}>
+      診断結果: {verdict}
     </div>
   );
 }

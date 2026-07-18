@@ -39,6 +39,51 @@ export interface ProductRecoveryCandidate {
   redisCategory: string;
 }
 
+export type IdDiagMatchType =
+  | 'exact_id_match'
+  | 'normalized_url_match'
+  | 'item_code_match'
+  | 'suffix_match'
+  | 'no_match';
+
+export interface IdDiagEntry {
+  orphanId:        string;
+  prefix:          string;
+  suffix:          string;
+  matchType:       IdDiagMatchType;
+  matchedId:       string | null;
+  matchedUrl:      string | null;
+  matchedTitle:    string | null;
+  matchedCategory: string | null;
+}
+
+export interface IdDiagRedisSample {
+  id:            string | null;
+  title:         string;
+  itemUrl:       string;
+  category:      string;
+  lastSegment:   string;
+  recomputedId:  string;
+}
+
+export interface IdDiagResult {
+  personName:   string;
+  summary: {
+    orphanTotal:           number;
+    diagnosedCount:        number;
+    redisItemTotal:        number;
+    redisItemsWithNoId:    number;
+    redisCategories:       string[];
+    exact_id_match:        number;
+    normalized_url_match:  number;
+    item_code_match:       number;
+    suffix_match:          number;
+    no_match:              number;
+  };
+  diagnoses:   IdDiagEntry[];
+  redisSample: IdDiagRedisSample[];
+}
+
 // ── GET ─��────────────────────────────────────────────────────────────────────
 // query:
 //   type=orphan-stats        → 孤立verdict 件数を人物別に集計
@@ -218,7 +263,187 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // ── ID診断: 孤立 verdict の productId を Redis item.id / URL セグメントと照合 ──
+  // type=id-diagnosis&personName={name}
+  // DB・Redisへの書き込みは一切行わない（読み取り専用）
+  if (type === 'id-diagnosis') {
+    const redis = getRedis();
+    if (!redis) {
+      return NextResponse.json(
+        { error: 'Redis 未接続 — UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN を確認してください' },
+        { status: 503 },
+      );
+    }
+
+    // 孤立 productId を DB から取得（最大 500 件）
+    let orphanIds: string[] = [];
+    try {
+      const rows = await neonSql`
+        WITH product_ids AS (
+          SELECT DISTINCT elem->>'id' AS product_id
+          FROM products p,
+          LATERAL jsonb_array_elements(p.items) AS elem
+          WHERE p.person_name = ${personName}
+            AND jsonb_typeof(p.items) = 'array'
+        )
+        SELECT v.product_id
+        FROM verdicts v
+        LEFT JOIN product_ids pi ON v.product_id = pi.product_id
+        WHERE v.person_name = ${personName}
+          AND pi.product_id IS NULL
+        ORDER BY v.judged_at DESC
+        LIMIT 500
+      `;
+      orphanIds = rows.map((r) => r.product_id as string);
+    } catch (err) {
+      return NextResponse.json({ error: `DB query failed: ${String(err)}` }, { status: 500 });
+    }
+
+    // Redis から全カテゴリデータを取得
+    let redisData: Record<string, unknown> = {};
+    try {
+      const raw = await redis.hgetall(`products:${personName}`);
+      redisData = (raw ?? {}) as Record<string, unknown>;
+    } catch (err) {
+      return NextResponse.json({ error: `Redis 取得失敗: ${String(err)}` }, { status: 500 });
+    }
+
+    // Redis 全商品をフラット化（item.id / itemUrl / lastSegment を抽出）
+    interface RedisItemFlat {
+      id:           string | null;
+      title:        string;
+      itemUrl:      string;
+      category:     string;
+      lastSegment:  string;  // URL 最終パスセグメント (stableId の元になる値)
+    }
+
+    const allRedisItems: RedisItemFlat[] = [];
+    let redisItemsWithNoId = 0;
+
+    for (const [category, rawJson] of Object.entries(redisData)) {
+      try {
+        const items = (typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson) as RakutenItem[];
+        if (!Array.isArray(items)) continue;
+        for (const item of items) {
+          const lastSeg = extractLastUrlSegment(item.itemUrl ?? '');
+          if (!item?.id) redisItemsWithNoId++;
+          allRedisItems.push({
+            id:          item.id ?? null,
+            title:       (item.title ?? '').slice(0, 40),
+            itemUrl:     item.itemUrl ?? '',
+            category,
+            lastSegment: lastSeg,
+          });
+        }
+      } catch { /* JSON parse 失敗: スキップ */ }
+    }
+
+    // 孤立 productId ごとに照合（先頭 10 件）
+    type MatchType = 'exact_id_match' | 'normalized_url_match' | 'item_code_match' | 'suffix_match' | 'no_match';
+
+    interface DiagEntry {
+      orphanId:    string;
+      prefix:      string;
+      suffix:      string;
+      matchType:   MatchType;
+      matchedId:   string | null;
+      matchedUrl:  string | null;
+      matchedTitle: string | null;
+      matchedCategory: string | null;
+    }
+
+    const diagnoses: DiagEntry[] = orphanIds.slice(0, 10).map((orphanId) => {
+      const m = orphanId.match(/^([a-z]+)-(.+)$/);
+      const prefix = m?.[1] ?? '';
+      const suffix = m?.[2] ?? '';
+
+      const entry: DiagEntry = {
+        orphanId, prefix, suffix,
+        matchType: 'no_match',
+        matchedId: null, matchedUrl: null, matchedTitle: null, matchedCategory: null,
+      };
+
+      for (const ri of allRedisItems) {
+        if (ri.id === orphanId) {
+          return { ...entry, matchType: 'exact_id_match', matchedId: ri.id, matchedUrl: ri.itemUrl, matchedTitle: ri.title, matchedCategory: ri.category };
+        }
+      }
+      // suffix match: URL 末尾セグメントが suffix と一致
+      for (const ri of allRedisItems) {
+        if (ri.lastSegment && (ri.lastSegment === suffix || ri.lastSegment.startsWith(suffix) || suffix.startsWith(ri.lastSegment))) {
+          if (entry.matchType === 'no_match') {
+            Object.assign(entry, { matchType: 'suffix_match' as MatchType, matchedId: ri.id, matchedUrl: ri.itemUrl, matchedTitle: ri.title, matchedCategory: ri.category });
+          }
+        }
+      }
+      // item_code_match: suffix が ri.id の後半部分と一致（prefix 違い）
+      for (const ri of allRedisItems) {
+        if (ri.id && ri.id !== orphanId) {
+          const riM = ri.id.match(/^([a-z]+)-(.+)$/);
+          const riSuffix = riM?.[2] ?? '';
+          if (riSuffix === suffix) {
+            return { ...entry, matchType: 'item_code_match', matchedId: ri.id, matchedUrl: ri.itemUrl, matchedTitle: ri.title, matchedCategory: ri.category };
+          }
+        }
+      }
+      // normalized_url_match: orphan suffix が ri.itemUrl の正規化パスに含まれる
+      for (const ri of allRedisItems) {
+        try {
+          const u = new URL(ri.itemUrl);
+          const normalizedPath = u.pathname.toLowerCase().replace(/\/$/, '');
+          if (normalizedPath.includes(suffix.toLowerCase())) {
+            if (entry.matchType === 'no_match' || entry.matchType === 'suffix_match') {
+              Object.assign(entry, { matchType: 'normalized_url_match' as MatchType, matchedId: ri.id, matchedUrl: ri.itemUrl, matchedTitle: ri.title, matchedCategory: ri.category });
+            }
+          }
+        } catch { /* skip */ }
+      }
+
+      return entry;
+    });
+
+    // Redis サンプル（カテゴリ別先頭 3 件ずつ、最大 18 件）
+    const redisSample: (RedisItemFlat & { recomputedId: string })[] = [];
+    const seenCategories = new Set<string>();
+    for (const ri of allRedisItems) {
+      if (!seenCategories.has(ri.category) || [...seenCategories].filter((c) => c === ri.category).length < 3) {
+        seenCategories.add(ri.category);
+        redisSample.push({
+          ...ri,
+          recomputedId: ri.id ?? `(no id — lastSegment: ${ri.lastSegment})`,
+        });
+        if (redisSample.length >= 18) break;
+      }
+    }
+
+    const summary = {
+      orphanTotal:           orphanIds.length,
+      diagnosedCount:        Math.min(10, orphanIds.length),
+      redisItemTotal:        allRedisItems.length,
+      redisItemsWithNoId,
+      redisCategories:       Object.keys(redisData),
+      exact_id_match:        diagnoses.filter((d) => d.matchType === 'exact_id_match').length,
+      normalized_url_match:  diagnoses.filter((d) => d.matchType === 'normalized_url_match').length,
+      item_code_match:       diagnoses.filter((d) => d.matchType === 'item_code_match').length,
+      suffix_match:          diagnoses.filter((d) => d.matchType === 'suffix_match').length,
+      no_match:              diagnoses.filter((d) => d.matchType === 'no_match').length,
+    };
+
+    return NextResponse.json({ personName, summary, diagnoses, redisSample });
+  }
+
   return NextResponse.json({ error: `不明な type: ${type}` }, { status: 400 });
+}
+
+// URL の最終パスセグメントを抽出する補助関数（stableId の抽出ロジックと同一）
+function extractLastUrlSegment(itemUrl: string): string {
+  try {
+    const url = new URL(itemUrl);
+    const parts = url.pathname.split('/').filter(Boolean);
+    return parts[parts.length - 1] ?? '';
+  } catch {
+    return '';
+  }
 }
 
 // ── POST ─────────────���───────────────────────────────────────────────────────
