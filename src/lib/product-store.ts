@@ -15,34 +15,167 @@ export interface StoredCategoryData {
   fetchedAt: number; // バッチ実行のタイムスタンプ
 }
 
+// バッチ保存の統計情報
+export interface ProductMergeStats {
+  fetchedCount:           number;  // 楽天APIから取得した件数
+  retainedExistingCount:  number;  // fetchedにない既存商品（削除しない）
+  addedCount:             number;  // 新規追加（既存にない）
+  mergedCount:            number;  // 既存と同一IDでマージ
+  preservedManualCount:   number;  // verdict未登録の保持商品（手動追加候補）
+  preservedVerdictedCount:number;  // verdict登録済みの保持商品
+  skippedBecauseError:    boolean; // true=API空+既存あり → 保存スキップ
+}
+
+// itemUrl を正規化してセカンダリキーにする（URLパスの変更対策）
+function normalizeItemUrl(url: string): string {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    return (u.hostname + u.pathname).toLowerCase().replace(/\/$/, '');
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+// fetched の情報で existing を更新するが、null / undefined / "" で既存値を上書きしない
+export function mergeRakutenItem(fetched: RakutenItem, existing: RakutenItem): RakutenItem {
+  const result = { ...existing } as Record<string, unknown>;
+  for (const [key, value] of Object.entries(fetched)) {
+    if (value !== null && value !== undefined && value !== '') {
+      result[key] = value;
+    }
+  }
+  return result as unknown as RakutenItem;
+}
+
+// 非破壊マージ:
+//   - fetchedとexistingを stable key (id → normalized URL) でマッチング
+//   - fetchedにある商品: 既存とマージ（空値上書きなし）
+//   - fetchedにない既存商品: 削除せず全て保持
+//   - 重複なし（同一stable keyは1件）
+export function mergeProductItems(
+  fetched: readonly RakutenItem[],
+  existing: readonly RakutenItem[],
+  verdictIds: ReadonlySet<string>,
+): { items: RakutenItem[] } & Omit<ProductMergeStats, 'skippedBecauseError'> {
+  // 既存商品を id とURLの両方でインデックス
+  const existingById  = new Map<string, RakutenItem>();
+  const existingByUrl = new Map<string, RakutenItem>();
+  for (const item of existing) {
+    if (!existingById.has(item.id)) existingById.set(item.id, item);
+    const url = normalizeItemUrl(item.itemUrl);
+    if (url && !existingByUrl.has(url)) existingByUrl.set(url, item);
+  }
+
+  const resultById = new Map<string, RakutenItem>();
+  let addedCount  = 0;
+  let mergedCount = 0;
+
+  // ステップ1: fetched 商品を処理（既存とマージ or 新規追加）
+  for (const fetchedItem of fetched) {
+    const existingMatch =
+      existingById.get(fetchedItem.id) ??
+      existingByUrl.get(normalizeItemUrl(fetchedItem.itemUrl));
+    if (existingMatch) {
+      resultById.set(fetchedItem.id, mergeRakutenItem({ ...fetchedItem }, existingMatch));
+      mergedCount++;
+    } else {
+      resultById.set(fetchedItem.id, { ...fetchedItem });
+      addedCount++;
+    }
+  }
+
+  // ステップ2: fetchedにない既存商品を全て保持（手動追加・verdict済み商品含む）
+  const fetchedIds  = new Set(fetched.map((i) => i.id));
+  const fetchedUrls = new Set(fetched.map((i) => normalizeItemUrl(i.itemUrl)).filter(Boolean));
+
+  let retainedExistingCount    = 0;
+  let preservedManualCount     = 0;
+  let preservedVerdictedCount  = 0;
+
+  for (const item of existing) {
+    const inFetched =
+      fetchedIds.has(item.id) ||
+      fetchedUrls.has(normalizeItemUrl(item.itemUrl));
+    if (!inFetched && !resultById.has(item.id)) {
+      resultById.set(item.id, { ...item });
+      retainedExistingCount++;
+      if (verdictIds.has(item.id)) {
+        preservedVerdictedCount++;
+      } else {
+        preservedManualCount++;
+      }
+    }
+  }
+
+  return {
+    items: [...resultById.values()],
+    fetchedCount:            fetched.length,
+    retainedExistingCount,
+    addedCount,
+    mergedCount,
+    preservedManualCount,
+    preservedVerdictedCount,
+  };
+}
+
 // カテゴリ単位で商品を保存（バッチ処理から呼ぶ）
-// verdictIds を渡すと、新規フェッチに含まれなかった verdict 済み商品を既存データから保持する。
-// これにより「手動採用した商品が楽天再取得で消える」問題を防ぐ。
+//
+// 安全ガード:
+//   1. products=[] + 既存あり → 保存スキップ（楽天API失敗・429・タイムアウト時のデータ消失防止）
+//   2. 非破壊マージ: fetchedにない既存商品は全て保持（手動追加・verdict済み商品含む）
+//   3. 空値での既存値上書きなし（fetchedのnull/""は既存値を保持）
+//   4. stable key (id → normalized URL) で重複防止
 export async function storeProducts(
   personName: string,
   category: ProductCategory,
   products: RakutenItem[],
   verdictIds?: Set<string>,
-): Promise<void> {
-  let finalProducts = products;
-  if (verdictIds && verdictIds.size > 0) {
-    try {
-      const rows = await db.select().from(productsTable)
-        .where(eq(productsTable.personName, personName));
-      const row = rows.find((r) => r.category === category);
-      if (row) {
-        const existing = row.items as RakutenItem[];
-        const newIds = new Set(products.map((p) => p.id));
-        const preserved = existing.filter((p) => !newIds.has(p.id) && verdictIds.has(p.id));
-        if (preserved.length > 0) {
-          console.log(`[db] ${personName}/${category}: verdict済み${preserved.length}件を保持`);
-          finalProducts = [...products, ...preserved];
-        }
-      }
-    } catch { /* 既存データ取得失敗時はそのまま上書き */ }
+): Promise<ProductMergeStats> {
+  // 既存データを先に取得（スキップ判定 + マージの両方に必要）
+  let existingItems: RakutenItem[] = [];
+  let hasExisting = false;
+  try {
+    const rows = await db.select().from(productsTable)
+      .where(eq(productsTable.personName, personName));
+    const row = rows.find((r) => r.category === category);
+    if (row) {
+      existingItems = row.items as RakutenItem[];
+      hasExisting = existingItems.length > 0;
+    }
+  } catch {
+    // DB読み取り失敗: 既存データ不明のため新規データのみ保存（フォールバック）
   }
+
+  // 空上書き防止: API 0件 + 既存あり → スキップ
+  if (products.length === 0 && hasExisting) {
+    console.log(`[db] ${personName}/${category}: 新規0件のため既存${existingItems.length}件を保持`);
+    return {
+      fetchedCount:            0,
+      retainedExistingCount:   existingItems.length,
+      addedCount:              0,
+      mergedCount:             0,
+      preservedManualCount:    0,
+      preservedVerdictedCount: 0,
+      skippedBecauseError:     true,
+    };
+  }
+
+  // 非破壊マージ
+  const activeVerdictIds = verdictIds ?? new Set<string>();
+  const stats = mergeProductItems(products, existingItems, activeVerdictIds);
+
+  if (stats.retainedExistingCount > 0) {
+    console.log(
+      `[db] ${personName}/${category}: 既存${stats.retainedExistingCount}件保持` +
+      ` (verdict:${stats.preservedVerdictedCount} / other:${stats.preservedManualCount})`,
+    );
+  }
+
   const fetchedAt = Date.now();
-  await upsertProduct(personName, category, finalProducts, fetchedAt);
+  await upsertProduct(personName, category, stats.items, fetchedAt);
+
+  return { ...stats, skippedBecauseError: false };
 }
 
 // 手動追加: カテゴリに商品を1件追加（既存商品は保持）
