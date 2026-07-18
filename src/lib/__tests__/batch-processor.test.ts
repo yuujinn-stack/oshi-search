@@ -15,7 +15,11 @@ vi.mock('@/lib/rakuten', () => ({
 
 vi.mock('@/lib/product-store', () => ({
   CATEGORIES: ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD', '中古'],
-  storeProducts: vi.fn().mockResolvedValue(undefined),
+  storeProducts: vi.fn().mockResolvedValue({
+    fetchedCount: 0, retainedExistingCount: 0, addedCount: 0,
+    mergedCount: 0, preservedManualCount: 0, preservedVerdictedCount: 0,
+    skippedBecauseError: false,
+  }),
   saveBatchMeta: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -78,7 +82,11 @@ beforeEach(() => {
   vi.mocked(getAllPersonsWithConfig).mockReturnValue([PERSON]);
   vi.mocked(getAllVerdicts).mockResolvedValue({});
   vi.mocked(shouldAutoApprove).mockReturnValue(false);
-  vi.mocked(storeProducts).mockResolvedValue(undefined);
+  vi.mocked(storeProducts).mockResolvedValue({
+    fetchedCount: 0, retainedExistingCount: 0, addedCount: 0,
+    mergedCount: 0, preservedManualCount: 0, preservedVerdictedCount: 0,
+    skippedBecauseError: false,
+  });
 });
 
 // ── テスト ────────────────────────────────────────────────────────────────────
