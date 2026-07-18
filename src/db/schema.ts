@@ -221,6 +221,25 @@ export const batchLock = pgTable('batch_lock', {
   expiresAt:   timestamp('expires_at',   { withTimezone: true }).notNull(),
 });
 
+// ── ステータス変更履歴（work_status_history）──────────────────────────────────
+export const workStatusHistory = pgTable('work_status_history', {
+  id:             serial('id').primaryKey(),
+  personName:     text('person_name').notNull(),
+  workId:         text('work_id').notNull(),
+  title:          text('title').notNull(),
+  workSource:     text('work_source').notNull(),
+  previousStatus: text('previous_status').notNull(),
+  newStatus:      text('new_status').notNull(),
+  changedBy:      text('changed_by').notNull(),
+  reason:         text('reason'),
+  idempotencyKey: text('idempotency_key'),
+  createdAt:      timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('wsh_person_work_idx').on(t.personName, t.workId),
+  index('wsh_idempotency_idx').on(t.idempotencyKey),
+  index('wsh_created_at_idx').on(t.createdAt),
+]);
+
 // ── AI/手動判定結果（verdicts:{personName}）──────────────────────────────────
 export const verdicts = pgTable('verdicts', {
   personName:    text('person_name').notNull(),

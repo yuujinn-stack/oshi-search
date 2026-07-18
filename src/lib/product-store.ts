@@ -18,29 +18,48 @@ export interface StoredCategoryData {
 // カテゴリ単位で商品を保存（バッチ処理から呼ぶ）
 // verdictIds を渡すと、新規フェッチに含まれなかった verdict 済み商品を既存データから保持する。
 // これにより「手動採用した商品が楽天再取得で消える」問題を防ぐ。
+//
+// 安全ガード:
+//   - products = [] + 既存データあり → 上書きせず保持（楽天API失敗・一時的な空結果で消えるのを防ぐ）
+//   - verdict保持処理は既存データ読み取りと統合（catch時も既存データを活用）
 export async function storeProducts(
   personName: string,
   category: ProductCategory,
   products: RakutenItem[],
   verdictIds?: Set<string>,
 ): Promise<void> {
-  let finalProducts = products;
-  if (verdictIds && verdictIds.size > 0) {
-    try {
-      const rows = await db.select().from(productsTable)
-        .where(eq(productsTable.personName, personName));
-      const row = rows.find((r) => r.category === category);
-      if (row) {
-        const existing = row.items as RakutenItem[];
-        const newIds = new Set(products.map((p) => p.id));
-        const preserved = existing.filter((p) => !newIds.has(p.id) && verdictIds.has(p.id));
-        if (preserved.length > 0) {
-          console.log(`[db] ${personName}/${category}: verdict済み${preserved.length}件を保持`);
-          finalProducts = [...products, ...preserved];
-        }
-      }
-    } catch { /* 既存データ取得失敗時はそのまま上書き */ }
+  // 既存データを先に取得（空上書き防止 + verdict保持の両方に必要）
+  let existingItems: RakutenItem[] = [];
+  let hasExisting = false;
+  try {
+    const rows = await db.select().from(productsTable)
+      .where(eq(productsTable.personName, personName));
+    const row = rows.find((r) => r.category === category);
+    if (row) {
+      existingItems = row.items as RakutenItem[];
+      hasExisting = existingItems.length > 0;
+    }
+  } catch {
+    // DB読み取り失敗: 既存データ不明のため続行（新規データのみ保存）
   }
+
+  // 空上書き防止: API 0件 + 既存あり → 既存を保持して終了
+  if (products.length === 0 && hasExisting) {
+    console.log(`[db] ${personName}/${category}: 新規0件のため既存${existingItems.length}件を保持`);
+    return;
+  }
+
+  // verdict済み商品を保持（新規フェッチに含まれなかった承認済み商品）
+  let finalProducts = products;
+  if (verdictIds && verdictIds.size > 0 && hasExisting) {
+    const newIds = new Set(products.map((p) => p.id));
+    const preserved = existingItems.filter((p) => !newIds.has(p.id) && verdictIds.has(p.id));
+    if (preserved.length > 0) {
+      console.log(`[db] ${personName}/${category}: verdict済み${preserved.length}件を保持`);
+      finalProducts = [...products, ...preserved];
+    }
+  }
+
   const fetchedAt = Date.now();
   await upsertProduct(personName, category, finalProducts, fetchedAt);
 }
