@@ -88,7 +88,8 @@ export function deduplicateProviders(providers: VodProvider[]): VodProvider[] {
  */
 export function isConfirmedVodAvailability(p: VodProvider): boolean {
   if (p.hidden) return false;
-  if (!p.providerName || p.providerName === 'unknown') return false;
+  const normalizedName = (p.providerName ?? '').trim().toLowerCase();
+  if (!normalizedName || normalizedName === 'unknown') return false;
   if (p.type === 'unknown') return false;
   const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
   if (isAiSource && p.confidence === 'low') return false;
