@@ -9,7 +9,8 @@ import { getPublishedWorksOrThrow } from '@/lib/work-store';
 import { getPersonMeta } from '@/lib/person-meta';
 import { getGroupMeta } from '@/lib/group-meta';
 import { groupHref } from '@/lib/group-slug';
-import { deduplicateProviders, isConfirmedVodAvailability } from '@/lib/vod-dedup';
+import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName } from '@/lib/vod-dedup';
+import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import ProductTabList, { type ProductWithSection } from '@/components/ProductTabList';
 import PersonCard from '@/components/PersonCard';
 import WorksSection from '@/components/WorksSection';
@@ -192,9 +193,9 @@ const DISPLAY_SECTIONS: Array<{
 ];
 
 // ─── VOD フィルタ（WorkCard と同一ロジック） ──────────────────────────────────
-function getStreamingProviders(work: WorkRecord): VodProvider[] {
+function getStreamingProviders(work: WorkRecord, terminatedSlugs: Set<string>): VodProvider[] {
   return deduplicateProviders(
-    (work.vodProviders ?? []).filter(isConfirmedVodAvailability),
+    (work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p, terminatedSlugs)),
   ).filter((p) => ['flatrate', 'free', 'ads'].includes(p.type));
 }
 
@@ -229,7 +230,7 @@ export default async function PersonPage({ params }: Props) {
   const groupMembers = person.group ? await getPersonsByGroupMerged(person.group) : [];
   const related = groupMembers.filter((p) => p.name !== person.name).slice(0, 4);
 
-  const [storedResult, verdictsResult, worksResult, personMetaResult, groupMetaResult, displayOrdersResult] =
+  const [storedResult, verdictsResult, worksResult, personMetaResult, groupMetaResult, displayOrdersResult, terminatedSlugs] =
     await Promise.allSettled([
       getAllStoredProductsOrThrow(person.name),
       getAllVerdictsOrThrow(person.name),
@@ -237,6 +238,7 @@ export default async function PersonPage({ params }: Props) {
       getPersonMeta(person.name),
       person.group ? getGroupMeta(person.group) : Promise.resolve(null),
       getAllDisplayOrders(person.name),
+      getInactiveProviderSlugs(),
     ]);
 
   const storedData: Partial<Record<ProductCategory, StoredCategoryData>> =
@@ -246,6 +248,7 @@ export default async function PersonPage({ params }: Props) {
   const personMeta = personMetaResult.status === 'fulfilled' ? personMetaResult.value : null;
   const groupMeta = groupMetaResult.status === 'fulfilled' ? groupMetaResult.value : null;
   const displayOrders = displayOrdersResult.status === 'fulfilled' ? displayOrdersResult.value : {};
+  const inactiveSlugs: Set<string> = terminatedSlugs.status === 'fulfilled' ? terminatedSlugs.value : new Set();
   const redisError =
     storedResult.status === 'rejected' ||
     worksResult.status === 'rejected' ||
@@ -344,10 +347,20 @@ export default async function PersonPage({ params }: Props) {
   );
 
   // ── VOD データ ──
-  const streamingWorks = publishedWorks.filter((w) => getStreamingProviders(w).length > 0);
+  // WorksSection（クライアント）へ渡す前に終了済みサービスを除去しておく
+  const publishedWorksForClient = inactiveSlugs.size > 0
+    ? publishedWorks.map((w) => ({
+        ...w,
+        vodProviders: (w.vodProviders ?? []).filter(
+          (p) => !inactiveSlugs.has(normalizeProviderName(p.providerName ?? '')),
+        ),
+      }))
+    : publishedWorks;
+
+  const streamingWorks = publishedWorks.filter((w) => getStreamingProviders(w, inactiveSlugs).length > 0);
   const providerWorkMap = new Map<string, { logoPath?: string; works: WorkRecord[] }>();
   for (const work of streamingWorks) {
-    for (const p of getStreamingProviders(work)) {
+    for (const p of getStreamingProviders(work, inactiveSlugs)) {
       if (!providerWorkMap.has(p.providerName)) {
         providerWorkMap.set(p.providerName, { logoPath: p.logoPath, works: [] });
       }
@@ -791,7 +804,7 @@ export default async function PersonPage({ params }: Props) {
                   </a>
                 )}
               </div>
-              <WorksSection works={publishedWorks} />
+              <WorksSection works={publishedWorksForClient} />
             </section>
           ) : redisError ? (
             <section id="works">

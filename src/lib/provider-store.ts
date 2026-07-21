@@ -1,9 +1,11 @@
 // 配信サービス（VOD）プロバイダーデータの永続ストレージ（Neon DB）
 // 管理画面からのみ書き込み、ProviderLogo コンポーネントから読み取る
 
+import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { vodProviders as vodProvidersTable } from '@/db/schema';
 import { upsertVodProvider, deleteVodProviderInDB } from '@/db/write';
+import { normalizeProviderName } from '@/lib/vod-dedup';
 
 export interface ProviderRecord {
   id: string;
@@ -54,6 +56,21 @@ export async function getActiveProviderLogoMap(): Promise<Record<string, string>
     }
   }
   return map;
+}
+
+// isActive=false のプロバイダーの正規化済みslugセットを返す
+// 公開フィルタで終了済みサービスを除外するために使用する
+// DB接続失敗時は空Setを返してすべてのサービスを有効として扱う（fail-open）
+export async function getInactiveProviderSlugs(): Promise<Set<string>> {
+  try {
+    const rows = await db
+      .select({ slug: vodProvidersTable.slug })
+      .from(vodProvidersTable)
+      .where(eq(vodProvidersTable.isActive, false));
+    return new Set(rows.map((r) => normalizeProviderName(r.slug)));
+  } catch {
+    return new Set();
+  }
 }
 
 export async function saveProvider(record: ProviderRecord): Promise<void> {

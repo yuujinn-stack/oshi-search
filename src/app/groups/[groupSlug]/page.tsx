@@ -5,7 +5,8 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts, CATEGORIES } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
-import { deduplicateProviders, isConfirmedVodAvailability } from '@/lib/vod-dedup';
+import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName } from '@/lib/vod-dedup';
+import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getAllPersonMetas } from '@/lib/person-meta';
 import { getAllGroupMetasOrThrow, getAllGroupMetas } from '@/lib/group-meta';
 import { groupHref, groupHrefByName, resolveGroupFromSlug, resolveGroupName, canonicalGroupSlug, SLUG_TO_GROUP_NAME } from '@/lib/group-slug';
@@ -90,9 +91,9 @@ const PRODUCT_DISPLAY: Array<{
 ];
 
 // ─── ユーティリティ ────────────────────────────────────────────────────────────
-function getPublicProviders(work: WorkRecord): VodProvider[] {
+function getPublicProviders(work: WorkRecord, terminatedSlugs: Set<string>): VodProvider[] {
   return deduplicateProviders(
-    (work.vodProviders ?? []).filter(isConfirmedVodAvailability),
+    (work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p, terminatedSlugs)),
   );
 }
 
@@ -314,8 +315,8 @@ export default async function GroupsPage({ params }: Props) {
 
   const genre = members[0]?.genre;
 
-  // ── 全メンバーのデータ + PersonMeta を並列取得 ──
-  const [memberDataList, personMetaMap] = await Promise.all([
+  // ── 全メンバーのデータ + PersonMeta + 終了済みVODスラグ を並列取得 ──
+  const [memberDataList, personMetaMap, terminatedSlugs] = await Promise.all([
     Promise.all(
       members.map(async (m) => {
         const [works, storedProducts, verdicts] = await Promise.all([
@@ -327,6 +328,7 @@ export default async function GroupsPage({ params }: Props) {
       }),
     ),
     getAllPersonMetas().catch(() => ({} as Record<string, PersonMeta>)),
+    getInactiveProviderSlugs(),
   ]);
 
   // ── メンバー分類 ──────────────────────────────────────────────────────────────
@@ -385,12 +387,22 @@ export default async function GroupsPage({ params }: Props) {
 
   const workProviders = new Map<string, VodProvider[]>();
   for (const work of allWorks) {
-    workProviders.set(work.id, getPublicProviders(work));
+    workProviders.set(work.id, getPublicProviders(work, terminatedSlugs));
   }
 
   const streamingWorks = allWorks.filter((w) =>
     (workProviders.get(w.id) ?? []).some((p) => ['flatrate', 'free', 'ads'].includes(p.type)),
   );
+
+  // WorkCard（クライアント）へ渡す前に終了済みサービスを除去
+  const streamingWorksForClient = terminatedSlugs.size > 0
+    ? streamingWorks.map((w) => ({
+        ...w,
+        vodProviders: (w.vodProviders ?? []).filter(
+          (p) => !terminatedSlugs.has(normalizeProviderName(p.providerName ?? '')),
+        ),
+      }))
+    : streamingWorks;
 
   const decadeMap = new Map<string, WorkRecord[]>();
   for (const work of allWorks) {
@@ -732,7 +744,7 @@ export default async function GroupsPage({ params }: Props) {
             {streamingWorks.length > 0 ? (
               <>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                  {streamingWorks.slice(0, 12).map((work) => (
+                  {streamingWorksForClient.slice(0, 12).map((work) => (
                     <WorkCard key={work.id} work={work} />
                   ))}
                 </div>

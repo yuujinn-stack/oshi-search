@@ -22,14 +22,16 @@ export const VOD_SOURCE_LABEL: Record<string, string> = {
  * プロバイダー名を照合用に正規化する
  *
  * 例:
- *   "U-NEXT CSV" → "unext"
- *   "U-NEXT"     → "unext"
- *   "u-next"     → "unext"
- *   "Disney+"    → "disneyplus"
- *   "Apple TV+"  → "appletvplus"
+ *   "U-NEXT CSV"  → "unext"
+ *   "U-NEXT"      → "unext"
+ *   "U-NEXT JP"   → "unext"   ← 末尾の地域表記 "jp" を除去
+ *   "Hulu JP"     → "hulu"
+ *   "u-next"      → "unext"
+ *   "Disney+"     → "disneyplus"
+ *   "Apple TV+"   → "appletvplus"
  */
 export function normalizeProviderName(name: string): string {
-  return name
+  const base = name
     .trim()
     .toLowerCase()
     .replace(/\s*csv\s*$/i, '')          // 末尾の " CSV" を除去
@@ -39,6 +41,10 @@ export function normalizeProviderName(name: string): string {
     .replace(/[-_\s・　]/g, '')           // ハイフン・アンダースコア・スペース除去
     .replace(/[（(][^)）]*[)）]/g, '')    // 括弧とその中身を除去
     .trim();
+  // 末尾の地域表記 "jp" を除去（"Hulu JP" → "hulu"、"U-NEXT JP" → "unext"）
+  // 除去後が 2 文字未満になる場合はフォールバックとして除去前を返す
+  const stripped = base.replace(/jp$/, '');
+  return stripped.length >= 2 ? stripped : base;
 }
 
 /**
@@ -85,15 +91,32 @@ export function deduplicateProviders(providers: VodProvider[]): VodProvider[] {
  * - providerName が空または 'unknown'（配信サービス名が特定できていない）
  * - type が 'unknown'（配信種別が特定できていない）
  * - AI ソースかつ confidence=low（信頼度が低い）
+ * - terminatedSlugs に含まれるサービス（管理画面で isActive=false に設定済み）
  */
-export function isConfirmedVodAvailability(p: VodProvider): boolean {
+export function isConfirmedVodAvailability(p: VodProvider, terminatedSlugs?: Set<string>): boolean {
   if (p.hidden) return false;
   const normalizedName = (p.providerName ?? '').trim().toLowerCase();
   if (!normalizedName || normalizedName === 'unknown') return false;
   if (p.type === 'unknown') return false;
   const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
   if (isAiSource && p.confidence === 'low') return false;
+  if (terminatedSlugs?.size && terminatedSlugs.has(normalizeProviderName(p.providerName ?? ''))) return false;
   return true;
+}
+
+/**
+ * 公開画面用フィルタ + 重複除去をまとめて行う
+ *
+ * isConfirmedVodAvailability（hidden / unknown / type / AI confidence / 終了済み）で
+ * 除外したのち deduplicateProviders で同名サービスを1件に集約する。
+ */
+export function filterPublicVodProviders(
+  providers: VodProvider[],
+  terminatedSlugs: Set<string> = new Set(),
+): VodProvider[] {
+  return deduplicateProviders(
+    providers.filter((p) => isConfirmedVodAvailability(p, terminatedSlugs)),
+  );
 }
 
 /**

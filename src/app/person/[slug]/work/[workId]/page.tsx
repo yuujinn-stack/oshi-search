@@ -9,6 +9,7 @@ import type { VodProvider } from '@/types/vod';
 import type { ProductCategory } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
 import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName } from '@/lib/vod-dedup';
+import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
 import ProviderLogo from '@/components/ProviderLogo';
 import VodTrackLink from '@/components/site/VodTrackLink';
@@ -172,11 +173,12 @@ export default async function WorkDetailPage({ params }: Props) {
   if (!work || work.status !== 'auto_published') notFound();
 
   // 並列データ取得
-  const [tmdbDetails, coStars, allWorks, relatedProducts] = await Promise.all([
+  const [tmdbDetails, coStars, allWorks, relatedProducts, terminatedSlugs] = await Promise.all([
     work.tmdbId ? fetchTmdbDetails(work.tmdbId, work.type as 'movie' | 'tv') : Promise.resolve({ genres: [] }),
     getCoStars(workId, personName),
     getPublishedWorks(personName),
     getRelatedProducts(personName, work.title),
+    getInactiveProviderSlugs(),
   ]);
 
   const relatedWorks = allWorks.filter((w) => w.id !== workId).slice(0, 6);
@@ -186,7 +188,7 @@ export default async function WorkDetailPage({ params }: Props) {
 
   // 公開用 VOD フィルタ + 重複除去
   const publicProviders = deduplicateProviders(
-    (work.vodProviders ?? []).filter(isConfirmedVodAvailability),
+    (work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p, terminatedSlugs)),
   );
 
   const sortedProviders = publicProviders
