@@ -9,7 +9,7 @@ import { getPublishedWorksOrThrow } from '@/lib/work-store';
 import { getPersonMeta } from '@/lib/person-meta';
 import { getGroupMeta } from '@/lib/group-meta';
 import { groupHref } from '@/lib/group-slug';
-import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName } from '@/lib/vod-dedup';
+import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import ProductTabList, { type ProductWithSection } from '@/components/ProductTabList';
 import PersonCard from '@/components/PersonCard';
@@ -380,7 +380,7 @@ export default async function PersonPage({ params }: Props) {
   const hasVod     = streamingWorks.length > 0;
 
   // ── FAQ ──
-  const topProviders = providerGroups.slice(0, 3).map(([n]) => n);
+  const topProviders = providerGroups.slice(0, 3).map(([n]) => getVodProviderDisplayInfo(n).displayName);
   const faqItems = [
     {
       q: `${person.name}の写真集・グッズはどこで買えますか？`,
@@ -831,14 +831,23 @@ export default async function PersonPage({ params }: Props) {
               </div>
 
               <div className="space-y-2.5">
-                {providerGroups.map(([providerName, { logoPath, works: pWorks }]) => (
+                {providerGroups.map(([providerName, { logoPath, works: pWorks }]) => {
+                  const pInfo = getVodProviderDisplayInfo(providerName);
+                  return (
                   <details
                     key={providerName}
                     className="theme-card overflow-hidden"
                   >
                     <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
                       <ProviderLogo providerName={providerName} logoPath={logoPath} size="md" />
-                      <span className="font-semibold text-sm flex-1" style={{ color: 'var(--ds-text)' }}>{providerName}</span>
+                      <span className="font-semibold text-sm flex-1" style={{ color: 'var(--ds-text)' }}>
+                        {pInfo.displayName}
+                        {pInfo.badgeLabel && (
+                          <span className="ml-1.5 text-[10px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full align-middle">
+                            {pInfo.badgeLabel}
+                          </span>
+                        )}
+                      </span>
                       <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">
                         {pWorks.length}件
                       </span>
@@ -881,7 +890,8 @@ export default async function PersonPage({ params }: Props) {
                       </div>
                     </div>
                   </details>
-                ))}
+                  );
+                })}
               </div>
             </section>
           )}

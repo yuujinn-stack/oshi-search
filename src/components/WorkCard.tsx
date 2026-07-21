@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import type { WorkRecord } from '@/types/work';
-import { deduplicateProviders, isConfirmedVodAvailability } from '@/lib/vod-dedup';
+import { deduplicateProviders, isConfirmedVodAvailability, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL, DISPLAY_WORK_TYPE_ICON } from '@/lib/work-display-type';
 
@@ -169,27 +169,32 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
         {/* 配信サービスバッジ */}
         {sortedProviders.length > 0 ? (
           <div className="flex flex-wrap gap-1.5 mt-auto">
-            {streamingProviders.slice(0, 4).map((p, i) => (
-              <span
-                key={`${p.providerId}-${p.type}-${i}`}
-                title={`${p.providerName}（${
-                  p.type === 'flatrate' ? '見放題' :
-                  p.type === 'free' ? '無料' :
-                  p.type === 'ads' ? '広告付き' : p.type
-                }）${p.confidence ? ` 確度:${p.confidence}` : ''}`}
-                className={`flex items-center gap-1 border rounded-full px-1.5 py-0.5 text-[10px] ${
-                  VOD_SOURCE_BADGE[p.source] ?? 'bg-gray-50 border-gray-200 text-gray-700'
-                }`}
-              >
-                <ProviderLogo
-                  providerName={p.providerName}
-                  logoPath={p.logoPath}
-                  size="xs"
-                  className="rounded-sm border-0 bg-transparent"
-                />
-                <span className="truncate max-w-[5rem]">{p.providerName}</span>
-              </span>
-            ))}
+            {streamingProviders.slice(0, 4).map((p, i) => {
+              const info = getVodProviderDisplayInfo(p.providerName);
+              return (
+                <span
+                  key={`${p.providerId}-${p.type}-${i}`}
+                  title={`${info.displayName}${info.badgeLabel ? `（${info.badgeLabel}）` : ''}（${
+                    p.type === 'flatrate' ? '見放題' :
+                    p.type === 'free' ? '無料' :
+                    p.type === 'ads' ? '広告付き' : p.type
+                  }）${p.confidence ? ` 確度:${p.confidence}` : ''}`}
+                  className={`flex items-center gap-1 border rounded-full px-1.5 py-0.5 text-[10px] ${
+                    info.isPrimeVideoChannel
+                      ? 'bg-amber-50 border-amber-200 text-amber-700'
+                      : VOD_SOURCE_BADGE[p.source] ?? 'bg-gray-50 border-gray-200 text-gray-700'
+                  }`}
+                >
+                  <ProviderLogo
+                    providerName={p.providerName}
+                    logoPath={p.logoPath}
+                    size="xs"
+                    className="rounded-sm border-0 bg-transparent"
+                  />
+                  <span className="truncate max-w-[5rem]">{info.displayName}</span>
+                </span>
+              );
+            })}
             {streamingProviders.length > 4 && (
               <span className="text-[10px] text-gray-400 self-center">
                 +{streamingProviders.length - 4}
