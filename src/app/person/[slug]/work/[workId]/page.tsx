@@ -8,7 +8,7 @@ import { getAllVerdicts } from '@/lib/judgment-store';
 import type { VodProvider } from '@/types/vod';
 import type { ProductCategory } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
-import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName } from '@/lib/vod-dedup';
+import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
 import ProviderLogo from '@/components/ProviderLogo';
@@ -392,6 +392,11 @@ export default async function WorkDetailPage({ params }: Props) {
                   const cfg = VOD_TYPE_CONFIG[p.type] ?? VOD_TYPE_CONFIG.unknown;
                   const link = getVodLink(p);
                   const isAi = p.source === 'openai_supplement' || p.source === 'openai_web_search';
+                  const info = getVodProviderDisplayInfo(p.providerName);
+                  // 追加チャンネルは "Prime Video内Xで見る"、通常は "{サービス名}で{動詞}"
+                  const ctaText = info.isPrimeVideoChannel
+                    ? `Prime Video内${info.shortName}で見る`
+                    : `${p.providerName}で${cfg.btnLabel}`;
                   return (
                     <div key={`${p.providerId}-${p.type}-${i}`} className={`rounded-xl border ${cfg.border} ${cfg.bg} p-3`}>
                       <div className="flex items-center gap-3">
@@ -402,12 +407,23 @@ export default async function WorkDetailPage({ params }: Props) {
                           size="xl"
                           className="rounded-xl shadow-sm"
                         />
-                        {/* サービス名・種別 */}
+                        {/* サービス名・種別・追加チャンネルバッジ */}
                         <div className="flex-1 min-w-0">
-                          <p className="font-bold text-slate-800 text-sm leading-tight">{p.providerName}</p>
-                          <p className={`text-xs font-semibold mt-0.5 ${cfg.labelColor}`}>
-                            {cfg.icon} {cfg.label}
-                          </p>
+                          <p className="font-bold text-slate-800 text-sm leading-tight">{info.displayName}</p>
+                          <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                            {info.badgeLabel && (
+                              <span className="text-[10px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                                {info.badgeLabel}
+                              </span>
+                            )}
+                            <p className={`text-xs font-semibold ${cfg.labelColor}`}>
+                              {cfg.icon} {cfg.label}
+                            </p>
+                          </div>
+                          {/* 追加チャンネル登録案内 */}
+                          {info.noticeText && (
+                            <p className="text-[11px] text-amber-600 mt-1 leading-snug">{info.noticeText}</p>
+                          )}
                         </div>
                         {/* AI マーク */}
                         {isAi && (
@@ -423,11 +439,11 @@ export default async function WorkDetailPage({ params }: Props) {
                           service={p.providerName}
                           className={`mt-3 flex items-center justify-center gap-1.5 w-full text-sm font-bold text-white py-2.5 rounded-xl transition-colors ${cfg.btn}`}
                         >
-                          {p.providerName}で{cfg.btnLabel} →
+                          {ctaText} →
                         </VodTrackLink>
                       ) : (
                         <p className="mt-3 text-xs text-center text-gray-400 py-1.5 bg-white/60 rounded-lg">
-                          {p.providerName}で視聴可能（公式サイトでご確認ください）
+                          {info.displayName}で視聴可能（公式サイトでご確認ください）
                         </p>
                       )}
                     </div>

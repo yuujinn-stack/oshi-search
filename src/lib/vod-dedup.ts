@@ -205,3 +205,116 @@ export function hasDuplicateProviders(providers: VodProvider[]): boolean {
   }
   return false;
 }
+
+// ─── Prime Video追加チャンネル 表示情報 ──────────────────────────────────────
+
+export type VodProviderDisplayInfo = {
+  /** 表示用サービス名。追加チャンネルは "Prime Video内 {チャンネル名}" */
+  displayName: string;
+  /** CTA・一覧用の短縮名。"TELASAチャンネル" → "TELASA" */
+  shortName: string;
+  /** Prime Video追加チャンネルかどうか */
+  isPrimeVideoChannel: boolean;
+  /** バッジラベル。追加チャンネルは "追加チャンネル"、通常サービスは null */
+  badgeLabel: string | null;
+  /** 補足文。追加チャンネルは登録案内、通常サービスは null */
+  noticeText: string | null;
+};
+
+// 既知の追加チャンネルの表示名マッピング（normalizeProviderName結果 → 日本語表示名）
+// ProviderLogo.tsx の AMAZON_CHANNEL_PARENT と対応させる
+const AMAZON_CHANNEL_DISPLAY_NAMES: Record<string, string> = {
+  'fodchannelamazonchannel':              'FODチャンネル',
+  'telasaamazonchannel':                  'TELASAチャンネル',
+  'nhkondemandamazonchannel':             'NHKオンデマンド',
+  'danimeamazonchannel':                  'Dアニメストアチャンネル',
+  'danimestoreamazonchannel':             'Dアニメストアチャンネル',
+  'paraviamoplusamazonchannel':           'Paraviチャンネル',
+  'wowowamazonchannel':                   'WOWOWチャンネル',
+  'wowowondemandamazonchannel':           'WOWOWチャンネル',
+  'niconicochannelplusamazonchannel':     'ニコニコチャンネルプラス',
+  'bandaichannelamazonchannel':           'バンダイチャンネル',
+  'animetimesamazonchannel':              'Anime Timesチャンネル',
+  'plusgagaamazonchannel':                'プラスGAGAチャンネル',
+  'telesaamazonchannel':                  'TELESAチャンネル',
+  // Amazon Prime Video（Leminoセレクト）・Lemino Select Amazon Channel
+  'leminoセレクトamazonchannel':           'Leminoせれくと',
+  'leminoせれくとamazonchannel':           'Leminoせれくと',
+  'leminoselectamazonchannel':            'Leminoせれくと',
+};
+
+/**
+ * providerName の normalized slug が "amazonchannel" で終わるか、
+ * または "X for Prime Video" 形式なら Prime Video追加チャンネルと判定する。
+ *
+ * 判定は normalizeProviderName() の結果を利用し、個別の providerName 文字列を
+ * 直接検査しない。不明なサービスを推測で追加チャンネルへ分類しない。
+ */
+export function isPrimeVideoChannel(providerName: string): boolean {
+  if (normalizeProviderName(providerName).endsWith('amazonchannel')) return true;
+  // "FODチャンネル for Prime Video" / "NHKオンデマンド for Prime Video" 形式
+  return /\bfor\s+prime\s*video\s*$/i.test(providerName.trim());
+}
+
+/**
+ * Prime Video追加チャンネルの表示用チャンネル名を providerName から抽出する。
+ * isPrimeVideoChannel() が true の場合のみ呼び出す。
+ *
+ * 優先度:
+ *  1. AMAZON_CHANNEL_DISPLAY_NAMES による既知チャンネル名（日本語）
+ *  2. "X Amazon Channel" → X + "チャンネル"（末尾 " Channel" は置換）
+ *  3. "Amazon Prime Video（X）" → X（括弧内をそのまま）
+ *  4. "X for Prime Video" → X
+ */
+function extractChannelName(providerName: string): string {
+  const norm = normalizeProviderName(providerName);
+  if (AMAZON_CHANNEL_DISPLAY_NAMES[norm]) return AMAZON_CHANNEL_DISPLAY_NAMES[norm];
+
+  // Pattern 1: "X Amazon Channel"
+  const m1 = providerName.match(/^(.+?)\s+Amazon\s+Channel$/i);
+  if (m1) {
+    let name = m1[1].trim();
+    // " Channel" 末尾 → "チャンネル"（FOD Channel → FODチャンネル）
+    name = name.replace(/\s+Channel$/i, 'チャンネル');
+    if (!name.endsWith('チャンネル')) name += 'チャンネル';
+    return name;
+  }
+  // Pattern 2: "Amazon Prime Video（X）" or "Amazon Prime Video (X)"
+  const m2 = providerName.match(/^Amazon\s+Prime\s+Video\s*[（(]([^)）]+)[)）]/i);
+  if (m2) return m2[1].trim();
+  // Pattern 3: "X for Prime Video"
+  const m3 = providerName.match(/^(.+?)\s+for\s+Prime\s*Video\s*$/i);
+  if (m3) return m3[1].trim();
+  // fallback: slug の末尾を除去
+  return norm.replace(/amazonchannel$/, '') || providerName;
+}
+
+/**
+ * VODプロバイダーの表示情報を返す共通関数。
+ *
+ * - Prime Video追加チャンネルには displayName="Prime Video内 {チャンネル名}"、
+ *   バッジ・補足文を付与する。
+ * - 通常サービスは displayName=providerName をそのまま返し、バッジ等は null。
+ * - 元の VodProvider オブジェクトは変更しない。
+ */
+export function getVodProviderDisplayInfo(providerName: string): VodProviderDisplayInfo {
+  if (!isPrimeVideoChannel(providerName)) {
+    return {
+      displayName: providerName,
+      shortName: providerName,
+      isPrimeVideoChannel: false,
+      badgeLabel: null,
+      noticeText: null,
+    };
+  }
+  const channelName = extractChannelName(providerName);
+  // CTA用短縮名: 末尾の "チャンネル" を除去（"TELASAチャンネル" → "TELASA"）
+  const shortName = channelName.replace(/チャンネル$/, '');
+  return {
+    displayName: `Prime Video内 ${channelName}`,
+    shortName,
+    isPrimeVideoChannel: true,
+    badgeLabel: '追加チャンネル',
+    noticeText: '別途チャンネル登録が必要です。',
+  };
+}

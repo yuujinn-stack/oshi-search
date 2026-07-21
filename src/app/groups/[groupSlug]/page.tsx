@@ -5,7 +5,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts, CATEGORIES } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
-import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName } from '@/lib/vod-dedup';
+import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getAllPersonMetas } from '@/lib/person-meta';
 import { getAllGroupMetasOrThrow, getAllGroupMetas } from '@/lib/group-meta';
@@ -480,7 +480,7 @@ export default async function GroupsPage({ params }: Props) {
   });
 
   // ── FAQ ──
-  const topProviders = providerGroups.slice(0, 3).map(([name]) => name);
+  const topProviders = providerGroups.slice(0, 3).map(([name]) => getVodProviderDisplayInfo(name).displayName);
   const faqItems = [
     {
       q: `${groupName}のメンバーは何人ですか？`,
@@ -837,7 +837,9 @@ export default async function GroupsPage({ params }: Props) {
             <section>
               <h2 className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>配信サービス別作品</h2>
               <div className="space-y-2.5">
-                {providerGroups.map(([providerName, { logoPath, works: pWorks }]) => (
+                {providerGroups.map(([providerName, { logoPath, works: pWorks }]) => {
+                  const pInfo = getVodProviderDisplayInfo(providerName);
+                  return (
                   <details
                     key={providerName}
                     className="theme-card overflow-hidden"
@@ -849,7 +851,12 @@ export default async function GroupsPage({ params }: Props) {
                         size="md"
                       />
                       <span className="font-semibold text-sm flex-1" style={{ color: 'var(--ds-text)' }}>
-                        {providerName}
+                        {pInfo.displayName}
+                        {pInfo.badgeLabel && (
+                          <span className="ml-1.5 text-[10px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full align-middle">
+                            {pInfo.badgeLabel}
+                          </span>
+                        )}
                       </span>
                       <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
                         {pWorks.length}件
@@ -868,7 +875,8 @@ export default async function GroupsPage({ params }: Props) {
                       )}
                     </div>
                   </details>
-                ))}
+                  );
+                })}
               </div>
             </section>
           )}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isConfirmedVodAvailability, normalizeProviderName, deduplicateProviders, filterPublicVodProviders } from '../vod-dedup';
+import { isConfirmedVodAvailability, normalizeProviderName, deduplicateProviders, filterPublicVodProviders, isPrimeVideoChannel, getVodProviderDisplayInfo } from '../vod-dedup';
 import type { VodProvider } from '@/types/vod';
 
 function provider(overrides: Partial<VodProvider>): VodProvider {
@@ -444,5 +444,195 @@ describe('filterPublicVodProviders', () => {
     ];
     const result = filterPublicVodProviders(providers);
     expect(result).toHaveLength(1);
+  });
+});
+
+// ─── isPrimeVideoChannel ──────────────────────────────────────────────────────
+
+describe('isPrimeVideoChannel', () => {
+  // 追加チャンネル（true）
+  it('"TELASA Amazon Channel" → true', () => {
+    expect(isPrimeVideoChannel('TELASA Amazon Channel')).toBe(true);
+  });
+  it('"FOD Channel Amazon Channel" → true', () => {
+    expect(isPrimeVideoChannel('FOD Channel Amazon Channel')).toBe(true);
+  });
+  it('"Amazon Prime Video（Leminoせれくと）" → true', () => {
+    expect(isPrimeVideoChannel('Amazon Prime Video（Leminoせれくと）')).toBe(true);
+  });
+  it('"Amazon Prime Video (Leminoセレクト)"（半角括弧）→ true', () => {
+    expect(isPrimeVideoChannel('Amazon Prime Video (Leminoセレクト)')).toBe(true);
+  });
+  it('"FODチャンネル for Prime Video" → true（for Prime Video 形式）', () => {
+    expect(isPrimeVideoChannel('FODチャンネル for Prime Video')).toBe(true);
+  });
+  it('"NHKオンデマンド for Prime Video" → true', () => {
+    expect(isPrimeVideoChannel('NHKオンデマンド for Prime Video')).toBe(true);
+  });
+
+  // 追加チャンネルでない（false）
+  it('"Amazon Prime Video" → false（本体）', () => {
+    expect(isPrimeVideoChannel('Amazon Prime Video')).toBe(false);
+  });
+  it('"Amazon Prime Video with Ads" → false（本体・広告プラン）', () => {
+    expect(isPrimeVideoChannel('Amazon Prime Video with Ads')).toBe(false);
+  });
+  it('"Amazon Video" → false（購入・レンタルストア）', () => {
+    expect(isPrimeVideoChannel('Amazon Video')).toBe(false);
+  });
+  it('"Hulu" → false', () => {
+    expect(isPrimeVideoChannel('Hulu')).toBe(false);
+  });
+  it('"U-NEXT" → false', () => {
+    expect(isPrimeVideoChannel('U-NEXT')).toBe(false);
+  });
+  it('"Lemino" → false', () => {
+    expect(isPrimeVideoChannel('Lemino')).toBe(false);
+  });
+  it('"Leminoプレミアム" → false（料金プランは本体へ統合済み）', () => {
+    expect(isPrimeVideoChannel('Leminoプレミアム')).toBe(false);
+  });
+  it('"Netflix" → false', () => {
+    expect(isPrimeVideoChannel('Netflix')).toBe(false);
+  });
+  it('"Netflix Standard with Ads" → false', () => {
+    expect(isPrimeVideoChannel('Netflix Standard with Ads')).toBe(false);
+  });
+  it('"Disney+" → false', () => {
+    expect(isPrimeVideoChannel('Disney+')).toBe(false);
+  });
+  it('"TVer" → false', () => {
+    expect(isPrimeVideoChannel('TVer')).toBe(false);
+  });
+  it('"Google Play Movies" → false', () => {
+    expect(isPrimeVideoChannel('Google Play Movies')).toBe(false);
+  });
+  it('"Apple TV" → false', () => {
+    expect(isPrimeVideoChannel('Apple TV')).toBe(false);
+  });
+});
+
+// ─── getVodProviderDisplayInfo ────────────────────────────────────────────────
+
+describe('getVodProviderDisplayInfo', () => {
+  // ── Test 1: TELASA Amazon Channel ──────────────────────────────────────────
+  it('TELASA Amazon Channel: displayName・shortName・badge・noticeText', () => {
+    const info = getVodProviderDisplayInfo('TELASA Amazon Channel');
+    expect(info.displayName).toBe('Prime Video内 TELASAチャンネル');
+    expect(info.shortName).toBe('TELASA');
+    expect(info.isPrimeVideoChannel).toBe(true);
+    expect(info.badgeLabel).toBe('追加チャンネル');
+    expect(info.noticeText).toBe('別途チャンネル登録が必要です。');
+  });
+
+  // ── Test 2: FODチャンネル for Prime Video ──────────────────────────────────
+  it('FODチャンネル for Prime Video: 追加チャンネル判定・displayName', () => {
+    const info = getVodProviderDisplayInfo('FODチャンネル for Prime Video');
+    expect(info.isPrimeVideoChannel).toBe(true);
+    expect(info.displayName).toBe('Prime Video内 FODチャンネル');
+    expect(info.badgeLabel).toBe('追加チャンネル');
+  });
+
+  // ── Test 3: NHKオンデマンド for Prime Video ────────────────────────────────
+  it('NHKオンデマンド for Prime Video: 追加チャンネル・displayName', () => {
+    const info = getVodProviderDisplayInfo('NHKオンデマンド for Prime Video');
+    expect(info.isPrimeVideoChannel).toBe(true);
+    expect(info.displayName).toBe('Prime Video内 NHKオンデマンド');
+    expect(info.noticeText).not.toBeNull();
+  });
+
+  // ── Test 4: Amazon Prime Video (Leminoせれくと) 半角括弧 ───────────────────
+  it('"Amazon Prime Video (Leminoせれくと)": Prime Video本体でも Lemino本体でもない', () => {
+    const info = getVodProviderDisplayInfo('Amazon Prime Video (Leminoせれくと)');
+    expect(info.isPrimeVideoChannel).toBe(true);
+    expect(info.displayName).not.toBe('Amazon Prime Video');
+    expect(info.displayName).not.toBe('Lemino');
+    expect(info.displayName).toContain('Prime Video内');
+    expect(info.badgeLabel).toBe('追加チャンネル');
+  });
+
+  // ── Test 5: Amazon Prime Video（Leminoセレクト）全角括弧 ──────────────────
+  it('"Amazon Prime Video（Leminoセレクト）"（全角）: 半角と同じ追加チャンネル判定', () => {
+    const info = getVodProviderDisplayInfo('Amazon Prime Video（Leminoセレクト）');
+    expect(info.isPrimeVideoChannel).toBe(true);
+    expect(info.displayName).toContain('Prime Video内');
+    expect(info.displayName).toContain('Lemino');
+    expect(info.badgeLabel).toBe('追加チャンネル');
+  });
+
+  // ── Test 6: Amazon Prime Video 本体 ───────────────────────────────────────
+  it('"Amazon Prime Video": 表示名はそのまま・追加チャンネルではない', () => {
+    const info = getVodProviderDisplayInfo('Amazon Prime Video');
+    expect(info.isPrimeVideoChannel).toBe(false);
+    expect(info.displayName).toBe('Amazon Prime Video');
+    expect(info.badgeLabel).toBeNull();
+    expect(info.noticeText).toBeNull();
+  });
+
+  // ── Test 7: Amazon Prime Video with Ads ───────────────────────────────────
+  it('"Amazon Prime Video with Ads": 追加チャンネルではない', () => {
+    const info = getVodProviderDisplayInfo('Amazon Prime Video with Ads');
+    expect(info.isPrimeVideoChannel).toBe(false);
+    expect(info.badgeLabel).toBeNull();
+  });
+
+  // ── Test 8: Amazon Video ───────────────────────────────────────────────────
+  it('"Amazon Video": 購入・レンタルストア、追加チャンネルではない', () => {
+    const info = getVodProviderDisplayInfo('Amazon Video');
+    expect(info.isPrimeVideoChannel).toBe(false);
+    expect(info.displayName).toBe('Amazon Video');
+    expect(info.badgeLabel).toBeNull();
+    expect(info.noticeText).toBeNull();
+  });
+
+  // ── Test 9: 通常VODサービス ────────────────────────────────────────────────
+  const regularServices = [
+    'Hulu', 'U-NEXT', 'Lemino', 'Leminoプレミアム',
+    'Netflix', 'Netflix Standard with Ads', 'Disney+', 'TVer',
+  ];
+  for (const name of regularServices) {
+    it(`"${name}": 追加チャンネルバッジ・補足文なし`, () => {
+      const info = getVodProviderDisplayInfo(name);
+      expect(info.isPrimeVideoChannel).toBe(false);
+      expect(info.badgeLabel).toBeNull();
+      expect(info.noticeText).toBeNull();
+    });
+  }
+
+  // ── Test 10: データ保持（providerName 等を変更しない）──────────────────────
+  it('getVodProviderDisplayInfo は VodProvider オブジェクトを変更しない', () => {
+    const p = {
+      providerId: 99,
+      providerName: 'TELASA Amazon Channel',
+      type: 'flatrate' as const,
+      countryCode: 'JP',
+      source: 'tmdb_watch_provider' as const,
+      sourceUrl: 'https://example.com',
+      confidence: 'high' as const,
+      note: 'テストメモ',
+    };
+    const before = { ...p };
+    getVodProviderDisplayInfo(p.providerName);
+    expect(p.providerName).toBe(before.providerName);
+    expect(p.sourceUrl).toBe(before.sourceUrl);
+    expect(p.confidence).toBe(before.confidence);
+    expect(p.note).toBe(before.note);
+  });
+
+  // ── Test 11: SEO — 追加チャンネルのみの作品に "Prime Videoで見放題" を出さない ─
+  it('TELASA Amazon Channel の displayName は "Prime Video" 単体に一致しない', () => {
+    const info = getVodProviderDisplayInfo('TELASA Amazon Channel');
+    expect(info.displayName).not.toBe('Prime Video');
+    expect(info.displayName).not.toBe('Amazon Prime Video');
+    // "Prime Video内" を含むが、本体と誤認させない "内" が必須
+    expect(info.displayName).toContain('内');
+  });
+
+  // ── FOD Channel Amazon Channel（実DBデータ形式）──────────────────────────
+  it('"FOD Channel Amazon Channel": displayName="Prime Video内 FODチャンネル"', () => {
+    const info = getVodProviderDisplayInfo('FOD Channel Amazon Channel');
+    expect(info.isPrimeVideoChannel).toBe(true);
+    expect(info.displayName).toBe('Prime Video内 FODチャンネル');
+    expect(info.shortName).toBe('FOD');
   });
 });
