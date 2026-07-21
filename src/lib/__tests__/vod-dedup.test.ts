@@ -284,6 +284,47 @@ describe('normalizeProviderName', () => {
   it('"Amazon Prime Video with Ads" 本体は引き続き "primevideo"', () => {
     expect(normalizeProviderName('Amazon Prime Video with Ads')).toBe('primevideo');
   });
+
+  // ── Netflix 広告付きプラン ─────────────────────────────────────────────────
+  it('"Netflix Standard with Ads" → "netflix"（料金プランは本体へ統一）', () => {
+    expect(normalizeProviderName('Netflix Standard with Ads')).toBe('netflix');
+  });
+
+  it('"Netflix Standard with ads"（小文字 a）→ "netflix"', () => {
+    expect(normalizeProviderName('Netflix Standard with ads')).toBe('netflix');
+  });
+
+  it('"Netflix 広告つきスタンダード" → "netflix"', () => {
+    expect(normalizeProviderName('Netflix 広告つきスタンダード')).toBe('netflix');
+  });
+
+  it('"Netflix 広告付きスタンダード" → "netflix"', () => {
+    expect(normalizeProviderName('Netflix 広告付きスタンダード')).toBe('netflix');
+  });
+
+  // ── Leminoプレミアム ──────────────────────────────────────────────────────
+  it('"Leminoプレミアム" → "lemino"（料金プランは本体へ統一）', () => {
+    expect(normalizeProviderName('Leminoプレミアム')).toBe('lemino');
+  });
+
+  it('"Amazon Prime Video（Leminoセレクト）" は "lemino" にならない（追加チャンネル）', () => {
+    const result = normalizeProviderName('Amazon Prime Video（Leminoセレクト）');
+    expect(result).not.toBe('lemino');
+    expect(result).toContain('amazonchannel');
+  });
+
+  // ── 独立slug維持：購入・レンタルストア ────────────────────────────────────
+  it('"Amazon Video" は "primevideo" にならない（独立slug維持）', () => {
+    expect(normalizeProviderName('Amazon Video')).toBe('amazonvideo');
+  });
+
+  it('"Google Play Movies" は独立slug', () => {
+    expect(normalizeProviderName('Google Play Movies')).toBe('googleplaymovies');
+  });
+
+  it('"Apple TV" は独立slug', () => {
+    expect(normalizeProviderName('Apple TV')).toBe('appletv');
+  });
 });
 
 describe('deduplicateProviders', () => {
@@ -327,6 +368,35 @@ describe('deduplicateProviders', () => {
     const result = deduplicateProviders(providers);
     expect(result).toHaveLength(1);
     expect(result[0].providerName).toBe('ABEMA');
+  });
+
+  it('"Netflix" と "Netflix Standard with Ads" が同一作品にある場合、1件に集約される', () => {
+    const providers: VodProvider[] = [
+      provider({ providerId: 1, providerName: 'Netflix', source: 'tmdb_watch_provider' }),
+      provider({ providerId: 2, providerName: 'Netflix Standard with Ads', source: 'openai_supplement' }),
+    ];
+    const result = deduplicateProviders(providers);
+    expect(result).toHaveLength(1);
+    expect(result[0].providerName).toBe('Netflix');
+  });
+
+  it('"Lemino" と "Leminoプレミアム" が同一作品にある場合、1件に集約される', () => {
+    const providers: VodProvider[] = [
+      provider({ providerId: 1, providerName: 'Lemino', source: 'tmdb_watch_provider' }),
+      provider({ providerId: 2, providerName: 'Leminoプレミアム', source: 'openai_supplement' }),
+    ];
+    const result = deduplicateProviders(providers);
+    expect(result).toHaveLength(1);
+    expect(result[0].providerName).toBe('Lemino');
+  });
+
+  it('"Amazon Video" と "Amazon Prime Video" は統合されない（独立slug）', () => {
+    const providers: VodProvider[] = [
+      provider({ providerId: 1, providerName: 'Amazon Video', source: 'tmdb_watch_provider' }),
+      provider({ providerId: 2, providerName: 'Amazon Prime Video', source: 'tmdb_watch_provider' }),
+    ];
+    const result = deduplicateProviders(providers);
+    expect(result).toHaveLength(2);
   });
 
   it('重複除去後も winner のフィールド（confidence, sourceUrl, note）は保持される', () => {

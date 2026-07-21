@@ -26,12 +26,19 @@ const CANONICAL_SLUG_MAP: Record<string, string> = {
   'amazonプライムビデオ':      'primevideo',
   'amazonprimevideowithads':  'primevideo',
   'primevideowithads':        'primevideo',
+  // Netflix 広告付きプランは Netflix 本体と同一サービス
+  'netflixstandardwithads':   'netflix',
+  'netflix広告つきスタンダード': 'netflix',
+  'netflix広告付きスタンダード': 'netflix',
   // U-NEXT カナ表記（ー = U+30FC, 除去対象外のためエイリアスで対応）
   'ユーネクスト':              'unext',
   // Disney+ カナ表記
   'ディズニープラス':           'disneyplus',
   // ABEMA（AbemaTV → abema）
   'abematv':                  'abema',
+  // Leminoプレミアムは料金プランであり別サービスではない
+  // ※ Amazon Prime Video（Leminoセレクト）は追加チャンネルなので統合しない
+  'leminoプレミアム':          'lemino',
 };
 
 // Prime Video 追加チャンネル判定
@@ -77,6 +84,9 @@ function detectPrimeVideoChannel(raw: string): string | null {
  *   "Amazonプライム・ビデオ"            → "primevideo"
  *   "Amazon Prime Video with Ads"     → "primevideo"
  *   "Amazon Prime Video（Leminoせれくと）" → "leminoせれくとamazonchannel"  ← 追加チャンネル
+ *   "Netflix Standard with Ads"       → "netflix"
+ *   "Netflix 広告つきスタンダード"        → "netflix"
+ *   "Leminoプレミアム"                  → "lemino"
  *   "U-NEXT JP"                       → "unext"
  *   "U‐NEXT" (U+2010)                → "unext"
  *   "ユーネクスト"                      → "unext"
