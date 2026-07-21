@@ -144,6 +144,7 @@ describe('isConfirmedVodAvailability', () => {
 });
 
 describe('normalizeProviderName', () => {
+  // ── JP 末尾除去 ─────────────────────────────────────────────────────────
   it('"Hulu JP" → "hulu"（末尾jp除去）', () => {
     expect(normalizeProviderName('Hulu JP')).toBe('hulu');
   });
@@ -160,12 +161,89 @@ describe('normalizeProviderName', () => {
     expect(normalizeProviderName('JP')).toBe('jp');
   });
 
+  // ── + → plus ────────────────────────────────────────────────────────────
   it('"Disney+" → "disneyplus"', () => {
     expect(normalizeProviderName('Disney+')).toBe('disneyplus');
   });
 
+  // ── 通常ハイフン除去 ─────────────────────────────────────────────────────
   it('"U-NEXT" → "unext"', () => {
     expect(normalizeProviderName('U-NEXT')).toBe('unext');
+  });
+
+  // ── Unicode ハイフン除去（U+2010） ────────────────────────────────────────
+  it('"U‐NEXT"（U+2010 HYPHEN）→ "unext"', () => {
+    expect(normalizeProviderName('U‐NEXT')).toBe('unext');
+  });
+
+  it('"U–NEXT"（U+2013 EN DASH）→ "unext"', () => {
+    expect(normalizeProviderName('U–NEXT')).toBe('unext');
+  });
+
+  // ── Amazon Prime Video 各種表記 ───────────────────────────────────────────
+  it('"Amazon Prime Video" → "primevideo"', () => {
+    expect(normalizeProviderName('Amazon Prime Video')).toBe('primevideo');
+  });
+
+  it('"Amazonプライム・ビデオ" → "primevideo"', () => {
+    expect(normalizeProviderName('Amazonプライム・ビデオ')).toBe('primevideo');
+  });
+
+  it('"Amazon プライム・ビデオ" → "primevideo"（スペース入り）', () => {
+    expect(normalizeProviderName('Amazon プライム・ビデオ')).toBe('primevideo');
+  });
+
+  it('"Amazon Prime Video with Ads" → "primevideo"', () => {
+    expect(normalizeProviderName('Amazon Prime Video with Ads')).toBe('primevideo');
+  });
+
+  it('"prime video" → "primevideo"', () => {
+    expect(normalizeProviderName('prime video')).toBe('primevideo');
+  });
+
+  // ── U-NEXT カナ ──────────────────────────────────────────────────────────
+  it('"ユーネクスト" → "unext"', () => {
+    expect(normalizeProviderName('ユーネクスト')).toBe('unext');
+  });
+
+  it('"U NEXT"（スペース区切り）→ "unext"', () => {
+    expect(normalizeProviderName('U NEXT')).toBe('unext');
+  });
+
+  // ── Disney+ 各種表記 ──────────────────────────────────────────────────────
+  it('"Disney Plus" → "disneyplus"', () => {
+    expect(normalizeProviderName('Disney Plus')).toBe('disneyplus');
+  });
+
+  it('"DisneyPlus" → "disneyplus"', () => {
+    expect(normalizeProviderName('DisneyPlus')).toBe('disneyplus');
+  });
+
+  it('"ディズニープラス" → "disneyplus"', () => {
+    expect(normalizeProviderName('ディズニープラス')).toBe('disneyplus');
+  });
+
+  // ── ABEMA ────────────────────────────────────────────────────────────────
+  it('"AbemaTV" → "abema"', () => {
+    expect(normalizeProviderName('AbemaTV')).toBe('abema');
+  });
+
+  it('"ABEMA" → "abema"（そのまま）', () => {
+    expect(normalizeProviderName('ABEMA')).toBe('abema');
+  });
+
+  // ── DMM TV ───────────────────────────────────────────────────────────────
+  it('"DMMTV" → "dmmtv"', () => {
+    expect(normalizeProviderName('DMMTV')).toBe('dmmtv');
+  });
+
+  it('"DMM TV" → "dmmtv"', () => {
+    expect(normalizeProviderName('DMM TV')).toBe('dmmtv');
+  });
+
+  // ── Amazon JP パターン ────────────────────────────────────────────────────
+  it('"Amazon Prime Video JP" → "primevideo"（jp除去後にエイリアス）', () => {
+    expect(normalizeProviderName('Amazon Prime Video JP')).toBe('primevideo');
   });
 });
 
@@ -188,6 +266,52 @@ describe('deduplicateProviders', () => {
     const result = deduplicateProviders(providers);
     expect(result).toHaveLength(1);
     expect(result[0].providerName).toBe('U-NEXT');
+  });
+
+  it('"Prime Video" と "Amazon Prime Video" と "Amazonプライム・ビデオ" は1件に集約される', () => {
+    const providers: VodProvider[] = [
+      provider({ providerId: 1, providerName: 'Amazon Prime Video', source: 'tmdb_watch_provider' }),
+      provider({ providerId: 2, providerName: 'Amazonプライム・ビデオ', source: 'openai_supplement' }),
+      provider({ providerId: 3, providerName: 'Prime Video', source: 'manual_csv' }),
+    ];
+    const result = deduplicateProviders(providers);
+    expect(result).toHaveLength(1);
+    // TMDb ソースが最高優先度で勝者になる
+    expect(result[0].providerName).toBe('Amazon Prime Video');
+  });
+
+  it('"ABEMA" と "AbemaTV" は1件に集約される', () => {
+    const providers: VodProvider[] = [
+      provider({ providerId: 1, providerName: 'AbemaTV', source: 'openai_supplement' }),
+      provider({ providerId: 2, providerName: 'ABEMA', source: 'tmdb_watch_provider' }),
+    ];
+    const result = deduplicateProviders(providers);
+    expect(result).toHaveLength(1);
+    expect(result[0].providerName).toBe('ABEMA');
+  });
+
+  it('重複除去後も winner のフィールド（confidence, sourceUrl, note）は保持される', () => {
+    const providers: VodProvider[] = [
+      provider({
+        providerId: 1,
+        providerName: 'Amazon Prime Video',
+        source: 'tmdb_watch_provider',
+        sourceUrl: 'https://example.com/tmdb',
+        note: 'TMDbから取得',
+        confidence: 'high',
+      }),
+      provider({
+        providerId: 2,
+        providerName: 'Amazonプライム・ビデオ',
+        source: 'openai_supplement',
+        confidence: 'medium',
+      }),
+    ];
+    const result = deduplicateProviders(providers);
+    expect(result).toHaveLength(1);
+    expect(result[0].sourceUrl).toBe('https://example.com/tmdb');
+    expect(result[0].note).toBe('TMDbから取得');
+    expect(result[0].confidence).toBe('high');
   });
 });
 

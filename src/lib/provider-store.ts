@@ -58,18 +58,26 @@ export async function getActiveProviderLogoMap(): Promise<Record<string, string>
   return map;
 }
 
+// 日本で確実に終了しているサービスの正規化済みスラグ（静的安全策）
+// vod_providers テーブルに未登録の場合や DB 障害時のフォールバックとして機能する
+// dTV → Lemino 移行済み / GYAO! → 2023年7月終了 / Paravi → U-NEXT 統合済み
+// ※ dTV を Lemino へ、Paravi を U-NEXT へ自動置き換えはしない（非表示のみ）
+const KNOWN_TERMINATED_SLUGS = new Set(['dtv', 'gyao', 'paravi']);
+
 // isActive=false のプロバイダーの正規化済みslugセットを返す
-// 公開フィルタで終了済みサービスを除外するために使用する
-// DB接続失敗時は空Setを返してすべてのサービスを有効として扱う（fail-open）
+// DB結果と KNOWN_TERMINATED_SLUGS を合算する
+// DB接続失敗時は KNOWN_TERMINATED_SLUGS のみを返す（完全 fail-open より安全）
 export async function getInactiveProviderSlugs(): Promise<Set<string>> {
   try {
     const rows = await db
       .select({ slug: vodProvidersTable.slug })
       .from(vodProvidersTable)
       .where(eq(vodProvidersTable.isActive, false));
-    return new Set(rows.map((r) => normalizeProviderName(r.slug)));
+    const dbSlugs = new Set(rows.map((r) => normalizeProviderName(r.slug)));
+    return new Set([...KNOWN_TERMINATED_SLUGS, ...dbSlugs]);
   } catch {
-    return new Set();
+    // DB障害時: 静的リストのみ返す（完全な空Setは避ける）
+    return new Set(KNOWN_TERMINATED_SLUGS);
   }
 }
 

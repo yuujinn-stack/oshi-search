@@ -18,33 +18,60 @@ export const VOD_SOURCE_LABEL: Record<string, string> = {
   manual_csv:          'CSV',
 };
 
+// 正規化済みスラグ → 統一スラグへの完全一致エイリアスマップ
+// 過度な部分一致を防ぐため完全一致のみ。不明なサービスはマップに追加しない。
+const CANONICAL_SLUG_MAP: Record<string, string> = {
+  // Amazon Prime Video 各種表記 → primevideo
+  'amazonprimevideo':         'primevideo',
+  'amazonプライムビデオ':      'primevideo',
+  'amazonprimevideowithads':  'primevideo',
+  'primevideowithads':        'primevideo',
+  // U-NEXT カナ表記（ー = U+30FC, 除去対象外のためエイリアスで対応）
+  'ユーネクスト':              'unext',
+  // Disney+ カナ表記
+  'ディズニープラス':           'disneyplus',
+  // ABEMA（AbemaTV → abema）
+  'abematv':                  'abema',
+};
+
 /**
- * プロバイダー名を照合用に正規化する
+ * プロバイダー名を照合用に正規化する（重複除去・終了済みチェックのキーとして使用）
  *
  * 例:
- *   "U-NEXT CSV"  → "unext"
- *   "U-NEXT"      → "unext"
- *   "U-NEXT JP"   → "unext"   ← 末尾の地域表記 "jp" を除去
- *   "Hulu JP"     → "hulu"
- *   "u-next"      → "unext"
- *   "Disney+"     → "disneyplus"
- *   "Apple TV+"   → "appletvplus"
+ *   "U-NEXT CSV"              → "unext"
+ *   "U-NEXT JP"               → "unext"   ← 末尾 "jp" を除去
+ *   "U‐NEXT" (U+2010)         → "unext"   ← Unicode ハイフンを除去
+ *   "ユーネクスト"               → "unext"   ← カナ → エイリアス
+ *   "Amazon Prime Video"      → "primevideo"
+ *   "Amazonプライム・ビデオ"    → "primevideo"
+ *   "Amazon Prime Video with Ads" → "primevideo"
+ *   "AbemaTV"                 → "abema"
+ *   "ディズニープラス"           → "disneyplus"
+ *   "Disney+"                 → "disneyplus"
+ *   "Apple TV+"               → "appletvplus"
  */
 export function normalizeProviderName(name: string): string {
   const base = name
     .trim()
     .toLowerCase()
-    .replace(/\s*csv\s*$/i, '')          // 末尾の " CSV" を除去
-    .replace(/^csv\s+/i, '')             // 先頭の "CSV " を除去
-    .replace(/\s*[|｜]\s*.*$/g, '')      // "|" 以降を削除（"Hulu | フールー" → "hulu"）
-    .replace(/[+＋]/g, 'plus')           // "+" → "plus"（Disney+ など）
-    .replace(/[-_\s・　]/g, '')           // ハイフン・アンダースコア・スペース除去
-    .replace(/[（(][^)）]*[)）]/g, '')    // 括弧とその中身を除去
+    .replace(/\s*csv\s*$/i, '')                                           // 末尾の " CSV" を除去
+    .replace(/^csv\s+/i, '')                                              // 先頭の "CSV " を除去
+    .replace(/\s*[|｜]\s*.*$/g, '')                                       // "|" 以降を削除
+    .replace(/[+＋]/g, 'plus')                                            // "+" → "plus"
+    // ASCII ハイフン(U+002D)に加え Unicode ハイフン類も除去
+    // U+2010 HYPHEN / U+2011 NON-BREAKING HYPHEN / U+2012 FIGURE DASH
+    // U+2013 EN DASH / U+2014 EM DASH / U+2015 HORIZONTAL BAR / U+FF0D FULLWIDTH
+    .replace(/[-‐‑‒–—―－_\s・　]/g, '')
+    .replace(/[（(][^)）]*[)）]/g, '')                                     // 括弧とその中身を除去
     .trim();
+
   // 末尾の地域表記 "jp" を除去（"Hulu JP" → "hulu"、"U-NEXT JP" → "unext"）
   // 除去後が 2 文字未満になる場合はフォールバックとして除去前を返す
   const stripped = base.replace(/jp$/, '');
-  return stripped.length >= 2 ? stripped : base;
+  const noJp = stripped.length >= 2 ? stripped : base;
+
+  // 完全一致エイリアスで統一スラグへ変換（過度な部分一致禁止）
+  return CANONICAL_SLUG_MAP[noJp] ?? noJp;
 }
 
 /**
