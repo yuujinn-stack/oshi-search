@@ -2,6 +2,7 @@ import { getRedis } from '@/lib/redis';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
+import { isConfirmedVodAvailability } from '@/lib/vod-dedup';
 import type { Redis } from '@upstash/redis';
 import type { Person } from '@/types/person';
 
@@ -130,7 +131,9 @@ export async function getRankingData(): Promise<RankingData> {
     const products = productsArr[i];
     const productCount = Object.values(products).reduce((s, c) => s + (c?.products.length ?? 0), 0);
     const streamingCount = works.filter((w) =>
-      (w.vodProviders ?? []).some((vp) => ['flatrate', 'free', 'ads'].includes(vp.type)),
+      (w.vodProviders ?? []).some(
+        (vp) => isConfirmedVodAvailability(vp) && ['flatrate', 'free', 'ads'].includes(vp.type),
+      ),
     ).length;
     return {
       name: p.name,

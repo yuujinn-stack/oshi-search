@@ -3,7 +3,7 @@
 // 失敗時は console.warn('[dual-write] DB_ERR ...') のみ出力し、本番処理を失敗扱いにしない。
 
 import { db, neonSql } from './client';
-import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons } from './schema';
+import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons, workStatusHistory } from './schema';
 import { eq, and } from 'drizzle-orm';
 import type { WorkRecord } from '@/types/work';
 
@@ -167,6 +167,43 @@ export async function upsertWork(work: WorkRecord): Promise<void> {
         updatedAt:       row.updatedAt,
       },
     });
+}
+
+// ── ステータス変更履歴（work_status_history）──────────────────────────────────
+
+export interface WorkStatusHistoryEntry {
+  personName: string;
+  workId: string;
+  title: string;
+  workSource: string;
+  previousStatus: string;
+  newStatus: string;
+  changedBy: string;
+  reason?: string;
+  idempotencyKey?: string;
+}
+
+export async function insertWorkStatusHistory(entry: WorkStatusHistoryEntry): Promise<void> {
+  await db.insert(workStatusHistory).values({
+    personName:     entry.personName,
+    workId:         entry.workId,
+    title:          entry.title,
+    workSource:     entry.workSource,
+    previousStatus: entry.previousStatus,
+    newStatus:      entry.newStatus,
+    changedBy:      entry.changedBy,
+    reason:         entry.reason ?? null,
+    idempotencyKey: entry.idempotencyKey ?? null,
+  });
+}
+
+export async function hasIdempotencyKey(key: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: workStatusHistory.id })
+    .from(workStatusHistory)
+    .where(eq(workStatusHistory.idempotencyKey, key))
+    .limit(1);
+  return rows.length > 0;
 }
 
 // ── 人物メタ（person_meta）────────────────────────────────────────────────────

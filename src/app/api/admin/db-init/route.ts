@@ -120,6 +120,22 @@ const CREATE_STATEMENTS = [
     heartbeat_at TIMESTAMPTZ NOT NULL,
     expires_at   TIMESTAMPTZ NOT NULL
   )`,
+  sql`CREATE TABLE IF NOT EXISTS work_status_history (
+    id               SERIAL PRIMARY KEY,
+    person_name      TEXT NOT NULL,
+    work_id          TEXT NOT NULL,
+    title            TEXT NOT NULL,
+    work_source      TEXT NOT NULL,
+    previous_status  TEXT NOT NULL,
+    new_status       TEXT NOT NULL,
+    changed_by       TEXT NOT NULL,
+    reason           TEXT,
+    idempotency_key  TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  sql`CREATE INDEX IF NOT EXISTS wsh_person_work_idx ON work_status_history (person_name, work_id)`,
+  sql`CREATE INDEX IF NOT EXISTS wsh_idempotency_idx ON work_status_history (idempotency_key)`,
+  sql`CREATE INDEX IF NOT EXISTS wsh_created_at_idx ON work_status_history (created_at)`,
 ];
 
 // ── ALTER TABLE ADD COLUMN IF NOT EXISTS ─────────────────────────────────────
@@ -207,7 +223,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE verdicts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
 ];
 
-const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock'];
+const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history'];
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。

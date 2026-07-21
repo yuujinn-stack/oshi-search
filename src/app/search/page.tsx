@@ -8,6 +8,7 @@ import { getAllPersonMetasOrThrow } from '@/lib/person-meta';
 import { getAllPersonsWithConfig } from '@/lib/persons';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
+import { isConfirmedVodAvailability } from '@/lib/vod-dedup';
 import type { GroupMeta } from '@/types/group';
 import type { ActivityStatus, PersonWithConfig } from '@/types/person';
 import type { SuggestionItem } from '@/types/search';
@@ -196,8 +197,8 @@ export default async function SearchPage({ searchParams }: Props) {
         );
         const workCount = works.length;
         const streamingCount = works.filter((w) =>
-          (w.vodProviders ?? []).some((vp) =>
-            !vp.hidden && ['flatrate', 'free', 'ads'].includes(vp.type),
+          (w.vodProviders ?? []).some(
+            (vp) => isConfirmedVodAvailability(vp) && ['flatrate', 'free', 'ads'].includes(vp.type),
           ),
         ).length;
         return [p.name, { productCount, workCount, streamingCount }] as const;

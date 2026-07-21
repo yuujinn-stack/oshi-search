@@ -12,6 +12,7 @@ import VodIntensiveModal from './VodIntensiveModal';
 import VodResearchModal from './VodResearchModal';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
 import ManualWorkModal from './ManualWorkModal';
+import { decideBulkVerdictCsvHandling } from '@/lib/bulk-verdict-guard';
 
 interface Props {
   personName: string;
@@ -608,16 +609,42 @@ export default function PersonWorks({
   // ─── 一括ステータス変更 ───────────────────────────────────────────────────────
   async function handleBulkWorkVerdict(status: WorkStatus) {
     if (selectedInView.length === 0 || bulkProcessing) return;
+
+    let includeManualCsv = false;
+
+    // 非表示操作のとき manual_csv 作品が含まれていれば確認ダイアログを表示する（データ消失防止）
+    if (status === 'hidden') {
+      const csvCount = filteredWorks.filter(
+        (w) => selectedInView.includes(w.id) && w.source === 'manual_csv',
+      ).length;
+      if (csvCount > 0) {
+        const confirmed = window.confirm(
+          `⚠️ 選択中 ${selectedInView.length} 件のうち ${csvCount} 件が CSV登録作品です。\n\n` +
+          `CSV登録作品は手動登録のため、非表示にすると復旧に手間がかかります。\n\n` +
+          `「OK」 → 全 ${selectedInView.length} 件（CSV含む）を非表示にする\n` +
+          `「キャンセル」 → 操作を中止`,
+        );
+        const decision = decideBulkVerdictCsvHandling(status, selectedInView.length, csvCount, confirmed);
+        if (!decision.proceed) return;
+        includeManualCsv = decision.includeManualCsv;
+      }
+    }
+
     setBulkProcessing(true);
     setMessage('');
     const res = await fetch('/api/admin/work-verdict-bulk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ personName, workIds: selectedInView, status }),
+      body: JSON.stringify({ personName, workIds: selectedInView, status, includeManualCsv }),
     });
     if (res.ok) {
+      const data = (await res.json()) as { count: number; skippedManualCsv?: number };
       const label = status === 'auto_published' ? '公開' : status === 'needs_review' ? '確認待ち' : '非表示';
-      setMessage(`${selectedInView.length}件を${label}にしました`);
+      let msg = `${data.count}件を${label}にしました`;
+      if ((data.skippedManualCsv ?? 0) > 0) {
+        msg += `（CSV登録作品 ${data.skippedManualCsv} 件は除外）`;
+      }
+      setMessage(msg);
       clearSelection();
       await loadWorks();
     } else {

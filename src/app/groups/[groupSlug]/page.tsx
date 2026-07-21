@@ -5,7 +5,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts, CATEGORIES } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
-import { deduplicateProviders } from '@/lib/vod-dedup';
+import { deduplicateProviders, isConfirmedVodAvailability } from '@/lib/vod-dedup';
 import { getAllPersonMetas } from '@/lib/person-meta';
 import { getAllGroupMetasOrThrow, getAllGroupMetas } from '@/lib/group-meta';
 import { groupHref, groupHrefByName, resolveGroupFromSlug, resolveGroupName, canonicalGroupSlug, SLUG_TO_GROUP_NAME } from '@/lib/group-slug';
@@ -92,11 +92,7 @@ const PRODUCT_DISPLAY: Array<{
 // ─── ユーティリティ ────────────────────────────────────────────────────────────
 function getPublicProviders(work: WorkRecord): VodProvider[] {
   return deduplicateProviders(
-    (work.vodProviders ?? []).filter((p) => {
-      if (p.hidden) return false;
-      const isAi = p.source === 'openai_supplement' || p.source === 'openai_web_search';
-      return !isAi || p.confidence !== 'low';
-    }),
+    (work.vodProviders ?? []).filter(isConfirmedVodAvailability),
   );
 }
 

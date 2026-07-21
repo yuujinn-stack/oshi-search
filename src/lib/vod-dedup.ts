@@ -78,6 +78,25 @@ export function deduplicateProviders(providers: VodProvider[]): VodProvider[] {
 }
 
 /**
+ * 公開画面に表示してよい配信情報かどうかを判定する
+ *
+ * 以下はすべて「確認済み配信なし」として除外する:
+ * - hidden フラグあり
+ * - providerName が空または 'unknown'（配信サービス名が特定できていない）
+ * - type が 'unknown'（配信種別が特定できていない）
+ * - AI ソースかつ confidence=low（信頼度が低い）
+ */
+export function isConfirmedVodAvailability(p: VodProvider): boolean {
+  if (p.hidden) return false;
+  const normalizedName = (p.providerName ?? '').trim().toLowerCase();
+  if (!normalizedName || normalizedName === 'unknown') return false;
+  if (p.type === 'unknown') return false;
+  const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
+  if (isAiSource && p.confidence === 'low') return false;
+  return true;
+}
+
+/**
  * 重複があるかどうかだけを確認する（変更なし）
  */
 export function hasDuplicateProviders(providers: VodProvider[]): boolean {

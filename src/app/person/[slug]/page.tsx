@@ -9,7 +9,7 @@ import { getPublishedWorksOrThrow } from '@/lib/work-store';
 import { getPersonMeta } from '@/lib/person-meta';
 import { getGroupMeta } from '@/lib/group-meta';
 import { groupHref } from '@/lib/group-slug';
-import { deduplicateProviders } from '@/lib/vod-dedup';
+import { deduplicateProviders, isConfirmedVodAvailability } from '@/lib/vod-dedup';
 import ProductTabList, { type ProductWithSection } from '@/components/ProductTabList';
 import PersonCard from '@/components/PersonCard';
 import WorksSection from '@/components/WorksSection';
@@ -194,11 +194,7 @@ const DISPLAY_SECTIONS: Array<{
 // ─── VOD フィルタ（WorkCard と同一ロジック） ──────────────────────────────────
 function getStreamingProviders(work: WorkRecord): VodProvider[] {
   return deduplicateProviders(
-    (work.vodProviders ?? []).filter((p) => {
-      if (p.hidden) return false;
-      const isAi = p.source === 'openai_supplement' || p.source === 'openai_web_search';
-      return !isAi || p.confidence !== 'low';
-    }),
+    (work.vodProviders ?? []).filter(isConfirmedVodAvailability),
   ).filter((p) => ['flatrate', 'free', 'ads'].includes(p.type));
 }
 
