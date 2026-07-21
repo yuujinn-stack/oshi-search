@@ -8,7 +8,7 @@ import { getAllVerdicts } from '@/lib/judgment-store';
 import type { VodProvider } from '@/types/vod';
 import type { ProductCategory } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
-import { deduplicateProviders, normalizeProviderName } from '@/lib/vod-dedup';
+import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName } from '@/lib/vod-dedup';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
 import ProviderLogo from '@/components/ProviderLogo';
 import VodTrackLink from '@/components/site/VodTrackLink';
@@ -186,12 +186,7 @@ export default async function WorkDetailPage({ params }: Props) {
 
   // 公開用 VOD フィルタ + 重複除去
   const publicProviders = deduplicateProviders(
-    (work.vodProviders ?? []).filter((p) => {
-      if (p.hidden) return false;
-      const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
-      if (isAiSource && p.confidence === 'low') return false;
-      return true;
-    }),
+    (work.vodProviders ?? []).filter(isConfirmedVodAvailability),
   );
 
   const sortedProviders = publicProviders
