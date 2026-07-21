@@ -4,6 +4,7 @@ import { db } from '@/db/client';
 import { works as worksTable } from '@/db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { upsertWork } from '@/db/write';
+import { normalizeProviderName } from '@/lib/vod-dedup';
 import type { WorkRecord, WorkStatus } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 
@@ -218,7 +219,7 @@ export async function upsertManualCsvVodProviders(
     for (const p of providers) {
       const idx = existing.findIndex(
         (e) => e.source === 'manual_csv' &&
-               e.providerName.toLowerCase() === p.providerName.toLowerCase(),
+               normalizeProviderName(e.providerName) === normalizeProviderName(p.providerName),
       );
       if (idx >= 0) { existing[idx] = p; updated++; }
       else { existing.push(p); added++; }

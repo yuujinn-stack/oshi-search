@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, saveWork, upsertManualCsvVodProviders } from '@/lib/work-store';
 import { normalizeWorkTitle } from '@/lib/work-processor';
+import { normalizeProviderName } from '@/lib/vod-dedup';
 import type { WorkRecord, WorkType, DisplayWorkType } from '@/types/work';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 import { normalizeDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
@@ -362,7 +363,7 @@ export async function POST(req: NextRequest) {
       } else if (existingWork) {
         const alreadyHas = (existingWork.vodProviders ?? []).some(
           (p) => p.source === 'manual_csv' &&
-                 p.providerName.toLowerCase() === vodServiceTrimmed.toLowerCase(),
+                 normalizeProviderName(p.providerName) === normalizeProviderName(vodServiceTrimmed),
         );
         if (alreadyHas) {
           vodAction = 'skip';
@@ -519,7 +520,7 @@ export async function POST(req: NextRequest) {
       if (cached) {
         const existing = cached.vodProviders ?? [];
         const idx = existing.findIndex(
-          (p) => p.source === 'manual_csv' && p.providerName.toLowerCase() === row.vodService.toLowerCase(),
+          (p) => p.source === 'manual_csv' && normalizeProviderName(p.providerName) === normalizeProviderName(row.vodService),
         );
         if (idx >= 0) existing[idx] = provider;
         else existing.push(provider);

@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, saveWorkIfAbsent, upsertManualCsvVodProviders } from '@/lib/work-store';
 import { saveImportHistory } from '@/lib/import-history';
+import { normalizeProviderName } from '@/lib/vod-dedup';
 import type { WorkRecord } from '@/types/work';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 
@@ -305,7 +306,7 @@ export async function POST(req: NextRequest) {
       addVodCount++;
 
       const entry = commitMap.get(key) ?? { personName, work: matched, isNew: false, providers: [] };
-      if (!entry.providers.some((p) => p.providerName.toLowerCase() === vodService.toLowerCase())) {
+      if (!entry.providers.some((p) => normalizeProviderName(p.providerName) === normalizeProviderName(vodService))) {
         entry.providers.push(provider);
       }
       commitMap.set(key, entry);
@@ -344,7 +345,7 @@ export async function POST(req: NextRequest) {
 
       const existing = commitMap.get(key);
       if (existing) {
-        if (!existing.providers.some((p) => p.providerName.toLowerCase() === vodService.toLowerCase())) {
+        if (!existing.providers.some((p) => normalizeProviderName(p.providerName) === normalizeProviderName(vodService))) {
           existing.providers.push(provider);
         }
       } else {
