@@ -57,7 +57,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
   //   confidence=low の AI ソースは非表示
   //   同名サービスは優先度の高いソースを1件だけ残す（TMDb > AI > CSV の順）
   const publicProviders = deduplicateProviders(
-    (work.vodProviders ?? []).filter(isConfirmedVodAvailability),
+    (work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p)),
   );
 
   const sortedProviders = publicProviders

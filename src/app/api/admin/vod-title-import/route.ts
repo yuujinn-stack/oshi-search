@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, upsertManualCsvVodProviders } from '@/lib/work-store';
 import { saveImportHistory } from '@/lib/import-history';
+import { normalizeProviderName } from '@/lib/vod-dedup';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 
 export const dynamic = 'force-dynamic';
@@ -280,7 +281,7 @@ export async function POST(req: NextRequest) {
       const key = `${match.personName}\x00${match.workId}`;
       const entry = commitMap.get(key) ?? { personName: match.personName, workId: match.workId, providers: [] };
       // 同一サービス重複防止
-      if (!entry.providers.some((p) => p.providerName.toLowerCase() === vodService.toLowerCase())) {
+      if (!entry.providers.some((p) => normalizeProviderName(p.providerName) === normalizeProviderName(vodService))) {
         entry.providers.push(provider);
       }
       commitMap.set(key, entry);

@@ -3,6 +3,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { isConfirmedVodAvailability } from '@/lib/vod-dedup';
+import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import type { Redis } from '@upstash/redis';
 import type { Person } from '@/types/person';
 
@@ -121,9 +122,10 @@ export async function getRankingData(): Promise<RankingData> {
   const top8Base = hasViewData ? sortedByView.slice(0, 8) : allPersons.slice(0, 8).map((p) => ({ ...p, viewCount: 0 }));
 
   // ── 2. TOP8 の作品数・商品数・配信数を並列取得 ────────────────────────────────
-  const [worksArr, productsArr] = await Promise.all([
+  const [worksArr, productsArr, terminatedSlugs] = await Promise.all([
     Promise.all(top8Base.map((p) => getPublishedWorks(p.name))),
     Promise.all(top8Base.map((p) => getAllStoredProducts(p.name))),
+    getInactiveProviderSlugs(),
   ]);
 
   const popularPersons: RankedPerson[] = top8Base.map((p, i) => {
@@ -132,7 +134,7 @@ export async function getRankingData(): Promise<RankingData> {
     const productCount = Object.values(products).reduce((s, c) => s + (c?.products.length ?? 0), 0);
     const streamingCount = works.filter((w) =>
       (w.vodProviders ?? []).some(
-        (vp) => isConfirmedVodAvailability(vp) && ['flatrate', 'free', 'ads'].includes(vp.type),
+        (vp) => isConfirmedVodAvailability(vp, terminatedSlugs) && ['flatrate', 'free', 'ads'].includes(vp.type),
       ),
     ).length;
     return {

@@ -9,6 +9,7 @@ import { getAllPersonsWithConfig } from '@/lib/persons';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { isConfirmedVodAvailability } from '@/lib/vod-dedup';
+import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import type { GroupMeta } from '@/types/group';
 import type { ActivityStatus, PersonWithConfig } from '@/types/person';
 import type { SuggestionItem } from '@/types/search';
@@ -185,6 +186,7 @@ export default async function SearchPage({ searchParams }: Props) {
   // ── 人物スタッツ（小さい検索結果のみ Redis から取得） ────────────────────
   let personStatsMap: Record<string, PersonStats> = {};
   if (query && persons.length > 0 && persons.length <= STATS_THRESHOLD) {
+    const terminatedSlugs = await getInactiveProviderSlugs();
     const entries = await Promise.all(
       persons.map(async (p) => {
         const [products, works] = await Promise.all([
@@ -198,7 +200,7 @@ export default async function SearchPage({ searchParams }: Props) {
         const workCount = works.length;
         const streamingCount = works.filter((w) =>
           (w.vodProviders ?? []).some(
-            (vp) => isConfirmedVodAvailability(vp) && ['flatrate', 'free', 'ads'].includes(vp.type),
+            (vp) => isConfirmedVodAvailability(vp, terminatedSlugs) && ['flatrate', 'free', 'ads'].includes(vp.type),
           ),
         ).length;
         return [p.name, { productCount, workCount, streamingCount }] as const;
