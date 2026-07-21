@@ -21,7 +21,7 @@ export const VOD_SOURCE_LABEL: Record<string, string> = {
 // 正規化済みスラグ → 統一スラグへの完全一致エイリアスマップ
 // 過度な部分一致を防ぐため完全一致のみ。不明なサービスはマップに追加しない。
 const CANONICAL_SLUG_MAP: Record<string, string> = {
-  // Amazon Prime Video 各種表記 → primevideo
+  // Amazon Prime Video 本体のみ（追加チャンネルはここに追加しない）
   'amazonprimevideo':         'primevideo',
   'amazonプライムビデオ':      'primevideo',
   'amazonprimevideowithads':  'primevideo',
@@ -34,23 +34,60 @@ const CANONICAL_SLUG_MAP: Record<string, string> = {
   'abematv':                  'abema',
 };
 
+// Prime Video 追加チャンネル判定
+// "Amazon Prime Video（○○）" 形式で括弧内が「本体を指す表記」でない場合は
+// 追加チャンネルとして独立スラグを返す。判定は括弧除去より前に行う。
+//
+// パススルー（本体として扱う括弧内表記）:
+//   "jp" / "withads" / "広告付き"
+// それ以外（例: "leminoせれくと"）:
+//   → "${channelSlug}amazonchannel" という独立スラグを返す
+const PRIME_VIDEO_CHANNEL_RE = /^amazon\s*prime\s*video\s*[（(]([^)）]+)[)）]/i;
+const PRIME_VIDEO_PASSTHROUGH_BRACKETS = new Set(['jp', 'withads', '広告付き']);
+
+function normalizeBracketContent(content: string): string {
+  return content
+    .trim()
+    .toLowerCase()
+    .replace(/[+＋]/g, 'plus')
+    .replace(/[-‐‑‒–—―－_\s・　]/g, '')
+    .trim();
+}
+
+function detectPrimeVideoChannel(raw: string): string | null {
+  const m = raw.trim().match(PRIME_VIDEO_CHANNEL_RE);
+  if (!m) return null;
+  const contentSlug = normalizeBracketContent(m[1]);
+  if (PRIME_VIDEO_PASSTHROUGH_BRACKETS.has(contentSlug)) return null;
+  // 追加チャンネル: 括弧内を slug 化して amazonchannel サフィックスを付与
+  return `${contentSlug}amazonchannel`;
+}
+
 /**
  * プロバイダー名を照合用に正規化する（重複除去・終了済みチェックのキーとして使用）
  *
+ * 処理順序（重要）:
+ *   1. Prime Video追加チャンネル判定（括弧除去より前）
+ *   2. 一般正規化（小文字・記号除去・括弧除去）
+ *   3. 末尾 "jp" 除去
+ *   4. 完全一致エイリアス（CANONICAL_SLUG_MAP）
+ *
  * 例:
- *   "U-NEXT CSV"              → "unext"
- *   "U-NEXT JP"               → "unext"   ← 末尾 "jp" を除去
- *   "U‐NEXT" (U+2010)         → "unext"   ← Unicode ハイフンを除去
- *   "ユーネクスト"               → "unext"   ← カナ → エイリアス
- *   "Amazon Prime Video"      → "primevideo"
- *   "Amazonプライム・ビデオ"    → "primevideo"
- *   "Amazon Prime Video with Ads" → "primevideo"
- *   "AbemaTV"                 → "abema"
- *   "ディズニープラス"           → "disneyplus"
- *   "Disney+"                 → "disneyplus"
- *   "Apple TV+"               → "appletvplus"
+ *   "Amazon Prime Video"              → "primevideo"
+ *   "Amazonプライム・ビデオ"            → "primevideo"
+ *   "Amazon Prime Video with Ads"     → "primevideo"
+ *   "Amazon Prime Video（Leminoせれくと）" → "leminoせれくとamazonchannel"  ← 追加チャンネル
+ *   "U-NEXT JP"                       → "unext"
+ *   "U‐NEXT" (U+2010)                → "unext"
+ *   "ユーネクスト"                      → "unext"
+ *   "Disney+"                         → "disneyplus"
+ *   "AbemaTV"                         → "abema"
  */
 export function normalizeProviderName(name: string): string {
+  // 1. Prime Video 追加チャンネル判定（括弧除去の前に行う）
+  const channelSlug = detectPrimeVideoChannel(name);
+  if (channelSlug !== null) return channelSlug;
+
   const base = name
     .trim()
     .toLowerCase()

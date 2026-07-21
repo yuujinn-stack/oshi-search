@@ -245,6 +245,45 @@ describe('normalizeProviderName', () => {
   it('"Amazon Prime Video JP" → "primevideo"（jp除去後にエイリアス）', () => {
     expect(normalizeProviderName('Amazon Prime Video JP')).toBe('primevideo');
   });
+
+  // ── Prime Video 追加チャンネル（primevideo本体にならないこと）────────────────
+  it('"Amazon Prime Video（Leminoセレクト）" → primevideo 本体にはならない', () => {
+    const result = normalizeProviderName('Amazon Prime Video（Leminoセレクト）');
+    expect(result).not.toBe('primevideo');
+  });
+
+  it('"Amazon Prime Video（Leminoせれくと）" → amazonchannel サフィックス付きの独立slug', () => {
+    const result = normalizeProviderName('Amazon Prime Video（Leminoセレクト）');
+    expect(result).toContain('amazonchannel');
+  });
+
+  it('"Amazon Prime Video (Leminoセレクト)"（英括弧）→ primevideo 本体にはならない', () => {
+    const result = normalizeProviderName('Amazon Prime Video (Leminoセレクト)');
+    expect(result).not.toBe('primevideo');
+    expect(result).toContain('amazonchannel');
+  });
+
+  it('"Amazon Prime Video（JP）" → パススルー扱いで "primevideo"', () => {
+    expect(normalizeProviderName('Amazon Prime Video（JP）')).toBe('primevideo');
+  });
+
+  it('"FODチャンネル for Prime Video" → primevideo 本体にはならない（独立slug）', () => {
+    const result = normalizeProviderName('FODチャンネル for Prime Video');
+    expect(result).not.toBe('primevideo');
+  });
+
+  it('"NHKオンデマンド for Prime Video" → primevideo 本体にはならない（独立slug）', () => {
+    const result = normalizeProviderName('NHKオンデマンド for Prime Video');
+    expect(result).not.toBe('primevideo');
+  });
+
+  it('"Amazon Prime Video" 本体は引き続き "primevideo"', () => {
+    expect(normalizeProviderName('Amazon Prime Video')).toBe('primevideo');
+  });
+
+  it('"Amazon Prime Video with Ads" 本体は引き続き "primevideo"', () => {
+    expect(normalizeProviderName('Amazon Prime Video with Ads')).toBe('primevideo');
+  });
 });
 
 describe('deduplicateProviders', () => {
