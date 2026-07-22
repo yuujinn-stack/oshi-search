@@ -22,9 +22,9 @@ function safeError(code: string, message: string, status: number) {
   return NextResponse.json({ ok: false, error: { code, message } }, { status });
 }
 
-/** 16文字の小文字 hex 文字列かどうかチェック */
+/** SHA-256 の完全な 64文字 lowercase hex かどうかチェック */
 function isValidGroupKey(key: string): boolean {
-  return /^[0-9a-f]{16}$/.test(key);
+  return /^[0-9a-f]{64}$/.test(key);
 }
 
 // ─── GET /api/admin/work-dedup/reviews/[key] ─────────────────────────────────

@@ -383,12 +383,19 @@ export function buildMergePlan(
 
 // ─── フェーズ4: 候補グループ ID ─────────────────────────────────────────────
 
-/** workId リストから安定したグループ ID を生成する */
+/**
+ * workId リストから安定したグループ ID（candidateGroupKey）を生成する。
+ * - SHA-256 の完全な 64 文字 lowercase hex を返す（切り詰めない）
+ * - algorithmVersion を含まない（workId 集合が同じなら常に同一キー）
+ * - workIds が空または 1 件の場合は空文字を返す（呼び出し元で除外すること）
+ */
 export function makeGroupId(workIds: string[]): string {
+  if (workIds.length < 2) return '';
+  const normalized = workIds.map((id) => id.trim()).filter(Boolean);
+  if (normalized.length < 2) return '';
   return createHash('sha256')
-    .update(workIds.slice().sort().join('|'))
-    .digest('hex')
-    .slice(0, 16);
+    .update([...new Set(normalized)].sort().join('|'))
+    .digest('hex'); // 64文字 lowercase hex（切り詰めなし）
 }
 
 // ─── フェーズ4: 重複候補の一括検出 ─────────────────────────────────────────
@@ -421,13 +428,16 @@ export function detectDuplicates(entries: WorkDedupEntry[]): WorkDedupGroup[] {
     }
     const deduped = [...byWorkId.values()];
 
+    const groupId = makeGroupId(deduped.map((e) => e.workId));
+    if (!groupId) continue; // 2件未満（通常ありえない）
+
     const { confidence, reasons, conflicts } = assessDuplicateGroup(deduped);
     const canonicalRecommendation = selectCanonical(deduped);
     const partialGroup = { entries: deduped, confidence, reasons, conflicts, canonicalRecommendation };
     const mergePlan = buildMergePlan(partialGroup);
 
     groups.push({
-      groupId: makeGroupId(deduped.map((e) => e.workId)),
+      groupId,
       entries: deduped,
       confidence,
       reasons,

@@ -7,6 +7,7 @@ import {
   REVIEW_NOTE_MAX_LENGTH,
   type ReviewStatus,
 } from '../work-dedup-review';
+import { makeGroupId, ALGORITHM_VERSION } from '../work-dedup';
 
 // ─── isValidReviewStatus ─────────────────────────────────────────────────────
 
@@ -254,19 +255,43 @@ describe('computeReviewStats', () => {
   });
 });
 
-// ─── candidateGroupKey の安定性（filterGroupsByReviewStatus で利用する前提） ───
+// ─── candidateGroupKey × algorithmVersion の独立性 ─────────────────────────
 
-describe('candidateGroupKey の安定性', () => {
-  // makeGroupId は work-dedup.ts からインポートして別テストにあるが、
-  // ここでは isGroupStale を通じて workId 順序不問を間接的に確認する
+describe('candidateGroupKey × algorithmVersion の独立性', () => {
+  const workIds = ['tmdb-tv-216223', 'csv-tv-離婚しようよ'];
 
-  it('workId 順序が違っても isGroupStale は false（ソート比較）', () => {
+  it('algorithmVersion が変わっても candidateGroupKey は同じ', () => {
+    // makeGroupId は algorithmVersion を使わない
+    const key = makeGroupId(workIds);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    // 同じ workIds から常に同一キーが生成される
+    expect(makeGroupId(workIds)).toBe(key);
+    expect(makeGroupId([...workIds].reverse())).toBe(key);
+  });
+
+  it('algorithmVersion が違うと stale になる（キーは同じ）', () => {
+    const key = makeGroupId(workIds);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    // algorithmVersion='v0' で保存されたレビューは現在 v1 と異なる → stale
+    expect(isGroupStale(workIds, 'v0', workIds)).toBe(true);
+    // algorithmVersion が一致していれば stale でない
+    expect(isGroupStale(workIds, ALGORITHM_VERSION, workIds)).toBe(false);
+  });
+
+  it('workId 構成が変わると別のキーになる', () => {
+    const key1 = makeGroupId(['a', 'b']);
+    const key2 = makeGroupId(['a', 'c']); // b→c で別候補
+    expect(key1).not.toBe(key2);
+    expect(key1).toMatch(/^[0-9a-f]{64}$/);
+    expect(key2).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('isGroupStale: workId 順序が違っても not stale（ソート比較）', () => {
     expect(isGroupStale(['z', 'a', 'm'], CURRENT_ALGORITHM, ['a', 'm', 'z'])).toBe(false);
     expect(isGroupStale(['a', 'm', 'z'], CURRENT_ALGORITHM, ['z', 'a', 'm'])).toBe(false);
   });
 
-  it('重複 workId があっても安全（ソート後の文字列で比較）', () => {
-    // 実際の detectDuplicates は重複 workId を除去するが、比較ロジックは安全に動作する
-    expect(isGroupStale(['a', 'a', 'b'], CURRENT_ALGORITHM, ['a', 'b'])).toBe(true);
+  it('isGroupStale: workId 追加で stale', () => {
+    expect(isGroupStale(['a', 'b'], CURRENT_ALGORITHM, ['a', 'b', 'c'])).toBe(true);
   });
 });
