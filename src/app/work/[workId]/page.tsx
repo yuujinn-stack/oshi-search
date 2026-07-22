@@ -69,9 +69,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const work = await getPublicWorkById(workId);
   if (!work) return {};
   const year = work.releaseYear ? `${work.releaseYear}年` : '';
+  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
   return {
     title: `${work.title} 配信情報・出演者一覧`,
     description: `${work.title}（${year}）の配信サービス、出演者、関連商品を掲載。`,
+    alternates: {
+      canonical: `${siteOrigin}/work/${encodeURIComponent(workId)}`,
+    },
     openGraph: {
       title: `${work.title} 配信情報・出演者一覧`,
       description: `${work.title}の配信サービス・出演者・関連商品情報`,
