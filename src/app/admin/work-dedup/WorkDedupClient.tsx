@@ -762,6 +762,11 @@ export default function WorkDedupClient() {
             <p className="text-xs text-yellow-200 mb-3">
               ネットワークエラーです。接続を確認して再試行してください。
             </p>
+          ) : fetchState.code === 'REVIEWS_TABLE_MISSING' ? (
+            <p className="text-xs text-yellow-200 mb-3">
+              Preview DBにレビューテーブルが存在しません。<br />
+              <code className="bg-red-900 text-red-100 px-1">drizzle/0004_work_dedup_reviews.sql</code> をPreview DBに適用してから再試行してください。
+            </p>
           ) : (
             <p className="text-xs text-yellow-200 mb-3">
               サーバーエラーが発生しました。しばらく待ってから再試行してください。

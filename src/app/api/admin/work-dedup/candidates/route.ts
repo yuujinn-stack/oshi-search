@@ -10,10 +10,15 @@ import { parseQueryParams, filterGroups, filterGroupsByReviewStatus, paginateGro
 // 全作品を1クエリで取得し、重複候補グループを返す。DB 更新なし。
 export async function GET(req: NextRequest) {
   const start = Date.now();
+  let step = 'init';
+  console.log('[work-dedup/candidates] start', {
+    dbUrlPresent: !!process.env.DATABASE_URL && process.env.DATABASE_URL.length > 4,
+  });
   try {
     const { page, limit, confidence, q, reviewStatus } = parseQueryParams(req.nextUrl.searchParams);
 
     // 全作品を取得
+    step = 'fetch_works';
     const rows = await db.select({
       id:              worksTable.id,
       personName:      worksTable.personName,
@@ -55,6 +60,7 @@ export async function GET(req: NextRequest) {
     const stats     = computeStats(rawRows, entries, allGroups);
 
     // レビュー一覧を取得（全件、max 414 行）
+    step = 'fetch_reviews';
     const reviewRows = await db.select().from(reviewsTable);
     const reviewMap = new Map(
       reviewRows.map((r) => [
@@ -128,11 +134,38 @@ export async function GET(req: NextRequest) {
     });
   } catch (err) {
     const elapsed = Date.now() - start;
+    const errName    = err instanceof Error ? err.name    : 'UnknownError';
+    const errMessage = err instanceof Error ? err.message : String(err);
+    const pgCode     = (err as Record<string, unknown>).code as string | undefined;
+    const errStack   = err instanceof Error
+      ? err.stack?.split('\n').slice(0, 5).join(' | ')
+      : undefined;
+
     console.error('[work-dedup/candidates] error', {
-      name:      err instanceof Error ? err.name    : 'UnknownError',
-      message:   err instanceof Error ? err.message : String(err),
-      elapsedMs: elapsed,
+      step,
+      name:         errName,
+      message:      errMessage,
+      pgCode,
+      elapsedMs:    elapsed,
+      stack:        errStack,
+      dbUrlPresent: !!process.env.DATABASE_URL && process.env.DATABASE_URL.length > 4,
     });
+
+    // work_dedup_reviews テーブルが存在しない（マイグレーション未適用）
+    if (pgCode === '42P01' || errMessage.includes('"work_dedup_reviews"')) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: {
+            code: 'REVIEWS_TABLE_MISSING',
+            message:
+              'Preview DBにレビュー用テーブルがありません。drizzle/0004_work_dedup_reviews.sql をPreview DBに適用してください。',
+          },
+        },
+        { status: 500 },
+      );
+    }
+
     return NextResponse.json(
       {
         ok: false,
