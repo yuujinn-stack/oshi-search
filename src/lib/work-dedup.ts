@@ -170,26 +170,32 @@ export function assessDuplicateGroup(entries: WorkDedupEntry[]): ConfidenceResul
 
   if (uniqueTmdbIds.size > 1) {
     // 複数の異なる TMDb ID → 確実に別作品
-    conflicts.push(`TMDb IDが異なる: ${[...uniqueTmdbIds].join(', ')}`);
+    conflicts.push(`異なるTMDb IDが混在: ${[...uniqueTmdbIds].join(', ')}`);
     return { confidence: 'conflict', reasons, conflicts };
   }
 
   if (uniqueTmdbIds.size === 1 && tmdbIds.length === entries.length) {
     // 全エントリが同じ TMDb ID を持つ
+    const sharedId = [...uniqueTmdbIds][0];
     const types = new Set(entries.map((e) => e.type));
     if (types.size > 1) {
-      reasons.push(`同一TMDb ID: ${[...uniqueTmdbIds][0]}`);
+      reasons.push(`複数作品でTMDb ID ${sharedId} が一致`);
       conflicts.push(`作品種別が異なる: ${[...types].join(' vs ')}`);
       return { confidence: 'conflict', reasons, conflicts };
     }
-    reasons.push(`同一TMDb ID: ${[...uniqueTmdbIds][0]}`);
+    reasons.push(`複数作品でTMDb ID ${sharedId} が一致`);
     reasons.push(`作品種別一致: ${[...types][0]}`);
     return { confidence: 'exact', reasons, conflicts };
   }
 
   if (uniqueTmdbIds.size === 1 && tmdbIds.length > 0 && tmdbIds.length < entries.length) {
-    // 一部エントリのみ TMDb ID あり（全員同じ ID）
-    reasons.push(`一部エントリに同一TMDb ID: ${[...uniqueTmdbIds][0]}`);
+    // 一部エントリのみ TMDb ID あり（同じ ID 値）
+    const sharedId = [...uniqueTmdbIds][0];
+    if (tmdbIds.length === 1) {
+      reasons.push(`候補内の1作品のみがTMDb ID ${sharedId} を保持`);
+    } else {
+      reasons.push(`候補内の${tmdbIds.length}作品がTMDb ID ${sharedId} を保持（残り${entries.length - tmdbIds.length}件はIDなし）`);
+    }
   }
 
   // ── 2. workType チェック ──
