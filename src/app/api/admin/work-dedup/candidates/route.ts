@@ -110,6 +110,7 @@ export async function GET(req: NextRequest) {
           row.algorithmVersion,
           currentWorkIds,
         ),
+        appliedAt:               row.appliedAt?.toISOString() ?? null,
       };
     }
 
@@ -131,6 +132,7 @@ export async function GET(req: NextRequest) {
       pagination,
       reviews:     reviewsRecord,
       reviewStats,
+      applyEnabled: process.env.WORK_DEDUP_APPLY_ENABLED === 'true',
     });
   } catch (err) {
     const elapsed = Date.now() - start;

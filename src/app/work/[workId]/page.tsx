@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, permanentRedirect } from 'next/navigation';
+import { db } from '@/db/client';
+import { workAliases } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getPublicWorkById, getAllPersonsForWork, getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
@@ -20,6 +23,20 @@ interface Props {
 }
 
 export const dynamic = 'force-dynamic';
+
+// ─── workAlias 参照（統合済み workId → canonical workId へリダイレクト）────────
+async function lookupWorkAlias(workId: string): Promise<string | null> {
+  try {
+    const rows = await db
+      .select({ canonicalWorkId: workAliases.canonicalWorkId })
+      .from(workAliases)
+      .where(eq(workAliases.aliasWorkId, workId))
+      .limit(1);
+    return rows[0]?.canonicalWorkId ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // ─── TMDb からジャンルを取得（force-cache で重複呼び出し防止）────────────────
 async function fetchTmdbDetails(
@@ -66,6 +83,8 @@ async function getRelatedProducts(
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { workId: rawWorkId } = await params;
   const workId = decodeURIComponent(rawWorkId);
+  const canonicalId = await lookupWorkAlias(workId);
+  if (canonicalId) permanentRedirect(`/work/${encodeURIComponent(canonicalId)}`);
   const work = await getPublicWorkById(workId);
   if (!work) return {};
   const year = work.releaseYear ? `${work.releaseYear}年` : '';
@@ -156,6 +175,9 @@ function formatDate(ts?: number): string {
 export default async function WorkDetailPage({ params }: Props) {
   const { workId: rawWorkId } = await params;
   const workId = decodeURIComponent(rawWorkId);
+
+  const canonicalId = await lookupWorkAlias(workId);
+  if (canonicalId) permanentRedirect(`/work/${encodeURIComponent(canonicalId)}`);
 
   const work = await getPublicWorkById(workId);
   if (!work) notFound();

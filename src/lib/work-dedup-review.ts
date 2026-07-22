@@ -33,6 +33,8 @@ export interface ReviewApiData {
   updatedAt: string;
   /** true = 保存後に workId 構成またはアルゴリズムバージョンが変わった */
   stale: boolean;
+  /** apply済みの場合の適用日時（ISO文字列）。未適用なら null */
+  appliedAt?: string | null;
 }
 
 /** レビュー進捗集計 */
