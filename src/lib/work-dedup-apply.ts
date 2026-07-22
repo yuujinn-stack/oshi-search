@@ -170,6 +170,18 @@ export async function buildApplyPreview(
     }
 
     const canonicalWorkId = review.selectedCanonicalWorkId;
+
+    // canonical が現在の候補グループに含まれていなければ拒否
+    if (!groupWorkIds.includes(canonicalWorkId)) {
+      return {
+        ok: false,
+        error: {
+          code: 'CANONICAL_NOT_IN_CANDIDATES',
+          message: 'selectedCanonicalWorkId が現在の候補グループに存在しません',
+        },
+      };
+    }
+
     const duplicateWorkIds = groupWorkIds.filter((id) => id !== canonicalWorkId);
 
     if (duplicateWorkIds.length === 0) {
@@ -252,7 +264,7 @@ export async function buildApplyPreview(
       }
     }
 
-    // 4. VOD統合後の増加数を計算
+    // 4. VOD統合後の増加数を計算（複数 dupe を順番にマージして累積カウント）
     const canonicalVodProviders = (() => {
       const row = canonicalRows[0];
       if (!row) return [];
@@ -260,14 +272,16 @@ export async function buildApplyPreview(
       return (vd?.vodProviders as VodProvider[] | undefined) ?? [];
     })();
 
+    let runningVodProviders = [...canonicalVodProviders];
     let vodMergedCount = 0;
     for (const dupeId of duplicateWorkIds) {
       const dupeRow = workRows.find((r) => r.id === dupeId);
       if (!dupeRow) continue;
       const vd = dupeRow.vodData as Record<string, unknown> | null;
       const dupeProviders = (vd?.vodProviders as VodProvider[] | undefined) ?? [];
-      const merged = mergeVodProviders(canonicalVodProviders, dupeProviders);
-      vodMergedCount += merged.length - canonicalVodProviders.length;
+      const merged = mergeVodProviders(runningVodProviders, dupeProviders);
+      vodMergedCount += merged.length - runningVodProviders.length;
+      runningVodProviders = merged;
     }
 
     // 5. worksToDeactivate
