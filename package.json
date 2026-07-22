@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "db:push": "dotenv -e .env.local -- drizzle-kit push",
     "db:migrate": "dotenv -e .env.local -- tsx scripts/migrate-from-redis-backup.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "works:dedup:dry-run": "dotenv -e .env.local -- tsx scripts/work-dedup-dry-run.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

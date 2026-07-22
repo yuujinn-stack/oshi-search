@@ -21,3 +21,6 @@ npm-debug.log*
 .vercel
 tsconfig.tsbuildinfo
 .env.preview
+
+# 一時レポート（dry-run 出力）
+tmp/
