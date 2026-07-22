@@ -1,9 +1,10 @@
 import { getRedis } from '@/lib/redis';
 import { getAllPersonsMerged } from '@/lib/persons';
-import { getPublishedWorks } from '@/lib/work-store';
+import { getPublishedWorks, getAllPublishedWorkPersonMap } from '@/lib/work-store';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { isConfirmedVodAvailability } from '@/lib/vod-dedup';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
+import { getWorkPublicUrl } from '@/lib/work-url';
 import type { Redis } from '@upstash/redis';
 import type { Person } from '@/types/person';
 
@@ -94,14 +95,15 @@ export async function getRankingData(): Promise<RankingData> {
   if (!redis) return emptyRanking;
 
   try {
-  // ── 1. 人物閲覧数 + 検索ランキング + SCAN キー を並列取得 ─────────────────────
+  // ── 1. 人物閲覧数 + 検索ランキング + SCAN キー + DB全公開作品マップ を並列取得 ──
   const pipe = redis.pipeline();
   for (const p of allPersons) pipe.hgetall(`person:view:${p.name}`);
-  const [pipeResults, searchHash, workKeys, productKeys] = await Promise.all([
+  const [pipeResults, searchHash, workKeys, productKeys, workPersonMap] = await Promise.all([
     pipe.exec() as Promise<unknown[]>,
     redis.hgetall('search:ranking') as Promise<Record<string, string> | null>,
     scanKeys(redis, 'work:click:*'),
     scanKeys(redis, 'product:click:*'),
+    getAllPublishedWorkPersonMap(),
   ]);
 
   // 閲覧数でソートして TOP8 を選定
@@ -157,7 +159,9 @@ export async function getRankingData(): Promise<RankingData> {
     .sort((a, b) => b.count - a.count)
     .slice(0, 10);
 
-  // ── 4. 人気作品 (SCAN + pipeline meta) ────────────────────────────────────────
+  // ── 4. 人気作品 (SCAN + pipeline meta + DB照合) ───────────────────────────────
+  // workPersonMap でDBに存在する公開作品のみ採用し、personName はDB値を正とする。
+  // Redisにしか存在しない workId（削除済み・非公開）はここで除外される。
   let popularWorks: RankedWork[] = [];
   if (workKeys.length > 0) {
     const counts = await redis.mget<(string | null)[]>(...workKeys);
@@ -166,26 +170,49 @@ export async function getRankingData(): Promise<RankingData> {
       metaPipe.hgetall(`work:meta:${k.replace('work:click:', '')}`);
     }
     const metas = await metaPipe.exec() as unknown[];
+
+    // 無効IDをRedisから非同期で削除（少数の場合のみ、ページ表示はブロックしない）
+    const invalidKeys: string[] = [];
+
     popularWorks = workKeys
       .map((key, i) => {
         const workId = key.replace('work:click:', '');
+        // DB照合: 公開・未削除の作品のみ採用（DBが正）
+        const dbPersonName = workPersonMap.get(workId);
+        if (!dbPersonName) {
+          invalidKeys.push(key);
+          return null;
+        }
         const meta = metas[i] as Record<string, string> | null;
-        if (!meta?.title) return null;
+        const detailUrl = getWorkPublicUrl({ workId, personName: dbPersonName });
+        if (!detailUrl) return null;
         return {
           workId,
-          title: meta.title,
-          personName: meta.personName ?? '',
-          workType: meta.workType ?? '',
-          posterUrl: meta.posterUrl ?? '',
-          detailUrl: meta.personName
-            ? `/person/${encodeURIComponent(meta.personName)}/work/${encodeURIComponent(workId)}`
-            : '',
+          title: meta?.title ?? '',
+          personName: dbPersonName,
+          workType: meta?.workType ?? '',
+          posterUrl: meta?.posterUrl ?? '',
+          detailUrl,
           clickCount: parseInt(String(counts[i] ?? '0'), 10) || 0,
         };
       })
-      .filter((w): w is RankedWork => w !== null && w.detailUrl !== '')
+      .filter((w): w is RankedWork => w !== null && w.title !== '')
       .sort((a, b) => b.clickCount - a.clickCount)
       .slice(0, 6);
+
+    // 無効IDが少数（20件以下）の場合のみ非同期削除
+    if (invalidKeys.length > 0 && invalidKeys.length <= 20) {
+      const cleanPipe = redis.pipeline();
+      for (const k of invalidKeys) {
+        cleanPipe.del(k);
+        cleanPipe.del(`work:meta:${k.replace('work:click:', '')}`);
+      }
+      cleanPipe.exec().catch((err: unknown) => {
+        console.error('[ranking] failed to clean invalid work keys:', err);
+      });
+    } else if (invalidKeys.length > 20) {
+      console.warn(`[ranking] ${invalidKeys.length} invalid work keys found in Redis. Run cleanup script.`);
+    }
   }
 
   // ── 5. 人気商品 (SCAN + pipeline meta) ────────────────────────────────────────

@@ -381,6 +381,28 @@ export async function getWorksForImport(
   return map;
 }
 
+// 全公開作品の workId → personName マップを一括取得（N+1防止・ランキング検証用）
+// auto_published かつ deleted=false の作品のみ返す。
+export async function getAllPublishedWorkPersonMap(): Promise<Map<string, string>> {
+  try {
+    const rows = await db.select({
+      id: worksTable.id,
+      personName: worksTable.personName,
+    }).from(worksTable).where(and(
+      eq(worksTable.status, 'auto_published'),
+      eq(worksTable.deleted, false),
+    ));
+    const map = new Map<string, string>();
+    for (const r of rows) {
+      if (!map.has(r.id)) map.set(r.id, r.personName);
+    }
+    return map;
+  } catch (err) {
+    console.error('[db] getAllPublishedWorkPersonMap failed:', String(err));
+    return new Map();
+  }
+}
+
 // source別に一括削除（AI補完作品を再実行する際に使用）
 export async function deleteWorksBySource(
   personName: string,

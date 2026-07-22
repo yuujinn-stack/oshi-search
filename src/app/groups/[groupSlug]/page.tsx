@@ -6,6 +6,7 @@ import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts, CATEGORIES } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
 import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
+import { getWorkPublicUrl } from '@/lib/work-url';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getAllPersonMetas } from '@/lib/person-meta';
 import { getAllGroupMetasOrThrow, getAllGroupMetas } from '@/lib/group-meta';
@@ -99,7 +100,7 @@ function getPublicProviders(work: WorkRecord, terminatedSlugs: Set<string>): Vod
 
 // ─── 作品コンパクトリンク ──────────────────────────────────────────────────────
 function CompactWorkLink({ work }: { work: WorkRecord }) {
-  const href = `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
+  const href = getWorkPublicUrl({ workId: work.id, personName: work.personName }) ?? '#';
   return (
     <Link href={href} className="flex items-center gap-2 p-2 rounded-lg hover:bg-indigo-50 transition-colors group">
       {work.posterUrl ? (
