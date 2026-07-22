@@ -468,6 +468,85 @@ describe('makeGroupId', () => {
   });
 });
 
+// ─── 追加: TMDb 判定理由の正確性 ─────────────────────────────────────────────
+
+describe('TMDb 判定理由の出し分け', () => {
+  // ケースA：全作品で同じ TMDb ID を保持
+  it('全エントリが同じ TMDb ID → 「複数作品でTMDb ID XX が一致」と表示する（exact）', () => {
+    const a = makeEntry({ workId: 'tmdb-tv-100', tmdbId: 100, type: 'tv' });
+    const b = makeEntry({ workId: 'csv-tv-100',  tmdbId: 100, type: 'tv' });
+
+    const result = assessDuplicateGroup([a, b]);
+
+    expect(result.confidence).toBe('exact');
+    const tmdbReason = result.reasons.find((r) => r.includes('TMDb ID'));
+    expect(tmdbReason).toBeDefined();
+    expect(tmdbReason).toContain('複数作品でTMDb ID 100 が一致');
+    // 「同一TMDb ID」という旧表現を使わない
+    expect(tmdbReason).not.toContain('同一TMDb ID');
+    // 「一部エントリ」という旧表現を使わない
+    expect(tmdbReason).not.toContain('一部エントリ');
+  });
+
+  // ケースB：1作品だけ TMDb ID を保持（「離婚しようよ」パターン）
+  it('1作品のみ TMDb ID あり → 「候補内の1作品のみがTMDb ID XX を保持」と表示する', () => {
+    const csv   = makeEntry({ workId: 'csv-tv-離婚しようよ', tmdbId: null,   type: 'tv', releaseYear: 2023 });
+    const tmdb  = makeEntry({ workId: 'tmdb-tv-216223',      tmdbId: 216223, type: 'tv', releaseYear: 2023 });
+
+    const result = assessDuplicateGroup([csv, tmdb]);
+
+    expect(result.confidence).toBe('high');
+    const tmdbReason = result.reasons.find((r) => r.includes('TMDb ID'));
+    expect(tmdbReason).toBeDefined();
+    expect(tmdbReason).toContain('候補内の1作品のみがTMDb ID 216223 を保持');
+    // 「同一TMDb ID」「一致」は使わない
+    expect(tmdbReason).not.toContain('同一TMDb ID');
+    expect(tmdbReason).not.toContain('一致');
+  });
+
+  // ケースB2：複数作品が同じ TMDb ID を保持するが全員ではない
+  it('2作品が同じ TMDb ID を持ち1作品は null → 「候補内の2作品が…を保持」と表示する', () => {
+    const a = makeEntry({ workId: 'w1', tmdbId: 999, type: 'tv', releaseYear: 2020 });
+    const b = makeEntry({ workId: 'w2', tmdbId: 999, type: 'tv', releaseYear: 2020 });
+    const c = makeEntry({ workId: 'w3', tmdbId: null, type: 'tv', releaseYear: 2020 });
+
+    const result = assessDuplicateGroup([a, b, c]);
+
+    const tmdbReason = result.reasons.find((r) => r.includes('TMDb ID'));
+    expect(tmdbReason).toBeDefined();
+    expect(tmdbReason).toContain('候補内の2作品がTMDb ID 999 を保持');
+    expect(tmdbReason).not.toContain('同一TMDb ID');
+  });
+
+  // ケースC：異なる TMDb ID → conflict の矛盾理由へ
+  it('異なる TMDb ID → conflict かつ矛盾理由に「異なるTMDb ID」が含まれる', () => {
+    const a = makeEntry({ workId: 'tmdb-tv-111', title: '星空の恋', type: 'tv', releaseYear: 2020, tmdbId: 111 });
+    const b = makeEntry({ workId: 'tmdb-tv-222', title: '星空の恋', type: 'tv', releaseYear: 2020, tmdbId: 222 });
+
+    const result = assessDuplicateGroup([a, b]);
+
+    expect(result.confidence).toBe('conflict');
+    const conflictReason = result.conflicts.find((c) => c.includes('TMDb'));
+    expect(conflictReason).toBeDefined();
+    expect(conflictReason).toContain('異なるTMDb IDが混在');
+    // 矛盾理由を reasons に混入しない
+    expect(result.reasons.some((r) => r.includes('一致'))).toBe(false);
+  });
+
+  // ケースD：TMDb ID なし → TMDb 理由なし
+  it('全エントリが TMDb ID なし → TMDb に関する reasons を生成しない', () => {
+    const a = makeEntry({ workId: 'csv-tv-A', title: '月の舟', type: 'tv', releaseYear: 2022, tmdbId: null, source: 'manual_csv' });
+    const b = makeEntry({ workId: 'ai-tv-A',  title: '月の舟', type: 'tv', releaseYear: 2022, tmdbId: null, source: 'ai' });
+
+    const result = assessDuplicateGroup([a, b]);
+
+    expect(result.confidence).toBe('high');
+    // TMDb に関する reasons が出ない
+    expect(result.reasons.some((r) => r.includes('TMDb'))).toBe(false);
+    expect(result.conflicts.some((c) => c.includes('TMDb'))).toBe(false);
+  });
+});
+
 // ─── 追加: normalizeWorkTitleForMatching の安全性 ───────────────────────────
 
 describe('normalizeWorkTitleForMatching の安全性', () => {
