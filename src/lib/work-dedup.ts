@@ -11,6 +11,9 @@
 import { createHash } from 'crypto';
 import { normalizeProviderName } from '@/lib/vod-dedup';
 
+/** 候補グループ検出アルゴリズムのバージョン。変更時はレビュー結果を無効化する。 */
+export const ALGORITHM_VERSION = 'v1';
+
 // ─── 型定義 ──────────────────────────────────────────────────────────────────
 
 export type WorkDuplicateConfidence = 'exact' | 'high' | 'medium' | 'low' | 'conflict';

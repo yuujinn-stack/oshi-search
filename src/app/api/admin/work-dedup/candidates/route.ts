@@ -1,17 +1,19 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db/client';
-import { works as worksTable } from '@/db/schema';
-import { aggregateEntries, detectDuplicates, computeStats, type WorkRawRow } from '@/lib/work-dedup';
-import { parseQueryParams, filterGroups, paginateGroups, trimGroupsForResponse } from './lib';
+import { works as worksTable, workDedupReviews as reviewsTable } from '@/db/schema';
+import { aggregateEntries, detectDuplicates, computeStats, ALGORITHM_VERSION, type WorkRawRow } from '@/lib/work-dedup';
+import { isGroupStale, computeReviewStats, type ReviewApiData, type ReviewStatus } from '@/lib/work-dedup-review';
+import { parseQueryParams, filterGroups, filterGroupsByReviewStatus, paginateGroups, trimGroupsForResponse } from './lib';
 
 // GET /api/admin/work-dedup/candidates
-// クエリパラメータ: page, limit, confidence, q
+// クエリパラメータ: page, limit, confidence, q, reviewStatus
 // 全作品を1クエリで取得し、重複候補グループを返す。DB 更新なし。
 export async function GET(req: NextRequest) {
   const start = Date.now();
   try {
-    const { page, limit, confidence, q } = parseQueryParams(req.nextUrl.searchParams);
+    const { page, limit, confidence, q, reviewStatus } = parseQueryParams(req.nextUrl.searchParams);
 
+    // 全作品を取得
     const rows = await db.select({
       id:              worksTable.id,
       personName:      worksTable.personName,
@@ -48,36 +50,87 @@ export async function GET(req: NextRequest) {
       createdAt:       r.createdAt ?? new Date(),
     }));
 
-    const entries  = aggregateEntries(rawRows);
+    const entries   = aggregateEntries(rawRows);
     const allGroups = detectDuplicates(entries);
-    const stats    = computeStats(rawRows, entries, allGroups);
+    const stats     = computeStats(rawRows, entries, allGroups);
 
-    const filtered = filterGroups(allGroups, confidence, q);
+    // レビュー一覧を取得（全件、max 414 行）
+    const reviewRows = await db.select().from(reviewsTable);
+    const reviewMap = new Map(
+      reviewRows.map((r) => [
+        r.candidateGroupKey,
+        {
+          reviewStatus:    r.reviewStatus as ReviewStatus,
+          candidateWorkIds: r.candidateWorkIds as string[],
+          algorithmVersion: r.algorithmVersion,
+        },
+      ]),
+    );
+
+    // グループ workId マップ（進捗集計用）
+    const groupWorkIdsMap = new Map<string, string[]>(
+      allGroups.map((g) => [g.groupId, g.entries.map((e) => e.workId)]),
+    );
+
+    // レビュー進捗集計
+    const reviewStats = computeReviewStats(allGroups.length, reviewMap, groupWorkIdsMap);
+
+    // フィルタリング（confidence + q）
+    let filtered = filterGroups(allGroups, confidence, q);
+
+    // レビュー状態でフィルタリング
+    filtered = filterGroupsByReviewStatus(filtered, reviewMap, reviewStatus);
+
     const { items, pagination } = paginateGroups(filtered, page, limit);
     const trimmed = trimGroupsForResponse(items);
 
+    // 全レビューを ReviewApiData 形式に変換（クライアント側で進捗表示・状態管理に使用）
+    const reviewsRecord: Record<string, ReviewApiData> = {};
+    for (const row of reviewRows) {
+      const key = row.candidateGroupKey;
+      const currentWorkIds = groupWorkIdsMap.get(key) ?? [];
+      reviewsRecord[key] = {
+        candidateGroupKey:       row.candidateGroupKey,
+        algorithmVersion:        row.algorithmVersion,
+        candidateWorkIds:        row.candidateWorkIds as string[],
+        detectedConfidence:      row.detectedConfidence,
+        reviewStatus:            row.reviewStatus as ReviewStatus,
+        selectedCanonicalWorkId: row.selectedCanonicalWorkId ?? null,
+        reviewerNote:            row.reviewerNote ?? null,
+        reviewedAt:              row.reviewedAt?.toISOString() ?? null,
+        updatedAt:               (row.updatedAt ?? new Date()).toISOString(),
+        stale:                   isGroupStale(
+          row.candidateWorkIds as string[],
+          row.algorithmVersion,
+          currentWorkIds,
+        ),
+      };
+    }
+
     const elapsed = Date.now() - start;
     console.log('[work-dedup/candidates]', {
-      totalRows: rawRows.length,
+      totalRows:     rawRows.length,
       uniqueWorkIds: entries.length,
-      allGroups: allGroups.length,
-      filtered: filtered.length,
-      page: pagination.page,
+      allGroups:     allGroups.length,
+      filtered:      filtered.length,
+      page:          pagination.page,
       limit,
-      elapsedMs: elapsed,
+      reviewStatus,
+      elapsedMs:     elapsed,
     });
 
     return NextResponse.json({
-      groups: trimmed,
+      groups:      trimmed,
       stats,
       pagination,
+      reviews:     reviewsRecord,
+      reviewStats,
     });
   } catch (err) {
     const elapsed = Date.now() - start;
-    // スタックトレース・接続情報はログのみ（レスポンスには含めない）
     console.error('[work-dedup/candidates] error', {
-      name:    err instanceof Error ? err.name    : 'UnknownError',
-      message: err instanceof Error ? err.message : String(err),
+      name:      err instanceof Error ? err.name    : 'UnknownError',
+      message:   err instanceof Error ? err.message : String(err),
       elapsedMs: elapsed,
     });
     return NextResponse.json(

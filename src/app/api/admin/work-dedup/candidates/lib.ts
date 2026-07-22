@@ -4,17 +4,23 @@
  */
 
 import type { WorkDedupGroup, WorkDuplicateConfidence } from '@/lib/work-dedup';
+import { isGroupStale, type ReviewStatus } from '@/lib/work-dedup-review';
 
 export const DEFAULT_LIMIT = 50;
 export const MAX_LIMIT = 100;
 
 const VALID_CONFIDENCES = new Set<string>(['exact', 'high', 'medium', 'low', 'conflict']);
 
+export const VALID_REVIEW_STATUSES = new Set<string>([
+  'all', 'pending', 'approved_duplicate', 'rejected_distinct', 'on_hold', 'stale',
+]);
+
 export interface ParsedParams {
   page: number;
   limit: number;
   confidence: string;
   q: string;
+  reviewStatus: string;
 }
 
 export interface Pagination {
@@ -36,8 +42,10 @@ export function parseQueryParams(searchParams: URLSearchParams): ParsedParams {
 
   const confidence = searchParams.get('confidence') ?? 'all';
   const q = (searchParams.get('q') ?? '').trim().toLowerCase();
+  const rawReviewStatus = searchParams.get('reviewStatus') ?? 'all';
+  const reviewStatus = VALID_REVIEW_STATUSES.has(rawReviewStatus) ? rawReviewStatus : 'all';
 
-  return { page, limit, confidence, q };
+  return { page, limit, confidence, q, reviewStatus };
 }
 
 /** confidence と検索クエリでフィルタリング */
@@ -80,6 +88,41 @@ export function paginateGroups(
     items: groups.slice(start, start + limit),
     pagination: { total, page: safePage, limit, totalPages },
   };
+}
+
+/** レビュー状態でグループをフィルタリングする */
+export function filterGroupsByReviewStatus(
+  groups: WorkDedupGroup[],
+  reviewMap: Map<string, { reviewStatus: ReviewStatus; candidateWorkIds: string[]; algorithmVersion: string }>,
+  reviewStatus: string,
+): WorkDedupGroup[] {
+  if (reviewStatus === 'all') return groups;
+
+  return groups.filter((g) => {
+    const review = reviewMap.get(g.groupId);
+    const currentWorkIds = g.entries.map((e) => e.workId);
+
+    if (reviewStatus === 'stale') {
+      if (!review) return false;
+      return isGroupStale(review.candidateWorkIds, review.algorithmVersion, currentWorkIds);
+    }
+
+    if (reviewStatus === 'pending') {
+      if (!review || review.reviewStatus === 'pending') {
+        // stale なレビューは pending ではなく stale として扱う
+        if (review && isGroupStale(review.candidateWorkIds, review.algorithmVersion, currentWorkIds)) {
+          return false;
+        }
+        return true;
+      }
+      return false;
+    }
+
+    // approved_duplicate / rejected_distinct / on_hold
+    if (!review) return false;
+    if (isGroupStale(review.candidateWorkIds, review.algorithmVersion, currentWorkIds)) return false;
+    return review.reviewStatus === reviewStatus;
+  });
 }
 
 /** レスポンスに含める overview を上限 maxLen 文字に切り詰める */
