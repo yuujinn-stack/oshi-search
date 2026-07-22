@@ -7,7 +7,7 @@ import {
   REVIEW_NOTE_MAX_LENGTH,
   type ReviewStatus,
 } from '../work-dedup-review';
-import { makeGroupId, ALGORITHM_VERSION } from '../work-dedup';
+import { makeGroupId, ALGORITHM_VERSION, GROUP_KEY_SCHEMA_VERSION } from '../work-dedup';
 
 // ─── isValidReviewStatus ─────────────────────────────────────────────────────
 
@@ -261,12 +261,24 @@ describe('candidateGroupKey × algorithmVersion の独立性', () => {
   const workIds = ['tmdb-tv-216223', 'csv-tv-離婚しようよ'];
 
   it('algorithmVersion が変わっても candidateGroupKey は同じ', () => {
-    // makeGroupId は algorithmVersion を使わない
+    // makeGroupId は algorithmVersion を使わない（GROUP_KEY_SCHEMA_VERSION のみ使用）
     const key = makeGroupId(workIds);
     expect(key).toMatch(/^[0-9a-f]{64}$/);
     // 同じ workIds から常に同一キーが生成される
     expect(makeGroupId(workIds)).toBe(key);
     expect(makeGroupId([...workIds].reverse())).toBe(key);
+  });
+
+  it('GROUP_KEY_SCHEMA_VERSION がハッシュに含まれる', () => {
+    // gk1 プレフィックスが入っている実装であることを確認
+    expect(GROUP_KEY_SCHEMA_VERSION).toBe('gk1');
+    const key = makeGroupId(workIds);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    // GROUP_KEY_SCHEMA_VERSION なしの素の SHA-256 とは別キーになる
+    const { createHash } = require('crypto');
+    const sorted = [...new Set(workIds)].sort().join('|');
+    const bareKey = createHash('sha256').update(sorted).digest('hex');
+    expect(key).not.toBe(bareKey);
   });
 
   it('algorithmVersion が違うと stale になる（キーは同じ）', () => {

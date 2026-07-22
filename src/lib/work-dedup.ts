@@ -14,6 +14,15 @@ import { normalizeProviderName } from '@/lib/vod-dedup';
 /** 候補グループ検出アルゴリズムのバージョン。変更時はレビュー結果を無効化する。 */
 export const ALGORITHM_VERSION = 'v1';
 
+/**
+ * candidateGroupKey のハッシュ入力スキーマバージョン。
+ * - makeGroupId の入力フォーマット（区切り文字・正規化手順）が変わった場合に更新する
+ * - ALGORITHM_VERSION（候補判定ロジック）とは独立して管理する
+ * - 値を変えると既存の全 candidateGroupKey が変わるため、DBレビュー行との照合不能になる
+ *   → 変更時は既存レビューの移行計画が必要
+ */
+export const GROUP_KEY_SCHEMA_VERSION = 'gk1';
+
 // ─── 型定義 ──────────────────────────────────────────────────────────────────
 
 export type WorkDuplicateConfidence = 'exact' | 'high' | 'medium' | 'low' | 'conflict';
@@ -385,16 +394,23 @@ export function buildMergePlan(
 
 /**
  * workId リストから安定したグループ ID（candidateGroupKey）を生成する。
+ *
+ * ハッシュ入力形式（GROUP_KEY_SCHEMA_VERSION = 'gk1'）:
+ *   `gk1:<sorted-unique-workIds joined by '|'>`
+ *
  * - SHA-256 の完全な 64 文字 lowercase hex を返す（切り詰めない）
- * - algorithmVersion を含まない（workId 集合が同じなら常に同一キー）
+ * - ALGORITHM_VERSION を含まない（workId 集合が同じなら常に同一キー）
+ * - GROUP_KEY_SCHEMA_VERSION をプレフィックスとして含む
+ *   （キー生成仕様変更時に既存キーと衝突しないよう保護）
  * - workIds が空または 1 件の場合は空文字を返す（呼び出し元で除外すること）
  */
 export function makeGroupId(workIds: string[]): string {
   if (workIds.length < 2) return '';
   const normalized = workIds.map((id) => id.trim()).filter(Boolean);
   if (normalized.length < 2) return '';
+  const payload = `${GROUP_KEY_SCHEMA_VERSION}:${[...new Set(normalized)].sort().join('|')}`;
   return createHash('sha256')
-    .update([...new Set(normalized)].sort().join('|'))
+    .update(payload)
     .digest('hex'); // 64文字 lowercase hex（切り詰めなし）
 }
 

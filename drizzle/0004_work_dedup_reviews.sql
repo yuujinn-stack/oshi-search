@@ -2,7 +2,8 @@
 -- 管理者が重複候補グループに対して行った判定結果を永続化する。
 -- 作品統合・workId 変更・Redis 更新は行わない（レビュー記録のみ）。
 -- reviewStatus: 'pending' | 'approved_duplicate' | 'rejected_distinct' | 'on_hold'
--- candidate_group_key: SHA-256(sorted workIds joined by '|') の 64文字 lowercase hex
+-- candidate_group_key: SHA-256('gk1:' + sorted-unique-workIds joined by '|') の 64文字 lowercase hex
+--   GROUP_KEY_SCHEMA_VERSION='gk1' をプレフィックスとしてハッシュ入力に含む
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "work_dedup_reviews" (
   "id"                        serial PRIMARY KEY NOT NULL,
