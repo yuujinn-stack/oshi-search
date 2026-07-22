@@ -1,13 +1,17 @@
-import { NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db/client';
 import { works as worksTable } from '@/db/schema';
-import { aggregateEntries, detectDuplicates, computeStats } from '@/lib/work-dedup';
-import type { WorkRawRow } from '@/lib/work-dedup';
+import { aggregateEntries, detectDuplicates, computeStats, type WorkRawRow } from '@/lib/work-dedup';
+import { parseQueryParams, filterGroups, paginateGroups, trimGroupsForResponse } from './lib';
 
 // GET /api/admin/work-dedup/candidates
+// クエリパラメータ: page, limit, confidence, q
 // 全作品を1クエリで取得し、重複候補グループを返す。DB 更新なし。
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const start = Date.now();
   try {
+    const { page, limit, confidence, q } = parseQueryParams(req.nextUrl.searchParams);
+
     const rows = await db.select({
       id:              worksTable.id,
       personName:      worksTable.personName,
@@ -44,21 +48,46 @@ export async function GET() {
       createdAt:       r.createdAt ?? new Date(),
     }));
 
-    const entries = aggregateEntries(rawRows);
-    const groups  = detectDuplicates(entries);
-    const stats   = computeStats(rawRows, entries, groups);
+    const entries  = aggregateEntries(rawRows);
+    const allGroups = detectDuplicates(entries);
+    const stats    = computeStats(rawRows, entries, allGroups);
 
+    const filtered = filterGroups(allGroups, confidence, q);
+    const { items, pagination } = paginateGroups(filtered, page, limit);
+    const trimmed = trimGroupsForResponse(items);
+
+    const elapsed = Date.now() - start;
     console.log('[work-dedup/candidates]', {
       totalRows: rawRows.length,
       uniqueWorkIds: entries.length,
-      groups: groups.length,
+      allGroups: allGroups.length,
+      filtered: filtered.length,
+      page: pagination.page,
+      limit,
+      elapsedMs: elapsed,
     });
 
-    return NextResponse.json({ groups, stats });
+    return NextResponse.json({
+      groups: trimmed,
+      stats,
+      pagination,
+    });
   } catch (err) {
-    console.error('[work-dedup/candidates] error:', String(err));
+    const elapsed = Date.now() - start;
+    // スタックトレース・接続情報はログのみ（レスポンスには含めない）
+    console.error('[work-dedup/candidates] error', {
+      name:    err instanceof Error ? err.name    : 'UnknownError',
+      message: err instanceof Error ? err.message : String(err),
+      elapsedMs: elapsed,
+    });
     return NextResponse.json(
-      { error: '重複候補の取得に失敗しました', detail: String(err) },
+      {
+        ok: false,
+        error: {
+          code: 'WORK_DEDUP_FETCH_FAILED',
+          message: '重複候補を取得できませんでした',
+        },
+      },
       { status: 500 },
     );
   }
