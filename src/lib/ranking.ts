@@ -200,8 +200,9 @@ export async function getRankingData(): Promise<RankingData> {
       .sort((a, b) => b.clickCount - a.clickCount)
       .slice(0, 6);
 
-    // 無効IDが少数（20件以下）の場合のみ非同期削除
-    if (invalidKeys.length > 0 && invalidKeys.length <= 20) {
+    // 無効IDが少数（20件以下）かつDBマップが正常に取得できた場合のみ非同期削除
+    // workPersonMap.size === 0 かつ workKeys があるケースはDB障害の可能性があるため削除しない
+    if (invalidKeys.length > 0 && invalidKeys.length <= 20 && workPersonMap.size > 0) {
       const cleanPipe = redis.pipeline();
       for (const k of invalidKeys) {
         cleanPipe.del(k);
@@ -210,7 +211,7 @@ export async function getRankingData(): Promise<RankingData> {
       cleanPipe.exec().catch((err: unknown) => {
         console.error('[ranking] failed to clean invalid work keys:', err);
       });
-    } else if (invalidKeys.length > 20) {
+    } else if (invalidKeys.length > 20 && workPersonMap.size > 0) {
       console.warn(`[ranking] ${invalidKeys.length} invalid work keys found in Redis. Run cleanup script.`);
     }
   }
