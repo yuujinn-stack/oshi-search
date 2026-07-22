@@ -1,0 +1,633 @@
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { getAllPersonsMerged } from '@/lib/persons';
+import { getPublicWorkById, getAllPersonsForWork, getPublishedWorks } from '@/lib/work-store';
+import { getAllStoredProducts } from '@/lib/product-store';
+import { getAllVerdicts } from '@/lib/judgment-store';
+import { getWorkPublicUrl } from '@/lib/work-url';
+import type { VodProvider } from '@/types/vod';
+import type { ProductCategory } from '@/types/person';
+import type { RakutenItem } from '@/types/rakuten';
+import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
+import { getInactiveProviderSlugs } from '@/lib/provider-store';
+import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
+import ProviderLogo from '@/components/ProviderLogo';
+import VodTrackLink from '@/components/site/VodTrackLink';
+
+interface Props {
+  params: Promise<{ workId: string }>;
+}
+
+export const dynamic = 'force-dynamic';
+
+// ─── TMDb からジャンルを取得（force-cache で重複呼び出し防止）────────────────
+async function fetchTmdbDetails(
+  tmdbId: number,
+  type: 'movie' | 'tv',
+): Promise<{ genres: string[] }> {
+  const apiKey = process.env.TMDB_API_KEY;
+  if (!apiKey) return { genres: [] };
+  try {
+    const res = await fetch(
+      `https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${apiKey}&language=ja-JP`,
+      { cache: 'force-cache' },
+    );
+    if (!res.ok) return { genres: [] };
+    const data = await res.json() as { genres?: Array<{ id: number; name: string }> };
+    return { genres: (data.genres ?? []).map((g) => g.name) };
+  } catch {
+    return { genres: [] };
+  }
+}
+
+// ─── 楽天の保存済み商品から作品名に関連するものを取得 ────────────────────────
+async function getRelatedProducts(
+  personName: string,
+  workTitle: string,
+): Promise<RakutenItem[]> {
+  const [storedData, verdicts] = await Promise.all([
+    getAllStoredProducts(personName),
+    getAllVerdicts(personName),
+  ]);
+  const titleNorm = workTitle.toLowerCase().replace(/[　\s]/g, '');
+  const targetCats: ProductCategory[] = ['Blu-ray・DVD', 'CD', '本・雑誌'];
+  return targetCats
+    .flatMap((cat) => storedData[cat]?.products ?? [])
+    .filter((p) => {
+      if (verdicts[p.id]?.verdict !== 'related') return false;
+      const pTitle = p.title.toLowerCase().replace(/[　\s]/g, '');
+      return pTitle.includes(titleNorm);
+    })
+    .slice(0, 6);
+}
+
+// ─── メタデータ ────────────────────────────────────────────────────────────────
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { workId: rawWorkId } = await params;
+  const workId = decodeURIComponent(rawWorkId);
+  const work = await getPublicWorkById(workId);
+  if (!work) return {};
+  const year = work.releaseYear ? `${work.releaseYear}年` : '';
+  return {
+    title: `${work.title} 配信情報・出演者一覧`,
+    description: `${work.title}（${year}）の配信サービス、出演者、関連商品を掲載。`,
+    openGraph: {
+      title: `${work.title} 配信情報・出演者一覧`,
+      description: `${work.title}の配信サービス・出演者・関連商品情報`,
+      images: work.posterUrl ? [{ url: work.posterUrl }] : [],
+      type: 'article',
+    },
+  };
+}
+
+// ─── VOD 種別ごとの表示設定 ──────────────────────────────────────────────────
+const VOD_TYPE_CONFIG: Record<string, {
+  icon: string;
+  label: string;
+  btnLabel: string;
+  border: string;
+  bg: string;
+  btn: string;
+  labelColor: string;
+}> = {
+  flatrate: { icon: '🟢', label: '見放題',      btnLabel: '今すぐ見る',   border: 'border-green-200',  bg: 'bg-green-50',  btn: 'bg-green-600 hover:bg-green-700',   labelColor: 'text-green-700' },
+  free:     { icon: '🟢', label: '無料',         btnLabel: '無料で見る',   border: 'border-green-200',  bg: 'bg-green-50',  btn: 'bg-green-600 hover:bg-green-700',   labelColor: 'text-green-700' },
+  ads:      { icon: '🟡', label: '広告付き無料', btnLabel: '無料で見る',   border: 'border-yellow-200', bg: 'bg-yellow-50', btn: 'bg-yellow-600 hover:bg-yellow-700', labelColor: 'text-yellow-700' },
+  rent:     { icon: '🟠', label: 'レンタル',     btnLabel: 'レンタルする', border: 'border-orange-200', bg: 'bg-orange-50', btn: 'bg-orange-600 hover:bg-orange-700', labelColor: 'text-orange-700' },
+  buy:      { icon: '🔵', label: '購入',         btnLabel: '購入する',     border: 'border-blue-200',   bg: 'bg-blue-50',   btn: 'bg-blue-600 hover:bg-blue-700',     labelColor: 'text-blue-700' },
+  unknown:  { icon: '⬜', label: '配信',         btnLabel: '詳細を見る',   border: 'border-gray-200',   bg: 'bg-gray-50',   btn: 'bg-gray-600 hover:bg-gray-700',     labelColor: 'text-gray-600' },
+};
+
+// ─── 配信サービス公式 URL マッピング（p.link がない場合のフォールバック）──────
+const VOD_OFFICIAL_URLS: Record<string, string> = {
+  'lemino':             'https://lemino.docomo.ne.jp/',
+  'hulu':               'https://www.hulu.jp/',
+  'unext':              'https://video.unext.jp/',
+  'netflix':            'https://www.netflix.com/jp/',
+  'primevideo':         'https://www.amazon.co.jp/gp/video/storefront',
+  'amazonprimevideo':   'https://www.amazon.co.jp/gp/video/storefront',
+  'disneyplus':         'https://www.disneyplus.com/ja-jp',
+  'abema':              'https://abema.tv/',
+  'abemat':             'https://abema.tv/',
+  'fod':                'https://fod.fujitv.co.jp/',
+  'telasa':             'https://telasa.jp/',
+  'dmmtv':              'https://tv.dmm.com/',
+  'rakutentv':          'https://tv.rakuten.co.jp/',
+  'tversionrakuten':    'https://tv.rakuten.co.jp/',
+  'nhkondemand':        'https://www.nhk-ondemand.jp/',
+  'paravi':             'https://www.paravi.jp/',
+  'tver':               'https://tver.jp/',
+  'wowow':              'https://www.wowow.co.jp/',
+  'bandaichannel':      'https://www.b-ch.com/',
+  'niconico':           'https://www.nicovideo.jp/',
+  'gyao':               'https://gyao.yahoo.co.jp/',
+  'hikari':             'https://hikaritv.net/',
+  'jcomtv':             'https://v.jcom.co.jp/',
+};
+
+function getVodLink(p: VodProvider): string | undefined {
+  if (p.link) return p.link;
+  const norm = normalizeProviderName(p.providerName);
+  return VOD_OFFICIAL_URLS[norm];
+}
+
+// ─── その他の定数 ──────────────────────────────────────────────────────────────
+const TYPE_ORDER: Record<string, number> = { flatrate: 0, free: 1, ads: 2, rent: 3, buy: 4, unknown: 5 };
+
+const CATEGORY_ICON: Record<string, string> = {
+  'Blu-ray・DVD': '📀',
+  'CD': '💿',
+  '本・雑誌': '📖',
+  '写真集': '📷',
+  'グッズ': '🎁',
+};
+
+function formatDate(ts?: number): string {
+  if (!ts) return '';
+  return new Date(ts).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+// ─── ページ本体 ────────────────────────────────────────────────────────────────
+export default async function WorkDetailPage({ params }: Props) {
+  const { workId: rawWorkId } = await params;
+  const workId = decodeURIComponent(rawWorkId);
+
+  const work = await getPublicWorkById(workId);
+  if (!work) notFound();
+
+  // 同一作品に紐づく全公開人物を単一クエリで取得（N+1なし）
+  const workPersons = await getAllPersonsForWork(workId);
+  const primaryPersonName = workPersons[0]?.personName ?? work.personName;
+
+  // 並列データ取得
+  const [tmdbDetails, allPersonsData, allWorks, relatedProducts, terminatedSlugs] = await Promise.all([
+    work.tmdbId ? fetchTmdbDetails(work.tmdbId, work.type as 'movie' | 'tv') : Promise.resolve({ genres: [] }),
+    getAllPersonsMerged(),
+    getPublishedWorks(primaryPersonName),
+    getRelatedProducts(primaryPersonName, work.title),
+    getInactiveProviderSlugs(),
+  ]);
+
+  const allPersonsMap = new Map(allPersonsData.map((p) => [p.name, p]));
+  const primaryPersonData = allPersonsMap.get(primaryPersonName);
+  const relatedWorks = allWorks.filter((w) => w.id !== workId).slice(0, 6);
+
+  const displayWorkType = getDisplayWorkType(work);
+  const displayWorkLabel = DISPLAY_WORK_TYPE_LABEL[displayWorkType];
+
+  // 公開用 VOD フィルタ + 重複除去
+  const publicProviders = deduplicateProviders(
+    (work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p, terminatedSlugs)),
+  );
+
+  const sortedProviders = publicProviders
+    .slice()
+    .sort((a, b) => (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9));
+
+  const streamingProviders = sortedProviders.filter((p) => ['flatrate', 'free', 'ads'].includes(p.type));
+
+  const hasAi = sortedProviders.some(
+    (p) => p.source === 'openai_supplement' || p.source === 'openai_web_search',
+  );
+
+  const lowConfidenceCount = (work.vodProviders ?? []).filter((p) => {
+    const isAiSource = p.source === 'openai_supplement' || p.source === 'openai_web_search';
+    return isAiSource && p.confidence === 'low';
+  }).length;
+
+  const tmdbUrl = work.tmdbId
+    ? `https://www.themoviedb.org/${work.type}/${work.tmdbId}`
+    : undefined;
+
+  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.vercel.app';
+  const workUrl = `${siteOrigin}/work/${encodeURIComponent(workId)}`;
+
+  // ─── JSON-LD: Movie / TVSeries ──
+  const workJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': work.type === 'movie' ? 'Movie' : 'TVSeries',
+    name: work.title,
+    ...(work.originalTitle && work.originalTitle !== work.title && { alternateName: work.originalTitle }),
+    ...(work.releaseYear && { datePublished: String(work.releaseYear) }),
+    ...(work.overview && { description: work.overview }),
+    ...(work.posterUrl && { image: work.posterUrl }),
+    ...(tmdbDetails.genres.length > 0 && { genre: tmdbDetails.genres }),
+    url: workUrl,
+    actor: workPersons.map((wp) => ({
+      '@type': 'Person',
+      name: wp.personName,
+      url: `${siteOrigin}/person/${encodeURIComponent(wp.personName)}`,
+    })),
+  };
+
+  // ─── JSON-LD: BreadcrumbList ──
+  const breadcrumbJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'ホーム', item: siteOrigin },
+      { '@type': 'ListItem', position: 2, name: '作品', item: `${siteOrigin}/work` },
+      { '@type': 'ListItem', position: 3, name: work.title, item: workUrl },
+    ],
+  };
+
+  return (
+    <>
+      {/* JSON-LD */}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(workJsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }} />
+
+      <div className="min-h-screen bg-gray-50">
+
+        {/* ━━━ パンくずリスト ━━━ */}
+        <nav aria-label="パンくずリスト" className="bg-white border-b border-gray-200">
+          <div className="max-w-lg mx-auto px-4 py-2.5 flex items-center gap-1.5 text-xs text-gray-500 overflow-x-auto whitespace-nowrap">
+            <Link href="/" className="hover:text-indigo-600 transition-colors shrink-0">ホーム</Link>
+            <span className="text-gray-300 shrink-0">›</span>
+            <span className="text-slate-700 truncate">{work.title}</span>
+          </div>
+        </nav>
+
+        <div className="max-w-lg mx-auto px-4 py-5 space-y-5">
+
+          {/* ━━━ ファーストビュー（基本情報 + サマリー統計） ━━━ */}
+          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <div className="flex gap-4 p-4">
+              {/* ポスター */}
+              <div className="w-24 flex-shrink-0">
+                {work.posterUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={work.posterUrl.replace('/w500', '/w300')}
+                    alt={work.title}
+                    className="w-24 aspect-[2/3] object-contain rounded-xl shadow-sm"
+                  />
+                ) : (
+                  <div className="w-24 aspect-[2/3] bg-gray-100 rounded-xl flex items-center justify-center text-gray-300 text-2xl">
+                    🎬
+                  </div>
+                )}
+              </div>
+
+              {/* テキスト情報 */}
+              <div className="flex-1 min-w-0 space-y-1.5">
+                <h1 className="font-bold text-slate-800 text-lg leading-snug">{work.title}</h1>
+                {work.originalTitle && work.originalTitle !== work.title && (
+                  <p className="text-sm text-gray-400">{work.originalTitle}</p>
+                )}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
+                  <span className="bg-gray-100 px-2 py-0.5 rounded-full">
+                    {displayWorkLabel}
+                  </span>
+                  {work.releaseYear && <span>{work.releaseYear}年</span>}
+                  {workPersons[0]?.roleName && (
+                    <span className="text-indigo-500">役: {workPersons[0].roleName}</span>
+                  )}
+                </div>
+
+                {/* ジャンル */}
+                {tmdbDetails.genres.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {tmdbDetails.genres.map((g) => (
+                      <span key={g} className="text-[11px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">
+                        {g}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* サマリー統計 */}
+                <div className="flex items-center gap-3 pt-1 border-t border-gray-100 mt-2">
+                  <div className="text-center">
+                    <p className="text-base font-bold text-slate-800 leading-none">{workPersons.length}</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">出演者</p>
+                  </div>
+                  <div className="w-px h-6 bg-gray-100" />
+                  <div className="text-center">
+                    <p className="text-base font-bold text-slate-800 leading-none">{sortedProviders.length}</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">配信</p>
+                  </div>
+                  {relatedProducts.length > 0 && (
+                    <>
+                      <div className="w-px h-6 bg-gray-100" />
+                      <div className="text-center">
+                        <p className="text-base font-bold text-slate-800 leading-none">{relatedProducts.length}</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">関連商品</p>
+                      </div>
+                    </>
+                  )}
+                  {/* 配信ステータスバッジ */}
+                  <div className="ml-auto">
+                    {streamingProviders.length > 0 ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-green-100 text-green-700 px-2.5 py-1 rounded-full">
+                        🟢 配信中
+                      </span>
+                    ) : sortedProviders.length > 0 ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-orange-100 text-orange-700 px-2.5 py-1 rounded-full">
+                        🟠 レンタル・購入
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full">
+                        配信情報なし
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* あらすじ */}
+            {work.overview && (
+              <div className="px-4 pb-4 border-t border-gray-50">
+                <p className="text-xs text-gray-500 leading-relaxed line-clamp-4 pt-3">{work.overview}</p>
+              </div>
+            )}
+          </div>
+
+          {/* ━━━ 配信情報（色分けカード + 直接リンク） ━━━ */}
+          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="font-bold text-slate-800">配信情報</h2>
+              {work.vodUpdatedAt && (
+                <span className="text-[11px] text-gray-400">確認: {formatDate(work.vodUpdatedAt)}</span>
+              )}
+            </div>
+
+            {sortedProviders.length > 0 ? (
+              <div className="p-4 space-y-3">
+                {sortedProviders.map((p, i) => {
+                  const cfg = VOD_TYPE_CONFIG[p.type] ?? VOD_TYPE_CONFIG.unknown;
+                  const link = getVodLink(p);
+                  const isAi = p.source === 'openai_supplement' || p.source === 'openai_web_search';
+                  const info = getVodProviderDisplayInfo(p.providerName);
+                  const ctaText = info.isPrimeVideoChannel
+                    ? `Prime Video内${info.shortName}で見る`
+                    : `${p.providerName}で${cfg.btnLabel}`;
+                  return (
+                    <div key={`${p.providerId}-${p.type}-${i}`} className={`rounded-xl border ${cfg.border} ${cfg.bg} p-3`}>
+                      <div className="flex items-center gap-3">
+                        <ProviderLogo
+                          providerName={p.providerName}
+                          logoPath={p.logoPath}
+                          size="xl"
+                          className="rounded-xl shadow-sm"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-slate-800 text-sm leading-tight">{info.displayName}</p>
+                          <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                            {info.badgeLabel && (
+                              <span className="text-[10px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                                {info.badgeLabel}
+                              </span>
+                            )}
+                            <p className={`text-xs font-semibold ${cfg.labelColor}`}>
+                              {cfg.icon} {cfg.label}
+                            </p>
+                          </div>
+                          {info.noticeText && (
+                            <p className="text-[11px] text-amber-600 mt-1 leading-snug">{info.noticeText}</p>
+                          )}
+                        </div>
+                        {isAi && (
+                          <span className="text-[9px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full flex-shrink-0 font-medium">
+                            AI
+                          </span>
+                        )}
+                      </div>
+                      {link ? (
+                        <VodTrackLink
+                          href={link}
+                          service={p.providerName}
+                          className={`mt-3 flex items-center justify-center gap-1.5 w-full text-sm font-bold text-white py-2.5 rounded-xl transition-colors ${cfg.btn}`}
+                        >
+                          {ctaText} →
+                        </VodTrackLink>
+                      ) : (
+                        <p className="mt-3 text-xs text-center text-gray-400 py-1.5 bg-white/60 rounded-lg">
+                          {info.displayName}で視聴可能（公式サイトでご確認ください）
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {lowConfidenceCount > 0 && (
+                  <p className="text-[11px] text-gray-400 text-center">
+                    ※ 確度が低い情報 {lowConfidenceCount}件は表示を省略しています
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="py-6 text-center px-4">
+                <p className="text-2xl mb-2">😔</p>
+                <p className="text-sm font-medium text-gray-600">現在配信情報が確認できません</p>
+                {lowConfidenceCount > 0 && (
+                  <p className="text-xs text-orange-400 mt-2">
+                    AI補完情報 {lowConfidenceCount}件がありますが、確度が低いため省略しています
+                  </p>
+                )}
+                {work.vodUpdatedAt && (
+                  <p className="text-xs text-gray-400 mt-1">最終確認: {formatDate(work.vodUpdatedAt)}</p>
+                )}
+                {tmdbUrl && (
+                  <a
+                    href={tmdbUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block mt-3 text-sm font-semibold text-indigo-600 border border-indigo-300 px-4 py-2 rounded-xl hover:bg-indigo-50 transition-colors"
+                  >
+                    TMDbで最新情報を確認する →
+                  </a>
+                )}
+              </div>
+            )}
+
+            <div className="px-4 pb-4">
+              <p className="text-[11px] text-gray-400 leading-relaxed bg-gray-50 rounded-xl px-3 py-2">
+                ※配信状況は変更される可能性があります。最新の配信状況は各公式サイトでご確認ください。
+                {hasAi && <> AI補完による情報を含む場合があります。正確性は保証されません。</>}
+              </p>
+            </div>
+          </div>
+
+          {/* ━━━ TMDb リンク（配信情報ありの場合は補足として） ━━━ */}
+          {tmdbUrl && sortedProviders.length > 0 && (
+            <a
+              href={tmdbUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-center text-xs text-gray-400 hover:text-indigo-500 py-2 transition-colors"
+            >
+              TMDbで詳細・最新の配信情報を確認する →
+            </a>
+          )}
+
+          {/* ━━━ 出演者（当サイト登録） ━━━ */}
+          {workPersons.length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                <h2 className="font-bold text-slate-800">出演者（当サイト登録）</h2>
+                {primaryPersonData?.group && (
+                  <Link
+                    href={`/group/${encodeURIComponent(primaryPersonData.group)}`}
+                    className="text-xs text-indigo-500 hover:text-indigo-700 transition-colors"
+                  >
+                    {primaryPersonData.group}へ →
+                  </Link>
+                )}
+              </div>
+              <div className="p-4 space-y-1">
+                {workPersons.map((wp) => {
+                  const pd = allPersonsMap.get(wp.personName);
+                  return (
+                    <Link
+                      key={wp.personName}
+                      href={`/person/${encodeURIComponent(wp.personName)}`}
+                      className="flex items-center gap-3 py-2 px-3 rounded-xl hover:bg-indigo-50 transition-colors group"
+                    >
+                      <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-sm flex-shrink-0">
+                        {wp.personName[0]}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-800 group-hover:text-indigo-700 transition-colors">
+                          {wp.personName}
+                        </p>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          {pd?.group && (
+                            <span className="text-[11px] text-gray-400">{pd.group}</span>
+                          )}
+                          {wp.roleName && (
+                            <span className="text-[11px] text-indigo-400">· 役: {wp.roleName}</span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-indigo-300 text-sm">›</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ━━━ 関連作品 ━━━ */}
+          {relatedWorks.length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                <h2 className="font-bold text-slate-800">{primaryPersonName}の他の出演作品</h2>
+                <Link
+                  href={`/person/${encodeURIComponent(primaryPersonName)}`}
+                  className="text-xs text-indigo-500 hover:text-indigo-700"
+                >
+                  一覧を見る →
+                </Link>
+              </div>
+              <div className="p-4 grid grid-cols-3 gap-2.5">
+                {relatedWorks.map((w) => (
+                  <Link
+                    key={w.id}
+                    href={getWorkPublicUrl({ workId: w.id }) ?? `/work/${encodeURIComponent(w.id)}`}
+                    className="group"
+                  >
+                    <div className="aspect-[2/3] rounded-lg overflow-hidden bg-gray-100 mb-1">
+                      {w.posterUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={w.posterUrl}
+                          alt={w.title}
+                          className="w-full h-full object-contain group-hover:opacity-90 transition-opacity"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-gray-200 text-2xl">🎬</div>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-700 line-clamp-2 leading-tight group-hover:text-indigo-600 transition-colors">
+                      {w.title}
+                    </p>
+                    {w.releaseYear && (
+                      <p className="text-[10px] text-gray-400 mt-0.5">{w.releaseYear}年</p>
+                    )}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ━━━ 関連商品 ━━━ */}
+          {relatedProducts.length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-100">
+                <h2 className="font-bold text-slate-800">関連商品</h2>
+                <p className="text-[11px] text-gray-400 mt-0.5">楽天市場の商品情報</p>
+              </div>
+              <div className="p-4 space-y-2.5">
+                {relatedProducts.map((product) => (
+                  <a
+                    key={product.id}
+                    href={product.affiliateUrl || product.itemUrl}
+                    target="_blank"
+                    rel="noopener noreferrer sponsored"
+                    className="flex items-center gap-3 hover:bg-gray-50 rounded-xl p-2 -mx-2 transition-colors group"
+                  >
+                    {product.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={product.imageUrl}
+                        alt={product.title}
+                        className="w-12 h-14 object-contain rounded-lg flex-shrink-0"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="w-12 h-14 bg-gray-100 rounded-lg flex-shrink-0 flex items-center justify-center text-lg">
+                        {CATEGORY_ICON[product.category] ?? '🛒'}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-slate-700 line-clamp-2 group-hover:text-indigo-600 transition-colors">
+                        {product.title}
+                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-[11px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
+                          {CATEGORY_ICON[product.category]} {product.category}
+                        </span>
+                        {product.price > 0 && (
+                          <span className="text-[11px] text-slate-600 font-medium">
+                            ¥{product.price.toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-gray-300 group-hover:text-indigo-400 transition-colors flex-shrink-0 text-sm">›</span>
+                  </a>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-300 px-4 pb-3">
+                ※楽天市場の商品情報です。価格・在庫は変動する場合があります。
+              </p>
+            </div>
+          )}
+
+          {/* AI補完ソース情報 */}
+          {hasAi && (
+            <div className="text-[11px] text-gray-400 text-center space-y-1">
+              {sortedProviders
+                .filter((p) => p.source === 'openai_supplement' && p.sourceUrl)
+                .map((p, i) => (
+                  <p key={i}>
+                    参照:{' '}
+                    <a href={p.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                      {p.sourceUrl}
+                    </a>
+                  </p>
+                ))}
+              {work.vodAiCheckedAt && (
+                <p>AI補完確認日: {formatDate(work.vodAiCheckedAt)}</p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}

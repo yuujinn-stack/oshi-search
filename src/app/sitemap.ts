@@ -2,15 +2,18 @@ import type { MetadataRoute } from 'next';
 import { getAllPersonsMerged, getAllGroupsMerged, getAllGenresMerged } from '@/lib/persons';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
+import { getAllPublishedWorkPersonMap } from '@/lib/work-store';
+import { getWorkPublicUrl } from '@/lib/work-url';
 
 const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const [persons, groups, genres, groupMetas] = await Promise.all([
+  const [persons, groups, genres, groupMetas, workPersonMap] = await Promise.all([
     getAllPersonsMerged(),
     getAllGroupsMerged(),
     getAllGenresMerged(),
     getAllGroupMetas(),
+    getAllPublishedWorkPersonMap(),
   ]);
 
   return [
@@ -52,5 +55,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'weekly' as const,
       priority: 0.8,
     })),
+    ...[...workPersonMap.keys()].flatMap((workId) => {
+      const url = getWorkPublicUrl({ workId });
+      if (!url) return [];
+      return [{ url: `${BASE_URL}${url}`, changeFrequency: 'weekly' as const, priority: 0.7 }];
+    }),
   ];
 }

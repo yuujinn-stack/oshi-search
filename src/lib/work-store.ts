@@ -381,6 +381,49 @@ export async function getWorksForImport(
   return map;
 }
 
+// workIdのみで公開作品を1件取得（新正規作品ページ用。personNameなし）
+// 同一workIdに複数人物がある場合は最初の行を代表として返す。
+export async function getPublicWorkById(workId: string): Promise<WorkRecord | null> {
+  try {
+    const rows = await db.select().from(worksTable)
+      .where(and(
+        eq(worksTable.id, workId),
+        eq(worksTable.status, 'auto_published'),
+        eq(worksTable.deleted, false),
+      ));
+    return rows.length > 0 ? dbRowToWorkRecord(rows[0]) : null;
+  } catch (err) {
+    console.error('[db] getPublicWorkById failed:', String(err));
+    return null;
+  }
+}
+
+// 同一workIdに紐づく全公開人物を取得（N+1なし・単一クエリ）
+export async function getAllPersonsForWork(
+  workId: string,
+): Promise<Array<{ personName: string; roleName: string | null }>> {
+  try {
+    const rows = await db.select({
+      personName: worksTable.personName,
+      roleName: worksTable.roleName,
+    }).from(worksTable)
+      .where(and(
+        eq(worksTable.id, workId),
+        eq(worksTable.status, 'auto_published'),
+        eq(worksTable.deleted, false),
+      ));
+    const seen = new Set<string>();
+    return rows.filter((r) => {
+      if (seen.has(r.personName)) return false;
+      seen.add(r.personName);
+      return true;
+    }).map((r) => ({ personName: r.personName, roleName: r.roleName ?? null }));
+  } catch (err) {
+    console.error('[db] getAllPersonsForWork failed:', String(err));
+    return [];
+  }
+}
+
 // 全公開作品の workId → personName マップを一括取得（N+1防止・ランキング検証用）
 // auto_published かつ deleted=false の作品のみ返す。
 export async function getAllPublishedWorkPersonMap(): Promise<Map<string, string>> {
