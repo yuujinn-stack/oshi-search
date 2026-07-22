@@ -11,6 +11,18 @@
 import { createHash } from 'crypto';
 import { normalizeProviderName } from '@/lib/vod-dedup';
 
+/** 候補グループ検出アルゴリズムのバージョン。変更時はレビュー結果を無効化する。 */
+export const ALGORITHM_VERSION = 'v1';
+
+/**
+ * candidateGroupKey のハッシュ入力スキーマバージョン。
+ * - makeGroupId の入力フォーマット（区切り文字・正規化手順）が変わった場合に更新する
+ * - ALGORITHM_VERSION（候補判定ロジック）とは独立して管理する
+ * - 値を変えると既存の全 candidateGroupKey が変わるため、DBレビュー行との照合不能になる
+ *   → 変更時は既存レビューの移行計画が必要
+ */
+export const GROUP_KEY_SCHEMA_VERSION = 'gk1';
+
 // ─── 型定義 ──────────────────────────────────────────────────────────────────
 
 export type WorkDuplicateConfidence = 'exact' | 'high' | 'medium' | 'low' | 'conflict';
@@ -380,12 +392,26 @@ export function buildMergePlan(
 
 // ─── フェーズ4: 候補グループ ID ─────────────────────────────────────────────
 
-/** workId リストから安定したグループ ID を生成する */
+/**
+ * workId リストから安定したグループ ID（candidateGroupKey）を生成する。
+ *
+ * ハッシュ入力形式（GROUP_KEY_SCHEMA_VERSION = 'gk1'）:
+ *   `gk1:<sorted-unique-workIds joined by '|'>`
+ *
+ * - SHA-256 の完全な 64 文字 lowercase hex を返す（切り詰めない）
+ * - ALGORITHM_VERSION を含まない（workId 集合が同じなら常に同一キー）
+ * - GROUP_KEY_SCHEMA_VERSION をプレフィックスとして含む
+ *   （キー生成仕様変更時に既存キーと衝突しないよう保護）
+ * - workIds が空または 1 件の場合は空文字を返す（呼び出し元で除外すること）
+ */
 export function makeGroupId(workIds: string[]): string {
+  if (workIds.length < 2) return '';
+  const normalized = workIds.map((id) => id.trim()).filter(Boolean);
+  if (normalized.length < 2) return '';
+  const payload = `${GROUP_KEY_SCHEMA_VERSION}:${[...new Set(normalized)].sort().join('|')}`;
   return createHash('sha256')
-    .update(workIds.slice().sort().join('|'))
-    .digest('hex')
-    .slice(0, 16);
+    .update(payload)
+    .digest('hex'); // 64文字 lowercase hex（切り詰めなし）
 }
 
 // ─── フェーズ4: 重複候補の一括検出 ─────────────────────────────────────────
@@ -418,13 +444,16 @@ export function detectDuplicates(entries: WorkDedupEntry[]): WorkDedupGroup[] {
     }
     const deduped = [...byWorkId.values()];
 
+    const groupId = makeGroupId(deduped.map((e) => e.workId));
+    if (!groupId) continue; // 2件未満（通常ありえない）
+
     const { confidence, reasons, conflicts } = assessDuplicateGroup(deduped);
     const canonicalRecommendation = selectCanonical(deduped);
     const partialGroup = { entries: deduped, confidence, reasons, conflicts, canonicalRecommendation };
     const mergePlan = buildMergePlan(partialGroup);
 
     groups.push({
-      groupId: makeGroupId(deduped.map((e) => e.workId)),
+      groupId,
       entries: deduped,
       confidence,
       reasons,

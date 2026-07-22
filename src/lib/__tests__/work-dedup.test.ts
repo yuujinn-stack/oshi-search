@@ -8,6 +8,7 @@ import {
   validateAlias,
   aggregateEntries,
   makeGroupId,
+  GROUP_KEY_SCHEMA_VERSION,
   type WorkDedupEntry,
   type WorkRawRow,
 } from '../work-dedup';
@@ -450,21 +451,111 @@ describe('aggregateEntries: DB 行を workId 単位に集約', () => {
   });
 });
 
-// ─── 追加: makeGroupId の安定性 ──────────────────────────────────────────────
+// ─── 追加: makeGroupId（candidateGroupKey）の仕様 ──────────────────────────
 
-describe('makeGroupId', () => {
-  it('workId の順序に依存しない（安定したハッシュ）', () => {
+describe('makeGroupId（candidateGroupKey）', () => {
+  // ─── 形式 ────────────────────────────────────────────────────────────────
+
+  it('64文字の lowercase hex を返す（切り詰めなし）', () => {
+    const id = makeGroupId(['tmdb-tv-216223', 'csv-tv-離婚しようよ']);
+    expect(id).toMatch(/^[0-9a-f]{64}$/);
+    expect(id.length).toBe(64);
+  });
+
+  it('16文字に切り詰められていないこと', () => {
+    const id = makeGroupId(['a', 'b']);
+    expect(id.length).toBe(64);
+    expect(id.length).not.toBe(16);
+  });
+
+  // ─── 順序不変性 ─────────────────────────────────────────────────────────
+
+  it('workId の順序が違っても同じキー', () => {
     const id1 = makeGroupId(['a', 'b', 'c']);
     const id2 = makeGroupId(['c', 'a', 'b']);
-
     expect(id1).toBe(id2);
   });
 
-  it('異なる workId セットに異なる groupId を生成する', () => {
+  it('日本語 workId でも順序不変', () => {
+    const id1 = makeGroupId(['csv-tv-離婚しようよ', 'tmdb-tv-216223']);
+    const id2 = makeGroupId(['tmdb-tv-216223', 'csv-tv-離婚しようよ']);
+    expect(id1).toBe(id2);
+  });
+
+  // ─── 前後空白の除去 ──────────────────────────────────────────────────────
+
+  it('workId の前後空白を除去して同じキー', () => {
+    const id1 = makeGroupId(['a', 'b']);
+    const id2 = makeGroupId([' a ', ' b ']);
+    expect(id1).toBe(id2);
+  });
+
+  // ─── 重複除去 ───────────────────────────────────────────────────────────
+
+  it('重複 workId があっても安全に処理する（重複除去して同一キー）', () => {
+    const id1 = makeGroupId(['a', 'b']);
+    const id2 = makeGroupId(['a', 'b', 'a']); // 重複あり
+    expect(id1).toBe(id2);
+  });
+
+  // ─── 異なる集合は別キー ──────────────────────────────────────────────────
+
+  it('workId 集合が異なると別キー', () => {
     const id1 = makeGroupId(['a', 'b']);
     const id2 = makeGroupId(['a', 'c']);
-
     expect(id1).not.toBe(id2);
+  });
+
+  it('workId が1件増えると別キー', () => {
+    const id1 = makeGroupId(['a', 'b']);
+    const id2 = makeGroupId(['a', 'b', 'c']);
+    expect(id1).not.toBe(id2);
+  });
+
+  // ─── 不正入力 ────────────────────────────────────────────────────────────
+
+  it('空配列は空文字を返す（候補なし）', () => {
+    expect(makeGroupId([])).toBe('');
+  });
+
+  it('1件のみの配列は空文字を返す（重複候補でない）', () => {
+    expect(makeGroupId(['only-one'])).toBe('');
+  });
+
+  it('空文字 workId は除去されて不正な場合は空文字', () => {
+    expect(makeGroupId(['', ''])).toBe('');
+  });
+
+  // ─── algorithmVersion との独立性 ────────────────────────────────────────
+
+  it('algorithmVersion は candidateGroupKey に含まない（同じ workId → 同じキー）', () => {
+    const id = makeGroupId(['tmdb-tv-216223', 'csv-tv-離婚しようよ']);
+    const idAgain = makeGroupId(['tmdb-tv-216223', 'csv-tv-離婚しようよ']);
+    expect(id).toBe(idAgain);
+    expect(id).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  // ─── GROUP_KEY_SCHEMA_VERSION ────────────────────────────────────────────
+
+  it('GROUP_KEY_SCHEMA_VERSION がハッシュ入力に含まれる（仕様変更で別キーになる）', () => {
+    // 同じ workIds でも GROUP_KEY_SCHEMA_VERSION 相当の文字列が違えばキーが変わることを確認
+    // （実装ではプレフィックス 'gk1:' を付与している）
+    const { createHash } = require('crypto');
+    const workIds = ['a', 'b'];
+    const sorted = [...new Set(workIds)].sort().join('|');
+    // GROUP_KEY_SCHEMA_VERSION あり
+    const withVersion = createHash('sha256').update(`${GROUP_KEY_SCHEMA_VERSION}:${sorted}`).digest('hex');
+    // GROUP_KEY_SCHEMA_VERSION なし（旧仕様相当）
+    const withoutVersion = createHash('sha256').update(sorted).digest('hex');
+    // 同じ workIds でもプレフィックスが異なるため別キー
+    expect(withVersion).not.toBe(withoutVersion);
+    // makeGroupId はバージョン付きと一致する
+    expect(makeGroupId(workIds)).toBe(withVersion);
+    expect(makeGroupId(workIds)).not.toBe(withoutVersion);
+  });
+
+  it('GROUP_KEY_SCHEMA_VERSION の値が "gk1" である', () => {
+    expect(GROUP_KEY_SCHEMA_VERSION).toBe('gk1');
   });
 });
 

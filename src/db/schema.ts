@@ -240,6 +240,29 @@ export const workStatusHistory = pgTable('work_status_history', {
   index('wsh_created_at_idx').on(t.createdAt),
 ]);
 
+// ── 作品重複候補レビュー（work_dedup_reviews）────────────────────────────────
+// 管理者が各重複候補グループに対して行った判定結果を永続化する。
+// 作品統合・workId 変更・Redis 更新は行わない（レビュー結果の記録のみ）。
+export const workDedupReviews = pgTable('work_dedup_reviews', {
+  id:                      serial('id').primaryKey(),
+  candidateGroupKey:       text('candidate_group_key').notNull().unique(),
+  algorithmVersion:        text('algorithm_version').notNull(),
+  candidateWorkIds:        jsonb('candidate_work_ids').$type<string[]>().notNull(),
+  normalizedTitle:         text('normalized_title').notNull().default(''),
+  detectedConfidence:      text('detected_confidence').notNull(),
+  reviewStatus:            text('review_status').notNull().default('pending'),
+  selectedCanonicalWorkId: text('selected_canonical_work_id'),
+  reviewerNote:            text('reviewer_note'),
+  reviewedBy:              text('reviewed_by'),
+  reviewedAt:              timestamp('reviewed_at', { withTimezone: true }),
+  createdAt:               timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:               timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('wdr_review_status_idx').on(t.reviewStatus),
+  index('wdr_algorithm_version_idx').on(t.algorithmVersion),
+  index('wdr_updated_at_idx').on(t.updatedAt),
+]);
+
 // ── AI/手動判定結果（verdicts:{personName}）──────────────────────────────────
 export const verdicts = pgTable('verdicts', {
   personName:    text('person_name').notNull(),

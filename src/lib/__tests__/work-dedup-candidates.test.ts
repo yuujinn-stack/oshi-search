@@ -2,11 +2,13 @@ import { describe, it, expect } from 'vitest';
 import {
   parseQueryParams,
   filterGroups,
+  filterGroupsByReviewStatus,
   paginateGroups,
   trimGroupsForResponse,
   DEFAULT_LIMIT,
   MAX_LIMIT,
 } from '@/app/api/admin/work-dedup/candidates/lib';
+import type { ReviewStatus } from '@/lib/work-dedup-review';
 import {
   normalizeWorkTitleForMatching,
   type WorkDedupGroup,
@@ -297,6 +299,103 @@ describe('候補0件とエラーの区別', () => {
 });
 
 // ─── DB・Redis 更新がないことの確認 ──────────────────────────────────────────────
+
+// ─── filterGroupsByReviewStatus ──────────────────────────────────────────────
+
+function makeReview(
+  key: string,
+  status: ReviewStatus,
+  workIds: string[],
+  algorithmVersion = 'v1',
+) {
+  return { reviewStatus: status, candidateWorkIds: workIds, algorithmVersion };
+}
+
+describe('filterGroupsByReviewStatus', () => {
+  const g1 = makeGroup({ groupId: 'g1', workId1: 'a', workId2: 'b' });
+  const g2 = makeGroup({ groupId: 'g2', workId1: 'c', workId2: 'd' });
+  const g3 = makeGroup({ groupId: 'g3', workId1: 'e', workId2: 'f' });
+  const groups = [g1, g2, g3];
+
+  it('reviewStatus=all は全件返す', () => {
+    const map = new Map([['g1', makeReview('g1', 'approved_duplicate', ['a', 'b'])]]);
+    expect(filterGroupsByReviewStatus(groups, map, 'all')).toHaveLength(3);
+  });
+
+  it('pending: レビューなしのグループを返す', () => {
+    const map = new Map([['g1', makeReview('g1', 'approved_duplicate', ['a', 'b'])]]);
+    const result = filterGroupsByReviewStatus(groups, map, 'pending');
+    // g1 は approved → 除外, g2・g3 はレビューなし → pending
+    expect(result.map((g) => g.groupId)).toEqual(['g2', 'g3']);
+  });
+
+  it('pending: status=pending のレビューも pending に含む', () => {
+    const map = new Map([['g1', makeReview('g1', 'pending', ['a', 'b'])]]);
+    const result = filterGroupsByReviewStatus(groups, map, 'pending');
+    // g1 も pending → 3件すべて
+    expect(result).toHaveLength(3);
+  });
+
+  it('approved_duplicate: 承認済みのみ返す', () => {
+    const map = new Map([
+      ['g1', makeReview('g1', 'approved_duplicate', ['a', 'b'])],
+      ['g2', makeReview('g2', 'rejected_distinct',  ['c', 'd'])],
+    ]);
+    const result = filterGroupsByReviewStatus(groups, map, 'approved_duplicate');
+    expect(result.map((g) => g.groupId)).toEqual(['g1']);
+  });
+
+  it('rejected_distinct: 却下済みのみ返す', () => {
+    const map = new Map([
+      ['g1', makeReview('g1', 'approved_duplicate', ['a', 'b'])],
+      ['g2', makeReview('g2', 'rejected_distinct',  ['c', 'd'])],
+    ]);
+    const result = filterGroupsByReviewStatus(groups, map, 'rejected_distinct');
+    expect(result.map((g) => g.groupId)).toEqual(['g2']);
+  });
+
+  it('stale: workId が変わったレビューのみ返す', () => {
+    // g1 のレビューは workId=['a','z'] で保存されたが、現在は ['a','b'] → stale
+    const map = new Map([
+      ['g1', makeReview('g1', 'approved_duplicate', ['a', 'z'])],
+      ['g2', makeReview('g2', 'rejected_distinct',  ['c', 'd'])],
+    ]);
+    const result = filterGroupsByReviewStatus(groups, map, 'stale');
+    expect(result.map((g) => g.groupId)).toEqual(['g1']);
+  });
+
+  it('stale レビューは pending フィルターに含まない', () => {
+    const map = new Map([
+      ['g1', makeReview('g1', 'approved_duplicate', ['a', 'z'])], // stale
+    ]);
+    const result = filterGroupsByReviewStatus(groups, map, 'pending');
+    // g1 は stale → pending に含まない。g2・g3 はレビューなし → pending
+    expect(result.map((g) => g.groupId)).toEqual(['g2', 'g3']);
+  });
+});
+
+// ─── parseQueryParams: reviewStatus パラメータ ───────────────────────────────
+
+describe('parseQueryParams: reviewStatus', () => {
+  it('デフォルトは all', () => {
+    const p = parseQueryParams(new URLSearchParams());
+    expect(p.reviewStatus).toBe('all');
+  });
+
+  it('有効な reviewStatus を取得する', () => {
+    const cases: string[] = ['pending', 'approved_duplicate', 'rejected_distinct', 'on_hold', 'stale'];
+    for (const s of cases) {
+      expect(parseQueryParams(new URLSearchParams(`reviewStatus=${s}`)).reviewStatus).toBe(s);
+    }
+  });
+
+  it('不正な reviewStatus は all に補正', () => {
+    const p = parseQueryParams(new URLSearchParams('reviewStatus=invalid'));
+    expect(p.reviewStatus).toBe('all');
+  });
+});
+
+// ─── DB・Redis 更新禁止の確認 ──────────────────────────────────────────────────
 
 describe('DB・Redis 更新禁止の確認', () => {
   it('lib.ts の全関数は副作用を持たない（純粋関数）', () => {
