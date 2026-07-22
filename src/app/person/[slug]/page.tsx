@@ -10,6 +10,7 @@ import { getPersonMeta } from '@/lib/person-meta';
 import { getGroupMeta } from '@/lib/group-meta';
 import { groupHref } from '@/lib/group-slug';
 import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
+import { getWorkPublicUrl } from '@/lib/work-url';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import ProductTabList, { type ProductWithSection } from '@/components/ProductTabList';
 import PersonCard from '@/components/PersonCard';
@@ -857,7 +858,7 @@ export default async function PersonPage({ params }: Props) {
                         {pWorks.slice(0, 8).map((work) => (
                           <Link
                             key={work.id}
-                            href={`/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`}
+                            href={getWorkPublicUrl({ workId: work.id, personName: work.personName }) ?? '#'}
                             className="flex items-center gap-2 py-1 transition-colors group theme-text-link"
                             style={{ color: 'var(--ds-text)', textDecoration: 'none' }}
                           >

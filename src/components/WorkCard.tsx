@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import type { WorkRecord } from '@/types/work';
 import { deduplicateProviders, isConfirmedVodAvailability, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
+import { getWorkPublicUrl } from '@/lib/work-url';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL, DISPLAY_WORK_TYPE_ICON } from '@/lib/work-display-type';
 
@@ -48,7 +49,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
   const displayType = getDisplayWorkType(work);
   const displayLabel = DISPLAY_WORK_TYPE_LABEL[displayType];
   const displayIcon  = DISPLAY_WORK_TYPE_ICON[displayType];
-  const workDetailUrl = `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
+  const workDetailUrl = getWorkPublicUrl({ workId: work.id, personName: work.personName }) ?? `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
   // 画像優先順位: OG画像 > TMDb/posterUrl > プレースホルダー
   const displayPosterUrl = work.ogImageUrl ?? work.posterUrl;
   const posterLayout = displayPosterUrl ? getPosterLayout(displayPosterUrl) : null;
