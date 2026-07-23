@@ -13,7 +13,7 @@ import {
   workAliases as workAliasesTable,
   workMergeLogs as workMergeLogsTable,
 } from '@/db/schema';
-import { inArray, eq } from 'drizzle-orm';
+import { inArray, eq, isNull, and } from 'drizzle-orm';
 import type { VodProvider } from '@/types/vod';
 import { normalizeProviderName } from '@/lib/vod-dedup';
 import { getRedis } from '@/lib/redis';
@@ -376,6 +376,52 @@ export async function executeApply(params: {
 }): Promise<ApplyResult> {
   const { groupKey, canonicalWorkId, duplicateWorkIds, expectedUpdatedAt, appliedBy } = params;
 
+  // Step 0: トランザクション前 precondition チェック（通常の SELECT）
+  // DO $$ ブロックは Neon HTTP パラメータ化クエリ内で $n 参照が機能しないため、TS層でチェックする。
+  const guardRows = await db
+    .select({ updatedAt: reviewsTable.updatedAt })
+    .from(reviewsTable)
+    .where(and(
+      eq(reviewsTable.candidateGroupKey, groupKey),
+      eq(reviewsTable.reviewStatus, 'approved_duplicate'),
+      eq(reviewsTable.selectedCanonicalWorkId, canonicalWorkId),
+      isNull(reviewsTable.appliedAt),
+    ))
+    .limit(1);
+
+  if (guardRows.length === 0) {
+    console.warn('[executeApply] precondition failed: review not found or already applied', { groupKey, canonicalWorkId });
+    return {
+      success: false,
+      personLinksMoved:   0,
+      personLinksRemoved: 0,
+      vodProvidersMerged: 0,
+      aliasesCreated:     0,
+      redisClickMoved:    0,
+      redisKeysDeleted:   0,
+      redisError:         null,
+    };
+  }
+
+  // 楽観的ロック: updatedAt が期待値と一致することを確認
+  const dbUpdatedAt = guardRows[0].updatedAt;
+  if (!dbUpdatedAt || dbUpdatedAt.toISOString() !== expectedUpdatedAt) {
+    console.warn('[executeApply] precondition failed: updatedAt mismatch', {
+      expected: expectedUpdatedAt,
+      actual: dbUpdatedAt?.toISOString() ?? null,
+    });
+    return {
+      success: false,
+      personLinksMoved:   0,
+      personLinksRemoved: 0,
+      vodProvidersMerged: 0,
+      aliasesCreated:     0,
+      redisClickMoved:    0,
+      redisKeysDeleted:   0,
+      redisError:         null,
+    };
+  }
+
   // 事前にworksのデータを取得（トランザクション外でのJSロジック用）
   const allWorkIds = [canonicalWorkId, ...duplicateWorkIds];
   const workRows = await db
@@ -430,34 +476,9 @@ export async function executeApply(params: {
   }
 
   const mergedVodJson = JSON.stringify(mergedProviders);
-  const appliedByStr = appliedBy ?? 'unknown';
-  const appliedByEscaped = appliedByStr.replace(/'/g, "''");
-  const groupKeyEscaped = groupKey.replace(/'/g, "''");
-  const canonicalIdEscaped = canonicalWorkId.replace(/'/g, "''");
 
   // トランザクション内クエリを構築
   const txQueries: ReturnType<typeof neonSql>[] = [];
-
-  // Step 0: ガードDOブロック（precondition check）
-  txQueries.push(neonSql`
-    DO $$
-    DECLARE
-      v_count integer;
-    BEGIN
-      SELECT COUNT(*) INTO v_count
-      FROM work_dedup_reviews
-      WHERE candidate_group_key = ${groupKey}
-        AND review_status = 'approved_duplicate'
-        AND selected_canonical_work_id = ${canonicalWorkId}
-        AND applied_at IS NULL
-        AND updated_at = ${expectedUpdatedAt}::timestamptz;
-
-      IF v_count = 0 THEN
-        RAISE EXCEPTION 'APPLY_PRECONDITION_FAILED' USING ERRCODE = 'P0001';
-      END IF;
-    END;
-    $$
-  `);
 
   // Step 1: 各dupeWorkIdについて人物リンク処理
   for (const dupeId of duplicateWorkIds) {
@@ -550,6 +571,8 @@ export async function executeApply(params: {
       apply_result              = ${applyResultJson}::jsonb,
       updated_at                = NOW()
     WHERE candidate_group_key = ${groupKey}
+      AND applied_at IS NULL
+      AND updated_at = ${expectedUpdatedAt}::timestamptz
   `);
 
   // Step 5: work_merge_logs INSERT
