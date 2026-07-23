@@ -561,10 +561,10 @@ describe('getVodProviderDisplayInfo', () => {
   });
 
   // ── Test 6: Amazon Prime Video 本体 ───────────────────────────────────────
-  it('"Amazon Prime Video": 表示名はそのまま・追加チャンネルではない', () => {
+  it('"Amazon Prime Video": 表示名は "Prime Video" に統一・追加チャンネルではない', () => {
     const info = getVodProviderDisplayInfo('Amazon Prime Video');
     expect(info.isPrimeVideoChannel).toBe(false);
-    expect(info.displayName).toBe('Amazon Prime Video');
+    expect(info.displayName).toBe('Prime Video');
     expect(info.badgeLabel).toBeNull();
     expect(info.noticeText).toBeNull();
   });
@@ -634,5 +634,82 @@ describe('getVodProviderDisplayInfo', () => {
     expect(info.isPrimeVideoChannel).toBe(true);
     expect(info.displayName).toBe('Prime Video内 FODチャンネル');
     expect(info.shortName).toBe('FOD');
+  });
+});
+
+// ─── Prime Video 名称統一（表示層正規化） ─────────────────────────────────────
+
+describe('Prime Video 名称統一 — getVodProviderDisplayInfo', () => {
+  // 1. Amazon Prime Video → "Prime Video"
+  it('Amazon Prime Video の displayName は "Prime Video"', () => {
+    expect(getVodProviderDisplayInfo('Amazon Prime Video').displayName).toBe('Prime Video');
+  });
+
+  // 2. Amazon Prime Video with Ads → "Prime Video"
+  it('Amazon Prime Video with Ads の displayName は "Prime Video"', () => {
+    expect(getVodProviderDisplayInfo('Amazon Prime Video with Ads').displayName).toBe('Prime Video');
+  });
+
+  // 3. Amazonプライム・ビデオ → "Prime Video"
+  it('Amazonプライム・ビデオ の displayName は "Prime Video"', () => {
+    expect(getVodProviderDisplayInfo('Amazonプライム・ビデオ').displayName).toBe('Prime Video');
+  });
+
+  // 4. Prime Video → "Prime Video"
+  it('Prime Video の displayName は "Prime Video"', () => {
+    expect(getVodProviderDisplayInfo('Prime Video').displayName).toBe('Prime Video');
+  });
+
+  // 5. shortName も "Prime Video" に統一される
+  it('Amazon Prime Video の shortName も "Prime Video"', () => {
+    expect(getVodProviderDisplayInfo('Amazon Prime Video').shortName).toBe('Prime Video');
+  });
+
+  // 6. Amazon Video は "Prime Video" にならない（独立slug）
+  it('Amazon Video の displayName は "Amazon Video" のまま（Prime Videoに統合しない）', () => {
+    expect(getVodProviderDisplayInfo('Amazon Video').displayName).toBe('Amazon Video');
+  });
+
+  // 7. 追加チャンネルは "Prime Video" 単体にならない
+  it('TELASA Amazon Channel の displayName は "Prime Video" 単体でなく "Prime Video内 ..."', () => {
+    const info = getVodProviderDisplayInfo('TELASA Amazon Channel');
+    expect(info.displayName).not.toBe('Prime Video');
+    expect(info.displayName).toContain('Prime Video内');
+  });
+
+  // 8. for Prime Video 形式の追加チャンネルも "Prime Video" 単体にならない
+  it('NHKオンデマンド for Prime Video の displayName は "Prime Video" でなく "Prime Video内 ..."', () => {
+    const info = getVodProviderDisplayInfo('NHKオンデマンド for Prime Video');
+    expect(info.displayName).not.toBe('Prime Video');
+    expect(info.displayName).toContain('Prime Video内');
+  });
+
+  // 9. Hulu などの通常サービスは providerName がそのまま表示名になる
+  it('Hulu の displayName は "Hulu" のまま', () => {
+    expect(getVodProviderDisplayInfo('Hulu').displayName).toBe('Hulu');
+  });
+
+  // 10. dTV は "dTV" のまま（Prime Video統一の影響を受けない）
+  it('dTV の displayName は "dTV" のまま', () => {
+    expect(getVodProviderDisplayInfo('dTV').displayName).toBe('dTV');
+  });
+
+  // 11. 正規化キーで providerWorkMap の集約が起きることを normalizeProviderName で確認
+  it('Amazon Prime Video と Prime Video は normalizeProviderName で同一キーになる', () => {
+    expect(normalizeProviderName('Amazon Prime Video')).toBe(normalizeProviderName('Prime Video'));
+  });
+
+  // 12. 有効サービスと unknown が混在した場合、unknown だけが除外される
+  it('有効サービスと unknown が混在した場合、unknown だけが除外される', () => {
+    const providers: VodProvider[] = [
+      provider({ providerId: 1, providerName: 'Amazon Prime Video', type: 'flatrate', source: 'tmdb_watch_provider' }),
+      provider({ providerId: 2, providerName: 'unknown', type: 'unknown' }),
+      provider({ providerId: 3, providerName: 'Prime Video', type: 'flatrate', source: 'manual_csv' }),
+      provider({ providerId: 4, providerName: 'UNKNOWN', type: 'rent' }),
+    ];
+    const result = filterPublicVodProviders(providers);
+    // unknown は除外、Amazon Prime Video と Prime Video は同一サービスとして1件に集約
+    expect(result).toHaveLength(1);
+    expect(normalizeProviderName(result[0].providerName)).toBe('primevideo');
   });
 });

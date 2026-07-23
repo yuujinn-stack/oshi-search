@@ -425,10 +425,11 @@ export default async function GroupsPage({ params }: Props) {
   for (const work of allWorks) {
     for (const p of workProviders.get(work.id) ?? []) {
       if (!['flatrate', 'free', 'ads'].includes(p.type)) continue;
-      if (!providerWorkMap.has(p.providerName)) {
-        providerWorkMap.set(p.providerName, { logoPath: p.logoPath, works: [] });
+      const providerKey = normalizeProviderName(p.providerName);
+      if (!providerWorkMap.has(providerKey)) {
+        providerWorkMap.set(providerKey, { logoPath: p.logoPath, works: [] });
       }
-      providerWorkMap.get(p.providerName)!.works.push(work);
+      providerWorkMap.get(providerKey)!.works.push(work);
     }
   }
   const providerGroups = [...providerWorkMap.entries()].sort(([a], [b]) =>

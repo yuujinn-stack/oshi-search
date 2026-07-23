@@ -389,7 +389,7 @@ export default async function WorkDetailPage({ params }: Props) {
                   const info = getVodProviderDisplayInfo(p.providerName);
                   const ctaText = info.isPrimeVideoChannel
                     ? `Prime Video内${info.shortName}で見る`
-                    : `${p.providerName}で${cfg.btnLabel}`;
+                    : `${info.displayName}で${cfg.btnLabel}`;
                   return (
                     <div key={`${p.providerId}-${p.type}-${i}`} className={`rounded-xl border ${cfg.border} ${cfg.bg} p-3`}>
                       <div className="flex items-center gap-3">

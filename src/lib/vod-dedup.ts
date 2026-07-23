@@ -221,6 +221,12 @@ export type VodProviderDisplayInfo = {
   noticeText: string | null;
 };
 
+// 正規化スラグ → 統一表示名（公開画面での表示に使用）
+// DB・providerName は変更しない。表示層のみで変換する。
+const SLUG_DISPLAY_NAME: Record<string, string> = {
+  'primevideo': 'Prime Video',
+};
+
 // 既知の追加チャンネルの表示名マッピング（normalizeProviderName結果 → 日本語表示名）
 // ProviderLogo.tsx の AMAZON_CHANNEL_PARENT と対応させる
 const AMAZON_CHANNEL_DISPLAY_NAMES: Record<string, string> = {
@@ -299,9 +305,11 @@ function extractChannelName(providerName: string): string {
  */
 export function getVodProviderDisplayInfo(providerName: string): VodProviderDisplayInfo {
   if (!isPrimeVideoChannel(providerName)) {
+    const slug = normalizeProviderName(providerName);
+    const displayName = SLUG_DISPLAY_NAME[slug] ?? providerName;
     return {
-      displayName: providerName,
-      shortName: providerName,
+      displayName,
+      shortName: displayName,
       isPrimeVideoChannel: false,
       badgeLabel: null,
       noticeText: null,
