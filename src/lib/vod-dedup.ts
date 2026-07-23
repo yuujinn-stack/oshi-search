@@ -223,8 +223,11 @@ export type VodProviderDisplayInfo = {
 
 // 正規化スラグ → 統一表示名（公開画面での表示に使用）
 // DB・providerName は変更しない。表示層のみで変換する。
+// 'amazonvideo' は独立スラグを維持（rentエントリと flatrate エントリは別扱い）し、
+// 表示名のみ "Prime Video" に統一する。
 const SLUG_DISPLAY_NAME: Record<string, string> = {
-  'primevideo': 'Prime Video',
+  'primevideo':  'Prime Video',
+  'amazonvideo': 'Prime Video',
 };
 
 // 既知の追加チャンネルの表示名マッピング（normalizeProviderName結果 → 日本語表示名）
