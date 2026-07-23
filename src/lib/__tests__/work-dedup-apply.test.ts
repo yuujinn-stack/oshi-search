@@ -454,6 +454,11 @@ describe('executeApply', () => {
     appliedBy:         'test-admin',
   };
 
+  // precondition チェック用 SELECT の結果（最初に積む）
+  function setupGuardRow(updatedAt = new Date('2024-01-01T00:00:00.000Z')) {
+    mockState.selectQueue.push([{ updatedAt }]);
+  }
+
   function setupWorkRows() {
     mockState.selectQueue.push([
       makeWorkRow(CANONICAL_ID, '山田花子', { roleName: '主人公' }),
@@ -462,15 +467,17 @@ describe('executeApply', () => {
   }
 
   it('transaction 成功時は success=true を返す', async () => {
+    setupGuardRow();
     setupWorkRows();
 
     const result = await executeApply(defaultParams);
     expect(result.success).toBe(true);
   });
 
-  it('transaction 失敗時（APPLY_PRECONDITION_FAILED）は success=false を返す', async () => {
+  it('transaction 失敗時（TX エラー）は success=false を返す', async () => {
+    setupGuardRow();
     setupWorkRows();
-    mockState.transactionFn.mockRejectedValueOnce(new Error('APPLY_PRECONDITION_FAILED'));
+    mockState.transactionFn.mockRejectedValueOnce(new Error('TX_ERROR'));
 
     const result = await executeApply(defaultParams);
     expect(result.success).toBe(false);
@@ -479,6 +486,7 @@ describe('executeApply', () => {
   });
 
   it('transaction 失敗時は work_merge_logs にエラーログを INSERT する', async () => {
+    setupGuardRow();
     setupWorkRows();
     mockState.transactionFn.mockRejectedValueOnce(new Error('TX_ERROR'));
 
@@ -491,6 +499,7 @@ describe('executeApply', () => {
   });
 
   it('success 時は dupe work への status=hidden UPDATE クエリが含まれる', async () => {
+    setupGuardRow();
     setupWorkRows();
 
     await executeApply(defaultParams);
@@ -506,6 +515,7 @@ describe('executeApply', () => {
   });
 
   it('canonical work 自体は hidden/deleted にしない', async () => {
+    setupGuardRow();
     setupWorkRows();
 
     await executeApply(defaultParams);
@@ -520,6 +530,7 @@ describe('executeApply', () => {
   });
 
   it('success 時は work_aliases への INSERT クエリが含まれる', async () => {
+    setupGuardRow();
     setupWorkRows();
 
     await executeApply(defaultParams);
@@ -531,6 +542,7 @@ describe('executeApply', () => {
   });
 
   it('success 時は work_dedup_reviews の applied_at 更新クエリが含まれる', async () => {
+    setupGuardRow();
     setupWorkRows();
 
     await executeApply(defaultParams);
@@ -544,7 +556,24 @@ describe('executeApply', () => {
     expect(reviewUpdateCall).toBeDefined();
   });
 
+  it('work_dedup_reviews UPDATE に applied_at IS NULL ガード条件が含まれる（二重実行防止）', async () => {
+    setupGuardRow();
+    setupWorkRows();
+
+    await executeApply(defaultParams);
+
+    const reviewUpdateCall = mockState.neonSqlCalls.find(
+      (args) =>
+        (args[0] as string[]).some(
+          (s) => s.includes('work_dedup_reviews') && s.includes('applied_at'),
+        ),
+    );
+    const allStrings = (reviewUpdateCall?.[0] as string[]) ?? [];
+    expect(allStrings.some((s) => s.includes('applied_at IS NULL'))).toBe(true);
+  });
+
   it('success 時は work_merge_logs に成功ログを INSERT する', async () => {
+    setupGuardRow();
     setupWorkRows();
 
     await executeApply(defaultParams);
@@ -557,6 +586,7 @@ describe('executeApply', () => {
 
   it('canonical にいない人物は personLinksMoved++ / canonical にいる人物は personLinksRemoved++', async () => {
     // canonical(山田花子) / dupe(田中太郎): 別人 → move=1, remove=0
+    setupGuardRow();
     setupWorkRows();
 
     const result = await executeApply(defaultParams);
@@ -566,6 +596,7 @@ describe('executeApply', () => {
   });
 
   it('同一 personName が canonical と dupe 両方に存在する場合は personLinksRemoved++', async () => {
+    setupGuardRow();
     mockState.selectQueue.push([
       makeWorkRow(CANONICAL_ID, '山田花子'),
       makeWorkRow(DUPE_ID_1,    '山田花子'), // 同一人物
@@ -577,22 +608,60 @@ describe('executeApply', () => {
     expect(result.personLinksRemoved).toBe(1);
   });
 
-  it('DO ガードブロック（precondition check）が transaction の先頭クエリに含まれる', async () => {
+  // ─── precondition guard チェック ─────────────────────────────────────────
+
+  it('guard: reviewStatus 不一致 / already applied → success=false かつ transaction は呼ばれない', async () => {
+    // guardRows = [] → precondition SELECT が 0 行を返す
+    mockState.selectQueue.push([]);
+
+    const result = await executeApply(defaultParams);
+    expect(result.success).toBe(false);
+    expect(mockState.transactionFn).not.toHaveBeenCalled();
+  });
+
+  it('guard: appliedAt 設定済みの場合は success=false かつ transaction は呼ばれない（二重実行防止）', async () => {
+    // appliedAt IS NULL 条件を満たさない場合、guard SELECT は 0 行を返す
+    mockState.selectQueue.push([]);
+
+    const result = await executeApply(defaultParams);
+    expect(result.success).toBe(false);
+    expect(mockState.transactionFn).not.toHaveBeenCalled();
+  });
+
+  it('guard: updatedAt が expectedUpdatedAt と不一致の場合は success=false かつ transaction は呼ばれない', async () => {
+    // guard SELECT は行を返すが updatedAt が期待値と異なる（楽観的ロック失敗）
+    mockState.selectQueue.push([{ updatedAt: new Date('2099-12-31T00:00:00.000Z') }]);
+
+    const result = await executeApply(defaultParams);
+    expect(result.success).toBe(false);
+    expect(mockState.transactionFn).not.toHaveBeenCalled();
+  });
+
+  it('guard: updatedAt が null の場合は success=false かつ transaction は呼ばれない', async () => {
+    mockState.selectQueue.push([{ updatedAt: null }]);
+
+    const result = await executeApply(defaultParams);
+    expect(result.success).toBe(false);
+    expect(mockState.transactionFn).not.toHaveBeenCalled();
+  });
+
+  it('transaction に DO $$ ブロックは含まれない（Neon HTTP パラメータ非対応のため）', async () => {
+    setupGuardRow();
     setupWorkRows();
 
     await executeApply(defaultParams);
 
-    // 最初の neonSql 呼び出しが DO $$ ... RAISE EXCEPTION ブロックであること
-    const firstCall    = mockState.neonSqlCalls[0];
-    const firstStrings = (firstCall?.[0] as string[]) ?? [];
-    expect(firstStrings.some((s) => s.includes('DO'))).toBe(true);
-    expect(firstStrings.some((s) => s.includes('APPLY_PRECONDITION_FAILED'))).toBe(true);
+    const doCall = mockState.neonSqlCalls.find(
+      (args) => (args[0] as string[]).some((s) => s.includes('DO $$')),
+    );
+    expect(doCall).toBeUndefined();
   });
 
   it('executeApply 自体は WORK_DEDUP_APPLY_ENABLED を参照しない（チェックはルート層の責務）', async () => {
     const original = process.env.WORK_DEDUP_APPLY_ENABLED;
     process.env.WORK_DEDUP_APPLY_ENABLED = 'false';
 
+    setupGuardRow();
     setupWorkRows();
     const result = await executeApply(defaultParams);
     expect(result.success).toBe(true);
