@@ -362,10 +362,11 @@ export default async function PersonPage({ params }: Props) {
   const providerWorkMap = new Map<string, { logoPath?: string; works: WorkRecord[] }>();
   for (const work of streamingWorks) {
     for (const p of getStreamingProviders(work, inactiveSlugs)) {
-      if (!providerWorkMap.has(p.providerName)) {
-        providerWorkMap.set(p.providerName, { logoPath: p.logoPath, works: [] });
+      const providerKey = normalizeProviderName(p.providerName);
+      if (!providerWorkMap.has(providerKey)) {
+        providerWorkMap.set(providerKey, { logoPath: p.logoPath, works: [] });
       }
-      providerWorkMap.get(p.providerName)!.works.push(work);
+      providerWorkMap.get(providerKey)!.works.push(work);
     }
   }
   const providerGroups = [...providerWorkMap.entries()].sort(([a], [b]) => a.localeCompare(b, 'ja'));

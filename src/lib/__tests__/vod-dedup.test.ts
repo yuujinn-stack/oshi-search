@@ -561,10 +561,10 @@ describe('getVodProviderDisplayInfo', () => {
   });
 
   // ── Test 6: Amazon Prime Video 本体 ───────────────────────────────────────
-  it('"Amazon Prime Video": 表示名はそのまま・追加チャンネルではない', () => {
+  it('"Amazon Prime Video": 表示名は "Prime Video" に統一・追加チャンネルではない', () => {
     const info = getVodProviderDisplayInfo('Amazon Prime Video');
     expect(info.isPrimeVideoChannel).toBe(false);
-    expect(info.displayName).toBe('Amazon Prime Video');
+    expect(info.displayName).toBe('Prime Video');
     expect(info.badgeLabel).toBeNull();
     expect(info.noticeText).toBeNull();
   });
@@ -577,10 +577,10 @@ describe('getVodProviderDisplayInfo', () => {
   });
 
   // ── Test 8: Amazon Video ───────────────────────────────────────────────────
-  it('"Amazon Video": 購入・レンタルストア、追加チャンネルではない', () => {
+  it('"Amazon Video": 表示名は "Prime Video"・追加チャンネルではない（スラグは独立）', () => {
     const info = getVodProviderDisplayInfo('Amazon Video');
     expect(info.isPrimeVideoChannel).toBe(false);
-    expect(info.displayName).toBe('Amazon Video');
+    expect(info.displayName).toBe('Prime Video');
     expect(info.badgeLabel).toBeNull();
     expect(info.noticeText).toBeNull();
   });
@@ -634,5 +634,132 @@ describe('getVodProviderDisplayInfo', () => {
     expect(info.isPrimeVideoChannel).toBe(true);
     expect(info.displayName).toBe('Prime Video内 FODチャンネル');
     expect(info.shortName).toBe('FOD');
+  });
+});
+
+// ─── Prime Video 名称統一（表示層正規化） ─────────────────────────────────────
+
+describe('Prime Video 名称統一 — getVodProviderDisplayInfo', () => {
+  // 1. Amazon Prime Video → "Prime Video"
+  it('Amazon Prime Video の displayName は "Prime Video"', () => {
+    expect(getVodProviderDisplayInfo('Amazon Prime Video').displayName).toBe('Prime Video');
+  });
+
+  // 2. Amazon Prime Video with Ads → "Prime Video"
+  it('Amazon Prime Video with Ads の displayName は "Prime Video"', () => {
+    expect(getVodProviderDisplayInfo('Amazon Prime Video with Ads').displayName).toBe('Prime Video');
+  });
+
+  // 3. Amazonプライム・ビデオ → "Prime Video"
+  it('Amazonプライム・ビデオ の displayName は "Prime Video"', () => {
+    expect(getVodProviderDisplayInfo('Amazonプライム・ビデオ').displayName).toBe('Prime Video');
+  });
+
+  // 4. Prime Video → "Prime Video"
+  it('Prime Video の displayName は "Prime Video"', () => {
+    expect(getVodProviderDisplayInfo('Prime Video').displayName).toBe('Prime Video');
+  });
+
+  // 5. shortName も "Prime Video" に統一される
+  it('Amazon Prime Video の shortName も "Prime Video"', () => {
+    expect(getVodProviderDisplayInfo('Amazon Prime Video').shortName).toBe('Prime Video');
+  });
+
+  // 6. Amazon Video は表示名のみ "Prime Video"（スラグは "amazonvideo" 独立・追加チャンネルでない）
+  it('Amazon Video の displayName は "Prime Video"（isPrimeVideoChannel:false, スラグは独立）', () => {
+    const info = getVodProviderDisplayInfo('Amazon Video');
+    expect(info.displayName).toBe('Prime Video');
+    expect(info.isPrimeVideoChannel).toBe(false);
+    expect(normalizeProviderName('Amazon Video')).toBe('amazonvideo');
+  });
+
+  // 7. 追加チャンネルは "Prime Video" 単体にならない
+  it('TELASA Amazon Channel の displayName は "Prime Video" 単体でなく "Prime Video内 ..."', () => {
+    const info = getVodProviderDisplayInfo('TELASA Amazon Channel');
+    expect(info.displayName).not.toBe('Prime Video');
+    expect(info.displayName).toContain('Prime Video内');
+  });
+
+  // 8. for Prime Video 形式の追加チャンネルも "Prime Video" 単体にならない
+  it('NHKオンデマンド for Prime Video の displayName は "Prime Video" でなく "Prime Video内 ..."', () => {
+    const info = getVodProviderDisplayInfo('NHKオンデマンド for Prime Video');
+    expect(info.displayName).not.toBe('Prime Video');
+    expect(info.displayName).toContain('Prime Video内');
+  });
+
+  // 9. Hulu などの通常サービスは providerName がそのまま表示名になる
+  it('Hulu の displayName は "Hulu" のまま', () => {
+    expect(getVodProviderDisplayInfo('Hulu').displayName).toBe('Hulu');
+  });
+
+  // 10. dTV は "dTV" のまま（Prime Video統一の影響を受けない）
+  it('dTV の displayName は "dTV" のまま', () => {
+    expect(getVodProviderDisplayInfo('dTV').displayName).toBe('dTV');
+  });
+
+  // 11. 正規化キーで providerWorkMap の集約が起きることを normalizeProviderName で確認
+  it('Amazon Prime Video と Prime Video は normalizeProviderName で同一キーになる', () => {
+    expect(normalizeProviderName('Amazon Prime Video')).toBe(normalizeProviderName('Prime Video'));
+  });
+
+  // 12. 有効サービスと unknown が混在した場合、unknown だけが除外される
+  it('有効サービスと unknown が混在した場合、unknown だけが除外される', () => {
+    const providers: VodProvider[] = [
+      provider({ providerId: 1, providerName: 'Amazon Prime Video', type: 'flatrate', source: 'tmdb_watch_provider' }),
+      provider({ providerId: 2, providerName: 'unknown', type: 'unknown' }),
+      provider({ providerId: 3, providerName: 'Prime Video', type: 'flatrate', source: 'manual_csv' }),
+      provider({ providerId: 4, providerName: 'UNKNOWN', type: 'rent' }),
+    ];
+    const result = filterPublicVodProviders(providers);
+    // unknown は除外、Amazon Prime Video と Prime Video は同一サービスとして1件に集約
+    expect(result).toHaveLength(1);
+    expect(normalizeProviderName(result[0].providerName)).toBe('primevideo');
+  });
+});
+
+// ─── Amazon Video 表示名統一（レンタル・購入） ────────────────────────────────
+
+describe('Amazon Video 表示名統一', () => {
+  // 1. Amazon Videoの公開表示名がPrime Videoになる
+  it('Amazon Video の displayName は "Prime Video"', () => {
+    expect(getVodProviderDisplayInfo('Amazon Video').displayName).toBe('Prime Video');
+  });
+
+  // 2. Amazon Videoのレンタルボタンが「Prime Videoでレンタルする」になる
+  it('Amazon Video の displayName で "Prime Videoでレンタルする" が構成できる', () => {
+    const info = getVodProviderDisplayInfo('Amazon Video');
+    expect(info.isPrimeVideoChannel).toBe(false);
+    // 作品ページのCTA: `${info.displayName}で${cfg.btnLabel}` → "Prime Videoでレンタルする"
+    expect(`${info.displayName}でレンタルする`).toBe('Prime Videoでレンタルする');
+  });
+
+  // 3. availabilityType=rentが維持される
+  it('Amazon Video(rent) は deduplicateProviders 後も type="rent" が維持される', () => {
+    const p = provider({ providerId: 1, providerName: 'Amazon Video', type: 'rent' });
+    const result = deduplicateProviders([p]);
+    expect(result).toHaveLength(1);
+    expect(result[0].providerName).toBe('Amazon Video');
+    expect(result[0].type).toBe('rent');
+  });
+
+  // 4. Prime Video見放題とAmazon Videoレンタルが混在しても、提供形態が失われない
+  it('Amazon Prime Video(flatrate)とAmazon Video(rent)は別エントリとして共存する', () => {
+    const providers: VodProvider[] = [
+      provider({ providerId: 1, providerName: 'Amazon Prime Video', type: 'flatrate', source: 'tmdb_watch_provider' }),
+      provider({ providerId: 2, providerName: 'Amazon Video', type: 'rent', source: 'tmdb_watch_provider' }),
+    ];
+    const result = deduplicateProviders(providers);
+    expect(result).toHaveLength(2);
+    const types = result.map((p) => p.type);
+    expect(types).toContain('flatrate');
+    expect(types).toContain('rent');
+  });
+
+  // 5. Amazon追加チャンネルがPrime Video本体へ統合されない
+  it('Amazon追加チャンネル(TELASA)は isPrimeVideoChannel=true、displayNameは "Prime Video内 ..."', () => {
+    const info = getVodProviderDisplayInfo('TELASA Amazon Channel');
+    expect(info.isPrimeVideoChannel).toBe(true);
+    expect(info.displayName).not.toBe('Prime Video');
+    expect(info.displayName).toContain('Prime Video内');
   });
 });
