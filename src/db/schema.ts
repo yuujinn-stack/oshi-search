@@ -255,12 +255,17 @@ export const workDedupReviews = pgTable('work_dedup_reviews', {
   reviewerNote:            text('reviewer_note'),
   reviewedBy:              text('reviewed_by'),
   reviewedAt:              timestamp('reviewed_at', { withTimezone: true }),
+  appliedAt:               timestamp('applied_at',                { withTimezone: true }),
+  appliedBy:               text('applied_by'),
+  appliedCanonicalWorkId:  text('applied_canonical_work_id'),
+  applyResult:             jsonb('apply_result').$type<Record<string, unknown>>(),
   createdAt:               timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt:               timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index('wdr_review_status_idx').on(t.reviewStatus),
   index('wdr_algorithm_version_idx').on(t.algorithmVersion),
   index('wdr_updated_at_idx').on(t.updatedAt),
+  index('wdr_applied_at_idx').on(t.appliedAt),
 ]);
 
 // ── AI/手動判定結果（verdicts:{personName}）──────────────────────────────────
@@ -277,4 +282,37 @@ export const verdicts = pgTable('verdicts', {
 }, (t) => [
   primaryKey({ columns: [t.personName, t.productId] }),
   index('verdicts_person_name_idx').on(t.personName),
+]);
+
+// ── 統合済みworkIdエイリアス（work_aliases）───────────────────────────────────
+export const workAliases = pgTable('work_aliases', {
+  aliasWorkId:     text('alias_work_id').primaryKey(),
+  canonicalWorkId: text('canonical_work_id').notNull(),
+  mergeGroupKey:   text('merge_group_key'),
+  createdBy:       text('created_by'),
+  createdAt:       timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('wa_canonical_work_id_idx').on(t.canonicalWorkId),
+]);
+
+// ── 統合実行ログ（work_merge_logs）──────────────────────────────────────────────
+export const workMergeLogs = pgTable('work_merge_logs', {
+  id:                   serial('id').primaryKey(),
+  candidateGroupKey:    text('candidate_group_key').notNull(),
+  canonicalWorkId:      text('canonical_work_id').notNull(),
+  duplicateWorkIds:     jsonb('duplicate_work_ids').$type<string[]>().notNull(),
+  personLinksMoved:     integer('person_links_moved').notNull().default(0),
+  personLinksRemoved:   integer('person_links_removed').notNull().default(0),
+  vodProvidersMerged:   integer('vod_providers_merged').notNull().default(0),
+  aliasesCreated:       integer('aliases_created').notNull().default(0),
+  redisClickMoved:      integer('redis_click_moved').notNull().default(0),
+  redisKeysDeleted:     integer('redis_keys_deleted').notNull().default(0),
+  redisError:           text('redis_error'),
+  success:              boolean('success').notNull(),
+  errorMessage:         text('error_message'),
+  executedBy:           text('executed_by'),
+  executedAt:           timestamp('executed_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('wml_candidate_group_key_idx').on(t.candidateGroupKey),
+  index('wml_executed_at_idx').on(t.executedAt),
 ]);

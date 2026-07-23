@@ -9,6 +9,7 @@ import {
   type ReviewStatus,
   REVIEW_NOTE_MAX_LENGTH,
 } from '@/lib/work-dedup-review';
+import type { ApplyPreview } from '@/lib/work-dedup-apply';
 
 // ─── 型 ────────────────────────────────────────────────────────────────────────
 
@@ -18,6 +19,7 @@ interface ApiResponse {
   pagination:  Pagination;
   reviews:     Record<string, ReviewApiData>;
   reviewStats: ReviewStats;
+  applyEnabled: boolean;
 }
 
 interface ApiError {
@@ -344,24 +346,250 @@ function ReviewForm({
   );
 }
 
+// ─── 統合プレビューモーダル ───────────────────────────────────────────────────────
+
+interface ApplyModalProps {
+  groupId:         string;
+  review:          ReviewApiData;
+  preview:         ApplyPreview;
+  applyEnabled:    boolean;
+  onClose:         () => void;
+  onApplySuccess:  () => void;
+}
+
+function ApplyModal({ groupId, review, preview, applyEnabled, onClose, onApplySuccess }: ApplyModalProps) {
+  const [confirmText, setConfirmText] = useState('');
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [applyDone, setApplyDone] = useState(false);
+
+  const canSubmit =
+    applyEnabled &&
+    !applying &&
+    !applyDone &&
+    !preview.alreadyApplied &&
+    !preview.isStale &&
+    confirmText === '統合を実行';
+
+  async function handleApply() {
+    if (!canSubmit) return;
+    setApplying(true);
+    setApplyError(null);
+    try {
+      const res = await fetch(`/api/admin/work-dedup/reviews/${groupId}/apply`, {
+        method:      'POST',
+        credentials: 'same-origin',
+        headers:     { 'Content-Type': 'application/json' },
+        body:        JSON.stringify({
+          confirmationText:         '統合を実行',
+          expectedCanonicalWorkId:  preview.canonicalWorkId,
+          expectedCandidateWorkIds: preview.currentWorkIds,
+          expectedUpdatedAt:        review.updatedAt,
+        }),
+      });
+      const json = await res.json() as { ok: boolean; error?: { code: string; message: string } };
+      if (!res.ok || !json.ok) {
+        setApplyError(json.error?.message ?? `HTTP ${res.status}`);
+        setApplying(false);
+        return;
+      }
+      setApplyDone(true);
+      setApplying(false);
+      onApplySuccess();
+    } catch {
+      setApplyError('ネットワークエラーが発生しました');
+      setApplying(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="統合プレビュー"
+    >
+      <div className="bg-slate-800 border border-slate-600 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
+        {/* ヘッダー */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-600">
+          <h2 className="text-white font-bold text-base">統合プレビュー</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-slate-400 hover:text-white text-xl font-bold focus:outline-none focus:ring-2 focus:ring-slate-400 rounded px-1"
+            aria-label="閉じる"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {/* already applied */}
+          {preview.alreadyApplied && (
+            <div className="bg-emerald-950 border border-emerald-700 rounded px-3 py-2 text-emerald-200 text-sm">
+              このグループは適用済みです（適用日時: {preview.appliedAt ? new Date(preview.appliedAt).toLocaleString('ja-JP') : '不明'}）
+            </div>
+          )}
+
+          {/* stale 警告 */}
+          {preview.isStale && (
+            <div className="bg-orange-950 border border-orange-700 rounded px-3 py-2 text-orange-200 text-sm">
+              候補グループの構成が変更されました。再度プレビューを取得してください。
+            </div>
+          )}
+
+          {/* 統合先 */}
+          <div>
+            <div className="text-xs text-slate-400 mb-1">canonical workId（統合先）</div>
+            <div className="text-sm text-white font-mono bg-slate-900 rounded px-2 py-1">{preview.canonicalWorkId}</div>
+          </div>
+
+          {/* 重複workIds */}
+          <div>
+            <div className="text-xs text-slate-400 mb-1">統合対象（廃止）workId</div>
+            <div className="space-y-1">
+              {preview.duplicateWorkIds.map((id) => (
+                <div key={id} className="text-sm text-red-300 font-mono bg-slate-900 rounded px-2 py-1">{id}</div>
+              ))}
+            </div>
+          </div>
+
+          {/* 統計 */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+            {[
+              { label: '人物リンク移動',    value: preview.personLinkChanges.filter((c) => c.action === 'move').length },
+              { label: '人物リンク重複除去', value: preview.personLinkChanges.filter((c) => c.action === 'remove').length },
+              { label: 'VOD追加数',          value: preview.vodProvidersMergedCount },
+              { label: 'alias作成数',        value: preview.aliasesToCreate.length },
+              { label: '非活性化work数',     value: preview.worksToDeactivate.length },
+            ].map(({ label, value }) => (
+              <div key={label} className="bg-slate-700 rounded p-2 border border-slate-600">
+                <div className="text-slate-300">{label}</div>
+                <div className="text-white font-bold text-sm mt-0.5">{value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* APPLY_DISABLED 警告 */}
+          {!applyEnabled && (
+            <div className="bg-yellow-950 border border-yellow-700 rounded px-3 py-2 text-yellow-200 text-sm">
+              現在、統合実行は無効です（WORK_DEDUP_APPLY_ENABLED=false）。プレビューのみ確認できます。
+            </div>
+          )}
+
+          {/* 確認入力 + 実行ボタン */}
+          {applyEnabled && !preview.alreadyApplied && !preview.isStale && (
+            <div className="space-y-3 border-t border-slate-600 pt-3">
+              <p className="text-xs text-yellow-200">
+                この操作は元に戻せません。「統合を実行」と入力して確定してください。
+              </p>
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">
+                  確認テキスト（「統合を実行」と入力）
+                </label>
+                <input
+                  type="text"
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  placeholder="統合を実行"
+                  className="w-full bg-slate-900 border border-slate-500 rounded px-2 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-red-500"
+                />
+              </div>
+
+              {applyError && (
+                <div role="alert" className="text-xs text-red-200 bg-red-950 border border-red-700 rounded px-3 py-2">
+                  エラー: {applyError}
+                </div>
+              )}
+
+              {applyDone && (
+                <div className="text-xs text-emerald-300 bg-emerald-950 border border-emerald-700 rounded px-3 py-2">
+                  統合が完了しました。ページを再読み込みしてください。
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleApply}
+                disabled={!canSubmit}
+                className="w-full text-sm px-4 py-2 bg-red-700 hover:bg-red-600 disabled:bg-slate-700 disabled:text-slate-400 text-white rounded border border-red-600 disabled:border-slate-600 font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-red-400 disabled:cursor-not-allowed"
+              >
+                {applying ? '統合実行中…' : 'この1グループを統合する'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── グループカード ─────────────────────────────────────────────────────────────
 
 interface GroupCardProps {
-  group:   WorkDedupGroup;
-  review:  ReviewApiData | undefined;
-  edit:    EditState;
-  onChange: (groupId: string, partial: Partial<EditState>) => void;
-  onSave:  (groupId: string) => Promise<void>;
+  group:       WorkDedupGroup;
+  review:      ReviewApiData | undefined;
+  edit:        EditState;
+  applyEnabled: boolean;
+  onChange:    (groupId: string, partial: Partial<EditState>) => void;
+  onSave:      (groupId: string) => Promise<void>;
+  onReload:    () => void;
 }
 
-function GroupCard({ group, review, edit, onChange, onSave }: GroupCardProps) {
+function GroupCard({ group, review, edit, applyEnabled, onChange, onSave, onReload }: GroupCardProps) {
   const [open, setOpen] = useState(false);
+  const [applyPreview, setApplyPreview] = useState<ApplyPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [showModal, setShowModal] = useState(false);
   const detailId = useId();
   const plan = group.mergePlan;
   const badge = CONFIDENCE_BADGE[group.confidence];
   const displayStatus = getDisplayStatus(review);
 
+  // 「統合プレビューを確認」ボタンの表示条件
+  const canShowApplyButton =
+    review?.reviewStatus === 'approved_duplicate' &&
+    review?.selectedCanonicalWorkId &&
+    !review?.stale &&
+    !review?.appliedAt;
+
+  async function handleOpenPreview() {
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const res = await fetch(`/api/admin/work-dedup/reviews/${group.groupId}/apply-preview`, {
+        method:      'POST',
+        credentials: 'same-origin',
+        headers:     { 'Content-Type': 'application/json' },
+      });
+      const json = await res.json() as { ok: boolean; preview?: ApplyPreview; error?: { code: string; message: string } };
+      if (!res.ok || !json.ok) {
+        setPreviewError(json.error?.message ?? `HTTP ${res.status}`);
+        setPreviewLoading(false);
+        return;
+      }
+      setApplyPreview(json.preview!);
+      setShowModal(true);
+    } catch {
+      setPreviewError('ネットワークエラーが発生しました');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
   return (
+    <>
+    {showModal && applyPreview && review && (
+      <ApplyModal
+        groupId={group.groupId}
+        review={review}
+        preview={applyPreview}
+        applyEnabled={applyEnabled}
+        onClose={() => setShowModal(false)}
+        onApplySuccess={() => { setShowModal(false); onReload(); }}
+      />
+    )}
     <div className={`border rounded-lg bg-slate-800 overflow-hidden ${CONFIDENCE_BORDER[group.confidence]}`}>
       {/* ヘッダー */}
       <button
@@ -486,13 +714,36 @@ function GroupCard({ group, review, edit, onChange, onSave }: GroupCardProps) {
             </div>
             <div className="mt-3 flex items-center gap-2 flex-wrap">
               <span className="inline-flex items-center gap-1 bg-slate-600 border border-slate-400 text-white text-xs font-bold px-2 py-1 rounded">
-                🚫 自動統合不可
-              </span>
-              <span className="text-slate-300 text-xs">
-                canApplyAutomatically: false（このUIからの統合・DB変更は行いません）
+                統合計画（参考値）
               </span>
             </div>
           </Section>
+
+          {/* 統合プレビューボタン */}
+          {canShowApplyButton && (
+            <Section title="統合実行">
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={handleOpenPreview}
+                  disabled={previewLoading}
+                  className="text-sm px-4 py-2 bg-amber-700 hover:bg-amber-600 disabled:bg-slate-700 disabled:text-slate-400 text-white rounded border border-amber-600 disabled:border-slate-600 font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:cursor-not-allowed"
+                >
+                  {previewLoading ? 'プレビュー取得中…' : '統合プレビューを確認'}
+                </button>
+                {!applyEnabled && (
+                  <p className="text-xs text-yellow-300">
+                    現在、統合実行は無効です（WORK_DEDUP_APPLY_ENABLED=false）
+                  </p>
+                )}
+                {previewError && (
+                  <div role="alert" className="text-xs text-red-200 bg-red-950 border border-red-700 rounded px-3 py-2">
+                    プレビュー取得エラー: {previewError}
+                  </div>
+                )}
+              </div>
+            </Section>
+          )}
 
           {/* レビューフォーム */}
           <Section title="レビュー判定">
@@ -510,6 +761,7 @@ function GroupCard({ group, review, edit, onChange, onSave }: GroupCardProps) {
         </div>
       )}
     </div>
+    </>
   );
 }
 
@@ -725,11 +977,12 @@ export default function WorkDedupClient() {
     }
   }
 
-  const stats      = fetchState.status === 'ok' ? fetchState.data.stats       : null;
-  const groups     = fetchState.status === 'ok' ? fetchState.data.groups      : [];
-  const pagination = fetchState.status === 'ok' ? fetchState.data.pagination  : null;
-  const reviews    = fetchState.status === 'ok' ? fetchState.data.reviews     : {};
-  const reviewStats = fetchState.status === 'ok' ? fetchState.data.reviewStats : null;
+  const stats       = fetchState.status === 'ok' ? fetchState.data.stats        : null;
+  const groups      = fetchState.status === 'ok' ? fetchState.data.groups       : [];
+  const pagination  = fetchState.status === 'ok' ? fetchState.data.pagination   : null;
+  const reviews     = fetchState.status === 'ok' ? fetchState.data.reviews      : {};
+  const reviewStats = fetchState.status === 'ok' ? fetchState.data.reviewStats  : null;
+  const applyEnabled = fetchState.status === 'ok' ? (fetchState.data.applyEnabled ?? false) : false;
 
   return (
     <div>
@@ -889,8 +1142,10 @@ export default function WorkDedupClient() {
                   group={group}
                   review={review}
                   edit={edit}
+                  applyEnabled={applyEnabled}
                   onChange={handleEditChange}
                   onSave={handleSave}
+                  onReload={load}
                 />
               );
             })}
