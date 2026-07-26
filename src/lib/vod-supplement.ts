@@ -101,7 +101,25 @@ const BACKTICK3 = '```';
 
 // gpt-4o + web_search_preview で配信情報を検索・補完（作品単位）
 // source: openai_web_search, sourceLabel: AI Web検索補完
+//
+// 通常の呼び出し元（cron・既存の管理画面）向け: エラーは内部で握りつぶし [] を返す
+// （呼び出し元は「AIが何も見つけられなかった」ケースと区別しない）。
 export async function supplementVodWithAI(
+  work: WorkRecord,
+): Promise<VodProvider[]> {
+  try {
+    return await supplementVodWithAIOrThrow(work);
+  } catch (err) {
+    console.error(`[vod-ai] Web検索補完エラー: "${work.title}"`, err);
+    return [];
+  }
+}
+
+// VOD自動調査ジョブ（vod-investigation-store.ts）専用: 呼び出し元がリトライ制御のために
+// 「APIキー未設定・タイムアウト・429・ネットワークエラー等で失敗した」ことと
+// 「AIが調査した結果、配信サービスを確認できなかった（[]は正常な結果）」ことを区別する必要があるため、
+// エラーを握りつぶさずそのまま投げる。ロジック自体は supplementVodWithAI と完全に同一。
+export async function supplementVodWithAIOrThrow(
   work: WorkRecord,
 ): Promise<VodProvider[]> {
   const openai = getOpenAI();
@@ -244,7 +262,6 @@ type の意味:
       success: false,
       errorMessage: String(err),
     });
-    console.error(`[vod-ai] Web検索補完エラー: "${work.title}"`, err);
-    return [];
+    throw err;
   }
 }

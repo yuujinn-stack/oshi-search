@@ -3,25 +3,24 @@
 // 同一workIdに複数人物が紐づく場合は、既存の作品CSV運用（csv-export/route.ts）と同様に
 // 1行1人物で出力する（personName列で複数行に分かれる）。
 //
+// workIdの解決は resolveActiveWorkTargets() を使い、候補一覧・CSVインポートと同じ
+// 対象判定ロジックを共有する（旧workId(work_aliases)はcanonical workIdへ解決される）。
+//
+// 末尾に取り込み用の5列（vodService, availabilityType, confidence, sourceUrl, note）を
+// 空欄で追加する。これは /api/admin/vod-recheck/csv-import が要求する列と同じ名前・順序で、
+// 利用者がこのCSVをNumbers/Excel等で開いて空欄を埋め、同じ作品に複数サービスがあれば行を
+// 複製し、そのまま管理画面のCSV取り込みへ選択・プレビュー・反映できるようにするため。
+// 調査対象の補助列（workTitle等）は取り込み時に無視される（parseAndValidateImportCsvが
+// 列名で workId/vodService 等だけを参照するため、余分な列があっても解析に影響しない）。
+//
 // body: { items: Array<{ personName: string; workId: string }> }  最大 MAX_EXPORT_ITEMS 件
 import { NextRequest, NextResponse } from 'next/server';
-import { neonSql } from '@/db/client';
-import { getInactiveProviderSlugs } from '@/lib/provider-store';
-import { deduplicateProviders, isConfirmedVodAvailability } from '@/lib/vod-dedup';
-import { detectRecheckReasons, RECHECK_REASON_LABEL, RECHECK_PRIORITY_LABEL } from '@/lib/vod-recheck';
-import type { VodProvider } from '@/types/vod';
+import { resolveVodRecheckExportData } from '@/lib/vod-recheck-export-data';
+import { buildVodRecheckExportCsv } from '@/lib/vod-recheck-csv-export';
 
 export const dynamic = 'force-dynamic';
 
 const MAX_EXPORT_ITEMS = 500;
-
-function csvEscape(val: string): string {
-  const s = String(val ?? '');
-  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
 
 interface ExportItem {
   personName: string;
@@ -45,64 +44,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `一度にエクスポートできるのは最大 ${MAX_EXPORT_ITEMS} 件です` }, { status: 400 });
   }
 
-  const workIds = [...new Set((items as ExportItem[]).map((i) => i.workId))];
-
   try {
-    // 選択されたworkIdに紐づく全人物行を取得（1行1人物・既存CSV運用と同じ方式）
-    const rows = await neonSql`
-      SELECT person_name, id AS work_id, title, type, release_year, role_name, vod_data
-      FROM works
-      WHERE id = ANY(${workIds}) AND status = 'auto_published' AND deleted = false
-      ORDER BY id, person_name
-    `;
+    // 候補一覧・CSVインポートと共通の対象判定ロジックでworkIdを解決する
+    // （通常は候補一覧由来のcanonical workIdのみだが、旧workIdが渡された場合もcanonicalへ解決する）
+    const { rows: dataRows } = await resolveVodRecheckExportData(items as ExportItem[]);
 
-    const terminatedSlugs = await getInactiveProviderSlugs();
-    const now = Date.now();
+    if (dataRows.length === 0) {
+      return NextResponse.json({ error: '出力対象の作品が見つかりません（非公開・削除済み、または存在しないworkIdです）' }, { status: 400 });
+    }
 
-    const dataRows = rows.map((r) => {
-      const vodData = (r.vod_data ?? {}) as Record<string, unknown>;
-      const vodProviders = (vodData.vodProviders as VodProvider[] | undefined) ?? [];
-      const lastVodCheckAt = vodData.lastVodCheckAt as number | undefined;
-      const vodAiCheckedAt = vodData.vodAiCheckedAt as number | undefined;
-
-      const detection = detectRecheckReasons({
-        vodProviders,
-        lastVodCheckAt,
-        vodAiCheckedAt,
-        terminatedSlugs,
-        isHighTraffic: false,
-        isPostMergeUnchecked: false,
-        now,
-      });
-
-      const currentVodServices = deduplicateProviders(vodProviders)
-        .filter((p) => isConfirmedVodAvailability(p, terminatedSlugs))
-        .map((p) => p.providerName)
-        .join(', ');
-
-      const lastCheckedAt = detection.lastCheckedAt
-        ? new Date(detection.lastCheckedAt).toISOString().slice(0, 10)
-        : '';
-
-      return [
-        r.work_id as string,
-        r.person_name as string,
-        r.title as string,
-        r.type as string,
-        r.release_year != null ? String(r.release_year) : '',
-        (r.role_name as string | null) ?? '',
-        currentVodServices,
-        lastCheckedAt,
-        detection.codes.map((c) => RECHECK_REASON_LABEL[c]).join('/'),
-        RECHECK_PRIORITY_LABEL[detection.priority],
-      ].map(csvEscape).join(',');
-    });
-
-    const headers = [
-      'workId', 'personName', 'workTitle', 'workType', 'releaseYear', 'roleName',
-      'currentVodServices', 'lastCheckedAt', 'recheckReason', 'priority',
-    ];
-    const csv = '﻿' + [headers.join(','), ...dataRows].join('\n');
+    const csv = buildVodRecheckExportCsv(dataRows);
 
     const date = new Date().toISOString().slice(0, 10);
     return new NextResponse(csv, {

@@ -4,6 +4,32 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import type { RecheckListResult, RecheckListItem } from '@/lib/vod-recheck-list';
 import type { RecheckReasonCode, RecheckPriority, RecheckAction } from '@/lib/vod-recheck';
+import { parseCSV } from '@/lib/csv-parse';
+import { validateCsvFile, formatFileSize } from '@/lib/csv-file-validation';
+import { detectVodRecheckCsvType, type VodRecheckCsvType } from '@/lib/vod-recheck-csv';
+import InvestigationJobPanel from './InvestigationJobPanel';
+import ChatGptPromptResultPanel from '@/components/admin/ChatGptPromptResultPanel';
+
+interface CsvPreviewWork {
+  workId: string;
+  resolvedFrom?: string[];
+  title: string | null;
+  persons: string[];
+  services: Array<{ providerName: string; availabilityType: string }>;
+  currentVodCount: number;
+  afterVodCount: number;
+  warnings: string[];
+  errors: string[];
+}
+
+interface CsvPreviewResponse {
+  commit: false;
+  preview: CsvPreviewWork[];
+  unresolvedWorkIds: string[];
+  hasFatalErrors: boolean;
+  totalWorkIds: number;
+  totalRows: number;
+}
 
 const REASON_OPTIONS: Array<{ value: RecheckReasonCode; label: string }> = [
   { value: 'stale_180_days', label: '180日以上未確認' },
@@ -77,10 +103,22 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [note, setNote] = useState('');
   const [actionMsg, setActionMsg] = useState('');
+  const [researchPrompt, setResearchPrompt] = useState<string | null>(null);
+  const [researchWorkCount, setResearchWorkCount] = useState(0);
+  const [researchBusy, setResearchBusy] = useState(false);
+  const [researchError, setResearchError] = useState('');
   const [csvText, setCsvText] = useState('');
-  const [csvPreview, setCsvPreview] = useState<{ totalWorkIds: number; totalRows: number; unresolvedWorkIds: string[] } | null>(null);
+  const [csvPreview, setCsvPreview] = useState<CsvPreviewResponse | null>(null);
   const [csvBusy, setCsvBusy] = useState(false);
+  const [csvFileError, setCsvFileError] = useState('');
+  const [selectedFileName, setSelectedFileName] = useState('');
+  const [selectedFileSize, setSelectedFileSize] = useState<number | null>(null);
+  const [csvRowCount, setCsvRowCount] = useState<number | null>(null);
+  const [csvType, setCsvType] = useState<VodRecheckCsvType | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const isFirstRun = useRef(true);
+  const csvSubmitLockRef = useRef(false); // 二重送信防止（state更新の非同期性に依存しない同期ガード）
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -180,7 +218,103 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
     URL.revokeObjectURL(url);
   }
 
+  // 選択した作品から、ChatGPTへ配信状況調査を依頼するプロンプト全文を生成する。
+  // データ解決・プロンプトのテンプレートは /admin/work-check の調査プロンプト生成と共通
+  // （src/lib/vod-research-prompt.ts・src/lib/vod-recheck-export-data.ts）を使う。
+  async function generateResearchPrompt() {
+    const items = selectedItems();
+    if (items.length === 0) return;
+    setResearchBusy(true);
+    setResearchError('');
+    setResearchPrompt(null);
+    try {
+      const res = await fetch('/api/admin/vod-recheck/research-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: items.map((i) => ({ personName: i.personName, workId: i.workId })) }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'プロンプト生成に失敗しました');
+      setResearchPrompt(json.prompt);
+      setResearchWorkCount(json.workCount);
+    } catch (err) {
+      setResearchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResearchBusy(false);
+    }
+  }
+
+  // CSVテキスト（ファイル読み込み・貼り付け共通）が変わったら、行数表示を更新し、
+  // 既存のプレビュー結果を無効化する（古いプレビューのまま反映されるのを防ぐ）。
+  function applyCsvText(text: string) {
+    setCsvText(text);
+    setCsvPreview(null);
+    setCsvFileError('');
+    if (text.trim()) {
+      try {
+        const table = parseCSV(text);
+        setCsvRowCount(Math.max(0, table.length - 1)); // ヘッダー行を除いた行数
+      } catch {
+        setCsvRowCount(null);
+      }
+      setCsvType(detectVodRecheckCsvType(text));
+    } else {
+      setCsvRowCount(null);
+      setCsvType(null);
+    }
+  }
+
+  function handleFileSelected(file: File) {
+    const validation = validateCsvFile({ name: file.name, size: file.size });
+    if (!validation.ok) {
+      setCsvFileError(validation.error);
+      setSelectedFileName('');
+      setSelectedFileSize(null);
+      return;
+    }
+    setSelectedFileName(file.name);
+    setSelectedFileSize(file.size);
+    setCsvFileError('');
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === 'string' ? reader.result : '';
+      applyCsvText(text);
+    };
+    reader.onerror = () => {
+      setCsvFileError('ファイルの読み込みに失敗しました。');
+    };
+    // ファイルはブラウザ内でテキストとして読み取るのみ。サーバーへアップロード保存はしない。
+    reader.readAsText(file, 'utf-8');
+  }
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) handleFileSelected(file);
+    e.target.value = ''; // 同じファイルを選び直しても onChange が発火するようにリセット
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFileSelected(file);
+  }
+
+  function clearFile() {
+    setSelectedFileName('');
+    setSelectedFileSize(null);
+    setCsvRowCount(null);
+    setCsvFileError('');
+    setCsvText('');
+    setCsvPreview(null);
+    setCsvType(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
   async function previewCsvImport() {
+    if (csvSubmitLockRef.current) return;
+    csvSubmitLockRef.current = true;
     setCsvBusy(true);
     setActionMsg('');
     try {
@@ -190,16 +324,20 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
         body: JSON.stringify({ csv: csvText, commit: false }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? 'CSVの解析に失敗しました');
+      if (!res.ok) throw new Error(json.error ?? (json.details ? json.details.join(' / ') : 'CSVの解析に失敗しました'));
       setCsvPreview(json);
     } catch (err) {
       setActionMsg(err instanceof Error ? err.message : String(err));
     } finally {
       setCsvBusy(false);
+      csvSubmitLockRef.current = false;
     }
   }
 
   async function commitCsvImport() {
+    if (csvSubmitLockRef.current) return;
+    if (!csvPreview || csvPreview.hasFatalErrors) return; // 致命的エラーがある場合は反映しない（念のための二重ガード）
+    csvSubmitLockRef.current = true;
     setCsvBusy(true);
     setActionMsg('');
     try {
@@ -210,14 +348,15 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'CSVの反映に失敗しました');
-      setActionMsg(`${json.updatedWorks}件のVOD情報を反映しました`);
-      setCsvText('');
-      setCsvPreview(null);
+      setActionMsg(`${json.updatedWorks}件のVOD情報を反映しました。同じCSVを再度反映しないようご注意ください。`);
+      // 成功後は状態をリセット（同じCSVを誤って再反映することを防ぐ）
+      clearFile();
       fetchData();
     } catch (err) {
       setActionMsg(err instanceof Error ? err.message : String(err));
     } finally {
       setCsvBusy(false);
+      csvSubmitLockRef.current = false;
     }
   }
 
@@ -313,7 +452,29 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
         >
           選択した作品をCSV出力（{selected.size}件）
         </button>
+        <button
+          type="button"
+          disabled={selected.size === 0 || selected.size > MAX_BULK_ITEMS || researchBusy}
+          onClick={generateResearchPrompt}
+          title="選択した作品からChatGPTへ配信状況調査を依頼するプロンプトを生成します"
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors disabled:opacity-40"
+        >
+          {researchBusy ? '生成中...' : `ChatGPT調査用プロンプトを生成（${selected.size}件）`}
+        </button>
       </div>
+
+      {researchError && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{researchError}</div>}
+      {researchPrompt && (
+        <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
+          <h2 className="text-sm font-bold text-slate-700">ChatGPT調査用プロンプト</h2>
+          <ChatGptPromptResultPanel
+            prompt={researchPrompt}
+            workCount={researchWorkCount}
+            filename={`vod-recheck_ChatGPT調査プロンプト_${new Date().toISOString().slice(0, 10)}.txt`}
+            onChangePrompt={setResearchPrompt}
+          />
+        </div>
+      )}
 
       {/* 一覧テーブル */}
       <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
@@ -404,43 +565,155 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
       </div>
 
       {/* CSVインポート */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
+      <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
         <h2 className="text-sm font-bold text-slate-700">調査結果CSVの取り込み</h2>
         <p className="text-xs text-gray-500">
           必須列: workId, vodService（1作品1サービス1行）。任意列: availabilityType（flatrate/rent/buy/free/unknown）, sourceUrl, confidence, note
         </p>
+        <p className="text-xs text-slate-600 font-medium">
+          CSVファイルを選択するか、下の入力欄へCSVを貼り付けてください
+        </p>
+
+        {/* ファイル選択・ドラッグ＆ドロップ領域 */}
+        <div
+          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          className={`border-2 border-dashed rounded-xl p-4 text-center transition-colors ${
+            isDragging ? 'border-indigo-400 bg-indigo-50' : 'border-gray-300 bg-gray-50'
+          }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleFileInputChange}
+            className="hidden"
+            id="csv-file-input"
+          />
+          <label
+            htmlFor="csv-file-input"
+            className="inline-block px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer"
+          >
+            CSVファイルを選択
+          </label>
+          <p className="text-xs text-gray-400 mt-2">またはここにCSVファイルをドラッグ＆ドロップ</p>
+
+          {selectedFileName && (
+            <div className="mt-3 flex items-center justify-center gap-2 text-xs text-slate-700 bg-white border border-gray-200 rounded-lg px-3 py-2 inline-flex">
+              <span className="font-mono">{selectedFileName}</span>
+              <span className="text-gray-400">
+                {selectedFileSize !== null ? formatFileSize(selectedFileSize) : ''}
+                {csvRowCount !== null ? ` / ${csvRowCount.toLocaleString()}行` : ''}
+              </span>
+              <button type="button" onClick={clearFile} className="text-red-500 hover:underline">解除</button>
+            </div>
+          )}
+          {csvFileError && <p className="text-xs text-red-600 mt-2">{csvFileError}</p>}
+        </div>
+
         <textarea
           value={csvText}
-          onChange={(e) => { setCsvText(e.target.value); setCsvPreview(null); }}
+          onChange={(e) => applyCsvText(e.target.value)}
           rows={6}
           placeholder="workId,vodService,availabilityType,sourceUrl,confidence,note"
           className="w-full border border-gray-300 rounded-lg p-2 text-xs font-mono"
         />
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={csvBusy || !csvText.trim()}
-            onClick={previewCsvImport}
-            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-40"
-          >
-            プレビュー
-          </button>
-          <button
-            type="button"
-            disabled={csvBusy || !csvPreview}
-            onClick={commitCsvImport}
-            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
-          >
-            反映する
-          </button>
-        </div>
-        {csvPreview && (
-          <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-2">
-            対象作品: {csvPreview.totalWorkIds}件 / 行数: {csvPreview.totalRows}件
-            {csvPreview.unresolvedWorkIds.length > 0 && (
-              <p className="text-amber-600 mt-1">未解決のworkId（公開作品として見つかりません）: {csvPreview.unresolvedWorkIds.join(', ')}</p>
-            )}
+
+        {csvType === 'investigation_target' && (
+          <p className="text-xs bg-indigo-50 text-indigo-700 rounded-lg px-3 py-2">
+            調査対象CSV（配信サービス列が未入力）として検出しました。下の「自動調査を開始」から進めてください。
+          </p>
+        )}
+        {csvType === 'investigation_result' && (
+          <p className="text-xs bg-emerald-50 text-emerald-700 rounded-lg px-3 py-2">
+            調査結果CSV（配信サービス列が入力済み）として検出しました。「プレビュー」→「反映する」で取り込めます。
+          </p>
+        )}
+        {csvType === 'unknown' && csvText.trim() && (
+          <p className="text-xs bg-red-50 text-red-700 rounded-lg px-3 py-2">
+            CSVの形式を判定できませんでした。workId列があるか確認してください。
+          </p>
+        )}
+
+        {csvType === 'investigation_target' ? (
+          <InvestigationJobPanel csv={csvText} onApplied={() => { fetchData(); clearFile(); }} />
+        ) : (
+          <>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={csvBusy || !csvText.trim()}
+                onClick={previewCsvImport}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-40"
+              >
+                プレビュー
+              </button>
+              <button
+                type="button"
+                disabled={csvBusy || !csvPreview || csvPreview.hasFatalErrors}
+                onClick={commitCsvImport}
+                title={csvPreview?.hasFatalErrors ? '致命的エラーがあるため反映できません。CSVを修正して再プレビューしてください。' : undefined}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+              >
+                反映する
+              </button>
+            </div>
+            {csvPreview && (
+          <div className="text-xs text-gray-600 space-y-2">
+            <div className="bg-gray-50 rounded-lg p-2">
+              対象作品: {csvPreview.totalWorkIds}件 / 行数: {csvPreview.totalRows}件
+              {csvPreview.unresolvedWorkIds.length > 0 && (
+                <p className="text-red-600 mt-1">未解決のworkId（公開作品として見つかりません）: {csvPreview.unresolvedWorkIds.join(', ')}</p>
+              )}
+              {csvPreview.hasFatalErrors && (
+                <p className="text-red-600 mt-1 font-semibold">致命的エラーがあるため「反映する」は無効化されています。</p>
+              )}
+            </div>
+
+            <div className="overflow-x-auto border border-gray-200 rounded-lg">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50 text-gray-500">
+                  <tr>
+                    <th className="p-2 text-left">workId</th>
+                    <th className="p-2 text-left">タイトル</th>
+                    <th className="p-2 text-left">追加/更新サービス</th>
+                    <th className="p-2">現在のVOD件数</th>
+                    <th className="p-2">反映後のVOD件数</th>
+                    <th className="p-2 text-left">注意</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {csvPreview.preview.map((w) => (
+                    <tr key={w.workId} className="border-t border-gray-100">
+                      <td className="p-2 font-mono max-w-[160px] truncate" title={w.workId}>
+                        {w.workId}
+                        {w.resolvedFrom && (
+                          <div className="text-[10px] text-indigo-600">旧workId「{w.resolvedFrom.join(', ')}」から解決</div>
+                        )}
+                      </td>
+                      <td className="p-2 max-w-[160px] truncate" title={w.title ?? undefined}>{w.title ?? '(取得できず)'}</td>
+                      <td className="p-2">
+                        {w.services.map((s, i) => (
+                          <span key={i} className="inline-block px-1.5 py-0.5 mr-1 mb-1 rounded-full bg-slate-100 text-slate-600 whitespace-nowrap">
+                            {s.providerName}（{s.availabilityType}）
+                          </span>
+                        ))}
+                      </td>
+                      <td className="p-2 text-center">{w.currentVodCount}</td>
+                      <td className="p-2 text-center font-semibold">{w.afterVodCount}</td>
+                      <td className="p-2">
+                        {w.warnings.map((msg, i) => <p key={i} className="text-amber-600">{msg}</p>)}
+                        {w.errors.map((msg, i) => <p key={i} className="text-red-600">{msg}</p>)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
+            )}
+          </>
         )}
       </div>
     </div>

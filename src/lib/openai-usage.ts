@@ -1,6 +1,6 @@
 import { db } from '@/db/client';
 import { openaiUsageLogs } from '@/db/schema';
-import { and, gte, lte } from 'drizzle-orm';
+import { and, gte, lte, eq } from 'drizzle-orm';
 import { calcCostUsd } from '@/lib/openai-pricing';
 
 export interface UsageLogEntry {
@@ -74,5 +74,36 @@ export async function getUsageLogs(from: Date, to: Date): Promise<UsageLogEntry[
       .sort((a, b) => b.ts - a.ts);
   } catch {
     return [];
+  }
+}
+
+export interface VodResearchStats {
+  avgCostUsd: number;
+  successRate: number;
+  sampleSize: number;
+}
+
+// VOD自動調査ジョブの費用概算（estimateInvestigationCost）に使う実績データ。
+// feature='vod_research'（既存のAI Web検索補完 supplementVodWithAI が記録するのと同じfeature名）
+// の実績から平均単価・成功率を集計する。実績が無い場合は呼び出し側が保守的な既定値を使う。
+export async function getVodResearchStats(): Promise<VodResearchStats | null> {
+  try {
+    const rows = await db.select({
+      estimatedCostUsd: openaiUsageLogs.estimatedCostUsd,
+      success: openaiUsageLogs.success,
+    }).from(openaiUsageLogs).where(eq(openaiUsageLogs.feature, 'vod_research'));
+
+    if (rows.length === 0) return null;
+
+    const totalCostUsd = rows.reduce((sum, r) => sum + Number(r.estimatedCostUsd ?? 0), 0);
+    const successCount = rows.filter((r) => r.success).length;
+
+    return {
+      avgCostUsd: totalCostUsd / rows.length,
+      successRate: successCount / rows.length,
+      sampleSize: rows.length,
+    };
+  } catch {
+    return null;
   }
 }

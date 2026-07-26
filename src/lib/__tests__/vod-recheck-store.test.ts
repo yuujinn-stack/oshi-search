@@ -5,22 +5,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // 実際のSQL実行はせず、「どのSQL断片が・どんな値で呼ばれたか」を検証する。
 const mockState = vi.hoisted(() => {
   const calls: Array<{ text: string; values: unknown[] }> = [];
-
-  function makeResult() {
-    const arr: unknown[] = [];
-    return arr; // neonSql の戻り値は配列（rowsそのもの）
-  }
+  // テストごとに (text, values) を見て戻り値（rows配列）を差し替えられるようにする。
+  // 未設定時は常に空配列（既存の getRecheckCandidates 系テストはこの既定動作に依存）。
+  let responder: ((text: string, values: unknown[]) => unknown[]) | null = null;
 
   const neonSqlFn = vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
     // ネストしたフラグメント（他のneonSql呼び出し結果）はオブジェクトなので文字列化せず種別だけ記録
     const text = strings.join('{}');
     calls.push({ text, values });
-    return Promise.resolve(makeResult());
+    const rows = responder ? responder(text, values) : [];
+    return Promise.resolve(rows);
   });
 
   const redisFn = vi.fn((): unknown => null);
 
-  return { calls, neonSqlFn, redisFn };
+  return {
+    calls,
+    neonSqlFn,
+    redisFn,
+    setResponder(fn: ((text: string, values: unknown[]) => unknown[]) | null) { responder = fn; },
+  };
 });
 
 vi.mock('@/db/client', () => ({
@@ -35,6 +39,7 @@ import {
   getRecheckCandidates,
   getClickCountsForWorkIds,
   getHighTrafficWorkIds,
+  resolveActiveWorkTargets,
   clampPage,
   clampPageSize,
   DEFAULT_PAGE_SIZE,
@@ -45,6 +50,7 @@ beforeEach(() => {
   mockState.calls.length = 0;
   mockState.neonSqlFn.mockClear();
   mockState.redisFn.mockClear();
+  mockState.setResponder(null);
 });
 
 // すべての neonSql 呼び出し（フラグメント含む）を1本のテキストとして結合し、
@@ -211,5 +217,96 @@ describe('13. Redis失敗時も一覧表示できる（getRedis()がnullを返�
     });
     const result = await getClickCountsForWorkIds(['work-a']);
     expect(result.available).toBe(false);
+  });
+});
+
+describe('resolveActiveWorkTargets — 候補一覧・CSV出力・CSVインポートで共通の対象判定', () => {
+  it('直接一致: 現在も有効な公開作品はそのまま解決される（canonicalWorkId=inputWorkId, resolvedViaAlias=false）', async () => {
+    mockState.setResponder((text, values) => {
+      if (text.includes('SELECT DISTINCT id AS work_id, person_name') && (values[0] as string[]).includes('work-active')) {
+        return [{ work_id: 'work-active', person_name: '人物A' }];
+      }
+      return [];
+    });
+    const { resolved, unresolved } = await resolveActiveWorkTargets(['work-active']);
+    expect(unresolved).toEqual([]);
+    const target = resolved.get('work-active')!;
+    expect(target.canonicalWorkId).toBe('work-active');
+    expect(target.resolvedViaAlias).toBe(false);
+    expect(target.personNames).toEqual(['人物A']);
+  });
+
+  it('3. work_aliasesに旧workIdがある場合はcanonical workIdへ解決される', async () => {
+    mockState.setResponder((text, values) => {
+      // 1回目: 直接一致検索（旧workIdなのでヒットしない）
+      if (text.includes('SELECT DISTINCT id AS work_id, person_name') && (values[0] as string[]).includes('old-work-id')) {
+        return [];
+      }
+      // 2回目: work_aliases検索
+      if (text.includes('FROM work_aliases')) {
+        return [{ alias_work_id: 'old-work-id', canonical_work_id: 'new-canonical-id' }];
+      }
+      // 3回目: canonical側の直接一致検索
+      if (text.includes('SELECT DISTINCT id AS work_id, person_name') && (values[0] as string[]).includes('new-canonical-id')) {
+        return [{ work_id: 'new-canonical-id', person_name: '人物B' }];
+      }
+      return [];
+    });
+    const { resolved, unresolved } = await resolveActiveWorkTargets(['old-work-id']);
+    expect(unresolved).toEqual([]);
+    const target = resolved.get('old-work-id')!;
+    expect(target.canonicalWorkId).toBe('new-canonical-id');
+    expect(target.resolvedViaAlias).toBe(true);
+    expect(target.personNames).toEqual(['人物B']);
+  });
+
+  it('4. 非活性化作品（hidden/deleted）は拒否される: 直接一致もalias解決先もどちらも見つからない場合はunresolved', async () => {
+    mockState.setResponder(() => []); // 何にもヒットしない
+    const { resolved, unresolved } = await resolveActiveWorkTargets(['deactivated-work-id']);
+    expect(resolved.size).toBe(0);
+    expect(unresolved).toEqual(['deactivated-work-id']);
+  });
+
+  it('4b. work_aliasesは存在するがcanonical側も非活性化されている場合は拒否される', async () => {
+    mockState.setResponder((text, values) => {
+      if (text.includes('SELECT DISTINCT id AS work_id, person_name') && (values[0] as string[]).includes('old-id-2')) {
+        return [];
+      }
+      if (text.includes('FROM work_aliases')) {
+        return [{ alias_work_id: 'old-id-2', canonical_work_id: 'canonical-also-hidden' }];
+      }
+      // canonical側の再検索も空（= canonical自体も非活性化されている）
+      return [];
+    });
+    const { resolved, unresolved } = await resolveActiveWorkTargets(['old-id-2']);
+    expect(resolved.size).toBe(0);
+    expect(unresolved).toEqual(['old-id-2']);
+  });
+
+  it('5. 存在しないworkIdは拒否される', async () => {
+    mockState.setResponder(() => []);
+    const { resolved, unresolved } = await resolveActiveWorkTargets(['no-such-work-id']);
+    expect(resolved.size).toBe(0);
+    expect(unresolved).toEqual(['no-such-work-id']);
+  });
+
+  it('空配列を渡した場合は何もクエリせず空の結果を返す', async () => {
+    const before = mockState.calls.length;
+    const { resolved, unresolved } = await resolveActiveWorkTargets([]);
+    expect(resolved.size).toBe(0);
+    expect(unresolved).toEqual([]);
+    expect(mockState.calls.length).toBe(before);
+  });
+
+  it('重複したworkIdは1件として解決される', async () => {
+    mockState.setResponder((text, values) => {
+      if (text.includes('SELECT DISTINCT id AS work_id, person_name') && (values[0] as string[]).includes('dup-id')) {
+        return [{ work_id: 'dup-id', person_name: '人物C' }];
+      }
+      return [];
+    });
+    const { resolved, unresolved } = await resolveActiveWorkTargets(['dup-id', 'dup-id']);
+    expect(unresolved).toEqual([]);
+    expect(resolved.size).toBe(1);
   });
 });
