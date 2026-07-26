@@ -6,6 +6,13 @@
 // workIdの解決は resolveActiveWorkTargets() を使い、候補一覧・CSVインポートと同じ
 // 対象判定ロジックを共有する（旧workId(work_aliases)はcanonical workIdへ解決される）。
 //
+// 末尾に取り込み用の5列（vodService, availabilityType, confidence, sourceUrl, note）を
+// 空欄で追加する。これは /api/admin/vod-recheck/csv-import が要求する列と同じ名前・順序で、
+// 利用者がこのCSVをNumbers/Excel等で開いて空欄を埋め、同じ作品に複数サービスがあれば行を
+// 複製し、そのまま管理画面のCSV取り込みへ選択・プレビュー・反映できるようにするため。
+// 調査対象の補助列（workTitle等）は取り込み時に無視される（parseAndValidateImportCsvが
+// 列名で workId/vodService 等だけを参照するため、余分な列があっても解析に影響しない）。
+//
 // body: { items: Array<{ personName: string; workId: string }> }  最大 MAX_EXPORT_ITEMS 件
 import { NextRequest, NextResponse } from 'next/server';
 import { neonSql } from '@/db/client';
@@ -13,19 +20,12 @@ import { activeWorkFragment, resolveActiveWorkTargets } from '@/lib/vod-recheck-
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { deduplicateProviders, isConfirmedVodAvailability } from '@/lib/vod-dedup';
 import { detectRecheckReasons, RECHECK_REASON_LABEL, RECHECK_PRIORITY_LABEL } from '@/lib/vod-recheck';
+import { buildVodRecheckExportCsv } from '@/lib/vod-recheck-csv-export';
 import type { VodProvider } from '@/types/vod';
 
 export const dynamic = 'force-dynamic';
 
 const MAX_EXPORT_ITEMS = 500;
-
-function csvEscape(val: string): string {
-  const s = String(val ?? '');
-  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
 
 interface ExportItem {
   personName: string;
@@ -97,25 +97,21 @@ export async function POST(req: NextRequest) {
         ? new Date(detection.lastCheckedAt).toISOString().slice(0, 10)
         : '';
 
-      return [
-        r.work_id as string,
-        r.person_name as string,
-        r.title as string,
-        r.type as string,
-        r.release_year != null ? String(r.release_year) : '',
-        (r.role_name as string | null) ?? '',
+      return {
+        workId: r.work_id as string,
+        personName: r.person_name as string,
+        title: r.title as string,
+        workType: r.type as string,
+        releaseYear: r.release_year != null ? (r.release_year as number) : null,
+        roleName: (r.role_name as string | null) ?? null,
         currentVodServices,
         lastCheckedAt,
-        detection.codes.map((c) => RECHECK_REASON_LABEL[c]).join('/'),
-        RECHECK_PRIORITY_LABEL[detection.priority],
-      ].map(csvEscape).join(',');
+        recheckReason: detection.codes.map((c) => RECHECK_REASON_LABEL[c]).join('/'),
+        priority: RECHECK_PRIORITY_LABEL[detection.priority],
+      };
     });
 
-    const headers = [
-      'workId', 'personName', 'workTitle', 'workType', 'releaseYear', 'roleName',
-      'currentVodServices', 'lastCheckedAt', 'recheckReason', 'priority',
-    ];
-    const csv = '﻿' + [headers.join(','), ...dataRows].join('\n');
+    const csv = buildVodRecheckExportCsv(dataRows);
 
     const date = new Date().toISOString().slice(0, 10);
     return new NextResponse(csv, {
