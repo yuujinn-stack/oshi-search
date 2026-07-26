@@ -1,0 +1,405 @@
+'use client';
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+import Link from 'next/link';
+import type { RecheckListResult, RecheckListItem } from '@/lib/vod-recheck-list';
+import type { RecheckReasonCode, RecheckPriority, RecheckAction } from '@/lib/vod-recheck';
+
+const REASON_OPTIONS: Array<{ value: RecheckReasonCode; label: string }> = [
+  { value: 'stale_180_days', label: '180日以上未確認' },
+  { value: 'never_checked', label: '確認日なし' },
+  { value: 'unknown_only', label: 'unknownのみ' },
+  { value: 'no_active_provider', label: '有効VODなし' },
+  { value: 'high_traffic', label: 'アクセス上位' },
+  { value: 'deprecated_provider', label: '終了済みサービス候補' },
+  { value: 'post_merge_unchecked', label: '統合後未確認' },
+  { value: 'missing_source', label: 'sourceUrlなし' },
+  { value: 'low_confidence', label: 'confidenceが低い' },
+  { value: 'inconsistent_checked_at', label: '確認日時がVODごとに不一致' },
+];
+
+const PRIORITY_OPTIONS: Array<{ value: RecheckPriority; label: string; cls: string }> = [
+  { value: 'critical', label: '最優先', cls: 'bg-red-100 text-red-700' },
+  { value: 'high', label: '高', cls: 'bg-orange-100 text-orange-700' },
+  { value: 'medium', label: '中', cls: 'bg-yellow-100 text-yellow-700' },
+  { value: 'low', label: '低', cls: 'bg-gray-100 text-gray-600' },
+];
+
+const PRIORITY_CLS: Record<RecheckPriority, string> = Object.fromEntries(
+  PRIORITY_OPTIONS.map((p) => [p.value, p.cls]),
+) as Record<RecheckPriority, string>;
+
+const ACTION_OPTIONS: Array<{ value: RecheckAction; label: string }> = [
+  { value: 'start', label: '処理開始' },
+  { value: 'complete', label: '再確認完了' },
+  { value: 'needs_review', label: '要確認' },
+  { value: 'skip', label: '今回はスキップ' },
+];
+
+const MAX_BULK_ITEMS = 50;
+
+function fmtDate(ts: number | null): string {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+function rowKey(item: Pick<RecheckListItem, 'personName' | 'workId'>): string {
+  return `${item.personName}::${item.workId}`;
+}
+
+export default function VodRecheckClient({ initial }: { initial: RecheckListResult }) {
+  const [data, setData] = useState<RecheckListResult>(initial);
+  const [page, setPage] = useState(initial.page);
+  const [search, setSearch] = useState('');
+  const [workIdSearch, setWorkIdSearch] = useState('');
+  const [reason, setReason] = useState<RecheckReasonCode | ''>('');
+  const [priority, setPriority] = useState<RecheckPriority | ''>('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [note, setNote] = useState('');
+  const [actionMsg, setActionMsg] = useState('');
+  const [csvText, setCsvText] = useState('');
+  const [csvPreview, setCsvPreview] = useState<{ totalWorkIds: number; totalRows: number; unresolvedWorkIds: string[] } | null>(null);
+  const [csvBusy, setCsvBusy] = useState(false);
+  const isFirstRun = useRef(true);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      if (search.trim()) params.set('search', search.trim());
+      if (workIdSearch.trim()) params.set('workId', workIdSearch.trim());
+      if (reason) params.set('reason', reason);
+      if (priority) params.set('priority', priority);
+
+      const res = await fetch(`/api/admin/vod-recheck/candidates?${params.toString()}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? '取得に失敗しました');
+      setData(json);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [page, search, workIdSearch, reason, priority]);
+
+  useEffect(() => {
+    if (isFirstRun.current) { isFirstRun.current = false; return; }
+    fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  // フィルタ変更時は1ページ目に戻して再取得
+  useEffect(() => {
+    if (isFirstRun.current) return;
+    if (page !== 1) { setPage(1); return; }
+    fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, workIdSearch, reason, priority]);
+
+  function toggleSelect(item: RecheckListItem) {
+    const key = rowKey(item);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else if (next.size < MAX_BULK_ITEMS) next.add(key);
+      return next;
+    });
+  }
+
+  function selectedItems(): RecheckListItem[] {
+    return data.items.filter((i) => selected.has(rowKey(i)));
+  }
+
+  async function runAction(action: RecheckAction, items: RecheckListItem[]) {
+    if (items.length === 0) return;
+    setActionMsg('');
+    try {
+      const res = await fetch('/api/admin/vod-recheck/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: items.map((i) => ({ personName: i.personName, workId: i.workId })),
+          action,
+          note: note.trim() || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? '操作に失敗しました');
+      setActionMsg(`${json.processed}件を更新しました${json.failed > 0 ? `（失敗${json.failed}件）` : ''}`);
+      setSelected(new Set());
+      setNote('');
+      fetchData();
+    } catch (err) {
+      setActionMsg(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function exportCsv() {
+    const items = selectedItems();
+    if (items.length === 0) return;
+    const res = await fetch('/api/admin/vod-recheck/csv-export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: items.map((i) => ({ personName: i.personName, workId: i.workId })) }),
+    });
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      setActionMsg(json.error ?? 'CSV出力に失敗しました');
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vod-recheck_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function previewCsvImport() {
+    setCsvBusy(true);
+    setActionMsg('');
+    try {
+      const res = await fetch('/api/admin/vod-recheck/csv-import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv: csvText, commit: false }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'CSVの解析に失敗しました');
+      setCsvPreview(json);
+    } catch (err) {
+      setActionMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCsvBusy(false);
+    }
+  }
+
+  async function commitCsvImport() {
+    setCsvBusy(true);
+    setActionMsg('');
+    try {
+      const res = await fetch('/api/admin/vod-recheck/csv-import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv: csvText, commit: true }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'CSVの反映に失敗しました');
+      setActionMsg(`${json.updatedWorks}件のVOD情報を反映しました`);
+      setCsvText('');
+      setCsvPreview(null);
+      fetchData();
+    } catch (err) {
+      setActionMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCsvBusy(false);
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
+
+  return (
+    <div className="space-y-4">
+      {/* フィルタ */}
+      <div className="flex flex-wrap gap-2 items-center bg-white border border-gray-200 rounded-xl p-3">
+        <input
+          type="text"
+          placeholder="タイトル検索"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-40"
+        />
+        <input
+          type="text"
+          placeholder="workId検索"
+          value={workIdSearch}
+          onChange={(e) => setWorkIdSearch(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-40"
+        />
+        <select value={reason} onChange={(e) => setReason(e.target.value as RecheckReasonCode | '')} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+          <option value="">理由: すべて</option>
+          {REASON_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+        </select>
+        <select value={priority} onChange={(e) => setPriority(e.target.value as RecheckPriority | '')} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+          <option value="">優先度: すべて</option>
+          {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </select>
+        <span className="text-xs text-gray-400 ml-auto">
+          {loading ? '読み込み中…' : `全${data.total.toLocaleString()}件`}
+        </span>
+      </div>
+
+      {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{error}</div>}
+      {actionMsg && <div className="bg-blue-50 border border-blue-200 text-blue-700 text-sm rounded-lg px-3 py-2">{actionMsg}</div>}
+
+      {/* 一括操作バー */}
+      <div className="flex flex-wrap items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-xl p-3">
+        <span className="text-xs text-indigo-700 font-semibold">選択中: {selected.size}件（最大{MAX_BULK_ITEMS}件）</span>
+        <input
+          type="text"
+          placeholder="管理メモ（任意）"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm flex-1 min-w-[160px]"
+        />
+        {ACTION_OPTIONS.map((a) => (
+          <button
+            key={a.value}
+            type="button"
+            disabled={selected.size === 0}
+            onClick={() => runAction(a.value, selectedItems())}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-40 transition-colors"
+          >
+            {a.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          disabled={selected.size === 0 || !note.trim()}
+          onClick={() => runAction('note', selectedItems())}
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-40 transition-colors"
+        >
+          メモのみ保存
+        </button>
+        <button
+          type="button"
+          disabled={selected.size === 0}
+          onClick={exportCsv}
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors"
+        >
+          CSV出力
+        </button>
+      </div>
+
+      {/* 一覧テーブル */}
+      <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">
+        <table className="w-full text-xs">
+          <thead className="bg-gray-50 text-gray-500">
+            <tr>
+              <th className="p-2"></th>
+              <th className="p-2 text-left">workId</th>
+              <th className="p-2 text-left">タイトル</th>
+              <th className="p-2">種別</th>
+              <th className="p-2">公開年</th>
+              <th className="p-2">出演者数</th>
+              <th className="p-2">有効VOD</th>
+              <th className="p-2">unknown</th>
+              <th className="p-2">最終確認日</th>
+              <th className="p-2">経過日数</th>
+              <th className="p-2">アクセス数</th>
+              <th className="p-2 text-left">再確認理由</th>
+              <th className="p-2">優先度</th>
+              <th className="p-2">処理状態</th>
+              <th className="p-2">リンク</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.items.map((item) => {
+              const key = rowKey(item);
+              return (
+                <tr key={key} className="border-t border-gray-100 hover:bg-gray-50">
+                  <td className="p-2 text-center">
+                    <input type="checkbox" checked={selected.has(key)} onChange={() => toggleSelect(item)} />
+                  </td>
+                  <td className="p-2 font-mono text-[10px] max-w-[140px] truncate" title={item.workId}>{item.workId}</td>
+                  <td className="p-2 max-w-[180px] truncate" title={item.title}>{item.title}</td>
+                  <td className="p-2 text-center whitespace-nowrap">{item.workTypeLabel}</td>
+                  <td className="p-2 text-center">{item.releaseYear ?? '—'}</td>
+                  <td className="p-2 text-center">{item.personCount}</td>
+                  <td className="p-2 text-center">{item.activeCount}</td>
+                  <td className="p-2 text-center">{item.unknownCount}</td>
+                  <td className="p-2 text-center whitespace-nowrap">{fmtDate(item.lastCheckedAt)}</td>
+                  <td className="p-2 text-center">{item.daysSinceLastCheck ?? '—'}</td>
+                  <td className="p-2 text-center">{item.clickCount}</td>
+                  <td className="p-2">
+                    <div className="flex flex-wrap gap-1">
+                      {item.reasonLabels.map((label, i) => (
+                        <span key={i} className="px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 whitespace-nowrap">{label}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="p-2 text-center">
+                    <span className={`px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${PRIORITY_CLS[item.priority]}`}>
+                      {item.priorityLabel}
+                    </span>
+                  </td>
+                  <td className="p-2 text-center whitespace-nowrap">{item.processStatusLabel}</td>
+                  <td className="p-2 whitespace-nowrap">
+                    {item.workUrl && (
+                      <Link href={item.workUrl} target="_blank" className="text-indigo-600 hover:underline mr-2">作品</Link>
+                    )}
+                    <Link href={item.adminUrl} target="_blank" className="text-indigo-600 hover:underline">管理</Link>
+                  </td>
+                </tr>
+              );
+            })}
+            {data.items.length === 0 && !loading && (
+              <tr><td colSpan={15} className="p-6 text-center text-gray-400">該当する作品はありません</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ページング */}
+      <div className="flex items-center justify-between text-xs text-gray-500">
+        <span>{(data.page - 1) * data.pageSize + 1}〜{Math.min(data.page * data.pageSize, data.total)}件 / 全{data.total.toLocaleString()}件（{data.page} / {totalPages}ページ）</span>
+        <div className="flex gap-1">
+          <button type="button" disabled={data.page <= 1 || loading} onClick={() => setPage((p) => p - 1)}
+            className="px-3 py-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-50 transition-colors">
+            ← 前へ
+          </button>
+          <button type="button" disabled={data.page >= totalPages || loading} onClick={() => setPage((p) => p + 1)}
+            className="px-3 py-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-50 transition-colors">
+            次へ →
+          </button>
+        </div>
+      </div>
+
+      {/* CSVインポート */}
+      <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
+        <h2 className="text-sm font-bold text-slate-700">調査結果CSVの取り込み</h2>
+        <p className="text-xs text-gray-500">
+          必須列: workId, vodService（1作品1サービス1行）。任意列: availabilityType（flatrate/rent/buy/free/unknown）, sourceUrl, confidence, note
+        </p>
+        <textarea
+          value={csvText}
+          onChange={(e) => { setCsvText(e.target.value); setCsvPreview(null); }}
+          rows={6}
+          placeholder="workId,vodService,availabilityType,sourceUrl,confidence,note"
+          className="w-full border border-gray-300 rounded-lg p-2 text-xs font-mono"
+        />
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={csvBusy || !csvText.trim()}
+            onClick={previewCsvImport}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-40"
+          >
+            プレビュー
+          </button>
+          <button
+            type="button"
+            disabled={csvBusy || !csvPreview}
+            onClick={commitCsvImport}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+          >
+            反映する
+          </button>
+        </div>
+        {csvPreview && (
+          <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-2">
+            対象作品: {csvPreview.totalWorkIds}件 / 行数: {csvPreview.totalRows}件
+            {csvPreview.unresolvedWorkIds.length > 0 && (
+              <p className="text-amber-600 mt-1">未解決のworkId（公開作品として見つかりません）: {csvPreview.unresolvedWorkIds.join(', ')}</p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { href: '/admin/redis-backup',               label: '💾 バックアップ' },
   { href: '/admin/db-init',                    label: '🗄️ DBスキーマ初期化' },
   { href: '/admin/work-dedup',                 label: '🔍 作品重複候補' },
+  { href: '/admin/vod-recheck',                label: '📺 VOD再確認' },
 ] as const;
 
 export default function AdminLayoutClient({ children }: { children: ReactNode }) {

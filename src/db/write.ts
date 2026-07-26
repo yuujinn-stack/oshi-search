@@ -3,7 +3,7 @@
 // 失敗時は console.warn('[dual-write] DB_ERR ...') のみ出力し、本番処理を失敗扱いにしない。
 
 import { db, neonSql } from './client';
-import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons, workStatusHistory } from './schema';
+import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons, workStatusHistory, vodRecheckLogs } from './schema';
 import { eq, and } from 'drizzle-orm';
 import type { WorkRecord } from '@/types/work';
 
@@ -204,6 +204,38 @@ export async function hasIdempotencyKey(key: string): Promise<boolean> {
     .where(eq(workStatusHistory.idempotencyKey, key))
     .limit(1);
   return rows.length > 0;
+}
+
+// ── VOD再確認 監査ログ（vod_recheck_logs）────────────────────────────────────
+
+export interface VodRecheckLogEntry {
+  personName: string;
+  workId: string;
+  action: 'start' | 'complete' | 'needs_review' | 'skip' | 'note';
+  performedBy: string;
+  note?: string;
+  updatedProviderCount?: number;
+  activeCountBefore?: number;
+  activeCountAfter?: number;
+  unknownCountBefore?: number;
+  unknownCountAfter?: number;
+  vodCheckStatusAfter?: string;
+}
+
+export async function insertVodRecheckLog(entry: VodRecheckLogEntry): Promise<void> {
+  await db.insert(vodRecheckLogs).values({
+    personName:           entry.personName,
+    workId:               entry.workId,
+    action:               entry.action,
+    performedBy:          entry.performedBy,
+    note:                 entry.note ?? null,
+    updatedProviderCount: entry.updatedProviderCount ?? null,
+    activeCountBefore:    entry.activeCountBefore ?? null,
+    activeCountAfter:     entry.activeCountAfter ?? null,
+    unknownCountBefore:   entry.unknownCountBefore ?? null,
+    unknownCountAfter:    entry.unknownCountAfter ?? null,
+    vodCheckStatusAfter:  entry.vodCheckStatusAfter ?? null,
+  });
 }
 
 // ── 人物メタ（person_meta）────────────────────────────────────────────────────
