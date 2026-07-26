@@ -8,6 +8,7 @@ import { parseCSV } from '@/lib/csv-parse';
 import { validateCsvFile, formatFileSize } from '@/lib/csv-file-validation';
 import { detectVodRecheckCsvType, type VodRecheckCsvType } from '@/lib/vod-recheck-csv';
 import InvestigationJobPanel from './InvestigationJobPanel';
+import ChatGptPromptResultPanel from '@/components/admin/ChatGptPromptResultPanel';
 
 interface CsvPreviewWork {
   workId: string;
@@ -102,6 +103,10 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [note, setNote] = useState('');
   const [actionMsg, setActionMsg] = useState('');
+  const [researchPrompt, setResearchPrompt] = useState<string | null>(null);
+  const [researchWorkCount, setResearchWorkCount] = useState(0);
+  const [researchBusy, setResearchBusy] = useState(false);
+  const [researchError, setResearchError] = useState('');
   const [csvText, setCsvText] = useState('');
   const [csvPreview, setCsvPreview] = useState<CsvPreviewResponse | null>(null);
   const [csvBusy, setCsvBusy] = useState(false);
@@ -211,6 +216,32 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
     a.download = `vod-recheck_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  // 選択した作品から、ChatGPTへ配信状況調査を依頼するプロンプト全文を生成する。
+  // データ解決・プロンプトのテンプレートは /admin/work-check の調査プロンプト生成と共通
+  // （src/lib/vod-research-prompt.ts・src/lib/vod-recheck-export-data.ts）を使う。
+  async function generateResearchPrompt() {
+    const items = selectedItems();
+    if (items.length === 0) return;
+    setResearchBusy(true);
+    setResearchError('');
+    setResearchPrompt(null);
+    try {
+      const res = await fetch('/api/admin/vod-recheck/research-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: items.map((i) => ({ personName: i.personName, workId: i.workId })) }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'プロンプト生成に失敗しました');
+      setResearchPrompt(json.prompt);
+      setResearchWorkCount(json.workCount);
+    } catch (err) {
+      setResearchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResearchBusy(false);
+    }
   }
 
   // CSVテキスト（ファイル読み込み・貼り付け共通）が変わったら、行数表示を更新し、
@@ -421,7 +452,29 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
         >
           選択した作品をCSV出力（{selected.size}件）
         </button>
+        <button
+          type="button"
+          disabled={selected.size === 0 || selected.size > MAX_BULK_ITEMS || researchBusy}
+          onClick={generateResearchPrompt}
+          title="選択した作品からChatGPTへ配信状況調査を依頼するプロンプトを生成します"
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors disabled:opacity-40"
+        >
+          {researchBusy ? '生成中...' : `ChatGPT調査用プロンプトを生成（${selected.size}件）`}
+        </button>
       </div>
+
+      {researchError && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{researchError}</div>}
+      {researchPrompt && (
+        <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
+          <h2 className="text-sm font-bold text-slate-700">ChatGPT調査用プロンプト</h2>
+          <ChatGptPromptResultPanel
+            prompt={researchPrompt}
+            workCount={researchWorkCount}
+            filename={`vod-recheck_ChatGPT調査プロンプト_${new Date().toISOString().slice(0, 10)}.txt`}
+            onChangePrompt={setResearchPrompt}
+          />
+        </div>
+      )}
 
       {/* 一覧テーブル */}
       <div className="overflow-x-auto bg-white border border-gray-200 rounded-xl">

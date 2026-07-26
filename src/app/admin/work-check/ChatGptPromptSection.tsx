@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { WorkRecord } from '@/types/work';
 import type { PersonWithCounts } from './work-check-types';
 import { csvDownloadSection } from '@/lib/chatGptPromptUtil';
+import { buildVodResearchCsvRow, buildBatchVodResearchPrompt, VOD_RESEARCH_CSV_HEADER } from '@/lib/vod-research-prompt';
 import SearchablePersonSelect from './SearchablePersonSelect';
+import ChatGptPromptResultPanel from '@/components/admin/ChatGptPromptResultPanel';
 
 interface WorkPreview {
   title: string;
@@ -53,28 +55,22 @@ function applyBatchFilter(works: WorkRecord[], filter: BatchFilter): WorkRecord[
   }
 }
 
-// 変更不可
-function csvEscape(val: string): string {
-  const s = String(val ?? '');
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-
-// 変更不可
+// 変更不可（配信サービス除外ルールのみ）。行の組み立て自体は vod-research-prompt.ts の
+// buildVodResearchCsvRow を共有し、vod-recheck の調査プロンプト生成と二重実装しない。
 function workToBatchRow(w: WorkRecord): string {
   const currentVod = (w.vodProviders ?? [])
     .filter((p) => p.providerName !== '配信確認できず')
     .map((p) => p.providerName)
     .join('/') || 'なし';
-  return [
-    csvEscape(w.id),
-    csvEscape(w.personName),
-    csvEscape(w.title),
-    csvEscape(w.type),
-    csvEscape(String(w.releaseYear ?? '')),
-    csvEscape(w.roleName ?? ''),
-    csvEscape(currentVod),
-  ].join(',');
+  return buildVodResearchCsvRow({
+    workId: w.id,
+    personName: w.personName,
+    title: w.title,
+    workType: w.type,
+    releaseYear: w.releaseYear ?? null,
+    roleName: w.roleName ?? '',
+    currentVodServices: currentVod,
+  });
 }
 
 // ─────────────────────────────────────────
@@ -103,44 +99,6 @@ function getVodSummary(w: WorkRecord): { label: string; cls: string } {
   if (real.some((p) => p.type === 'flatrate')) return { label: '見放題あり', cls: 'text-green-600' };
   if (real.some((p) => p.type === 'free'))     return { label: '無料配信',   cls: 'text-teal-600' };
   return { label: '配信あり', cls: 'text-teal-600' };
-}
-
-// クリップボードコピー（フォールバック付き）。navigator.clipboard が使えない/権限で失敗する
-// 環境向けに、非表示textarea + document.execCommand('copy') へフォールバックする。
-async function copyTextWithFallback(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-    throw new Error('clipboard API unavailable');
-  } catch {
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      ta.style.top = '-9999px';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      return ok;
-    } catch {
-      return false;
-    }
-  }
-}
-
-function downloadTextFile(text: string, filename: string): void {
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 function fmtDate(ts: number): string {
@@ -185,10 +143,8 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
   // プロンプト生成結果
   const [genPrompt, setGenPrompt]     = useState('');
   const [genWorkCount, setGenWorkCount] = useState(0);
-  const [genCopyMsg, setGenCopyMsg]   = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [genError, setGenError]       = useState('');
   const [markMsg, setMarkMsg]         = useState('');
-  const genTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // 人物変更: ① リセット
   function resetSection1() {
@@ -200,7 +156,7 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
     setAllWorks(null); setWorksError(''); setWorksLoading(false);
     setSelectedWorkIds(new Set());
     setSelSearch(''); setSelYear(''); setSelType(''); setSelResearch('all');
-    setResearchLog({}); setGenPrompt(''); setGenWorkCount(0); setGenCopyMsg(null); setGenError(''); setMarkMsg('');
+    setResearchLog({}); setGenPrompt(''); setGenWorkCount(0); setGenError(''); setMarkMsg('');
 
     if (!selectedPerson) return;
 
@@ -231,7 +187,7 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
   // フィルター変更時: 選択・プロンプトをリセット（サブフィルターは保持）
   useEffect(() => {
     setSelectedWorkIds(new Set());
-    setGenPrompt(''); setGenWorkCount(0); setGenCopyMsg(null); setGenError(''); setMarkMsg('');
+    setGenPrompt(''); setGenWorkCount(0); setGenError(''); setMarkMsg('');
   }, [batchFilter]);
 
   // ── バッチフィルター済み作品 ──
@@ -305,15 +261,13 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
       setGenError('対象作品が0件です。フィルタ条件を変更するか、作品を選択してください。');
       return;
     }
-    const header = 'workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices';
     const rows   = works
       .slice()
       .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0))
       .map(workToBatchRow)
       .join('\n');
-    setGenPrompt(buildBatchVodPrompt(`${header}\n${rows}`, selectedPerson));
+    setGenPrompt(buildBatchVodResearchPrompt(`${VOD_RESEARCH_CSV_HEADER}\n${rows}`, selectedPerson));
     setGenWorkCount(works.length);
-    setGenCopyMsg(null);
     markResearched(works.map((w) => w.id));
   }
 
@@ -343,29 +297,6 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
     await navigator.clipboard.writeText(text);
     setter(true);
     setTimeout(() => setter(false), 2000);
-  }
-
-  // 「調査プロンプトをすべてコピー」— プロンプト生成時に作成した genPrompt（DOMから再構築しない）
-  // をそのままコピーする。省略・切り捨ては一切行わない。
-  async function handleCopyGenPromptFull() {
-    const ok = await copyTextWithFallback(genPrompt);
-    setGenCopyMsg(
-      ok
-        ? { type: 'success', text: `調査プロンプト全文をコピーしました（${genWorkCount}作品）` }
-        : { type: 'error', text: 'コピーできませんでした。下のテキストを選択してコピーしてください' },
-    );
-    setTimeout(() => setGenCopyMsg(null), 5000);
-  }
-
-  function handleSelectAllGenPrompt() {
-    const el = genTextareaRef.current;
-    if (!el) return;
-    el.focus();
-    el.select();
-  }
-
-  function handleSaveGenPromptFile() {
-    downloadTextFile(genPrompt, `${selectedPerson || 'chatgpt'}_VOD調査プロンプト.txt`);
   }
 
   return (
@@ -657,43 +588,11 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
               <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{genError}</div>
             )}
             {genPrompt && (
-              <div className="flex flex-wrap gap-2 items-center">
-                <button
-                  onClick={handleCopyGenPromptFull}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-medium"
-                >
-                  調査プロンプトをすべてコピー
-                </button>
-                <button
-                  onClick={handleSelectAllGenPrompt}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-slate-700 transition-colors font-medium"
-                >
-                  すべて選択
-                </button>
-                <button
-                  onClick={handleSaveGenPromptFile}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-slate-700 transition-colors font-medium"
-                >
-                  テキストファイルで保存
-                </button>
-              </div>
-            )}
-            {genCopyMsg && (
-              <div className={
-                genCopyMsg.type === 'success'
-                  ? 'text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2'
-                  : 'text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2'
-              }>
-                {genCopyMsg.text}
-              </div>
-            )}
-            {genPrompt && (
-              <textarea
-                ref={genTextareaRef}
-                value={genPrompt}
-                onChange={(e) => setGenPrompt(e.target.value)}
-                rows={20}
-                className="w-full text-[11px] font-mono border border-gray-200 rounded-lg p-3 bg-gray-50 resize-y focus:outline-none overflow-y-auto"
+              <ChatGptPromptResultPanel
+                prompt={genPrompt}
+                workCount={genWorkCount}
+                filename={`${selectedPerson || 'chatgpt'}_VOD調査プロンプト.txt`}
+                onChangePrompt={setGenPrompt}
               />
             )}
           </>
@@ -767,33 +666,3 @@ workIdは空欄でよい（インポート時に自動採番）
 ${csvDownloadSection(`${personName}_出演作品.csv`)}`;
 }
 
-function buildBatchVodPrompt(worksCsv: string, personName: string): string {
-  return `以下のCSVに含まれる作品について、日本国内で現在視聴可能な配信サービスを調査してください。
-
-条件
-
-・推測禁止
-・日本国内で現在視聴可能な情報のみ
-・過去配信のみは除外
-・公式サイト、配信サービス公式、番組公式を優先
-・workId は必ず保持
-・確認できない場合は vodService=unknown を出力
-・1作品1サービスで1行（複数サービスは複数行）
-
-調査対象サービス
-
-Hulu / U-NEXT / Lemino / Netflix / Prime Video / DMM TV / TELASA / FOD / ABEMA / TVer / Disney+ / YouTube / NHKオンデマンド
-
-availabilityType は以下を使用
-
-flatrate（見放題）/ rent（レンタル）/ buy（購入）/ free（無料）/ unknown（不明）
-
-出力形式
-
-workId,vodService,availabilityType,confidence,sourceUrl,note
-
----作品CSVここから---
-${worksCsv}
----作品CSVここまで---
-${csvDownloadSection(`${personName}_VOD配信情報.csv`)}`;
-}
