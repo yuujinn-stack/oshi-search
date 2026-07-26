@@ -256,23 +256,37 @@ export async function upsertManualCsvVodProviders(
   return result;
 }
 
+// CSV同期インポートの完全置換ロジック（純粋関数）: 既存のmanual_csvエントリを全て
+// 除去し、新しいproviders配列で置き換える。TMDb/AI等の他ソースのエントリは保持する。
+// 自動調査（VOD自動調査ジョブ）は「今回の調査結果が当該作品の配信状況を包括的に代表する」
+// という前提のため、追加のみ（upsert）ではなく完全置換（sync）を使う。これにより、
+// 終了済みサービスの古いmanual_csv情報が残り続けたり、同じサービスの新旧情報が
+// 二重に残ったりすることを防ぐ。
+export function syncManualCsvVodProvidersPure(
+  existing: VodProvider[],
+  providers: VodProvider[],
+): { merged: VodProvider[]; removed: number; added: number } {
+  const removed = existing.filter((p) => p.source === 'manual_csv').length;
+  const nonCsv = existing.filter((p) => p.source !== 'manual_csv');
+  return { merged: [...nonCsv, ...providers], removed, added: providers.length };
+}
+
 // CSV同期インポート: manual_csv 配信サービスを完全置換（CSVにないものは削除、TMDb/AI/manual は保持）
 export async function syncManualCsvVodProviders(
   personName: string,
   workId: string,
   providers: VodProvider[],
 ): Promise<{ removed: number; added: number }> {
-  let removedCount = 0;
+  let result = { removed: 0, added: 0 };
   await withWorkFromDB(personName, workId, (work) => {
-    const existing = work.vodProviders ?? [];
-    removedCount = existing.filter((p) => p.source === 'manual_csv').length;
-    const nonCsv = existing.filter((p) => p.source !== 'manual_csv');
-    work.vodProviders = [...nonCsv, ...providers];
+    const { merged, removed, added } = syncManualCsvVodProvidersPure(work.vodProviders ?? [], providers);
+    work.vodProviders = merged;
+    result = { removed, added };
     work.vodUpdatedAt = Date.now();
     work.updatedAt = Date.now();
     return true;
   });
-  return { removed: removedCount, added: providers.length };
+  return result;
 }
 
 // VOD配信情報を1件だけ論理削除（hidden: true をセット）

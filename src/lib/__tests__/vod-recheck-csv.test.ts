@@ -1,6 +1,47 @@
 import { describe, it, expect } from 'vitest';
-import { parseAndValidateImportCsv } from '../vod-recheck-csv';
+import { parseAndValidateImportCsv, detectVodRecheckCsvType } from '../vod-recheck-csv';
 import { MAX_CSV_ROWS } from '../csv-parse';
+import { buildVodRecheckExportCsv } from '../vod-recheck-csv-export';
+
+describe('detectVodRecheckCsvType', () => {
+  it('1. 調査対象CSVを自動判定できる（vodService列が存在しない）', () => {
+    const csv = 'workId,personName,workTitle\nwork-1,森田ひかる,テスト作品';
+    expect(detectVodRecheckCsvType(csv)).toBe('investigation_target');
+  });
+
+  it('1. 調査対象CSVを自動判定できる（vodService列はあるが全行空欄＝csv-export出力そのまま）', () => {
+    const csv = buildVodRecheckExportCsv([{
+      workId: 'work-1', personName: '森田ひかる', title: 'テスト作品', workType: 'movie',
+      releaseYear: 2021, roleName: null, currentVodServices: 'U-NEXT', lastCheckedAt: '',
+      recheckReason: '確認日なし', priority: '高',
+    }]);
+    expect(detectVodRecheckCsvType(csv)).toBe('investigation_target');
+  });
+
+  it('2. 調査結果CSVを自動判定できる（vodServiceに値がある行が1件でもある）', () => {
+    const csv = 'workId,vodService\nwork-1,Netflix';
+    expect(detectVodRecheckCsvType(csv)).toBe('investigation_result');
+  });
+
+  it('2. 一部の行だけvodServiceが埋まっていても調査結果CSVと判定する', () => {
+    const csv = 'workId,vodService\nwork-1,\nwork-2,Hulu';
+    expect(detectVodRecheckCsvType(csv)).toBe('investigation_result');
+  });
+
+  it('3. 判定不能CSVを拒否する（workId列がない）', () => {
+    const csv = 'foo,bar\n1,2';
+    expect(detectVodRecheckCsvType(csv)).toBe('unknown');
+  });
+
+  it('3. 判定不能CSVを拒否する（データ行が1行もない）', () => {
+    const csv = 'workId,vodService';
+    expect(detectVodRecheckCsvType(csv)).toBe('unknown');
+  });
+
+  it('3. 判定不能CSVを拒否する（空文字列）', () => {
+    expect(detectVodRecheckCsvType('')).toBe('unknown');
+  });
+});
 
 describe('parseAndValidateImportCsv', () => {
   it('7. workIdとvodServiceだけのCSVも受理できる', () => {
