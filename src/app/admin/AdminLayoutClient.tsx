@@ -1,11 +1,13 @@
 'use client';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
 
 const NAV_ITEMS = [
   { href: '/admin/people/import',              label: '人物登録' },
   { href: '/admin/people-progress',            label: '進捗管理' },
   { href: '/admin/work-check',                 label: '作品管理' },
+  { href: '/admin/work-dedup',                 label: '作品重複' },
   { href: '/admin/product-check',              label: '商品管理' },
   { href: '/admin/rakuten-search',             label: '楽天検索' },
   { href: '/admin/groups',                     label: 'グループ管理' },
@@ -18,11 +20,15 @@ const NAV_ITEMS = [
   { href: '/admin/analytics',                  label: '📊 アナリティクス' },
   { href: '/admin/redis-backup',               label: '💾 バックアップ' },
   { href: '/admin/db-init',                    label: '🗄️ DBスキーマ初期化' },
-  { href: '/admin/work-dedup',                 label: '🔍 作品重複候補' },
   { href: '/admin/vod-recheck',                label: '📺 VOD再確認' },
 ] as const;
 
+function isNavItemActive(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 export default function AdminLayoutClient({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -58,15 +64,23 @@ export default function AdminLayoutClient({ children }: { children: ReactNode })
           <span className="text-slate-400 text-[10px] font-bold mr-2 whitespace-nowrap py-2">
             管理
           </span>
-          {NAV_ITEMS.map(({ href, label }) => (
-            <a
-              key={href}
-              href={href}
-              className="whitespace-nowrap px-3 py-2 text-xs font-medium transition-colors rounded-sm text-slate-300 hover:text-white hover:bg-slate-700"
-            >
-              {label}
-            </a>
-          ))}
+          {NAV_ITEMS.map(({ href, label }) => {
+            const active = isNavItemActive(pathname ?? '', href);
+            return (
+              <a
+                key={href}
+                href={href}
+                aria-current={active ? 'page' : undefined}
+                className={
+                  active
+                    ? 'whitespace-nowrap px-3 py-2 text-xs font-medium transition-colors rounded-sm bg-slate-700 text-white'
+                    : 'whitespace-nowrap px-3 py-2 text-xs font-medium transition-colors rounded-sm text-slate-300 hover:text-white hover:bg-slate-700'
+                }
+              >
+                {label}
+              </a>
+            );
+          })}
           <button
             type="button"
             onClick={handleLogout}
