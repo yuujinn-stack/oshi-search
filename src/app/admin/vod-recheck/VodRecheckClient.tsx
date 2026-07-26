@@ -6,8 +6,6 @@ import type { RecheckListResult, RecheckListItem } from '@/lib/vod-recheck-list'
 import type { RecheckReasonCode, RecheckPriority, RecheckAction } from '@/lib/vod-recheck';
 import { parseCSV } from '@/lib/csv-parse';
 import { validateCsvFile, formatFileSize } from '@/lib/csv-file-validation';
-import { detectVodRecheckCsvType, type VodRecheckCsvType } from '@/lib/vod-recheck-csv';
-import InvestigationJobPanel from './InvestigationJobPanel';
 import ChatGptPromptResultPanel from '@/components/admin/ChatGptPromptResultPanel';
 
 interface CsvPreviewWork {
@@ -114,7 +112,6 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
   const [selectedFileName, setSelectedFileName] = useState('');
   const [selectedFileSize, setSelectedFileSize] = useState<number | null>(null);
   const [csvRowCount, setCsvRowCount] = useState<number | null>(null);
-  const [csvType, setCsvType] = useState<VodRecheckCsvType | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const isFirstRun = useRef(true);
   const csvSubmitLockRef = useRef(false); // 二重送信防止（state更新の非同期性に依存しない同期ガード）
@@ -257,10 +254,8 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
       } catch {
         setCsvRowCount(null);
       }
-      setCsvType(detectVodRecheckCsvType(text));
     } else {
       setCsvRowCount(null);
-      setCsvType(null);
     }
   }
 
@@ -308,7 +303,6 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
     setCsvFileError('');
     setCsvText('');
     setCsvPreview(null);
-    setCsvType(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
@@ -620,46 +614,27 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
           className="w-full border border-gray-300 rounded-lg p-2 text-xs font-mono"
         />
 
-        {csvType === 'investigation_target' && (
-          <p className="text-xs bg-indigo-50 text-indigo-700 rounded-lg px-3 py-2">
-            調査対象CSV（配信サービス列が未入力）として検出しました。下の「自動調査を開始」から進めてください。
-          </p>
-        )}
-        {csvType === 'investigation_result' && (
-          <p className="text-xs bg-emerald-50 text-emerald-700 rounded-lg px-3 py-2">
-            調査結果CSV（配信サービス列が入力済み）として検出しました。「プレビュー」→「反映する」で取り込めます。
-          </p>
-        )}
-        {csvType === 'unknown' && csvText.trim() && (
-          <p className="text-xs bg-red-50 text-red-700 rounded-lg px-3 py-2">
-            CSVの形式を判定できませんでした。workId列があるか確認してください。
-          </p>
-        )}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={csvBusy || !csvText.trim()}
+            onClick={previewCsvImport}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-40"
+          >
+            プレビュー
+          </button>
+          <button
+            type="button"
+            disabled={csvBusy || !csvPreview || csvPreview.hasFatalErrors}
+            onClick={commitCsvImport}
+            title={csvPreview?.hasFatalErrors ? '致命的エラーがあるため反映できません。CSVを修正して再プレビューしてください。' : undefined}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+          >
+            反映する
+          </button>
+        </div>
 
-        {csvType === 'investigation_target' ? (
-          <InvestigationJobPanel csv={csvText} onApplied={() => { fetchData(); clearFile(); }} />
-        ) : (
-          <>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={csvBusy || !csvText.trim()}
-                onClick={previewCsvImport}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-40"
-              >
-                プレビュー
-              </button>
-              <button
-                type="button"
-                disabled={csvBusy || !csvPreview || csvPreview.hasFatalErrors}
-                onClick={commitCsvImport}
-                title={csvPreview?.hasFatalErrors ? '致命的エラーがあるため反映できません。CSVを修正して再プレビューしてください。' : undefined}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
-              >
-                反映する
-              </button>
-            </div>
-            {csvPreview && (
+        {csvPreview && (
           <div className="text-xs text-gray-600 space-y-2">
             <div className="bg-gray-50 rounded-lg p-2">
               対象作品: {csvPreview.totalWorkIds}件 / 行数: {csvPreview.totalRows}件
@@ -712,8 +687,6 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
               </table>
             </div>
           </div>
-            )}
-          </>
         )}
       </div>
     </div>

@@ -3,7 +3,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockResolveActiveWorkTargets = vi.hoisted(() => vi.fn());
 const mockGetWork = vi.hoisted(() => vi.fn());
 const mockUpsertManualCsvVodProviders = vi.hoisted(() => vi.fn().mockResolvedValue({ added: 0, updated: 0 }));
-const mockSyncManualCsvVodProviders = vi.hoisted(() => vi.fn().mockResolvedValue({ added: 0, removed: 0 }));
 const mockInsertVodRecheckLog = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockGetInactiveProviderSlugs = vi.hoisted(() => vi.fn().mockResolvedValue(new Set(['dtv'])));
 
@@ -17,7 +16,6 @@ vi.mock('@/lib/work-store', async (importOriginal) => {
     ...actual,
     getWork: mockGetWork,
     upsertManualCsvVodProviders: mockUpsertManualCsvVodProviders,
-    syncManualCsvVodProviders: mockSyncManualCsvVodProviders,
   };
 });
 
@@ -62,46 +60,37 @@ describe('runVodRecheckCsvImport — 入力検証', () => {
   });
 });
 
-describe('runVodRecheckCsvImport — mergeStrategy: additive（既定・既存仕様）', () => {
-  it('プレビュー: sync特有の警告は出ない', async () => {
+describe('runVodRecheckCsvImport — プレビュー（commit=false）', () => {
+  it('現在のVOD件数・反映後のVOD件数・追加サービスを返す', async () => {
     const result = await runVodRecheckCsvImport(CSV, false);
     expect(result.status).toBe(200);
     if (result.status === 200 && result.body.commit === false) {
       const entry = result.body.preview[0];
-      expect(entry.warnings.some((w) => w.includes('置き換えられます'))).toBe(false);
+      expect(entry.workId).toBe('work-1');
+      expect(entry.services).toEqual([{ providerName: 'Netflix', availabilityType: 'flatrate' }]);
+      expect(entry.currentVodCount).toBe(1);
+      expect(entry.afterVodCount).toBe(2);
     }
   });
 
-  it('実行: upsertManualCsvVodProviders（追加型）を呼び、syncは呼ばない', async () => {
-    const result = await runVodRecheckCsvImport(CSV, true);
-    expect(result.status).toBe(200);
-    expect(mockUpsertManualCsvVodProviders).toHaveBeenCalledTimes(1);
-    expect(mockSyncManualCsvVodProviders).not.toHaveBeenCalled();
+  it('DBへは書き込まない（upsertManualCsvVodProvidersを呼ばない）', async () => {
+    await runVodRecheckCsvImport(CSV, false);
+    expect(mockUpsertManualCsvVodProviders).not.toHaveBeenCalled();
   });
 });
 
-describe('runVodRecheckCsvImport — mergeStrategy: sync（自動調査ジョブの反映で使用）', () => {
-  it('プレビュー: 既存manual_csvが置き換えられる旨の警告が出る', async () => {
-    const result = await runVodRecheckCsvImport(CSV, false, { mergeStrategy: 'sync' });
+describe('runVodRecheckCsvImport — 実行（commit=true）', () => {
+  it('upsertManualCsvVodProviders（同名manual_csvは上書き、他は保持）を呼ぶ', async () => {
+    const result = await runVodRecheckCsvImport(CSV, true);
     expect(result.status).toBe(200);
-    if (result.status === 200 && result.body.commit === false) {
-      const entry = result.body.preview[0];
-      expect(entry.warnings.some((w) => w.includes('置き換えられます'))).toBe(true);
-    }
+    expect(mockUpsertManualCsvVodProviders).toHaveBeenCalledTimes(1);
   });
 
-  it('実行: syncManualCsvVodProviders（完全置換）を呼び、upsertは呼ばない', async () => {
-    const result = await runVodRecheckCsvImport(CSV, true, { mergeStrategy: 'sync' });
-    expect(result.status).toBe(200);
-    expect(mockSyncManualCsvVodProviders).toHaveBeenCalledTimes(1);
-    expect(mockUpsertManualCsvVodProviders).not.toHaveBeenCalled();
-  });
-
-  it('実行: 監査ログにmergeStrategyを含むnoteとperformedByオーバーライドを記録する', async () => {
-    await runVodRecheckCsvImport(CSV, true, { mergeStrategy: 'sync', performedBy: 'admin:test-apply' });
+  it('監査ログを記録する', async () => {
+    await runVodRecheckCsvImport(CSV, true);
     expect(mockInsertVodRecheckLog).toHaveBeenCalledWith(expect.objectContaining({
-      performedBy: 'admin:test-apply',
-      note: expect.stringContaining('sync'),
+      performedBy: 'admin:vod-recheck-csv-import',
+      action: 'complete',
     }));
   });
 });

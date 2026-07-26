@@ -7,9 +7,8 @@
 // 検証ロジックは完全に共通（ファイル選択と貼り付けで結果が食い違うことはない）。
 //
 // 実体は src/lib/vod-recheck-csv-import.ts の runVodRecheckCsvImport()。
-// 自動調査ジョブの承認結果反映（/api/admin/vod-recheck/investigation-jobs/[jobId]/apply）も
-// 同じ関数を mergeStrategy: 'sync' で呼び出しており、workIdのcanonical解決・非活性化作品の
-// 拒否・manual_csv保存・監査ログ・処理状態変更のロジックはこの1箇所に集約されている。
+// workIdのcanonical解決・非活性化作品の拒否・manual_csv保存・監査ログ・処理状態変更の
+// ロジックはこの1箇所に集約されている。
 //
 // commit=false（デフォルト）: プレビューのみ・DB変更なし。commit=true: 実際に保存 + 監査ログ記録。
 // いずれの場合も公開状態（status/deleted）は変更しない（vod_dataのみ更新）。
