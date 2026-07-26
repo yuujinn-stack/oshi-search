@@ -215,30 +215,45 @@ export async function updateWorkVod(
   });
 }
 
+// CSV調査インポートのマージロジック（純粋関数）: 同名サービス（manual_csv同士）は上書き、
+// 新規は追加、TMDb/AI由来など他ソースのエントリはそのまま保持する。
+// DBアクセスを伴わないため、実際に保存する upsertManualCsvVodProviders() と
+// 保存前のプレビュー（/api/admin/vod-recheck/csv-import）の両方から同じロジックを使い、
+// 「プレビューで見せた反映後の件数」と「実際に反映される件数」がずれないようにする。
+export function mergeManualCsvVodProviders(
+  existing: VodProvider[],
+  providers: VodProvider[],
+): { merged: VodProvider[]; added: number; updated: number } {
+  const merged = [...existing];
+  let added = 0;
+  let updated = 0;
+  for (const p of providers) {
+    const idx = merged.findIndex(
+      (e) => e.source === 'manual_csv' &&
+             normalizeProviderName(e.providerName) === normalizeProviderName(p.providerName),
+    );
+    if (idx >= 0) { merged[idx] = p; updated++; }
+    else { merged.push(p); added++; }
+  }
+  return { merged, added, updated };
+}
+
 // CSV調査インポート: manual_csv 配信サービスをアップサート（同名サービスは上書き、新規は追加、TMDb/AI は保持）
 export async function upsertManualCsvVodProviders(
   personName: string,
   workId: string,
   providers: VodProvider[],
 ): Promise<{ added: number; updated: number }> {
-  let added = 0;
-  let updated = 0;
+  let result = { added: 0, updated: 0 };
   await withWorkFromDB(personName, workId, (work) => {
-    const existing = work.vodProviders ?? [];
-    for (const p of providers) {
-      const idx = existing.findIndex(
-        (e) => e.source === 'manual_csv' &&
-               normalizeProviderName(e.providerName) === normalizeProviderName(p.providerName),
-      );
-      if (idx >= 0) { existing[idx] = p; updated++; }
-      else { existing.push(p); added++; }
-    }
-    work.vodProviders = existing;
+    const { merged, added, updated } = mergeManualCsvVodProviders(work.vodProviders ?? [], providers);
+    work.vodProviders = merged;
+    result = { added, updated };
     work.vodUpdatedAt = Date.now();
     work.updatedAt = Date.now();
     return true;
   });
-  return { added, updated };
+  return result;
 }
 
 // CSV同期インポート: manual_csv 配信サービスを完全置換（CSVにないものは削除、TMDb/AI/manual は保持）

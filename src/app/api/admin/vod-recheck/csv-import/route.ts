@@ -3,6 +3,9 @@
 // 必須列: workId, vodService　（1作品1サービス1行）
 // 任意列: availabilityType（flatrate/rent/buy/free/unknown）, sourceUrl, confidence, note
 //
+// CSVはファイル選択・貼り付けのどちらから来ても同じ文字列としてこのAPIへ届くため、
+// 検証ロジックは完全に共通（ファイル選択と貼り付けで結果が食い違うことはない）。
+//
 // workIdの解決は resolveActiveWorkTargets() を使い、候補一覧・CSV出力と同じ対象判定
 // ロジックを共有する。work_aliasesに登録された旧workIdはcanonical workIdへ解決され、
 // 非活性化（hidden/deleted）された作品・存在しないworkIdは解決不可（拒否）として扱う。
@@ -10,16 +13,16 @@
 // commit=false（デフォルト）: プレビューのみ・DB変更なし。commit=true: 実際に保存 + 監査ログ記録。
 // いずれの場合も公開状態（status/deleted）は変更しない（vod_dataのみ更新）。
 import { NextRequest, NextResponse } from 'next/server';
+import { MAX_CSV_FILE_BYTES } from '@/lib/csv-parse';
+import { parseAndValidateImportCsv } from '@/lib/vod-recheck-csv';
 import { resolveActiveWorkTargets } from '@/lib/vod-recheck-store';
-import { upsertManualCsvVodProviders, getWork } from '@/lib/work-store';
+import { upsertManualCsvVodProviders, mergeManualCsvVodProviders, getWork } from '@/lib/work-store';
 import { insertVodRecheckLog } from '@/db/write';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { detectRecheckReasons } from '@/lib/vod-recheck';
-import type { VodProvider, VodProviderType } from '@/types/vod';
+import type { VodProvider } from '@/types/vod';
 
 export const dynamic = 'force-dynamic';
-
-const MAX_ROWS = 200;
 
 // ── サービス辞書（work-vod-import / vod-title-import と同じテーブルをこの機能専用に複製） ──
 const SERVICE_LOOKUP: Record<string, { id: number; logoPath?: string }> = {
@@ -38,14 +41,6 @@ const SERVICE_LOOKUP: Record<string, { id: number; logoPath?: string }> = {
   'ABEMA':               { id: 223,  logoPath: '/5T4b5p6OI7ZhWgpEnNcHKi5FHZB.jpg' },
 };
 
-const TYPE_MAP: Record<string, VodProviderType> = {
-  flatrate: 'flatrate', subscription: 'flatrate', 見放題: 'flatrate',
-  rent: 'rent', rental: 'rent', レンタル: 'rent',
-  buy: 'buy', purchase: 'buy', 購入: 'buy',
-  free: 'free', 無料: 'free',
-  unknown: 'unknown',
-};
-
 function lookupService(name: string): { id: number; logoPath?: string } {
   const key = Object.keys(SERVICE_LOOKUP).find((k) => k.toLowerCase() === name.toLowerCase());
   if (!key) {
@@ -56,37 +51,6 @@ function lookupService(name: string): { id: number; logoPath?: string } {
   return SERVICE_LOOKUP[key];
 }
 
-// RFC4180準拠の簡易CSVパーサー（BOM・改行コード対応。他のCSV importルートと同じ実装）
-function parseCSV(content: string): string[][] {
-  const normalized = content.replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let inQuotes = false;
-  for (let i = 0; i < normalized.length; i++) {
-    const c = normalized[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (normalized[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
-      } else field += c;
-    } else if (c === '"') inQuotes = true;
-    else if (c === ',') { row.push(field); field = ''; }
-    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
-    else field += c;
-  }
-  if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
-  return rows.filter((r) => r.some((v) => v.trim() !== ''));
-}
-
-interface ParsedRow {
-  workId: string;
-  vodService: string;
-  availabilityType: VodProviderType;
-  sourceUrl?: string;
-  confidence?: 'high' | 'medium' | 'low';
-  note?: string;
-}
-
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as { csv?: unknown; commit?: unknown };
   const { csv, commit } = body;
@@ -95,57 +59,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'csv（文字列）が必要です' }, { status: 400 });
   }
 
-  const table = parseCSV(csv);
-  if (table.length < 2) {
-    return NextResponse.json({ error: 'CSVにヘッダー行とデータ行が必要です' }, { status: 400 });
+  // ファイルサイズ相当のチェック（ファイル選択・貼り付けの両方に共通で適用）
+  const byteLength = Buffer.byteLength(csv, 'utf8');
+  if (byteLength > MAX_CSV_FILE_BYTES) {
+    const maxMb = (MAX_CSV_FILE_BYTES / (1024 * 1024)).toFixed(0);
+    return NextResponse.json({ error: `CSVのサイズが大きすぎます（上限${maxMb}MB）` }, { status: 400 });
   }
 
-  const header = table[0].map((h) => h.trim());
-  const workIdIdx = header.indexOf('workId');
-  const vodServiceIdx = header.indexOf('vodService');
-  if (workIdIdx === -1 || vodServiceIdx === -1) {
-    return NextResponse.json({ error: '必須列 workId, vodService がヘッダーに見つかりません' }, { status: 400 });
+  // CSV解析・行検証（重複行・必須列・availabilityType等）はファイル選択・貼り付け共通のロジック
+  const parseResult = parseAndValidateImportCsv(csv);
+  if (!parseResult.ok) {
+    return NextResponse.json({ error: parseResult.error, details: parseResult.details }, { status: 400 });
   }
-  const availIdx = header.indexOf('availabilityType');
-  const sourceUrlIdx = header.indexOf('sourceUrl');
-  const confidenceIdx = header.indexOf('confidence');
-  const noteIdx = header.indexOf('note');
-
-  const dataRows = table.slice(1);
-  if (dataRows.length > MAX_ROWS) {
-    return NextResponse.json({ error: `一度にインポートできるのは最大 ${MAX_ROWS} 行です（${dataRows.length}行が指定されました）` }, { status: 400 });
-  }
-
-  const parsed: ParsedRow[] = [];
-  const errors: string[] = [];
-  dataRows.forEach((cols, i) => {
-    const workId = (cols[workIdIdx] ?? '').trim();
-    const vodService = (cols[vodServiceIdx] ?? '').trim();
-    if (!workId || !vodService) {
-      errors.push(`${i + 2}行目: workId と vodService は必須です`);
-      return;
-    }
-    const availRaw = (availIdx >= 0 ? cols[availIdx] : '')?.trim().toLowerCase() ?? '';
-    const availabilityType = availRaw ? TYPE_MAP[availRaw] : 'unknown';
-    if (availRaw && !availabilityType) {
-      errors.push(`${i + 2}行目: availabilityType の値が不正です（${cols[availIdx]}）`);
-      return;
-    }
-    const confidenceRaw = (confidenceIdx >= 0 ? cols[confidenceIdx] : '')?.trim().toLowerCase();
-    const confidence = confidenceRaw === 'high' || confidenceRaw === 'medium' || confidenceRaw === 'low' ? confidenceRaw : undefined;
-    parsed.push({
-      workId,
-      vodService,
-      availabilityType: availabilityType ?? 'unknown',
-      sourceUrl: sourceUrlIdx >= 0 ? (cols[sourceUrlIdx] ?? '').trim() || undefined : undefined,
-      confidence,
-      note: noteIdx >= 0 ? (cols[noteIdx] ?? '').trim() || undefined : undefined,
-    });
-  });
-
-  if (errors.length > 0) {
-    return NextResponse.json({ error: 'CSVの内容にエラーがあります', details: errors }, { status: 400 });
-  }
+  const parsed = parseResult.rows;
 
   // workId解決: 候補一覧・CSV出力と共通のロジック（resolveActiveWorkTargets）を使う。
   // 旧workId（work_aliases登録済み）はcanonical workIdへ解決され、非活性化・存在しない
@@ -184,24 +110,67 @@ export async function POST(req: NextRequest) {
     providersByCanonical.set(target.canonicalWorkId, list);
   }
 
-  const preview = [...providersByCanonical.entries()].map(([canonicalWorkId, providers]) => {
-    // このcanonicalに解決された入力workIdのうち、canonical自身と異なるもの（= 旧workIdだった）を集める
-    const resolvedFrom = [...canonicalByInput.entries()]
-      .filter(([, v]) => v.canonicalWorkId === canonicalWorkId && v.resolvedViaAlias)
-      .map(([inputWorkId]) => inputWorkId);
-    return {
-      workId: canonicalWorkId,
-      resolvedFrom: resolvedFrom.length > 0 ? resolvedFrom : undefined,
-      persons: personsByCanonical.get(canonicalWorkId) ?? [],
-      providers: providers.map((p) => ({ providerName: p.providerName, type: p.type })),
-    };
-  });
-
   if (!commit) {
+    // ── プレビュー: DBは読み取りのみ（現在の状態を見るだけ）。書き込みは一切行わない ──
+    const terminatedSlugs = await getInactiveProviderSlugs();
+    const now = Date.now();
+
+    const preview = await Promise.all([...providersByCanonical.entries()].map(async ([canonicalWorkId, providers]) => {
+      const persons = personsByCanonical.get(canonicalWorkId) ?? [];
+      const representativePerson = persons[0];
+      const current = representativePerson ? await getWork(representativePerson, canonicalWorkId) : null;
+      const currentProviders = current?.vodProviders ?? [];
+
+      const currentDetection = detectRecheckReasons({
+        vodProviders: currentProviders,
+        lastVodCheckAt: current?.lastVodCheckAt,
+        vodAiCheckedAt: current?.vodAiCheckedAt,
+        terminatedSlugs,
+        isHighTraffic: false,
+        isPostMergeUnchecked: false,
+        now,
+      });
+
+      // 実際の upsertManualCsvVodProviders() と同じマージ関数でシミュレーション（DB書き込みなし）
+      const { merged } = mergeManualCsvVodProviders(currentProviders, providers);
+      const afterDetection = detectRecheckReasons({
+        vodProviders: merged,
+        lastVodCheckAt: current?.lastVodCheckAt,
+        vodAiCheckedAt: current?.vodAiCheckedAt,
+        terminatedSlugs,
+        isHighTraffic: false,
+        isPostMergeUnchecked: false,
+        now,
+      });
+
+      const resolvedFrom = [...canonicalByInput.entries()]
+        .filter(([, v]) => v.canonicalWorkId === canonicalWorkId && v.resolvedViaAlias)
+        .map(([inputWorkId]) => inputWorkId);
+
+      const warnings: string[] = [];
+      if (!current) warnings.push('現在のVOD情報を取得できませんでした（新規登録として扱われます）');
+
+      return {
+        workId: canonicalWorkId,
+        resolvedFrom: resolvedFrom.length > 0 ? resolvedFrom : undefined,
+        title: current?.title ?? null,
+        persons,
+        services: providers.map((p) => ({ providerName: p.providerName, availabilityType: p.type })),
+        currentVodCount: currentDetection.activeCount,
+        afterVodCount: afterDetection.activeCount,
+        warnings,
+        errors: [] as string[],
+      };
+    }));
+
+    // 1件でも未解決（存在しない・非活性化されたworkId）があれば反映を無効化する
+    const hasFatalErrors = unresolvedWorkIds.length > 0 || preview.some((p) => p.errors.length > 0);
+
     return NextResponse.json({
       commit: false,
       preview,
       unresolvedWorkIds,
+      hasFatalErrors,
       totalWorkIds: providersByCanonical.size,
       totalRows: parsed.length,
     });
