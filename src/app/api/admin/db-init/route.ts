@@ -136,6 +136,23 @@ const CREATE_STATEMENTS = [
   sql`CREATE INDEX IF NOT EXISTS wsh_person_work_idx ON work_status_history (person_name, work_id)`,
   sql`CREATE INDEX IF NOT EXISTS wsh_idempotency_idx ON work_status_history (idempotency_key)`,
   sql`CREATE INDEX IF NOT EXISTS wsh_created_at_idx ON work_status_history (created_at)`,
+  sql`CREATE TABLE IF NOT EXISTS vod_recheck_logs (
+    id                     SERIAL PRIMARY KEY,
+    person_name            TEXT NOT NULL,
+    work_id                TEXT NOT NULL,
+    action                 TEXT NOT NULL,
+    performed_by           TEXT NOT NULL,
+    note                   TEXT,
+    updated_provider_count INTEGER,
+    active_count_before    INTEGER,
+    active_count_after     INTEGER,
+    unknown_count_before   INTEGER,
+    unknown_count_after    INTEGER,
+    vod_check_status_after TEXT,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  sql`CREATE INDEX IF NOT EXISTS vrl_person_work_idx ON vod_recheck_logs (person_name, work_id)`,
+  sql`CREATE INDEX IF NOT EXISTS vrl_created_at_idx ON vod_recheck_logs (created_at)`,
 ];
 
 // ── ALTER TABLE ADD COLUMN IF NOT EXISTS ─────────────────────────────────────
@@ -223,7 +240,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE verdicts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
 ];
 
-const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history'];
+const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs'];
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。

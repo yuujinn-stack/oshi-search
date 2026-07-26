@@ -67,7 +67,7 @@ export interface WorkRecord {
   // 配信情報条件付き再確認（vod-recheck Cron 機能用）
   lastVodCheckAt?: number;         // AI再確認Cronによる最終確認日時
   vodCheckSource?: 'csv' | 'ai' | 'tmdb' | 'manual'; // 最終確認ソース
-  vodCheckStatus?: 'fresh' | 'needs_recheck' | 'checking' | 'checked' | 'failed';
+  vodCheckStatus?: 'fresh' | 'needs_recheck' | 'checking' | 'checked' | 'failed' | 'skipped';
   vodCheckError?: string;
   priorityRecheck?: boolean;       // 管理者が設定した優先再確認フラグ
   // 表示カテゴリ（CSVインポート時に明示設定・自動分類より優先）

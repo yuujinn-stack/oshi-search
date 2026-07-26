@@ -316,3 +316,25 @@ export const workMergeLogs = pgTable('work_merge_logs', {
   index('wml_candidate_group_key_idx').on(t.candidateGroupKey),
   index('wml_executed_at_idx').on(t.executedAt),
 ]);
+
+// ── VOD再確認 監査ログ（vod_recheck_logs）──────────────────────────────────────
+// /admin/vod-recheck からの手動操作（開始/完了/要確認/スキップ/メモ保存）を記録する。
+// work_status_history と同じ「追記専用ログ」パターン（fire-and-forgetで挿入）。
+export const vodRecheckLogs = pgTable('vod_recheck_logs', {
+  id:                  serial('id').primaryKey(),
+  personName:          text('person_name').notNull(),
+  workId:              text('work_id').notNull(),
+  action:              text('action').notNull(), // 'start' | 'complete' | 'needs_review' | 'skip' | 'note'
+  performedBy:         text('performed_by').notNull(),
+  note:                text('note'),
+  updatedProviderCount: integer('updated_provider_count'),
+  activeCountBefore:   integer('active_count_before'),
+  activeCountAfter:    integer('active_count_after'),
+  unknownCountBefore:  integer('unknown_count_before'),
+  unknownCountAfter:   integer('unknown_count_after'),
+  vodCheckStatusAfter: text('vod_check_status_after'),
+  createdAt:           timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('vrl_person_work_idx').on(t.personName, t.workId),
+  index('vrl_created_at_idx').on(t.createdAt),
+]);
