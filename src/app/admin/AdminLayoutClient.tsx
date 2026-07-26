@@ -23,7 +23,7 @@ const NAV_ITEMS = [
   { href: '/admin/vod-recheck',                label: '📺 VOD再確認' },
 ] as const;
 
-function isNavItemActive(pathname: string, href: string): boolean {
+export function isNavItemActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

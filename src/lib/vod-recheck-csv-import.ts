@@ -1,19 +1,11 @@
 // VOD再確認CSVの取り込み・反映ロジック（プレビュー・実行の両方を1関数に集約）。
-// /api/admin/vod-recheck/csv-import（手動貼り付け・ファイル選択）と、
-// /api/admin/vod-recheck/investigation-jobs/[jobId]/apply-preview・apply
-// （自動調査ジョブの承認結果を反映する経路）の両方がこの同じ関数を呼ぶ。
-// これにより「既存のCSV反映ロジックを再利用する」を文字通り実現し、workIdのcanonical解決・
-// 非活性化作品の拒否・manual_csv保存・監査ログ・処理状態変更のロジックが2箇所に分岐しない。
+// /api/admin/vod-recheck/csv-import（手動貼り付け・ファイル選択）から呼ばれる。
+// workIdのcanonical解決・非活性化作品の拒否・manual_csv保存・監査ログ・処理状態変更の
+// ロジックをこの1関数に集約する。
 import { MAX_CSV_FILE_BYTES } from '@/lib/csv-parse';
 import { parseAndValidateImportCsv } from '@/lib/vod-recheck-csv';
 import { resolveActiveWorkTargets } from '@/lib/vod-recheck-store';
-import {
-  upsertManualCsvVodProviders,
-  syncManualCsvVodProviders,
-  mergeManualCsvVodProviders,
-  syncManualCsvVodProvidersPure,
-  getWork,
-} from '@/lib/work-store';
+import { upsertManualCsvVodProviders, mergeManualCsvVodProviders, getWork } from '@/lib/work-store';
 import { insertVodRecheckLog } from '@/db/write';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { detectRecheckReasons } from '@/lib/vod-recheck';
@@ -44,16 +36,6 @@ function lookupService(name: string): { id: number; logoPath?: string } {
     return { id: -(h % 90000) - 10200 };
   }
   return SERVICE_LOOKUP[key];
-}
-
-export type MergeStrategy = 'additive' | 'sync';
-
-export interface RunCsvImportOptions {
-  /** 'additive'（既定・既存仕様）: 同名manual_csvは上書き、他は保持。
-   *  'sync': 既存のmanual_csvを全て新しい内容で完全置換（自動調査ジョブの反映で使用）。 */
-  mergeStrategy?: MergeStrategy;
-  /** 監査ログの実行者・action名（省略時は既存仕様どおり 'admin:vod-recheck-csv-import' / 'complete'） */
-  performedBy?: string;
 }
 
 export type RunCsvImportResult =
@@ -93,11 +75,7 @@ interface ApplyResponse {
 export async function runVodRecheckCsvImport(
   csv: string,
   commit: boolean,
-  options: RunCsvImportOptions = {},
 ): Promise<RunCsvImportResult> {
-  const mergeStrategy = options.mergeStrategy ?? 'additive';
-  const performedBy = options.performedBy ?? 'admin:vod-recheck-csv-import';
-
   if (!csv.trim()) {
     return { status: 400, body: { error: 'csv（文字列）が必要です' } };
   }
@@ -166,10 +144,8 @@ export async function runVodRecheckCsvImport(
         now,
       });
 
-      const merged = mergeStrategy === 'sync'
-        ? syncManualCsvVodProvidersPure(currentProviders, providers).merged
-        : mergeManualCsvVodProviders(currentProviders, providers).merged;
-
+      // 実際の upsertManualCsvVodProviders() と同じマージ関数でシミュレーション（DB書き込みなし）
+      const { merged } = mergeManualCsvVodProviders(currentProviders, providers);
       const afterDetection = detectRecheckReasons({
         vodProviders: merged,
         lastVodCheckAt: current?.lastVodCheckAt,
@@ -186,12 +162,6 @@ export async function runVodRecheckCsvImport(
 
       const warnings: string[] = [];
       if (!current) warnings.push('現在のVOD情報を取得できませんでした（新規登録として扱われます）');
-      if (mergeStrategy === 'sync') {
-        const removedCount = currentProviders.filter((p) => p.source === 'manual_csv').length;
-        if (removedCount > 0) {
-          warnings.push(`既存の手動登録サービス${removedCount}件は今回の調査結果で置き換えられます（削除されるものが含まれる場合があります）`);
-        }
-      }
 
       return {
         workId: canonicalWorkId,
@@ -208,6 +178,7 @@ export async function runVodRecheckCsvImport(
       };
     }));
 
+    // 1件でも未解決（存在しない・非活性化されたworkId）があれば反映を無効化する
     const hasFatalErrors = unresolvedWorkIds.length > 0 || preview.some((p) => p.errors.length > 0);
 
     return {
@@ -245,11 +216,7 @@ export async function runVodRecheckCsvImport(
         }) : undefined;
 
         // vod_dataのみ更新。status/deleted（公開状態）は一切変更しない
-        if (mergeStrategy === 'sync') {
-          await syncManualCsvVodProviders(personName, workId, providers);
-        } else {
-          await upsertManualCsvVodProviders(personName, workId, providers);
-        }
+        await upsertManualCsvVodProviders(personName, workId, providers);
 
         const after = await getWork(personName, workId);
         const afterDetection = after ? detectRecheckReasons({
@@ -267,8 +234,8 @@ export async function runVodRecheckCsvImport(
             personName,
             workId,
             action: 'complete',
-            performedBy,
-            note: `CSVインポート(${mergeStrategy}): ${providers.length}件のVOD情報を反映`,
+            performedBy: 'admin:vod-recheck-csv-import',
+            note: `CSVインポート: ${providers.length}件のVOD情報を反映`,
             updatedProviderCount: providers.length,
             activeCountBefore: beforeDetection?.activeCount,
             activeCountAfter: afterDetection?.activeCount,

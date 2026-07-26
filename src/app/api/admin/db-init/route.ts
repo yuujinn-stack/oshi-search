@@ -153,38 +153,6 @@ const CREATE_STATEMENTS = [
   )`,
   sql`CREATE INDEX IF NOT EXISTS vrl_person_work_idx ON vod_recheck_logs (person_name, work_id)`,
   sql`CREATE INDEX IF NOT EXISTS vrl_created_at_idx ON vod_recheck_logs (created_at)`,
-  sql`CREATE TABLE IF NOT EXISTS vod_investigation_jobs (
-    id         TEXT PRIMARY KEY,
-    status     TEXT NOT NULL DEFAULT 'pending',
-    created_by TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  )`,
-  sql`CREATE INDEX IF NOT EXISTS vij_status_idx ON vod_investigation_jobs (status)`,
-  sql`CREATE INDEX IF NOT EXISTS vij_created_at_idx ON vod_investigation_jobs (created_at)`,
-  sql`CREATE TABLE IF NOT EXISTS vod_investigation_job_items (
-    id                         SERIAL PRIMARY KEY,
-    job_id                     TEXT NOT NULL,
-    work_id                    TEXT NOT NULL,
-    person_name                TEXT NOT NULL,
-    title                      TEXT NOT NULL,
-    work_type                  TEXT NOT NULL,
-    release_year               INTEGER,
-    status                     TEXT NOT NULL DEFAULT 'pending',
-    decision                   TEXT NOT NULL DEFAULT 'pending',
-    retry_count                INTEGER NOT NULL DEFAULT 0,
-    candidate_providers        JSONB,
-    current_providers_snapshot JSONB,
-    manual_providers           JSONB,
-    error_message              TEXT,
-    investigated_at            TIMESTAMPTZ,
-    decided_at                 TIMESTAMPTZ,
-    decided_by                 TEXT,
-    created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  )`,
-  sql`CREATE INDEX IF NOT EXISTS viji_job_id_idx ON vod_investigation_job_items (job_id)`,
-  sql`CREATE INDEX IF NOT EXISTS viji_job_status_idx ON vod_investigation_job_items (job_id, status)`,
 ];
 
 // ── ALTER TABLE ADD COLUMN IF NOT EXISTS ─────────────────────────────────────
@@ -272,7 +240,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE verdicts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
 ];
 
-const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'vod_investigation_jobs', 'vod_investigation_job_items'];
+const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs'];
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。
