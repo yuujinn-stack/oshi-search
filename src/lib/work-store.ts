@@ -73,11 +73,20 @@ export async function getAllWorks(personName: string): Promise<WorkRecord[]> {
 }
 
 // 公開中（auto_published）の作品のみ取得（人物ページ表示用）
+// status/deleted を SQL 側でフィルタし、不要な行・列の転送を避ける
 export async function getPublishedWorks(personName: string): Promise<WorkRecord[]> {
-  const all = await getAllWorks(personName);
-  return all
-    .filter((w) => w.status === 'auto_published' && !w.deleted)
-    .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0));
+  try {
+    const rows = await db.select().from(worksTable).where(and(
+      eq(worksTable.personName, personName),
+      eq(worksTable.status, 'auto_published'),
+      eq(worksTable.deleted, false),
+    ));
+    return rows.map(dbRowToWorkRecord)
+      .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0));
+  } catch (err) {
+    console.error('[db] getPublishedWorks failed:', String(err));
+    return [];
+  }
 }
 
 // DBエラー時に throw する版（人物ページで error/empty を区別するために使う）

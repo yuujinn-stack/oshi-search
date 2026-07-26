@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { db } from '@/db/client';
 import { groupMeta as groupMetaTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
@@ -23,10 +24,17 @@ function dbRowToGroupMeta(r: typeof groupMetaTable.$inferSelect): GroupMeta {
   };
 }
 
+// react の cache() でリクエスト内の重複 DB 呼び出しを防ぐ（generateMetadata + page で
+// それぞれ getAllGroupMetas / getAllGroupMetasOrThrow を呼んでも group_meta の取得は1回のみ）。
+// cross-request キャッシュではないため、管理画面での更新は次のリクエストから即座に反映される。
+const getAllGroupMetasRaw = cache(async (): Promise<GroupMeta[]> => {
+  const rows = await db.select().from(groupMetaTable);
+  return rows.map(dbRowToGroupMeta).sort((a, b) => a.groupName.localeCompare(b.groupName, 'ja'));
+});
+
 export async function getAllGroupMetas(): Promise<GroupMeta[]> {
   try {
-    const rows = await db.select().from(groupMetaTable);
-    return rows.map(dbRowToGroupMeta).sort((a, b) => a.groupName.localeCompare(b.groupName, 'ja'));
+    return await getAllGroupMetasRaw();
   } catch (err) {
     console.error('[db] getAllGroupMetas failed:', String(err));
     return [];
@@ -36,8 +44,7 @@ export async function getAllGroupMetas(): Promise<GroupMeta[]> {
 // DBエラー時に throw する版（グループページのリダイレクト判定で error/empty を区別するために使う）
 // getAllGroupMetas が [] を返すと改名グループが 404 になるため OrThrow で区別する
 export async function getAllGroupMetasOrThrow(): Promise<GroupMeta[]> {
-  const rows = await db.select().from(groupMetaTable);
-  return rows.map(dbRowToGroupMeta).sort((a, b) => a.groupName.localeCompare(b.groupName, 'ja'));
+  return await getAllGroupMetasRaw();
 }
 
 export async function getGroupMeta(groupName: string): Promise<GroupMeta | null> {

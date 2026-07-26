@@ -36,6 +36,7 @@ interface Props {
 // ─── 定数 ──────────────────────────────────────────────────────────────────────
 const MAX_PRODUCTS_PER_SECTION = 12;
 const MAX_WORKS_PER_PROVIDER = 6;
+const MAX_WORKS_PER_DECADE = 12;
 
 // ─── 活動状態 ──────────────────────────────────────────────────────────────────
 const ACTIVITY_LABEL: Record<ActivityStatus, string> = {
@@ -249,14 +250,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function GroupsPage({ params }: Props) {
   const { groupSlug } = await params;
 
-  // ── GroupMeta 取得 ──
-  let allGroupMetas: GroupMeta[] = [];
-  let groupMetaRedisError = false;
-  try {
-    allGroupMetas = await getAllGroupMetasOrThrow();
-  } catch {
-    groupMetaRedisError = true;
-  }
+  // ── GroupMeta 取得 + メンバー取得 ──
+  // 互いに依存しないため並列実行（直列だと group_meta 取得完了までメンバー取得が遅延していた）
+  const [groupMetaResult, allPersons] = await Promise.all([
+    getAllGroupMetasOrThrow().then(
+      (data) => ({ data, error: false }),
+      () => ({ data: [] as GroupMeta[], error: true }),
+    ),
+    getAllPersonsMerged(),
+  ]);
+  const allGroupMetas = groupMetaResult.data;
+  const groupMetaRedisError = groupMetaResult.error;
 
   // ── スラッグ解決 & canonical リダイレクト ──
   const resolvedMeta = resolveGroupFromSlug(groupSlug, allGroupMetas);
@@ -274,8 +278,7 @@ export default async function GroupsPage({ params }: Props) {
     ?? decodeURIComponent(groupSlug);
   const groupMeta: GroupMeta | null = resolvedMeta ?? null;
 
-  // ── メンバー取得 ──
-  const allPersons = await getAllPersonsMerged();
+  // ── メンバー抽出 ──
   const members = allPersons.filter((p) => p.group === groupName);
 
   void groupMetaRedisError;
@@ -780,10 +783,15 @@ export default async function GroupsPage({ params }: Props) {
                     </summary>
                     <div className="p-4" style={{ borderTop: '1px solid var(--ds-border)' }}>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                        {works.map((work) => (
+                        {works.slice(0, MAX_WORKS_PER_DECADE).map((work) => (
                           <CompactWorkLink key={work.id} work={work} />
                         ))}
                       </div>
+                      {works.length > MAX_WORKS_PER_DECADE && (
+                        <p className="text-xs text-center mt-2" style={{ color: 'var(--ds-muted)' }}>
+                          他 {works.length - MAX_WORKS_PER_DECADE}件
+                        </p>
+                      )}
                     </div>
                   </details>
                 ))}
