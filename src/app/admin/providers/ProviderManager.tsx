@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { normalizeProviderName } from '@/lib/vod-dedup';
 import type { ProviderRecord } from '@/lib/provider-store';
 
@@ -75,12 +76,23 @@ function AddForm({ onAdded }: AddFormProps) {
 
   if (!open) {
     return (
-      <button
-        onClick={() => setOpen(true)}
-        className="mb-6 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors"
-      >
-        + 新規登録
-      </button>
+      <div className="mb-6 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setOpen(true)}
+            className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors"
+          >
+            + 新規登録
+          </button>
+          <Link
+            href="/admin/vod-recheck"
+            className="px-4 py-2 bg-white border border-indigo-200 text-indigo-700 text-sm font-semibold rounded-xl hover:bg-indigo-50 transition-colors"
+          >
+            VOD配信情報を再確認
+          </Link>
+        </div>
+        <p className="text-xs text-gray-400">作品ごとの最新配信情報をCSVで確認・反映します</p>
+      </div>
     );
   }
 
