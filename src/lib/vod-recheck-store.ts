@@ -42,6 +42,10 @@ export interface RecheckListParams {
   workId?: string;
   reason?: RecheckReasonCode;
   priority?: RecheckPriority;
+  /** 作品種別（movie/tv/variety/anime）でのSQL側絞り込み */
+  workType?: string;
+  /** 処理状態（not_started/checking/needs_recheck/checked/failed/skipped）でのSQL側絞り込み */
+  processStatus?: string;
   /** 「アクセス上位」フィルタ・優先度算出用に外部(Redis)で計算したworkId集合 */
   highTrafficWorkIds?: string[];
 }
@@ -220,6 +224,8 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
   const offset = (page - 1) * pageSize;
   const search = (params.search ?? '').trim();
   const workIdSearch = (params.workId ?? '').trim();
+  const workType = (params.workType ?? '').trim();
+  const processStatus = (params.processStatus ?? '').trim();
   const highTrafficWorkIds = params.highTrafficWorkIds ?? [];
 
   const extraFilter = params.reason
@@ -232,6 +238,11 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
     ? neonSql`AND (w.title ILIKE ${'%' + search + '%'} OR w.id ILIKE ${'%' + search + '%'})`
     : neonSql``;
   const workIdFilter = workIdSearch ? neonSql`AND w.id ILIKE ${'%' + workIdSearch + '%'}` : neonSql``;
+  const workTypeFilter = workType ? neonSql`AND w.type = ${workType}` : neonSql``;
+  // vodCheckStatus は vod_data(JSONB) 内。未設定(NULL)は 'not_started' 扱い（vod-recheck.tsのresolveRecheckProcessStatusと同じ規則）
+  const processStatusFilter = processStatus
+    ? neonSql`AND COALESCE(w.vod_data->>'vodCheckStatus', 'not_started') = ${processStatus}`
+    : neonSql``;
 
   const rows = await neonSql`
     WITH representative AS (
@@ -252,6 +263,8 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
       ${extraFilter}
       ${searchFilter}
       ${workIdFilter}
+      ${workTypeFilter}
+      ${processStatusFilter}
     ORDER BY id
     LIMIT ${pageSize} OFFSET ${offset}
   `;
@@ -259,7 +272,7 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
   const countRows = await neonSql`
     WITH representative AS (
       SELECT DISTINCT ON (id)
-        id, title, vod_data
+        id, title, type, vod_data
       FROM works
       WHERE status = 'auto_published' AND deleted = false
       ORDER BY id, person_name
@@ -275,6 +288,8 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
       ${extraFilter}
       ${searchFilter}
       ${workIdFilter}
+      ${workTypeFilter}
+      ${processStatusFilter}
   `;
 
   const workIds = rows.map((r) => r.id as string);
@@ -318,13 +333,20 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
 
 // ── アクセス数（Redis work:click:*） ──────────────────────────────────────────
 // src/lib/ranking.ts と同じキー形式・SCANパターンを再利用する。
-// Redis未設定・接続失敗時は空のMapを返す（一覧表示自体は継続できる= Redis失敗時の graceful degradation）。
+//
+// Redis未設定・接続失敗時に「0件」と「本当にクリック0件」を混同しないよう、
+// available（Redisから正常に取得できたか）を明示的に返す。
+// available=false の場合、counts の中身は信頼できない（呼び出し側は表示に使わないこと）。
+export interface ClickCountsResult {
+  counts: Map<string, number>;
+  available: boolean;
+}
 
-export async function getClickCountsForWorkIds(workIds: string[]): Promise<Map<string, number>> {
+export async function getClickCountsForWorkIds(workIds: string[]): Promise<ClickCountsResult> {
   const map = new Map<string, number>();
-  if (workIds.length === 0) return map;
   const redis = getRedis();
-  if (!redis) return map;
+  if (!redis) return { counts: map, available: false };
+  if (workIds.length === 0) return { counts: map, available: true };
   try {
     const keys = workIds.map((id) => `work:click:${id}`);
     const counts = await redis.mget<(string | null)[]>(...keys);
@@ -332,10 +354,11 @@ export async function getClickCountsForWorkIds(workIds: string[]): Promise<Map<s
       const c = parseInt(String(counts[i] ?? '0'), 10) || 0;
       if (c > 0) map.set(id, c);
     });
+    return { counts: map, available: true };
   } catch (err) {
     console.error('[vod-recheck-store] getClickCountsForWorkIds failed:', err);
+    return { counts: map, available: false };
   }
-  return map;
 }
 
 // クリック数が1件以上ある作品のうち、上位20%（相対順位）を「アクセス上位」とみなす。

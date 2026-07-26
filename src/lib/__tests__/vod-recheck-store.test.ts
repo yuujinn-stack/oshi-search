@@ -18,7 +18,7 @@ const mockState = vi.hoisted(() => {
     return Promise.resolve(makeResult());
   });
 
-  const redisFn = vi.fn(() => null);
+  const redisFn = vi.fn((): unknown => null);
 
   return { calls, neonSqlFn, redisFn };
 });
@@ -143,6 +143,32 @@ describe('18. workId検索', () => {
   });
 });
 
+describe('作品種別フィルター（workType）', () => {
+  it('workType指定時は w.type = 条件と値が渡される', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 10, workType: 'movie' });
+    expect(anyCallIncludesText('w.type =')).toBe(true);
+    expect(anyCallIncludesValue('movie')).toBe(true);
+  });
+
+  it('workType未指定時は絞り込まれない', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 10 });
+    expect(anyCallIncludesValue('movie')).toBe(false);
+  });
+});
+
+describe('処理状態フィルター（processStatus）', () => {
+  it('processStatus指定時は vodCheckStatus 条件と値が渡される', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 10, processStatus: 'checked' });
+    expect(anyCallIncludesText("vodCheckStatus'")).toBe(true);
+    expect(anyCallIncludesValue('checked')).toBe(true);
+  });
+
+  it('not_started（未処理）も指定可能', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 10, processStatus: 'not_started' });
+    expect(anyCallIncludesValue('not_started')).toBe(true);
+  });
+});
+
 describe('24・25. canonical workId対象・非活性化作品の除外', () => {
   it('候補クエリは auto_published かつ deleted=false のみを対象にする（統合済み旧workId・非活性化作品は除外される）', async () => {
     await getRecheckCandidates({ page: 1, pageSize: 10 });
@@ -151,10 +177,11 @@ describe('24・25. canonical workId対象・非活性化作品の除外', () => 
 });
 
 describe('13. Redis失敗時も一覧表示できる（getRedis()がnullを返す場合）', () => {
-  it('getClickCountsForWorkIds は空のMapを返す（例外を投げない）', async () => {
+  it('getClickCountsForWorkIds は空のMap・available=falseを返す（例外を投げず、0件と失敗を区別できる）', async () => {
     const result = await getClickCountsForWorkIds(['work-1', 'work-2']);
-    expect(result).toBeInstanceOf(Map);
-    expect(result.size).toBe(0);
+    expect(result.counts).toBeInstanceOf(Map);
+    expect(result.counts.size).toBe(0);
+    expect(result.available).toBe(false);
   });
 
   it('getHighTrafficWorkIds は空配列を返す（例外を投げない）', async () => {
@@ -166,5 +193,23 @@ describe('13. Redis失敗時も一覧表示できる（getRedis()がnullを返�
     const result = await getRecheckCandidates({ page: 1, pageSize: 10 });
     expect(result.rows).toEqual([]);
     expect(result.page).toBe(1);
+  });
+
+  it('Redisが利用可能な場合は available=true で実際のカウント（0件含む）を区別できる', async () => {
+    mockState.redisFn.mockReturnValueOnce({
+      mget: vi.fn().mockResolvedValue(['0', '5']),
+    });
+    const result = await getClickCountsForWorkIds(['work-a', 'work-b']);
+    expect(result.available).toBe(true);
+    expect(result.counts.get('work-a')).toBeUndefined(); // 0件は未登録のまま（本当のゼロ）
+    expect(result.counts.get('work-b')).toBe(5);
+  });
+
+  it('Redis呼び出しが例外を投げた場合も available=false になる', async () => {
+    mockState.redisFn.mockReturnValueOnce({
+      mget: vi.fn().mockRejectedValue(new Error('redis timeout')),
+    });
+    const result = await getClickCountsForWorkIds(['work-a']);
+    expect(result.available).toBe(false);
   });
 });

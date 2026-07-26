@@ -35,7 +35,8 @@ export interface RecheckListItem {
   unknownCount: number;
   lastCheckedAt: number | null;
   daysSinceLastCheck: number | null;
-  clickCount: number;
+  /** Redisから正常に取得できた場合のみ数値。取得できなかった場合はnull（「0件」と誤認させないため） */
+  clickCount: number | null;
   reasonCodes: RecheckReasonCode[];
   reasonLabels: string[];
   priority: RecheckPriority;
@@ -51,6 +52,8 @@ export interface RecheckListResult {
   total: number;
   page: number;
   pageSize: number;
+  /** アクセス数（Redis work:click:*）を正常に取得できたか。falseの場合は一覧のclickCountが全件nullになる */
+  clickCountsAvailable: boolean;
 }
 
 export async function fetchRecheckListPage(params: RecheckListParams): Promise<RecheckListResult> {
@@ -63,7 +66,7 @@ export async function fetchRecheckListPage(params: RecheckListParams): Promise<R
   const highTrafficSet = new Set(highTrafficWorkIds);
 
   const result = await getRecheckCandidates({ ...params, highTrafficWorkIds });
-  const clickCounts = await getClickCountsForWorkIds(result.rows.map((r) => r.workId));
+  const { counts: clickCounts, available: clickCountsAvailable } = await getClickCountsForWorkIds(result.rows.map((r) => r.workId));
   const now = Date.now();
 
   const items: RecheckListItem[] = result.rows.map((row) => {
@@ -94,7 +97,7 @@ export async function fetchRecheckListPage(params: RecheckListParams): Promise<R
       unknownCount: detection.unknownCount,
       lastCheckedAt: detection.lastCheckedAt ?? null,
       daysSinceLastCheck: detection.daysSinceLastCheck ?? null,
-      clickCount: clickCounts.get(row.workId) ?? 0,
+      clickCount: clickCountsAvailable ? (clickCounts.get(row.workId) ?? 0) : null,
       reasonCodes: detection.codes,
       reasonLabels: detection.codes.map((c) => RECHECK_REASON_LABEL[c]),
       priority: detection.priority,
@@ -106,5 +109,5 @@ export async function fetchRecheckListPage(params: RecheckListParams): Promise<R
     };
   });
 
-  return { items, total: result.total, page: result.page, pageSize: result.pageSize };
+  return { items, total: result.total, page: result.page, pageSize: result.pageSize, clickCountsAvailable };
 }

@@ -36,6 +36,22 @@ const ACTION_OPTIONS: Array<{ value: RecheckAction; label: string }> = [
   { value: 'skip', label: '今回はスキップ' },
 ];
 
+const WORK_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'movie', label: '映画' },
+  { value: 'tv', label: 'ドラマ' },
+  { value: 'variety', label: 'バラエティ' },
+  { value: 'anime', label: 'アニメ' },
+];
+
+const PROCESS_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'not_started', label: '未処理' },
+  { value: 'checking', label: '処理中' },
+  { value: 'needs_recheck', label: '要確認' },
+  { value: 'checked', label: '完了' },
+  { value: 'failed', label: '失敗' },
+  { value: 'skipped', label: 'スキップ' },
+];
+
 const MAX_BULK_ITEMS = 50;
 
 function fmtDate(ts: number | null): string {
@@ -54,6 +70,8 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
   const [workIdSearch, setWorkIdSearch] = useState('');
   const [reason, setReason] = useState<RecheckReasonCode | ''>('');
   const [priority, setPriority] = useState<RecheckPriority | ''>('');
+  const [workType, setWorkType] = useState('');
+  const [processStatus, setProcessStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -74,6 +92,8 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
       if (workIdSearch.trim()) params.set('workId', workIdSearch.trim());
       if (reason) params.set('reason', reason);
       if (priority) params.set('priority', priority);
+      if (workType) params.set('workType', workType);
+      if (processStatus) params.set('processStatus', processStatus);
 
       const res = await fetch(`/api/admin/vod-recheck/candidates?${params.toString()}`);
       const json = await res.json();
@@ -84,7 +104,7 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
     } finally {
       setLoading(false);
     }
-  }, [page, search, workIdSearch, reason, priority]);
+  }, [page, search, workIdSearch, reason, priority, workType, processStatus]);
 
   useEffect(() => {
     if (isFirstRun.current) { isFirstRun.current = false; return; }
@@ -98,7 +118,7 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
     if (page !== 1) { setPage(1); return; }
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, workIdSearch, reason, priority]);
+  }, [search, workIdSearch, reason, priority, workType, processStatus]);
 
   function toggleSelect(item: RecheckListItem) {
     const key = rowKey(item);
@@ -229,10 +249,24 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
           <option value="">優先度: すべて</option>
           {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
+        <select value={workType} onChange={(e) => setWorkType(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+          <option value="">作品種別: すべて</option>
+          {WORK_TYPE_OPTIONS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+        <select value={processStatus} onChange={(e) => setProcessStatus(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+          <option value="">処理状態: すべて</option>
+          {PROCESS_STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
         <span className="text-xs text-gray-400 ml-auto">
           {loading ? '読み込み中…' : `全${data.total.toLocaleString()}件`}
         </span>
       </div>
+
+      {!data.clickCountsAvailable && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg px-3 py-2">
+          Redisからアクセス数を取得できませんでした。アクセス数列は「不明」として表示しています（0件と確認できたわけではありません）。
+        </div>
+      )}
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{error}</div>}
       {actionMsg && <div className="bg-blue-50 border border-blue-200 text-blue-700 text-sm rounded-lg px-3 py-2">{actionMsg}</div>}
@@ -270,9 +304,14 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
           type="button"
           disabled={selected.size === 0}
           onClick={exportCsv}
-          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors"
+          title="チェックボックスで選択した作品のみをCSV出力します（絞り込み結果全体ではありません）"
+          className={
+            selected.size === 0
+              ? 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-200 text-gray-400 cursor-not-allowed'
+              : 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors'
+          }
         >
-          CSV出力
+          選択した作品をCSV出力（{selected.size}件）
         </button>
       </div>
 
@@ -315,7 +354,11 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
                   <td className="p-2 text-center">{item.unknownCount}</td>
                   <td className="p-2 text-center whitespace-nowrap">{fmtDate(item.lastCheckedAt)}</td>
                   <td className="p-2 text-center">{item.daysSinceLastCheck ?? '—'}</td>
-                  <td className="p-2 text-center">{item.clickCount}</td>
+                  <td className="p-2 text-center">
+                    {item.clickCount === null
+                      ? <span className="text-gray-400" title="Redisからアクセス数を取得できませんでした">不明</span>
+                      : item.clickCount}
+                  </td>
                   <td className="p-2">
                     <div className="flex flex-wrap gap-1">
                       {item.reasonLabels.map((label, i) => (
