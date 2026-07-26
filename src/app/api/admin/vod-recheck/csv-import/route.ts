@@ -3,11 +3,14 @@
 // 必須列: workId, vodService　（1作品1サービス1行）
 // 任意列: availabilityType（flatrate/rent/buy/free/unknown）, sourceUrl, confidence, note
 //
-// 同一workIdに複数人物が紐づく場合は、その全員に同じ配信情報を適用する
-// （getAllPersonsForWorkと同じ「1 workId → 複数人物」解決を一括クエリで行う）。
-// commit=false（デフォルト）: プレビューのみ。commit=true: 実際に保存 + 監査ログ記録。
+// workIdの解決は resolveActiveWorkTargets() を使い、候補一覧・CSV出力と同じ対象判定
+// ロジックを共有する。work_aliasesに登録された旧workIdはcanonical workIdへ解決され、
+// 非活性化（hidden/deleted）された作品・存在しないworkIdは解決不可（拒否）として扱う。
+// 同一workIdに複数人物が紐づく場合は、その全員に同じ配信情報を適用する。
+// commit=false（デフォルト）: プレビューのみ・DB変更なし。commit=true: 実際に保存 + 監査ログ記録。
+// いずれの場合も公開状態（status/deleted）は変更しない（vod_dataのみ更新）。
 import { NextRequest, NextResponse } from 'next/server';
-import { neonSql } from '@/db/client';
+import { resolveActiveWorkTargets } from '@/lib/vod-recheck-store';
 import { upsertManualCsvVodProviders, getWork } from '@/lib/work-store';
 import { insertVodRecheckLog } from '@/db/write';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
@@ -144,29 +147,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'CSVの内容にエラーがあります', details: errors }, { status: 400 });
   }
 
-  // workId → 対象人物一覧を一括解決（N+1回避）
+  // workId解決: 候補一覧・CSV出力と共通のロジック（resolveActiveWorkTargets）を使う。
+  // 旧workId（work_aliases登録済み）はcanonical workIdへ解決され、非活性化・存在しない
+  // workIdはunresolvedWorkIdsに入る（DBは変更しない・読み取りのみ）。
   const workIds = [...new Set(parsed.map((p) => p.workId))];
-  const personRows = await neonSql`
-    SELECT DISTINCT id AS work_id, person_name
-    FROM works
-    WHERE id = ANY(${workIds}) AND status = 'auto_published' AND deleted = false
-  `;
-  const personsByWork = new Map<string, string[]>();
-  for (const r of personRows) {
-    const wid = r.work_id as string;
-    const list = personsByWork.get(wid) ?? [];
-    list.push(r.person_name as string);
-    personsByWork.set(wid, list);
-  }
+  const { resolved, unresolved: unresolvedWorkIds } = await resolveActiveWorkTargets(workIds);
 
-  const unresolvedWorkIds = workIds.filter((id) => !personsByWork.has(id));
+  // canonical workId単位でVodProviderへ変換（同一canonicalに複数の入力workId・複数サービス行が
+  // 集まる場合は1つの配列にまとめる）
+  const providersByCanonical = new Map<string, VodProvider[]>();
+  const personsByCanonical = new Map<string, string[]>();
+  const canonicalByInput = new Map<string, { canonicalWorkId: string; resolvedViaAlias: boolean }>();
 
-  // workIdごとにVodProviderへ変換（同一workIdで複数サービス行があれば1つの配列にまとめる）
-  const providersByWork = new Map<string, VodProvider[]>();
   for (const row of parsed) {
-    if (!personsByWork.has(row.workId)) continue;
+    const target = resolved.get(row.workId);
+    if (!target) continue; // unresolved（未解決）はスキップ。unresolvedWorkIdsで報告済み
+    canonicalByInput.set(row.workId, { canonicalWorkId: target.canonicalWorkId, resolvedViaAlias: target.resolvedViaAlias });
+    personsByCanonical.set(target.canonicalWorkId, target.personNames);
+
     const svc = lookupService(row.vodService);
-    const list = providersByWork.get(row.workId) ?? [];
+    const list = providersByCanonical.get(target.canonicalWorkId) ?? [];
     list.push({
       providerId: svc.id,
       providerName: row.vodService,
@@ -181,21 +181,28 @@ export async function POST(req: NextRequest) {
       checkedDate: new Date().toISOString().slice(0, 10),
       updatedAt: Date.now(),
     });
-    providersByWork.set(row.workId, list);
+    providersByCanonical.set(target.canonicalWorkId, list);
   }
 
-  const preview = [...providersByWork.entries()].map(([workId, providers]) => ({
-    workId,
-    persons: personsByWork.get(workId) ?? [],
-    providers: providers.map((p) => ({ providerName: p.providerName, type: p.type })),
-  }));
+  const preview = [...providersByCanonical.entries()].map(([canonicalWorkId, providers]) => {
+    // このcanonicalに解決された入力workIdのうち、canonical自身と異なるもの（= 旧workIdだった）を集める
+    const resolvedFrom = [...canonicalByInput.entries()]
+      .filter(([, v]) => v.canonicalWorkId === canonicalWorkId && v.resolvedViaAlias)
+      .map(([inputWorkId]) => inputWorkId);
+    return {
+      workId: canonicalWorkId,
+      resolvedFrom: resolvedFrom.length > 0 ? resolvedFrom : undefined,
+      persons: personsByCanonical.get(canonicalWorkId) ?? [],
+      providers: providers.map((p) => ({ providerName: p.providerName, type: p.type })),
+    };
+  });
 
   if (!commit) {
     return NextResponse.json({
       commit: false,
       preview,
       unresolvedWorkIds,
-      totalWorkIds: providersByWork.size,
+      totalWorkIds: providersByCanonical.size,
       totalRows: parsed.length,
     });
   }
@@ -206,8 +213,8 @@ export async function POST(req: NextRequest) {
   let updatedWorks = 0;
   const applyErrors: string[] = [];
 
-  for (const [workId, providers] of providersByWork.entries()) {
-    const persons = personsByWork.get(workId) ?? [];
+  for (const [workId, providers] of providersByCanonical.entries()) {
+    const persons = personsByCanonical.get(workId) ?? [];
     for (const personName of persons) {
       try {
         const before = await getWork(personName, workId);
@@ -221,6 +228,7 @@ export async function POST(req: NextRequest) {
           now,
         }) : undefined;
 
+        // vod_dataのみ更新。status/deleted（公開状態）は一切変更しない
         await upsertManualCsvVodProviders(personName, workId, providers);
 
         const after = await getWork(personName, workId);

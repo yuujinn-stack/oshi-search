@@ -59,6 +59,14 @@ export function clampPageSize(pageSize: number): number {
   return Math.min(MAX_PAGE_SIZE, Math.max(1, n));
 }
 
+// ── 「有効な公開作品」の判定条件（単一の定義） ─────────────────────────────────
+// 候補一覧（getRecheckCandidates）・CSV出力・CSVインポートのworkId解決
+// （resolveActiveWorkTargets）のすべてがこの1つの関数を使う。
+// ここを変更すれば全ての判定が同時に更新される（対象判定ロジックの分岐を防ぐ）。
+export function activeWorkFragment() {
+  return neonSql`status = 'auto_published' AND deleted = false`;
+}
+
 // ── 理由コード → SQL条件フラグメント ──────────────────────────────────────────
 // 各フラグメントは vod_data 列 (w.vod_data) を参照する。すべて neonSql タグ付きテンプレート
 // のみで組み立て、文字列連結によるSQLインジェクションのリスクを避ける。
@@ -249,7 +257,7 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
       SELECT DISTINCT ON (id)
         id, person_name, title, type, release_year, vod_data
       FROM works
-      WHERE status = 'auto_published' AND deleted = false
+      WHERE ${activeWorkFragment()}
       ORDER BY id, person_name
     )
     SELECT w.*, al.merged_at
@@ -274,7 +282,7 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
       SELECT DISTINCT ON (id)
         id, title, type, vod_data
       FROM works
-      WHERE status = 'auto_published' AND deleted = false
+      WHERE ${activeWorkFragment()}
       ORDER BY id, person_name
     )
     SELECT COUNT(*)::int AS total
@@ -297,7 +305,7 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
     ? await neonSql`
         SELECT id AS work_id, COUNT(DISTINCT person_name)::int AS person_count
         FROM works
-        WHERE id = ANY(${workIds}) AND status = 'auto_published' AND deleted = false
+        WHERE id = ANY(${workIds}) AND ${activeWorkFragment()}
         GROUP BY id
       `
     : [];
@@ -396,4 +404,100 @@ export async function getHighTrafficWorkIds(): Promise<string[]> {
     console.error('[vod-recheck-store] getHighTrafficWorkIds failed:', err);
     return [];
   }
+}
+
+// ── workId解決（候補一覧・CSV出力・CSVインポートで共通利用） ──────────────────
+//
+// CSV取り込みは人間が手入力・コピペするため、入力されたworkIdが
+//   1. 現在も有効な公開作品そのもの（そのまま解決）
+//   2. work_dedup で統合済みの旧workId（work_aliases経由でcanonical workIdへ解決）
+//   3. 存在しない・非活性化(hidden/deleted)された作品（解決不可）
+// のいずれかになりうる。候補一覧・CSV出力は最初からactiveWorkFragment()で絞り込んだ
+// 作品のみを扱うため実質1のケースのみだが、CSVインポートは2・3のケースも受け付ける必要が
+// あるため、この関数を唯一の解決ロジックとして両者から使う。
+
+export interface ResolvedWorkTarget {
+  /** CSV等で指定された元のworkId */
+  inputWorkId: string;
+  /** 実際に有効な作品として解決されたworkId（旧workIdの場合はwork_aliases経由のcanonical） */
+  canonicalWorkId: string;
+  /** work_aliases経由で解決されたか（true = 旧workIdだった） */
+  resolvedViaAlias: boolean;
+  /** canonicalWorkIdに現在紐づく出演者一覧 */
+  personNames: string[];
+}
+
+export interface ResolveWorkTargetsResult {
+  /** key = inputWorkId */
+  resolved: Map<string, ResolvedWorkTarget>;
+  /** 解決できなかった入力workId（存在しない・非活性化された作品） */
+  unresolved: string[];
+}
+
+export async function resolveActiveWorkTargets(inputWorkIds: string[]): Promise<ResolveWorkTargetsResult> {
+  const uniqueIds = [...new Set(inputWorkIds)];
+  const resolved = new Map<string, ResolvedWorkTarget>();
+  if (uniqueIds.length === 0) return { resolved, unresolved: [] };
+
+  // 1. 直接一致（既にcanonical・公開中・非削除）
+  const directRows = await neonSql`
+    SELECT DISTINCT id AS work_id, person_name
+    FROM works
+    WHERE id = ANY(${uniqueIds}) AND ${activeWorkFragment()}
+  `;
+  const personsByDirectId = new Map<string, string[]>();
+  for (const r of directRows) {
+    const wid = r.work_id as string;
+    const list = personsByDirectId.get(wid) ?? [];
+    list.push(r.person_name as string);
+    personsByDirectId.set(wid, list);
+  }
+  for (const id of uniqueIds) {
+    const persons = personsByDirectId.get(id);
+    if (persons) {
+      resolved.set(id, { inputWorkId: id, canonicalWorkId: id, resolvedViaAlias: false, personNames: persons });
+    }
+  }
+
+  // 2. 直接一致しなかったものは work_aliases 経由で canonical workId への解決を試みる
+  const remaining = uniqueIds.filter((id) => !resolved.has(id));
+  if (remaining.length > 0) {
+    const aliasRows = await neonSql`
+      SELECT alias_work_id, canonical_work_id
+      FROM work_aliases
+      WHERE alias_work_id = ANY(${remaining})
+    `;
+    const canonicalByAlias = new Map<string, string>();
+    for (const r of aliasRows) {
+      canonicalByAlias.set(r.alias_work_id as string, r.canonical_work_id as string);
+    }
+
+    const canonicalIds = [...new Set(canonicalByAlias.values())];
+    if (canonicalIds.length > 0) {
+      const canonicalRows = await neonSql`
+        SELECT DISTINCT id AS work_id, person_name
+        FROM works
+        WHERE id = ANY(${canonicalIds}) AND ${activeWorkFragment()}
+      `;
+      const personsByCanonicalId = new Map<string, string[]>();
+      for (const r of canonicalRows) {
+        const wid = r.work_id as string;
+        const list = personsByCanonicalId.get(wid) ?? [];
+        list.push(r.person_name as string);
+        personsByCanonicalId.set(wid, list);
+      }
+
+      for (const id of remaining) {
+        const canonicalId = canonicalByAlias.get(id);
+        const persons = canonicalId ? personsByCanonicalId.get(canonicalId) : undefined;
+        // canonical側も非活性化されている（例: 二重統合）場合は解決不可のまま
+        if (canonicalId && persons) {
+          resolved.set(id, { inputWorkId: id, canonicalWorkId: canonicalId, resolvedViaAlias: true, personNames: persons });
+        }
+      }
+    }
+  }
+
+  const unresolved = uniqueIds.filter((id) => !resolved.has(id));
+  return { resolved, unresolved };
 }

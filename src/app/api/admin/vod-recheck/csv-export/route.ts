@@ -3,9 +3,13 @@
 // 同一workIdに複数人物が紐づく場合は、既存の作品CSV運用（csv-export/route.ts）と同様に
 // 1行1人物で出力する（personName列で複数行に分かれる）。
 //
+// workIdの解決は resolveActiveWorkTargets() を使い、候補一覧・CSVインポートと同じ
+// 対象判定ロジックを共有する（旧workId(work_aliases)はcanonical workIdへ解決される）。
+//
 // body: { items: Array<{ personName: string; workId: string }> }  最大 MAX_EXPORT_ITEMS 件
 import { NextRequest, NextResponse } from 'next/server';
 import { neonSql } from '@/db/client';
+import { activeWorkFragment, resolveActiveWorkTargets } from '@/lib/vod-recheck-store';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { deduplicateProviders, isConfirmedVodAvailability } from '@/lib/vod-dedup';
 import { detectRecheckReasons, RECHECK_REASON_LABEL, RECHECK_PRIORITY_LABEL } from '@/lib/vod-recheck';
@@ -48,11 +52,20 @@ export async function POST(req: NextRequest) {
   const workIds = [...new Set((items as ExportItem[]).map((i) => i.workId))];
 
   try {
+    // 候補一覧・CSVインポートと共通の対象判定ロジックでworkIdを解決する
+    // （通常は候補一覧由来のcanonical workIdのみだが、旧workIdが渡された場合もcanonicalへ解決する）
+    const { resolved } = await resolveActiveWorkTargets(workIds);
+    const canonicalWorkIds = [...new Set([...resolved.values()].map((t) => t.canonicalWorkId))];
+
+    if (canonicalWorkIds.length === 0) {
+      return NextResponse.json({ error: '出力対象の作品が見つかりません（非公開・削除済み、または存在しないworkIdです）' }, { status: 400 });
+    }
+
     // 選択されたworkIdに紐づく全人物行を取得（1行1人物・既存CSV運用と同じ方式）
     const rows = await neonSql`
       SELECT person_name, id AS work_id, title, type, release_year, role_name, vod_data
       FROM works
-      WHERE id = ANY(${workIds}) AND status = 'auto_published' AND deleted = false
+      WHERE id = ANY(${canonicalWorkIds}) AND ${activeWorkFragment()}
       ORDER BY id, person_name
     `;
 
