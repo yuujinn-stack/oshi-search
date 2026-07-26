@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { WorkRecord } from '@/types/work';
 import type { PersonWithCounts } from './work-check-types';
 import { csvDownloadSection } from '@/lib/chatGptPromptUtil';
@@ -105,6 +105,44 @@ function getVodSummary(w: WorkRecord): { label: string; cls: string } {
   return { label: '配信あり', cls: 'text-teal-600' };
 }
 
+// クリップボードコピー（フォールバック付き）。navigator.clipboard が使えない/権限で失敗する
+// 環境向けに、非表示textarea + document.execCommand('copy') へフォールバックする。
+async function copyTextWithFallback(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    throw new Error('clipboard API unavailable');
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function downloadTextFile(text: string, filename: string): void {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function fmtDate(ts: number): string {
   const d = new Date(ts);
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
@@ -146,9 +184,11 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
 
   // プロンプト生成結果
   const [genPrompt, setGenPrompt]     = useState('');
-  const [genCopied, setGenCopied]     = useState(false);
+  const [genWorkCount, setGenWorkCount] = useState(0);
+  const [genCopyMsg, setGenCopyMsg]   = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [genError, setGenError]       = useState('');
   const [markMsg, setMarkMsg]         = useState('');
+  const genTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // 人物変更: ① リセット
   function resetSection1() {
@@ -160,7 +200,7 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
     setAllWorks(null); setWorksError(''); setWorksLoading(false);
     setSelectedWorkIds(new Set());
     setSelSearch(''); setSelYear(''); setSelType(''); setSelResearch('all');
-    setResearchLog({}); setGenPrompt(''); setGenError(''); setMarkMsg('');
+    setResearchLog({}); setGenPrompt(''); setGenWorkCount(0); setGenCopyMsg(null); setGenError(''); setMarkMsg('');
 
     if (!selectedPerson) return;
 
@@ -191,7 +231,7 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
   // フィルター変更時: 選択・プロンプトをリセット（サブフィルターは保持）
   useEffect(() => {
     setSelectedWorkIds(new Set());
-    setGenPrompt(''); setGenError(''); setMarkMsg('');
+    setGenPrompt(''); setGenWorkCount(0); setGenCopyMsg(null); setGenError(''); setMarkMsg('');
   }, [batchFilter]);
 
   // ── バッチフィルター済み作品 ──
@@ -272,6 +312,8 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
       .map(workToBatchRow)
       .join('\n');
     setGenPrompt(buildBatchVodPrompt(`${header}\n${rows}`, selectedPerson));
+    setGenWorkCount(works.length);
+    setGenCopyMsg(null);
     markResearched(works.map((w) => w.id));
   }
 
@@ -301,6 +343,29 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
     await navigator.clipboard.writeText(text);
     setter(true);
     setTimeout(() => setter(false), 2000);
+  }
+
+  // 「調査プロンプトをすべてコピー」— プロンプト生成時に作成した genPrompt（DOMから再構築しない）
+  // をそのままコピーする。省略・切り捨ては一切行わない。
+  async function handleCopyGenPromptFull() {
+    const ok = await copyTextWithFallback(genPrompt);
+    setGenCopyMsg(
+      ok
+        ? { type: 'success', text: `調査プロンプト全文をコピーしました（${genWorkCount}作品）` }
+        : { type: 'error', text: 'コピーできませんでした。下のテキストを選択してコピーしてください' },
+    );
+    setTimeout(() => setGenCopyMsg(null), 5000);
+  }
+
+  function handleSelectAllGenPrompt() {
+    const el = genTextareaRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }
+
+  function handleSaveGenPromptFile() {
+    downloadTextFile(genPrompt, `${selectedPerson || 'chatgpt'}_VOD調査プロンプト.txt`);
   }
 
   return (
@@ -582,15 +647,6 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
                   📋 選択{selectedInBatch.length}件でプロンプト生成
                 </button>
               )}
-              {/* コピー */}
-              {genPrompt && (
-                <button
-                  onClick={() => handleCopy(genPrompt, setGenCopied)}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-slate-700 transition-colors font-medium"
-                >
-                  {genCopied ? '✓ コピー完了' : 'クリップボードへコピー'}
-                </button>
-              )}
               {/* 再調査済みメッセージ */}
               {markMsg && (
                 <span className="text-[11px] text-teal-600 font-medium">{markMsg}</span>
@@ -601,10 +657,43 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
               <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{genError}</div>
             )}
             {genPrompt && (
+              <div className="flex flex-wrap gap-2 items-center">
+                <button
+                  onClick={handleCopyGenPromptFull}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-medium"
+                >
+                  調査プロンプトをすべてコピー
+                </button>
+                <button
+                  onClick={handleSelectAllGenPrompt}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-slate-700 transition-colors font-medium"
+                >
+                  すべて選択
+                </button>
+                <button
+                  onClick={handleSaveGenPromptFile}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-slate-700 transition-colors font-medium"
+                >
+                  テキストファイルで保存
+                </button>
+              </div>
+            )}
+            {genCopyMsg && (
+              <div className={
+                genCopyMsg.type === 'success'
+                  ? 'text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2'
+                  : 'text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2'
+              }>
+                {genCopyMsg.text}
+              </div>
+            )}
+            {genPrompt && (
               <textarea
-                readOnly value={genPrompt} rows={20}
-                className="w-full text-[11px] font-mono border border-gray-200 rounded-lg p-3 bg-gray-50 resize-y focus:outline-none"
-                onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                ref={genTextareaRef}
+                value={genPrompt}
+                onChange={(e) => setGenPrompt(e.target.value)}
+                rows={20}
+                className="w-full text-[11px] font-mono border border-gray-200 rounded-lg p-3 bg-gray-50 resize-y focus:outline-none overflow-y-auto"
               />
             )}
           </>
