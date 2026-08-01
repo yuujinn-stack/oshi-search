@@ -15,7 +15,7 @@ import type { RakutenItem } from '@/types/rakuten';
 import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
-import { getWorkDisplayImage } from '@/lib/work-image';
+import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
 import ProviderLogo from '@/components/ProviderLogo';
 import VodTrackLink from '@/components/site/VodTrackLink';
 
@@ -92,7 +92,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
   // 画像優先順位: 手動画像 > TMDb画像(posterUrl) > 自動取得OG画像(ogImageUrl)。
   // 相対URLの場合は layout.tsx の metadataBase により自動的に絶対URLへ解決される。
-  const displayImage = getWorkDisplayImage(work);
+  const displayImage = getRenderableWorkImageUrl(getWorkDisplayImage(work));
   return {
     title: `${work.title} 配信情報・出演者一覧`,
     description: `${work.title}（${year}）の配信サービス、出演者、関連商品を掲載。`,
@@ -210,7 +210,7 @@ export default async function WorkDetailPage({ params }: Props) {
   const displayWorkType = getDisplayWorkType(work);
   const displayWorkLabel = DISPLAY_WORK_TYPE_LABEL[displayWorkType];
   // 画像優先順位: 手動画像 > TMDb画像(posterUrl) > 自動取得OG画像(ogImageUrl)
-  const displayImage = getWorkDisplayImage(work);
+  const displayImage = getRenderableWorkImageUrl(getWorkDisplayImage(work));
 
   // 公開用 VOD フィルタ + 重複除去
   const publicProviders = deduplicateProviders(
@@ -560,7 +560,7 @@ export default async function WorkDetailPage({ params }: Props) {
               </div>
               <div className="p-4 grid grid-cols-3 gap-2.5">
                 {relatedWorks.map((w) => {
-                  const wImage = getWorkDisplayImage(w);
+                  const wImage = getRenderableWorkImageUrl(getWorkDisplayImage(w));
                   return (
                   <Link
                     key={w.id}

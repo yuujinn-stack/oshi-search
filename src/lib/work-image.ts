@@ -10,6 +10,12 @@
 //
 // VODプロバイダーのロゴ（logoPath）はここでは一切扱わない。ロゴは配信バッジ専用
 // （ProviderLogoコンポーネント）であり、作品のメイン画像・OG画像としては使用しない。
+//
+// ── 候補選択とレンダリング用URL変換は別の関数に分離する ──────────────────────────
+// getWorkDisplayImage(work)         : どのフィールドの値を採用するか（優先順位・妥当性チェック込み）
+// getRenderableWorkImageUrl(url)    : 選ばれたDB上の生URLを、そのままブラウザへ渡してよい形へ整える
+// （HTMLエンティティの誤混入を復元するのみ。プロキシ経由にする必要が生じた場合もこの1箇所を
+//   変更すればよいよう、意図的に分離してある）
 export type WorkImageSource = 'manual' | 'tmdb' | 'auto' | 'none';
 
 export interface WorkImageInput {
@@ -18,20 +24,7 @@ export interface WorkImageInput {
   ogImageUrl?: string;
 }
 
-export function getWorkDisplayImage(work: WorkImageInput): string | undefined {
-  return work.manualImageUrl || work.posterUrl || work.ogImageUrl || undefined;
-}
-
-export function getWorkDisplayImageSource(work: WorkImageInput): WorkImageSource {
-  if (work.manualImageUrl) return 'manual';
-  if (work.posterUrl) return 'tmdb';
-  if (work.ogImageUrl) return 'auto';
-  return 'none';
-}
-
 // 画像URLとして許容できる形式か（http/https の絶対URLのみ）。
-// 画像として実際に読み込めるかどうか（Content-Type等）はここでは検証しない
-// （保存時にネットワーク往復を発生させないため。壊れた画像は表示側の onError で判別される）。
 export function isValidImageUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -39,4 +32,66 @@ export function isValidImageUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+// 「形式は正しいURLだが、実際には画像ではなく検索結果ページ等を指しているもの」を除外する。
+// 実際に発生した事例: Google画像検索の結果一覧からブラウザで「画像アドレスをコピー」した際、
+// 直接の画像URL（imgurlパラメータの値）ではなく検索結果ページ自体（/imgres?...）のURLが
+// コピーされてしまい、そのまま手動画像URLとして保存されるケースがあった。/imgres はHTML
+// ページを返すため<img>には表示できない。DBの値自体は変更せず、表示時にこの候補をスキップして
+// 次の優先順位（TMDb画像・自動取得OG画像）へフォールバックすることで解決する。
+export function isPlausibleImageUrl(url: string): boolean {
+  if (!isValidImageUrl(url)) return false;
+  try {
+    const { hostname, pathname } = new URL(url);
+    const host = hostname.toLowerCase();
+    if ((host === 'google.com' || host.endsWith('.google.com')) &&
+        (pathname === '/imgres' || pathname.startsWith('/search'))) {
+      return false;
+    }
+    if ((host === 'bing.com' || host.endsWith('.bing.com')) && pathname.startsWith('/images/search')) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+// 優先順位に沿って候補を順に評価し、実際に画像として表示できる見込みのある最初の候補を返す。
+// 「値は入っているが検索結果ページ等で画像として使えない」候補はスキップし、次点へフォールバック
+// する（DBの値そのものは一切変更しない。表示時の選択をスキップするだけ）。
+export function getWorkDisplayImage(work: WorkImageInput): string | undefined {
+  const candidates = [work.manualImageUrl, work.posterUrl, work.ogImageUrl];
+  for (const c of candidates) {
+    if (c && isPlausibleImageUrl(c)) return c;
+  }
+  return undefined;
+}
+
+export function getWorkDisplayImageSource(work: WorkImageInput): WorkImageSource {
+  if (work.manualImageUrl && isPlausibleImageUrl(work.manualImageUrl)) return 'manual';
+  if (work.posterUrl && isPlausibleImageUrl(work.posterUrl)) return 'tmdb';
+  if (work.ogImageUrl && isPlausibleImageUrl(work.ogImageUrl)) return 'auto';
+  return 'none';
+}
+
+// getWorkDisplayImage() が選んだ生のDB値を、<img src>・OGタグへそのまま渡せる形へ整える。
+// CSV取り込み等で混入したHTMLエンティティ（&amp; 等）をデコードするのみで、それ以外は
+// DBの値をそのまま使う（プロキシは経由しない。将来必要になった場合もこの関数の内部実装を
+// 差し替えるだけで済むよう、候補選択（getWorkDisplayImage）とは意図的に分離している）。
+const HTML_ENTITY_MAP: Record<string, string> = {
+  '&amp;': '&',
+  '&quot;': '"',
+  '&#39;': "'",
+  '&apos;': "'",
+  '&lt;': '<',
+  '&gt;': '>',
+};
+
+export function getRenderableWorkImageUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  const trimmed = url.trim();
+  if (!trimmed) return undefined;
+  return trimmed.replace(/&amp;|&quot;|&#39;|&apos;|&lt;|&gt;/g, (m) => HTML_ENTITY_MAP[m]);
 }

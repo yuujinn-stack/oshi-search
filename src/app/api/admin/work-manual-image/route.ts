@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getWork, setManualImageUrl } from '@/lib/work-store';
-import { isValidImageUrl } from '@/lib/work-image';
+import { isValidImageUrl, isPlausibleImageUrl } from '@/lib/work-image';
 
 // PATCH /api/admin/work-manual-image
 // body: { personName, workId, imageUrl }
@@ -28,6 +28,15 @@ export async function PATCH(req: NextRequest) {
   if (trimmed && !isValidImageUrl(trimmed)) {
     return NextResponse.json(
       { error: '画像URLの形式が正しくありません（http:// または https:// で始まるURLを入力してください）' },
+      { status: 400 },
+    );
+  }
+
+  // Google/Bing の検索結果ページURL（例: 画像検索結果を右クリック→「画像アドレスをコピー」で
+  // 誤ってコピーされがちな /imgres?... 形式）は画像そのものではないため保存前に弾く。
+  if (trimmed && !isPlausibleImageUrl(trimmed)) {
+    return NextResponse.json(
+      { error: 'これは画像ページ（検索結果ページなど）のURLで、画像そのものではありません。画像を右クリックして「画像アドレスをコピー」で取得した直接のURLを入力してください。' },
       { status: 400 },
     );
   }

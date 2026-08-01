@@ -7,7 +7,7 @@ import type { VodFetchDebugItem } from './work-check-types';
 import WorkVodActions from './WorkVodActions';
 import WorkStatusButtons from './WorkStatusButtons';
 import DebugPanel from './DebugPanel';
-import { getWorkDisplayImage, getWorkDisplayImageSource, isValidImageUrl } from '@/lib/work-image';
+import { getWorkDisplayImage, getWorkDisplayImageSource, getRenderableWorkImageUrl, isValidImageUrl } from '@/lib/work-image';
 
 const STATUS_LABEL: Record<WorkStatus, string> = {
   auto_published: '公開中',
@@ -104,8 +104,9 @@ export default function WorkCard({
   const [manualImageSaving, setManualImageSaving] = useState(false);
   const [manualImageError, setManualImageError] = useState<string | null>(null);
 
-  // 画像優先順位: 手動画像 > TMDb画像(posterUrl) > 自動取得OG画像(ogImageUrl) > プレースホルダー
-  const displayImageUrl = getWorkDisplayImage(work);
+  // 画像優先順位: 手動画像 > TMDb画像(posterUrl) > 自動取得OG画像(ogImageUrl) > プレースホルダー。
+  // 候補選択（どのフィールドを使うか）とレンダリング用URL変換（HTMLエンティティ復元等）は分離する。
+  const displayImageUrl = getRenderableWorkImageUrl(getWorkDisplayImage(work));
   const displayImageSource = getWorkDisplayImageSource(work);
   const isPosterBroken = !!displayImageUrl && /\/vi\/videoseries\//.test(displayImageUrl);
 
