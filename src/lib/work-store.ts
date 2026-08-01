@@ -25,6 +25,7 @@ function dbRowToWorkRecord(r: typeof worksTable.$inferSelect): WorkRecord {
     roleName:        r.roleName ?? undefined,
     overview:        r.overview ?? undefined,
     posterUrl:        r.posterUrl ?? undefined,
+    manualImageUrl:   r.manualImageUrl ?? undefined,
     ogImageUrl:       r.ogImageUrl ?? undefined,
     ogSourceUrl:      r.ogSourceUrl ?? undefined,
     ogImageFetchedAt: r.ogImageFetchedAt ? r.ogImageFetchedAt.getTime() : undefined,
@@ -129,6 +130,24 @@ export async function updateWorkStatus(
   work.checkedAt = Date.now();
   work.updatedAt = Date.now();
   await upsertWork(work);
+}
+
+// 手動画像URLを設定/解除する（管理画面の「手動画像」機能）。
+// url に null を渡すと解除（TMDb/OG自動取得画像へ戻す）。それ以外の呼び出し元フィールドは
+// 一切変更しない（読み取り→対象フィールドのみ書き換え→保存、のため意図しない消失は起きない）。
+export async function setManualImageUrl(
+  personName: string,
+  workId: string,
+  url: string | null,
+): Promise<boolean> {
+  const rows = await db.select().from(worksTable)
+    .where(and(eq(worksTable.personName, personName), eq(worksTable.id, workId)));
+  if (!rows.length) return false;
+  const work = dbRowToWorkRecord(rows[0]);
+  work.manualImageUrl = url ?? undefined;
+  work.updatedAt = Date.now();
+  await upsertWork(work);
+  return true;
 }
 
 // 作品を削除（物理削除）

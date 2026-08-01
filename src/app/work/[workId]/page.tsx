@@ -15,6 +15,7 @@ import type { RakutenItem } from '@/types/rakuten';
 import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
+import { getWorkDisplayImage } from '@/lib/work-image';
 import ProviderLogo from '@/components/ProviderLogo';
 import VodTrackLink from '@/components/site/VodTrackLink';
 
@@ -89,6 +90,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!work) return {};
   const year = work.releaseYear ? `${work.releaseYear}年` : '';
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
+  // 画像優先順位: 手動画像 > TMDb画像(posterUrl) > 自動取得OG画像(ogImageUrl)。
+  // 相対URLの場合は layout.tsx の metadataBase により自動的に絶対URLへ解決される。
+  const displayImage = getWorkDisplayImage(work);
   return {
     title: `${work.title} 配信情報・出演者一覧`,
     description: `${work.title}（${year}）の配信サービス、出演者、関連商品を掲載。`,
@@ -98,8 +102,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     openGraph: {
       title: `${work.title} 配信情報・出演者一覧`,
       description: `${work.title}の配信サービス・出演者・関連商品情報`,
-      images: work.posterUrl ? [{ url: work.posterUrl }] : [],
+      images: displayImage ? [{ url: displayImage }] : [],
       type: 'article',
+    },
+    twitter: {
+      card: 'summary_large_image',
+      images: displayImage ? [displayImage] : [],
     },
   };
 }
@@ -201,6 +209,8 @@ export default async function WorkDetailPage({ params }: Props) {
 
   const displayWorkType = getDisplayWorkType(work);
   const displayWorkLabel = DISPLAY_WORK_TYPE_LABEL[displayWorkType];
+  // 画像優先順位: 手動画像 > TMDb画像(posterUrl) > 自動取得OG画像(ogImageUrl)
+  const displayImage = getWorkDisplayImage(work);
 
   // 公開用 VOD フィルタ + 重複除去
   const publicProviders = deduplicateProviders(
@@ -237,7 +247,7 @@ export default async function WorkDetailPage({ params }: Props) {
     ...(work.originalTitle && work.originalTitle !== work.title && { alternateName: work.originalTitle }),
     ...(work.releaseYear && { datePublished: String(work.releaseYear) }),
     ...(work.overview && { description: work.overview }),
-    ...(work.posterUrl && { image: work.posterUrl }),
+    ...(displayImage && { image: displayImage }),
     ...(tmdbDetails.genres.length > 0 && { genre: tmdbDetails.genres }),
     url: workUrl,
     actor: workPersons.map((wp) => ({
@@ -280,12 +290,12 @@ export default async function WorkDetailPage({ params }: Props) {
           {/* ━━━ ファーストビュー（基本情報 + サマリー統計） ━━━ */}
           <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
             <div className="flex gap-4 p-4">
-              {/* ポスター */}
+              {/* ポスター（手動画像 > TMDb画像 > 自動取得OG画像） */}
               <div className="w-24 flex-shrink-0">
-                {work.posterUrl ? (
+                {displayImage ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={work.posterUrl.replace('/w500', '/w300')}
+                    src={displayImage.replace('/w500', '/w300')}
                     alt={work.title}
                     className="w-24 aspect-[2/3] object-contain rounded-xl shadow-sm"
                   />
@@ -549,17 +559,19 @@ export default async function WorkDetailPage({ params }: Props) {
                 </Link>
               </div>
               <div className="p-4 grid grid-cols-3 gap-2.5">
-                {relatedWorks.map((w) => (
+                {relatedWorks.map((w) => {
+                  const wImage = getWorkDisplayImage(w);
+                  return (
                   <Link
                     key={w.id}
                     href={getWorkPublicUrl({ workId: w.id }) ?? `/work/${encodeURIComponent(w.id)}`}
                     className="group"
                   >
                     <div className="aspect-[2/3] rounded-lg overflow-hidden bg-gray-100 mb-1">
-                      {w.posterUrl ? (
+                      {wImage ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
-                          src={w.posterUrl}
+                          src={wImage}
                           alt={w.title}
                           className="w-full h-full object-contain group-hover:opacity-90 transition-opacity"
                           loading="lazy"
@@ -575,7 +587,8 @@ export default async function WorkDetailPage({ params }: Props) {
                       <p className="text-[10px] text-gray-400 mt-0.5">{w.releaseYear}年</p>
                     )}
                   </Link>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

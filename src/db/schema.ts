@@ -95,6 +95,7 @@ export const works = pgTable('works', {
   roleName:        text('role_name'),
   overview:        text('overview'),
   posterUrl:       text('poster_url'),
+  manualImageUrl:  text('manual_image_url'),
   ogImageUrl:      text('og_image_url'),
   ogSourceUrl:     text('og_source_url'),
   ogImageFetchedAt: timestamp('og_image_fetched_at', { withTimezone: true }),

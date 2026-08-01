@@ -198,19 +198,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: true, reason: 'ogImageUrl既存' });
   }
 
-  // URL候補収集: officialUrl → sourceUrl の順（重複除去）
+  // URL候補収集: sourceUrl → officialUrl の順（重複除去）。
+  // officialUrl はAI補完が返す配信サービスのトップページ等、作品固有でない汎用URLになりがちで、
+  // そのサイト全体のog:image（サービスロゴ等）を拾ってしまうことがある。sourceUrl は
+  // 管理者が「URL編集」で直接入力した作品固有ページであることが多いため、常に先に試す。
   const seen = new Set<string>();
   const urlCandidates: string[] = [];
-  for (const p of work.vodProviders ?? []) {
-    if (p.officialUrl && !seen.has(p.officialUrl)) {
-      seen.add(p.officialUrl);
-      urlCandidates.push(p.officialUrl);
-    }
-  }
   for (const p of work.vodProviders ?? []) {
     if (p.sourceUrl && !seen.has(p.sourceUrl)) {
       seen.add(p.sourceUrl);
       urlCandidates.push(p.sourceUrl);
+    }
+  }
+  for (const p of work.vodProviders ?? []) {
+    if (p.officialUrl && !seen.has(p.officialUrl)) {
+      seen.add(p.officialUrl);
+      urlCandidates.push(p.officialUrl);
     }
   }
 

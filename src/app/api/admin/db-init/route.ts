@@ -223,6 +223,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE works ADD COLUMN IF NOT EXISTS role_name TEXT`),
   sql.raw(`ALTER TABLE works ADD COLUMN IF NOT EXISTS overview TEXT`),
   sql.raw(`ALTER TABLE works ADD COLUMN IF NOT EXISTS poster_url TEXT`),
+  sql.raw(`ALTER TABLE works ADD COLUMN IF NOT EXISTS manual_image_url TEXT`),
   sql.raw(`ALTER TABLE works ADD COLUMN IF NOT EXISTS confidence_score NUMERIC NOT NULL DEFAULT 0`),
   sql.raw(`ALTER TABLE works ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'needs_review'`),
   sql.raw(`ALTER TABLE works ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE`),
