@@ -6,7 +6,7 @@ import { deduplicateProviders, isConfirmedVodAvailability, getVodProviderDisplay
 import { getWorkPublicUrl } from '@/lib/work-url';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL, DISPLAY_WORK_TYPE_ICON } from '@/lib/work-display-type';
-import { getWorkDisplayImage } from '@/lib/work-image';
+import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
 
 function trackWorkClick(workId: string, title: string, personName: string, workType: string, posterUrl: string) {
   fetch('/api/track', {
@@ -52,7 +52,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
   const displayIcon  = DISPLAY_WORK_TYPE_ICON[displayType];
   const workDetailUrl = getWorkPublicUrl({ workId: work.id, personName: work.personName }) ?? `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
   // 画像優先順位: 手動画像 > TMDb/posterUrl > 自動取得OG画像 > プレースホルダー
-  const displayPosterUrl = getWorkDisplayImage(work);
+  const displayPosterUrl = getRenderableWorkImageUrl(getWorkDisplayImage(work));
   const posterLayout = displayPosterUrl ? getPosterLayout(displayPosterUrl) : null;
 
   // 公開ページ用フィルタ:

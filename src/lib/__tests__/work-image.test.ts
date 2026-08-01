@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getWorkDisplayImage, getWorkDisplayImageSource, isValidImageUrl } from '../work-image';
+import { getWorkDisplayImage, getWorkDisplayImageSource, getRenderableWorkImageUrl, isValidImageUrl, isPlausibleImageUrl } from '../work-image';
 
 describe('getWorkDisplayImage — 画像優先順位', () => {
   it('手動画像が最優先される', () => {
@@ -37,6 +37,52 @@ describe('getWorkDisplayImage — 画像優先順位', () => {
     });
     expect(image).toBe('https://image.tmdb.org/poster.jpg');
   });
+
+  // 実際に発生した回帰: Google画像検索結果ページのURL（/imgres）を「画像アドレスをコピー」で
+  // 誤って手動画像URLに保存してしまうと、以前は正常表示できていたogImageUrlが隠れてしまう問題。
+  // DBの値は変更せず、表示選択時にこの候補をスキップして次点へフォールバックする。
+  it('手動画像がGoogle画像検索の結果ページURL(/imgres)の場合はスキップし、次点(TMDb画像)へフォールバックする', () => {
+    const image = getWorkDisplayImage({
+      manualImageUrl: 'https://www.google.com/imgres?q=x&imgurl=https%3A%2F%2Fexample.com%2Freal.jpg',
+      posterUrl: 'https://image.tmdb.org/poster.jpg',
+    });
+    expect(image).toBe('https://image.tmdb.org/poster.jpg');
+  });
+
+  it('手動画像がGoogle検索結果ページURLで、TMDb画像も無い場合は自動取得OG画像へフォールバックする', () => {
+    const image = getWorkDisplayImage({
+      manualImageUrl: 'https://www.google.com/imgres?q=x',
+      ogImageUrl: 'https://img.happyon.jp/masthead.jpg',
+    });
+    expect(image).toBe('https://img.happyon.jp/masthead.jpg');
+  });
+
+  it('手動画像がBing画像検索の結果ページURLの場合もスキップする', () => {
+    const image = getWorkDisplayImage({
+      manualImageUrl: 'https://www.bing.com/images/search?q=x',
+      posterUrl: 'https://image.tmdb.org/poster.jpg',
+    });
+    expect(image).toBe('https://image.tmdb.org/poster.jpg');
+  });
+});
+
+describe('isPlausibleImageUrl', () => {
+  it('通常の画像URLは妥当と判定する', () => {
+    expect(isPlausibleImageUrl('https://image.tmdb.org/poster.jpg')).toBe(true);
+    expect(isPlausibleImageUrl('https://www.nogizaka46.com/files/46/news/1.jpg')).toBe(true);
+  });
+  it('Google画像検索の結果ページURL(/imgres)は妥当ではないと判定する', () => {
+    expect(isPlausibleImageUrl('https://www.google.com/imgres?q=x')).toBe(false);
+  });
+  it('Google検索ページURL(/search)も妥当ではないと判定する', () => {
+    expect(isPlausibleImageUrl('https://www.google.com/search?q=x&tbm=isch')).toBe(false);
+  });
+  it('Bing画像検索の結果ページURLも妥当ではないと判定する', () => {
+    expect(isPlausibleImageUrl('https://www.bing.com/images/search?q=x')).toBe(false);
+  });
+  it('形式が不正なURLは妥当ではないと判定する', () => {
+    expect(isPlausibleImageUrl('not-a-url')).toBe(false);
+  });
 });
 
 describe('getWorkDisplayImageSource', () => {
@@ -51,6 +97,27 @@ describe('getWorkDisplayImageSource', () => {
   });
   it('どれも無ければ none', () => {
     expect(getWorkDisplayImageSource({})).toBe('none');
+  });
+  it('手動画像がGoogle検索結果ページURLの場合は manual ではなく実際に使われる候補を返す', () => {
+    expect(getWorkDisplayImageSource({
+      manualImageUrl: 'https://www.google.com/imgres?q=x',
+      posterUrl: 'https://image.tmdb.org/a.jpg',
+    })).toBe('tmdb');
+  });
+});
+
+describe('getRenderableWorkImageUrl', () => {
+  it('HTMLエンティティ &amp; を & へ復元する', () => {
+    expect(getRenderableWorkImageUrl('https://example.com/a.jpg?w=600&amp;h=338')).toBe('https://example.com/a.jpg?w=600&h=338');
+  });
+  it('エンティティを含まないURLはそのまま返す', () => {
+    expect(getRenderableWorkImageUrl('https://example.com/a.jpg')).toBe('https://example.com/a.jpg');
+  });
+  it('undefinedはundefinedのまま返す', () => {
+    expect(getRenderableWorkImageUrl(undefined)).toBeUndefined();
+  });
+  it('空文字はundefinedを返す', () => {
+    expect(getRenderableWorkImageUrl('')).toBeUndefined();
   });
 });
 

@@ -36,6 +36,12 @@ describe('PATCH /api/admin/work-manual-image', () => {
     expect(mockSetManualImageUrl).not.toHaveBeenCalled();
   });
 
+  it('Google画像検索の結果ページURL(/imgres)は保存前に拒否する', async () => {
+    const res = await PATCH(makePatch({ personName: '人物A', workId: 'work-1', imageUrl: 'https://www.google.com/imgres?q=x&imgurl=https%3A%2F%2Fexample.com%2Freal.jpg' }) as never);
+    expect(res.status).toBe(400);
+    expect(mockSetManualImageUrl).not.toHaveBeenCalled();
+  });
+
   it('作品が存在しなければ404', async () => {
     mockGetWork.mockResolvedValue(null);
     const res = await PATCH(makePatch({ personName: '人物A', workId: 'work-1', imageUrl: 'https://example.com/a.jpg' }) as never);
