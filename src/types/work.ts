@@ -38,6 +38,8 @@ export interface WorkRecord {
   roleName?: string;
   overview?: string;
   posterUrl?: string;
+  // 管理者が手動設定した画像URL（最優先。TMDb/OG自動取得より常に優先される）
+  manualImageUrl?: string;
   // OG画像（posterUrl / TMDb画像とは独立して管理）
   ogImageUrl?: string;
   ogSourceUrl?: string;

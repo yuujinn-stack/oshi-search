@@ -7,6 +7,7 @@ import type { VodFetchDebugItem } from './work-check-types';
 import WorkVodActions from './WorkVodActions';
 import WorkStatusButtons from './WorkStatusButtons';
 import DebugPanel from './DebugPanel';
+import { getWorkDisplayImage, getWorkDisplayImageSource, isValidImageUrl } from '@/lib/work-image';
 
 const STATUS_LABEL: Record<WorkStatus, string> = {
   auto_published: '公開中',
@@ -58,6 +59,7 @@ interface WorkCardProps {
   onOgImageFetch: (workId: string) => Promise<{ ok: boolean; reason?: string } | null>;
   onOgImageForceFetch: (workId: string) => Promise<{ ok: boolean; reason?: string } | null>;
   onSetSourceUrl: (workId: string, sourceUrl: string) => Promise<{ ok: boolean; reason?: string } | null>;
+  onSetManualImageUrl: (workId: string, imageUrl: string) => Promise<{ ok: boolean; reason?: string } | null>;
 }
 
 export default function WorkCard({
@@ -82,6 +84,7 @@ export default function WorkCard({
   onOgImageFetch,
   onOgImageForceFetch,
   onSetSourceUrl,
+  onSetManualImageUrl,
 }: WorkCardProps) {
   const [manualVodWorkId, setManualVodWorkId] = useState<string | null>(null);
   const [manualVodName, setManualVodName] = useState('');
@@ -96,9 +99,14 @@ export default function WorkCard({
   const [sourceUrlSaving, setSourceUrlSaving] = useState(false);
   const [sourceUrlResult, setSourceUrlResult] = useState<string | null>(null);
   const [showUrlEdit, setShowUrlEdit] = useState(false);
+  const [showManualImageEdit, setShowManualImageEdit] = useState(false);
+  const [manualImageInput, setManualImageInput] = useState('');
+  const [manualImageSaving, setManualImageSaving] = useState(false);
+  const [manualImageError, setManualImageError] = useState<string | null>(null);
 
-  // img.youtube.com/vi/videoseries/... のような壊れたURLを検出（ogImageUrl優先でチェック）
-  const displayImageUrl = work.ogImageUrl ?? work.posterUrl;
+  // 画像優先順位: 手動画像 > TMDb画像(posterUrl) > 自動取得OG画像(ogImageUrl) > プレースホルダー
+  const displayImageUrl = getWorkDisplayImage(work);
+  const displayImageSource = getWorkDisplayImageSource(work);
   const isPosterBroken = !!displayImageUrl && /\/vi\/videoseries\//.test(displayImageUrl);
 
   // OG画像ステータス表示用
@@ -142,6 +150,37 @@ export default function WorkCard({
     }
   }, [onSetSourceUrl, work.id, sourceUrlInput]);
 
+  // 手動画像URLを保存する（入力URLをそのまま最優先画像として保存。再クロールはしない）
+  const handleManualImageSave = useCallback(async () => {
+    const trimmed = manualImageInput.trim();
+    if (!trimmed) return;
+    if (!isValidImageUrl(trimmed)) {
+      setManualImageError('URLの形式が正しくありません（http:// または https:// で始めてください）');
+      return;
+    }
+    setManualImageSaving(true);
+    setManualImageError(null);
+    const result = await onSetManualImageUrl(work.id, trimmed);
+    setManualImageSaving(false);
+    if (!result || !result.ok) {
+      setManualImageError(result?.reason ?? '保存に失敗しました');
+      return;
+    }
+    setManualImageInput('');
+    setShowManualImageEdit(false);
+  }, [onSetManualImageUrl, work.id, manualImageInput]);
+
+  // 手動画像を解除し、TMDb画像・自動取得OG画像へ戻す
+  const handleManualImageClear = useCallback(async () => {
+    setManualImageSaving(true);
+    setManualImageError(null);
+    const result = await onSetManualImageUrl(work.id, '');
+    setManualImageSaving(false);
+    if (!result || !result.ok) {
+      setManualImageError(result?.reason ?? '解除に失敗しました');
+    }
+  }, [onSetManualImageUrl, work.id]);
+
   async function handleManualVodAddLocal(workId: string) {
     await onManualVodAdd(workId, manualVodName, manualVodLink);
     setManualVodName('');
@@ -171,7 +210,7 @@ export default function WorkCard({
           style={{ pointerEvents: 'none' }}
         />
       )}
-      {/* ポスター（ogImageUrl > posterUrl の順で表示） */}
+      {/* ポスター（手動画像 > TMDb画像(posterUrl) > 自動取得OG画像(ogImageUrl) の順で表示） */}
       <div className="flex flex-col items-center gap-1 flex-shrink-0">
         {displayImageUrl && !isPosterBroken ? (
           <img
@@ -183,6 +222,9 @@ export default function WorkCard({
           <div className="w-10 h-14 bg-gray-100 rounded flex items-center justify-center text-gray-300 text-lg">
             🎬
           </div>
+        )}
+        {displayImageSource === 'manual' && (
+          <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 rounded whitespace-nowrap">手動画像</span>
         )}
 
         {/* ogImageUrl 未取得: OG取得ボタン（TMDb posterUrl の有無に関係なく表示） */}
@@ -261,6 +303,49 @@ export default function WorkCard({
             {sourceUrlResult && (
               <span className={`text-[8px] whitespace-nowrap ${sourceUrlResult === '取得済' ? 'text-teal-500' : 'text-red-400'}`}>
                 {sourceUrlResult}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* 手動画像URLボタン（画像URLを直接指定・最優先で使用。既存の「URL編集」＝ページを再クロールするのとは別機能）*/}
+        <button
+          onClick={() => { setShowManualImageEdit((v) => !v); setManualImageError(null); }}
+          className="text-[8px] text-indigo-300 hover:text-indigo-500 whitespace-nowrap leading-none"
+          title="画像URLを直接指定します（最優先で表示されます）"
+        >
+          {showManualImageEdit ? '▲' : '手動画像'}
+        </button>
+
+        {showManualImageEdit && (
+          <div className="flex flex-col items-center gap-0.5">
+            <input
+              type="text"
+              value={manualImageInput}
+              onChange={(e) => setManualImageInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleManualImageSave(); }}
+              placeholder="画像URL"
+              className="text-[8px] border border-gray-200 rounded px-1 py-0.5 w-20 text-center focus:outline-none focus:ring-1 focus:ring-indigo-300"
+            />
+            <button
+              onClick={handleManualImageSave}
+              disabled={manualImageSaving || !manualImageInput.trim()}
+              className="text-[8px] text-indigo-500 hover:text-indigo-700 disabled:opacity-40 whitespace-nowrap"
+            >
+              {manualImageSaving ? '保存中' : '保存'}
+            </button>
+            {work.manualImageUrl && (
+              <button
+                onClick={handleManualImageClear}
+                disabled={manualImageSaving}
+                className="text-[8px] text-gray-400 hover:text-red-500 disabled:opacity-40 whitespace-nowrap"
+              >
+                手動画像を解除
+              </button>
+            )}
+            {manualImageError && (
+              <span className="text-[8px] text-red-400 whitespace-nowrap text-center leading-tight">
+                {manualImageError}
               </span>
             )}
           </div>

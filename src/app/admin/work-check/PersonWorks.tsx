@@ -423,6 +423,26 @@ export default function PersonWorks({
     }
   }
 
+  // 手動画像URLを設定/解除する。入力されたURLをそのまま最優先画像として保存する
+  // （sourceUrlのように再クロールはしない）。imageUrl が空文字なら解除（自動画像へ戻す）。
+  async function handleSetManualImageUrl(workId: string, imageUrl: string): Promise<{ ok: boolean; reason?: string } | null> {
+    try {
+      const res = await fetch('/api/admin/work-manual-image', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personName, workId, imageUrl }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        return { ok: false, reason: data.error ?? '保存に失敗しました' };
+      }
+      await loadWorks();
+      return { ok: true };
+    } catch {
+      return { ok: false, reason: '通信エラーが発生しました' };
+    }
+  }
+
   async function handleIntensiveCronToggle() {
     setIntensiveCronLoading(true);
     const newVal = !intensiveCronEnabled;
@@ -1081,6 +1101,7 @@ export default function PersonWorks({
                       onOgImageFetch={handleOgImageFetch}
                       onOgImageForceFetch={handleOgImageForceFetch}
                       onSetSourceUrl={handleSetSourceUrl}
+                      onSetManualImageUrl={handleSetManualImageUrl}
                     />
                   </div>
                 ))}
