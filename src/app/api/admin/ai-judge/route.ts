@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
-import { processPerson } from '@/lib/batch-processor';
+import { judgeStoredProducts } from '@/lib/batch-processor';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getRedis } from '@/lib/redis';
+import { acquireBatchLock, releaseBatchLock, personAiJudgeLockKey } from '@/lib/batch-lock';
 
 // POST /api/admin/ai-judge
 // body: { personName: "..." , forceRejudge?: boolean }
-// 1人分の楽天商品取得 + AI判定を実行する個別エンドポイント
-// processAllPersons() と同様に getAllPersonsMerged() から configOverride を取得し、
-// JSON ファイル管理・CSV インポート（Redis 管理）どちらの人物でも正しく動作する
+// 個人単位の「AI判定」ボタン専用エンドポイント。
+//
+// 重要: このエンドポイントは楽天APIを一切呼ばない。対象は Neon の products.items に
+// 既に保存されている商品のみで、verdicts への書き込みだけを行う。楽天商品の再取得は
+// 別エンドポイント /api/admin/rakuten-refetch （「楽天再取得」ボタン専用）で行う。
+// これらは以前 processPerson() 経由で1つのエンドポイントを共用していたが、楽天APIの
+// レート制限がAI判定を毎回巻き込んで失敗させる問題があったため分離した。
 export async function POST(req: NextRequest) {
   const startMs = Date.now();
 
@@ -36,122 +41,107 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let result;
+  // ── 人物単位の二重実行防止（クライアント側のdisabledだけに依存しない） ──────
+  const lockKey = personAiJudgeLockKey(body.personName);
+  const ownerId = `ai-judge-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const acquired = await acquireBatchLock(ownerId, lockKey);
+  if (!acquired) {
+    return NextResponse.json(
+      { ok: false, status: 'locked', error: 'この人物のAI判定はすでに実行中です' },
+      { status: 409 },
+    );
+  }
+
   try {
-    result = await processPerson(body.personName, body.forceRejudge ?? false, personConfig);
-  } catch (err) {
+    let result;
+    try {
+      result = await judgeStoredProducts(body.personName, body.forceRejudge ?? false, personConfig);
+    } catch (err) {
+      const durationMs = Date.now() - startMs;
+      console.error(`[ai-judge] operation:judge_stored personName:${body.personName} status:server_error durationMs:${durationMs} error:${String(err)}`);
+      return NextResponse.json(
+        { ok: false, status: 'server_error', error: '処理中にエラーが発生しました' },
+        { status: 500 },
+      );
+    }
+
     const durationMs = Date.now() - startMs;
-    console.error(`[ai-judge] operation:rakuten_refetch personName:${body.personName} status:server_error durationMs:${durationMs} error:${String(err)}`);
-    return NextResponse.json(
-      { ok: false, status: 'server_error', error: '処理中にエラーが発生しました' },
-      { status: 500 },
-    );
-  }
 
-  const durationMs = Date.now() - startMs;
+    // ── 保存済み商品が0件（先に楽天再取得が必要） ─────────────────────────────
+    if (result.noStoredProducts) {
+      console.log(`[ai-judge] operation:judge_stored personName:${body.personName} status:no_stored_products durationMs:${durationMs}`);
+      return NextResponse.json({
+        ok: true,
+        status: 'no_stored_products',
+        person: { ...result, message: '保存済みの商品がありません。先に楽天再取得を実行してください' },
+      });
+    }
 
-  // ── RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEY 未設定 ────────────────────────────
-  if (result.rakutenConfigMissing) {
-    console.log(`[ai-judge] operation:rakuten_refetch personName:${body.personName} status:config_missing durationMs:${durationMs} envVarsMissing:RAKUTEN_APP_ID,RAKUTEN_ACCESS_KEY`);
-    return NextResponse.json(
-      { ok: false, status: 'config_missing', error: '楽天APIの設定が不足しています（RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEY）' },
-      { status: 503 },
-    );
-  }
+    if (result.error) {
+      console.error(`[ai-judge] operation:judge_stored personName:${body.personName} status:error durationMs:${durationMs} error:${result.error}`);
+      return NextResponse.json({ ok: false, status: 'server_error', error: result.error }, { status: 500 });
+    }
 
-  // ── 楽天API 429 レート制限（全カテゴリ取得0件） ──────────────────────────
-  if (result.fetchFailed > 0 && result.stored === 0 && result.upstreamHttpStatus === 429) {
-    console.log(`[ai-judge] operation:rakuten_refetch personName:${body.personName} status:rate_limited fetchFailed:${result.fetchFailed} durationMs:${durationMs}`);
-    return NextResponse.json(
-      {
-        ok: false,
-        status: 'rate_limited',
-        error: '楽天APIの一時的な利用制限です。しばらく待ってから再実行してください。',
-        httpStatus: 429,
-        failedCategories: result.failedCategories,
-      },
-      { status: 429 },
-    );
-  }
+    revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
 
-  // ── 楽天API upstream エラー（全カテゴリ取得0件） ─────────────────────────
-  if (result.fetchFailed > 0 && result.stored === 0 && result.upstreamHttpStatus !== undefined) {
-    const httpStatus = result.upstreamHttpStatus;
-    console.log(`[ai-judge] operation:rakuten_refetch personName:${body.personName} status:upstream_error upstreamHttpStatus:${httpStatus} fetchFailed:${result.fetchFailed} durationMs:${durationMs}`);
-    return NextResponse.json(
-      { ok: false, status: 'upstream_error', error: `楽天APIが ${httpStatus} を返しました`, httpStatus, failedCategories: result.failedCategories },
-      { status: 502 },
-    );
-  }
-
-  // ── ネットワーク障害 / タイムアウト（全カテゴリ取得0件） ──────────────────
-  if (result.fetchFailed > 0 && result.stored === 0 && result.upstreamHttpStatus === undefined) {
-    console.log(`[ai-judge] operation:rakuten_refetch personName:${body.personName} status:network_error fetchFailed:${result.fetchFailed} durationMs:${durationMs}`);
-    return NextResponse.json(
-      { ok: false, status: 'network_error', error: '楽天APIへの接続に失敗しました（タイムアウトまたはネットワーク障害）', failedCategories: result.failedCategories },
-      { status: 500 },
-    );
-  }
-
-  // ── DB保存失敗 ────────────────────────────────────────────────────────────
-  if (result.error?.startsWith('DB保存失敗')) {
-    console.error(`[ai-judge] operation:rakuten_refetch personName:${body.personName} status:db_error durationMs:${durationMs} error:${result.error}`);
-    return NextResponse.json(
-      { ok: false, status: 'db_error', error: 'データベースへの保存に失敗しました' },
-      { status: 500 },
-    );
-  }
-
-  revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
-
-  // ── 正常系ステータス判定 ──────────────────────────────────────────────────
-  // partial_success: 一部カテゴリ取得成功 + 一部失敗（fetchFailed > 0 && stored > 0）
-  const apiStatus: 'success' | 'partial_success' | 'no_targets' =
-    result.fetchFailed > 0 && result.stored > 0
-      ? 'partial_success'
-      : result.stored === 0 && result.skipped === 0 && result.fetchFailed === 0
+    // ── ステータス判定 ────────────────────────────────────────────────────────
+    const allDone = result.remainingCount === 0;
+    const apiStatus: 'success' | 'complete' | 'no_targets' =
+      result.totalUnclassifiedBefore === 0
         ? 'no_targets'
-        : 'success';
+        : allDone
+          ? 'complete'
+          : 'success';
 
-  // ── 正常系メッセージ生成 ──────────────────────────────────────────────────
-  let message = '';
-  if (result.error) {
-    message = result.error;
-  } else if (apiStatus === 'partial_success') {
-    message = `取得${result.stored}件 / 検索失敗${result.fetchFailed}カテゴリ (${result.failedCategories.join(', ')})`;
-  } else if (result.aiKeyMissing) {
-    message = 'OPENAI_API_KEY 未設定: AI判定をスキップしました';
-  } else if (result.aiFailed > 0) {
-    message = `AI判定 ${result.aiQueued}件中 ${result.aiFailed}件がエラーになりました`;
-  } else if (apiStatus === 'no_targets') {
-    message = '楽天API正常・該当商品0件';
-  } else if (result.aiQueued === 0 && result.autoApproved === 0 && result.stored > 0) {
-    message = `取得${result.stored}件（全件判定済みのためAI判定スキップ）`;
-  } else if (result.autoApproved > 0 && result.aiQueued === 0) {
-    message = `取得${result.stored}件 自動承認${result.autoApproved}件`;
-  } else {
-    message = `取得${result.stored}件 自動承認${result.autoApproved}件 AI判定${result.aiJudged}/${result.aiQueued}件`;
+    // ── メッセージ生成 ────────────────────────────────────────────────────────
+    // 失敗理由が単一種類（レート制限 or 残高/上限）に偏っている場合は、その専用文言を優先する
+    let dominantFailureMessage: string | null = null;
+    if (result.failedCount > 0 && result.aiFailures.length > 0) {
+      const codes = new Set(result.aiFailures.map((f) => f.code));
+      if (codes.size === 1) {
+        const code = result.aiFailures[0].code;
+        if (code === 'RATE_LIMIT') dominantFailureMessage = 'OpenAI APIが一時的な利用制限中です。しばらく待ってから再実行してください';
+        else if (code === 'INSUFFICIENT_QUOTA') dominantFailureMessage = 'OpenAI APIの残高または利用上限を確認してください';
+      }
+    }
+
+    let message = '';
+    if (result.aiKeyMissing) {
+      message = 'OPENAI_API_KEY 未設定: AI判定をスキップしました';
+    } else if (apiStatus === 'no_targets') {
+      message = '未判定の商品はありません';
+    } else if (dominantFailureMessage) {
+      message = dominantFailureMessage;
+    } else if (apiStatus === 'complete') {
+      message = 'すべての商品を判定しました';
+    } else if (result.failedCount > 0) {
+      message = `${result.successCount}件を判定しました。${result.failedCount}件失敗、残り${result.remainingCount}件`;
+    } else {
+      message = `${result.successCount}件を判定しました。残り${result.remainingCount}件`;
+    }
+
+    console.log([
+      `[ai-judge] operation:judge_stored`,
+      `personName:${body.personName}`,
+      `status:${apiStatus}`,
+      `totalUnclassifiedBefore:${result.totalUnclassifiedBefore}`,
+      `attempted:${result.attemptedCount}`,
+      `success:${result.successCount}`,
+      `failed:${result.failedCount}`,
+      `remaining:${result.remainingCount}`,
+      `autoApproved:${result.autoApproved}`,
+      `excluded:${result.excluded}`,
+      `membershipFiltered:${result.membershipFiltered}`,
+      `related:${result.relatedCount}`,
+      `unrelated:${result.unrelatedCount}`,
+      `uncertain:${result.uncertainCount}`,
+      `aiKeyMissing:${result.aiKeyMissing}`,
+      `durationMs:${durationMs}`,
+    ].join(' '));
+
+    return NextResponse.json({ ok: true, status: apiStatus, person: { ...result, message } });
+  } finally {
+    // 正常終了・異常終了問わず必ず解放する。TTL（10分）もあるため異常終了時に永久ロックしない。
+    await releaseBatchLock(ownerId, 'completed', lockKey);
   }
-
-  console.log([
-    `[ai-judge] operation:rakuten_refetch`,
-    `personName:${body.personName}`,
-    `status:${apiStatus}`,
-    `fetched:${result.stored}`,
-    `skipped:${result.skipped}`,
-    `excluded:${result.excluded}`,
-    `autoApproved:${result.autoApproved}`,
-    `fetchFailed:${result.fetchFailed}`,
-    `failedCategories:${result.failedCategories.join(',') || '-'}`,
-    `upstreamHttpStatus:${result.upstreamHttpStatus ?? '-'}`,
-    `targeted:${result.aiQueued}`,
-    `succeeded:${result.aiJudged}`,
-    `failed:${result.aiFailed}`,
-    `related:${result.relatedCount}`,
-    `unrelated:${result.unrelatedCount}`,
-    `uncertain:${result.uncertainCount}`,
-    `durationMs:${durationMs}`,
-  ].join(' '));
-
-  return NextResponse.json({ ok: true, status: apiStatus, person: { ...result, message } });
 }

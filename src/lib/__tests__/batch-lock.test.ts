@@ -28,6 +28,7 @@ import {
   renewBatchLock,
   releaseBatchLock,
   BULK_LOCK_KEY,
+  personAiJudgeLockKey,
 } from '../batch-lock';
 
 describe('batch-lock', () => {
@@ -170,5 +171,39 @@ describe('batch-lock', () => {
   it('[L16] releaseBatchLock: DB エラーでも例外を投げない（fail-safe）', async () => {
     mockNeonSql.mockRejectedValue(new Error('release error'));
     await expect(releaseBatchLock('owner-abc', 'completed')).resolves.toBeUndefined();
+  });
+
+  // ─── personAiJudgeLockKey（人物単位ロック） ────────────────────────────────────
+
+  it('[L17] personAiJudgeLockKey は "product-ai-judge:<人物名>" 形式', () => {
+    expect(personAiJudgeLockKey('阿部亮平')).toBe('product-ai-judge:阿部亮平');
+  });
+
+  it('[L18] personAiJudgeLockKey は前後の空白をtrimする', () => {
+    expect(personAiJudgeLockKey('  京本大我  ')).toBe('product-ai-judge:京本大我');
+  });
+
+  it('[L19] 異なる人物名は異なるロックキーになる（別人物は妨げない）', () => {
+    expect(personAiJudgeLockKey('人物A')).not.toBe(personAiJudgeLockKey('人物B'));
+  });
+
+  it('[L20] acquireBatchLock はlockKey省略時にBULK_LOCK_KEYを使う（既存呼び出し元との互換性）', async () => {
+    mockNeonSql.mockResolvedValue([{ owner_id: 'owner-x' }]);
+    const result = await acquireBatchLock('owner-x');
+    expect(result).toBe(true);
+    // 第2引数を省略しても動作する（デフォルト値 = BULK_LOCK_KEY）
+  });
+
+  it('[L21] acquireBatchLock は人物単位のlockKeyを指定して呼べる', async () => {
+    mockNeonSql.mockResolvedValue([{ owner_id: 'owner-y' }]);
+    const result = await acquireBatchLock('owner-y', personAiJudgeLockKey('阿部亮平'));
+    expect(result).toBe(true);
+  });
+
+  it('[L22] releaseBatchLock も人物単位のlockKeyを指定して呼べる', async () => {
+    mockNeonSql.mockResolvedValue([]);
+    await expect(
+      releaseBatchLock('owner-y', 'completed', personAiJudgeLockKey('阿部亮平')),
+    ).resolves.toBeUndefined();
   });
 });

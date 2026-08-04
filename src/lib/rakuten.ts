@@ -22,6 +22,67 @@ class RakutenApiError extends Error {
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 const REVALIDATE = 86400; // 24h
 
+// ── 楽天APIへのリクエストペーシング・429対策 ──────────────────────────────────
+// 同時実行数は常に1（全呼び出しは逐次await）。ここでは呼び出し間隔と429時の
+// 待機・再試行のみを制御する。無限リトライはしない（最大1回）。
+const REQUEST_INTERVAL_MS = 400;
+const MIN_RETRY_WAIT_MS = 1000;
+let lastRakutenRequestAt = 0;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function paceRakutenRequest(): Promise<void> {
+  const wait = lastRakutenRequestAt + REQUEST_INTERVAL_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastRakutenRequestAt = Date.now();
+}
+
+// Retry-Afterヘッダーを優先し、無ければ本文の「Try again in N seconds」を安全に解釈する。
+// どちらも得られない場合は最低1秒。本文の内容自体はログへ出さない（待機時間の算出のみに使う）。
+function resolveRetryWaitMs(res: Response, bodyExcerpt: string): number {
+  const headerVal = res.headers.get('retry-after');
+  if (headerVal) {
+    const asSeconds = Number(headerVal);
+    if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+      return Math.max(MIN_RETRY_WAIT_MS, asSeconds * 1000);
+    }
+  }
+  const m = bodyExcerpt.match(/try again in\s+(\d+)\s+second/i);
+  if (m) {
+    const sec = Number(m[1]);
+    if (Number.isFinite(sec) && sec >= 0) return Math.max(MIN_RETRY_WAIT_MS, sec * 1000);
+  }
+  return MIN_RETRY_WAIT_MS;
+}
+
+// 楽天APIへのGETリクエストの共通実行関数。
+//  - 呼び出し間隔をペーシング（同時実行数1・連続呼び出し防止）
+//  - 429を受けた場合のみ、Retry-Afterを優先した待機後に1回だけ再試行する
+//  - 2回目も429（またはそれ以外の非2xx）ならそのレスポンスをそのまま返し、
+//    呼び出し元（各fetch関数の `!res.ok` チェック）に処理を委ねる。
+//    そのカテゴリ内の以降の検索・他カテゴリの処理は呼び出し元の既存の分離構造により継続される。
+async function rakutenFetch(reqUrl: string, cacheMode: RequestCache): Promise<Response> {
+  await paceRakutenRequest();
+  const doFetch = () => fetch(
+    reqUrl,
+    { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS },
+  );
+
+  let res = await doFetch();
+  if (res.status === 429) {
+    let bodyExcerpt = '';
+    try { bodyExcerpt = (await res.text()).slice(0, 200); } catch { /* ignore */ }
+    const waitMs = resolveRetryWaitMs(res, bodyExcerpt);
+    console.log(`[rakuten] 429受信、${waitMs}ms待機後に1回だけ再試行します`);
+    await sleep(waitMs);
+    lastRakutenRequestAt = Date.now();
+    res = await doFetch();
+  }
+  return res;
+}
+
 const BASE_ICHIBA = 'https://openapi.rakuten.co.jp/ichibams/api';
 const BASE_BOOKS = 'https://openapi.rakuten.co.jp/services/api';
 // Origin: 楽天APIのアプリ登録ドメイン検証用, accessKey: ヘッダー名を正確に "accessKey" で送信（クエリパラメータと併用）
@@ -179,10 +240,7 @@ async function fetchBooksPages(
       outOfStockFlag: '1',
       page: String(page),
     });
-    const res = await fetch(
-      reqUrl,
-      { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
-    );
+    const res = await rakutenFetch(reqUrl, cacheMode);
     if (!res.ok) {
       await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
       throw new RakutenApiError(res.status);
@@ -360,10 +418,7 @@ async function fetchDvd(
         outOfStockFlag: '1',
         page: String(page),
       } as Record<string, string>);
-      const res = await fetch(
-        reqUrl,
-        { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
-      );
+      const res = await rakutenFetch(reqUrl, cacheMode);
       if (!res.ok) {
         await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
         throw new RakutenApiError(res.status);
@@ -454,10 +509,7 @@ async function fetchCd(
         outOfStockFlag: '1',
         page: String(page),
       } as Record<string, string>);
-      const res = await fetch(
-        reqUrl,
-        { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
-      );
+      const res = await rakutenFetch(reqUrl, cacheMode);
       if (!res.ok) {
         await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
         throw new RakutenApiError(res.status);
@@ -552,10 +604,7 @@ async function fetchIchiba(
         sort: '-reviewCount',
         page: String(page),
       });
-      const res = await fetch(
-        reqUrl,
-        { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
-      );
+      const res = await rakutenFetch(reqUrl, cacheMode);
       if (!res.ok) {
         await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
         throw new RakutenApiError(res.status);
@@ -649,10 +698,7 @@ async function fetchUsed(
         sort: '-reviewCount',
         page: String(page),
       });
-      const res = await fetch(
-        reqUrl,
-        { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS }
-      );
+      const res = await rakutenFetch(reqUrl, cacheMode);
       if (!res.ok) {
         await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
         throw new RakutenApiError(res.status);

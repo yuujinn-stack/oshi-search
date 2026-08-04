@@ -2,11 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { RakutenItem } from '@/types/rakuten';
 
 // ── モジュールモック ──────────────────────────────────────────────────────────
-// このテストは「route.ts → processPerson(実装) → judgeProducts/judgeProduct(実装)」を
-// 実コードのまま繋げて検証する。OpenAI課金・Rakuten実HTTP・実DBだけを境界でモックする。
-// ai-judge.ts の分類ロジック(JSON解析・エラー分類)とbatch-processor.tsの優先度チェックが
-// 実際に正しく合成されるかを確認するのが目的（batch-processor.test.tsはjudgeProducts自体を
-// モックしており、ai-judge.test.tsはjudgeProduct単体のみのため、両者の結合はここでのみ検証する）。
+// このテストは「route.ts → judgeStoredProducts(実装) → judgeProducts/judgeProduct(実装)」を
+// 実コードのまま繋げて検証する。OpenAI課金・実DBだけを境界でモックする。
+// 楽天API(getProductsByCategory)は「一度も呼ばれないこと」を検証する対象そのものなので、
+// モックした上で呼び出し回数を都度アサートする。
 
 const mockCreate = vi.hoisted(() => vi.fn());
 
@@ -23,19 +22,17 @@ vi.mock('@/lib/openai-usage', () => ({
   logOpenAIUsage: vi.fn().mockResolvedValue(undefined),
 }));
 
+const mockGetProductsByCategory = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/rakuten', () => ({
-  getProductsByCategory: vi.fn(),
+  getProductsByCategory: mockGetProductsByCategory,
 }));
 
-const mockStoreProducts = vi.hoisted(() => vi.fn().mockResolvedValue({
-  fetchedCount: 0, retainedExistingCount: 0, addedCount: 0,
-  mergedCount: 0, preservedManualCount: 0, preservedVerdictedCount: 0,
-  skippedBecauseError: false,
-}));
+const mockGetAllStoredProducts = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/product-store', () => ({
   CATEGORIES: ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD', '中古'],
-  storeProducts: mockStoreProducts,
-  saveBatchMeta: vi.fn().mockResolvedValue(undefined),
+  getAllStoredProducts: mockGetAllStoredProducts,
+  storeProducts: vi.fn(),
+  saveBatchMeta: vi.fn(),
 }));
 
 const mockGetAllVerdicts = vi.hoisted(() => vi.fn());
@@ -67,9 +64,15 @@ vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
 }));
 
+// batch-lockは実装のまま使うと@/db/clientまで必要になるため、常に取得成功として扱う
+vi.mock('@/lib/batch-lock', () => ({
+  acquireBatchLock: vi.fn().mockResolvedValue(true),
+  releaseBatchLock: vi.fn().mockResolvedValue(undefined),
+  personAiJudgeLockKey: (name: string) => `product-ai-judge:${name}`,
+}));
+
 // ── 実装（モック登録後にimport）───────────────────────────────────────────────
 import { POST } from '@/app/api/admin/ai-judge/route';
-import { getProductsByCategory } from '@/lib/rakuten';
 
 function makePost(body: object): Request {
   return new Request('http://localhost/api/admin/ai-judge', {
@@ -90,35 +93,22 @@ function chatResponse(content: string) {
   return { choices: [{ message: { content } }], usage: { prompt_tokens: 10, completion_tokens: 5 } };
 }
 
-const PERSON_NAME = 'テスト人物';
-
-// カテゴリごとに呼ばれる getProductsByCategory を、指定カテゴリのみ商品ありにする
-function mockCategoryProducts(category: string, items: RakutenItem[]) {
-  vi.mocked(getProductsByCategory).mockImplementation((_name, _group, cat) =>
-    cat === category
-      ? Promise.resolve({ status: 'ok', products: items })
-      : Promise.resolve({ status: 'empty' }),
-  );
+function storedDataOf(items: RakutenItem[]) {
+  return { '写真集': { products: items, fetchedAt: Date.now() } };
 }
+
+const PERSON_NAME = 'テスト人物';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockStoreProducts.mockResolvedValue({
-    fetchedCount: 0, retainedExistingCount: 0, addedCount: 0,
-    mergedCount: 0, preservedManualCount: 0, preservedVerdictedCount: 0,
-    skippedBecauseError: false,
-  });
-  mockSaveVerdict.mockResolvedValue(undefined);
   mockGetAllPersonsMerged.mockResolvedValue([{ name: PERSON_NAME, group: 'テストグループ', config: {} }]);
   process.env.OPENAI_API_KEY = 'sk-test-key';
 });
 
-describe('AI判定パイプライン統合（route→processPerson→ai-judge、OpenAIのみモック）', () => {
-  it('1件成功: 実際のJSON解析を経てrelatedが保存され、レスポンスに反映される', async () => {
-    // タイトルに人物名+「写真集」を含めると shouldAutoApprove() が先に確定させてしまい
-    // OpenAIを経由しないため、意図的に自動承認条件に当たらないタイトルにする
+describe('AI判定パイプライン統合（route→judgeStoredProducts→ai-judge、楽天API・OpenAIはモック境界）', () => {
+  it('楽天APIは1回も呼ばれない（1件成功ケース）', async () => {
     mockGetAllVerdicts.mockResolvedValue({});
-    mockCategoryProducts('写真集', [makeItem('item-a', '限定特典ポストカードセット')]);
+    mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('item-a', '限定特典ポストカードセット')]));
     mockCreate.mockResolvedValue(chatResponse('{"label":"related","score":92,"reason":"本人の写真集"}'));
 
     const res = await POST(makePost({ personName: PERSON_NAME }) as never);
@@ -126,17 +116,30 @@ describe('AI判定パイプライン統合（route→processPerson→ai-judge、
 
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(body.person.aiJudged).toBe(1);
-    expect(body.person.aiFailed).toBe(0);
-    expect(body.person.relatedCount).toBe(1);
-    expect(mockSaveVerdict).toHaveBeenCalledWith(
-      PERSON_NAME, 'item-a', 'related', 92, 'ai', '本人の写真集', 'v3',
-    );
+    expect(body.person.successCount).toBe(1);
+    expect(mockGetProductsByCategory).not.toHaveBeenCalled();
+    expect(mockSaveVerdict).toHaveBeenCalledWith(PERSON_NAME, 'item-a', 'related', 92, 'ai', '本人の写真集', 'v3');
   });
 
-  it('一部失敗: 実際のRateLimitErrorが分類され、成功分のみsaveVerdictされる', async () => {
+  it('120件保存済みでも最初の10件だけOpenAIへ送信し、楽天APIは呼ばれない', async () => {
+    const items = Array.from({ length: 120 }, (_, i) => makeItem(`item-${i}`, `商品${i} 限定グッズ`));
     mockGetAllVerdicts.mockResolvedValue({});
-    mockCategoryProducts('写真集', [makeItem('item-ok', '商品OK'), makeItem('item-ng', '商品NG')]);
+    mockGetAllStoredProducts.mockResolvedValue(storedDataOf(items));
+    mockCreate.mockResolvedValue(chatResponse('{"label":"unrelated","score":10,"reason":"無関係"}'));
+
+    const res = await POST(makePost({ personName: PERSON_NAME }) as never);
+    const body = await res.json();
+
+    expect(mockCreate).toHaveBeenCalledTimes(10);
+    expect(mockGetProductsByCategory).not.toHaveBeenCalled();
+    expect(body.person.attemptedCount).toBe(10);
+    expect(body.person.remainingCount).toBe(110);
+    expect(body.person.message).toBe('10件を判定しました。残り110件');
+  });
+
+  it('一部失敗: 実際のRateLimitErrorが分類され、楽天APIは呼ばれない', async () => {
+    mockGetAllVerdicts.mockResolvedValue({});
+    mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('item-ok', '商品OK'), makeItem('item-ng', '商品NG')]));
 
     const { RateLimitError } = await vi.importActual<typeof import('openai')>('openai');
     mockCreate
@@ -146,76 +149,70 @@ describe('AI判定パイプライン統合（route→processPerson→ai-judge、
     const res = await POST(makePost({ personName: PERSON_NAME }) as never);
     const body = await res.json();
 
-    expect(body.ok).toBe(true);
-    expect(body.person.aiJudged).toBe(1);
-    expect(body.person.aiFailed).toBe(1);
-    expect(body.person.aiFailures).toHaveLength(1);
+    expect(mockGetProductsByCategory).not.toHaveBeenCalled();
+    expect(body.person.successCount).toBe(1);
+    expect(body.person.failedCount).toBe(1);
     expect(body.person.aiFailures[0].code).toBe('RATE_LIMIT');
-    expect(mockSaveVerdict).toHaveBeenCalledTimes(1);
-    expect(mockSaveVerdict).toHaveBeenCalledWith(
-      PERSON_NAME, 'item-ok', 'unrelated', 10, 'ai', '無関係', 'v3',
-    );
+    expect(body.person.message).toBe('OpenAI APIが一時的な利用制限中です。しばらく待ってから再実行してください');
   });
 
-  it('全件失敗: JSON解析エラーが実際に分類され、saveVerdictは一度も呼ばれない', async () => {
+  it('OpenAI残高/上限エラー: INSUFFICIENT_QUOTAとして分類され、楽天APIは呼ばれない', async () => {
     mockGetAllVerdicts.mockResolvedValue({});
-    mockCategoryProducts('写真集', [makeItem('item-a')]);
-    mockCreate.mockResolvedValue(chatResponse('これはJSONではありません'));
+    mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('item-a')]));
+
+    const { RateLimitError } = await vi.importActual<typeof import('openai')>('openai');
+    mockCreate.mockRejectedValue(new RateLimitError(429, { code: 'insufficient_quota' }, 'quota exceeded', new Headers()));
 
     const res = await POST(makePost({ personName: PERSON_NAME }) as never);
     const body = await res.json();
 
-    expect(res.status).toBe(200); // AI失敗はHTTPエラーにしない仕様
-    expect(body.person.aiJudged).toBe(0);
-    expect(body.person.aiFailed).toBe(1);
-    expect(body.person.aiFailures[0].code).toBe('INVALID_JSON');
-    expect(mockSaveVerdict).not.toHaveBeenCalled();
+    expect(mockGetProductsByCategory).not.toHaveBeenCalled();
+    expect(body.person.aiFailures[0].code).toBe('INSUFFICIENT_QUOTA');
+    expect(body.person.message).toBe('OpenAI APIの残高または利用上限を確認してください');
   });
 
-  it('manual verdict済み商品はOpenAIを一切呼ばずスキップされる', async () => {
+  it('manual verdict済み商品はOpenAIを一切呼ばずスキップされ、楽天APIも呼ばれない', async () => {
     mockGetAllVerdicts.mockResolvedValue({
       'item-manual': { verdict: 'unrelated', score: 0, source: 'manual', timestamp: Date.now() },
     });
-    mockCategoryProducts('写真集', [makeItem('item-manual', '手動判定済み商品')]);
+    mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('item-manual', '手動判定済み商品')]));
 
     const res = await POST(makePost({ personName: PERSON_NAME }) as never);
     const body = await res.json();
 
     expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockGetProductsByCategory).not.toHaveBeenCalled();
     expect(mockSaveVerdict).not.toHaveBeenCalled();
-    expect(body.person.aiQueued).toBe(0);
-    expect(body.person.skipped).toBe(1);
+    expect(body.person.attemptedCount).toBe(0);
   });
 
-  it('deleted verdict済み商品はOpenAIを一切呼ばずスキップされる', async () => {
-    mockGetAllVerdicts.mockResolvedValue({
-      'item-deleted': { verdict: 'deleted', score: 0, source: 'manual', timestamp: Date.now() },
-    });
-    mockCategoryProducts('写真集', [makeItem('item-deleted', '削除済み商品')]);
+  it('保存済み商品が0件: 楽天APIもOpenAIも呼ばれず案内メッセージを返す', async () => {
+    mockGetAllStoredProducts.mockResolvedValue({});
 
     const res = await POST(makePost({ personName: PERSON_NAME }) as never);
     const body = await res.json();
 
+    expect(mockGetProductsByCategory).not.toHaveBeenCalled();
     expect(mockCreate).not.toHaveBeenCalled();
-    expect(mockSaveVerdict).not.toHaveBeenCalled();
-    expect(body.person.aiQueued).toBe(0);
+    expect(body.person.message).toBe('保存済みの商品がありません。先に楽天再取得を実行してください');
   });
 
-  it('OPENAI_API_KEY未設定: OpenAIを一切呼ばずaiKeyMissing:trueを返す', async () => {
+  it('OPENAI_API_KEY未設定: OpenAI・楽天いずれも呼ばずaiKeyMissing:trueを返す', async () => {
     delete process.env.OPENAI_API_KEY;
     mockGetAllVerdicts.mockResolvedValue({});
-    mockCategoryProducts('写真集', [makeItem('item-a')]);
+    mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('item-a')]));
 
     const res = await POST(makePost({ personName: PERSON_NAME }) as never);
     const body = await res.json();
 
     expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockGetProductsByCategory).not.toHaveBeenCalled();
     expect(body.person.aiKeyMissing).toBe(true);
   });
 
   it('AI失敗メッセージにAPIキーやOpenAIレスポンス本文が含まれない', async () => {
     mockGetAllVerdicts.mockResolvedValue({});
-    mockCategoryProducts('写真集', [makeItem('item-a')]);
+    mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('item-a')]));
     const { APIError } = await vi.importActual<typeof import('openai')>('openai');
     mockCreate.mockRejectedValue(new APIError(401, {}, 'sk-test-key is invalid and leaked', new Headers()));
 

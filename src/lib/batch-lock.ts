@@ -12,6 +12,11 @@ import { eq } from 'drizzle-orm';
 
 export const BULK_LOCK_KEY = 'product-check-bulk';
 
+// 人物単位のAI判定ロックキー（同じ人物の同時実行を防止。別人物は妨げない）
+export function personAiJudgeLockKey(personName: string): string {
+  return `product-ai-judge:${personName.trim()}`;
+}
+
 // ロックの有効期間: 10分（通常の全件バッチは1〜2分で完了）
 const LOCK_TTL_MS = 10 * 60 * 1000;
 
@@ -24,7 +29,7 @@ export interface BatchLockStatus {
   expiresAt: Date | null;
 }
 
-export async function getBatchLockStatus(): Promise<BatchLockStatus> {
+export async function getBatchLockStatus(lockKey: string = BULK_LOCK_KEY): Promise<BatchLockStatus> {
   const empty: BatchLockStatus = {
     isLocked: false,
     ownerId: null,
@@ -34,7 +39,7 @@ export async function getBatchLockStatus(): Promise<BatchLockStatus> {
     expiresAt: null,
   };
   try {
-    const rows = await db.select().from(batchLock).where(eq(batchLock.lockKey, BULK_LOCK_KEY));
+    const rows = await db.select().from(batchLock).where(eq(batchLock.lockKey, lockKey));
     if (!rows.length) return empty;
     const row = rows[0];
     const isLocked = row.status === 'running' && row.expiresAt > new Date();
@@ -54,14 +59,15 @@ export async function getBatchLockStatus(): Promise<BatchLockStatus> {
 
 // ロック取得（アトミック conditional upsert）
 // 戻り値: true = 取得成功, false = 別の有効なロックが存在
-export async function acquireBatchLock(ownerId: string): Promise<boolean> {
+// lockKey省略時は全件一括実行用の固定キー（既存呼び出し元との互換性維持）
+export async function acquireBatchLock(ownerId: string, lockKey: string = BULK_LOCK_KEY): Promise<boolean> {
   const now = new Date();
   const expiresAt = new Date(Date.now() + LOCK_TTL_MS);
   try {
     const result = await neonSql`
       INSERT INTO batch_lock (lock_key, owner_id, status, acquired_at, heartbeat_at, expires_at)
       VALUES (
-        ${BULK_LOCK_KEY}, ${ownerId}, 'running',
+        ${lockKey}, ${ownerId}, 'running',
         ${now}, ${now}, ${expiresAt}
       )
       ON CONFLICT (lock_key) DO UPDATE SET
@@ -83,13 +89,13 @@ export async function acquireBatchLock(ownerId: string): Promise<boolean> {
 
 // ロック更新（heartbeat: expires_at を延長）
 // 戻り値: true = 更新成功, false = ロックが自分のものでない / 期限切れ
-export async function renewBatchLock(ownerId: string): Promise<boolean> {
+export async function renewBatchLock(ownerId: string, lockKey: string = BULK_LOCK_KEY): Promise<boolean> {
   const expiresAt = new Date(Date.now() + LOCK_TTL_MS);
   try {
     const result = await neonSql`
       UPDATE batch_lock
       SET heartbeat_at = NOW(), expires_at = ${expiresAt}
-      WHERE lock_key = ${BULK_LOCK_KEY}
+      WHERE lock_key = ${lockKey}
         AND owner_id  = ${ownerId}
         AND status    = 'running'
       RETURNING owner_id
@@ -104,12 +110,13 @@ export async function renewBatchLock(ownerId: string): Promise<boolean> {
 export async function releaseBatchLock(
   ownerId: string,
   status: 'completed' | 'failed',
+  lockKey: string = BULK_LOCK_KEY,
 ): Promise<void> {
   try {
     await neonSql`
       UPDATE batch_lock
       SET status = ${status}, expires_at = NOW()
-      WHERE lock_key = ${BULK_LOCK_KEY}
+      WHERE lock_key = ${lockKey}
         AND owner_id  = ${ownerId}
     `;
   } catch (err) {

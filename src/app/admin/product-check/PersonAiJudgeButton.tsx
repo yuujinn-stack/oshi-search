@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 
-type Status = 'idle' | 'running' | 'done' | 'error' | 'config_missing' | 'rate_limited';
+// このボタンは楽天APIを一切呼ばない。DB(products.items)に保存済みの商品だけを対象に
+// AI判定を行う（/api/admin/ai-judge）。楽天商品の再取得は別ボタン(PersonRakutenFetchButton)
+// の担当であり、ここからは呼ばれない。
+type Status = 'idle' | 'running' | 'done' | 'error' | 'locked';
 
 interface AiFailureDetail {
   productId: string;
@@ -13,26 +16,24 @@ interface AiFailureDetail {
 }
 
 interface Result {
-  aiJudged: number;
-  aiQueued: number;
+  noStoredProducts: boolean;
+  totalUnclassifiedBefore: number;
+  attemptedCount: number;
+  successCount: number;
+  failedCount: number;
+  remainingCount: number;
   autoApproved: number;
-  aiFailed: number;
-  aiKeyMissing: boolean;
-  stored: number;
-  skipped: number;
   excluded: number;
+  membershipFiltered: number;
   relatedCount: number;
   unrelatedCount: number;
   uncertainCount: number;
-  fetchFailed: number;
-  failedCategories: string[];
-  upstreamHttpStatus?: number;
-  message?: string;
+  aiKeyMissing: boolean;
   aiFailures: AiFailureDetail[];
+  message?: string;
 }
 
 // 失敗詳細の折りたたみ表示: 件数と代表理由のみ画面に出し、全件はブラウザのconsoleへ出す
-// （console.tableもタイトルは既に60文字で切られたものを使い、件数も上限を設けて過剰出力を避ける）
 const CONSOLE_TABLE_MAX = 100;
 
 function FailureDetails({ failures }: { failures: AiFailureDetail[] }) {
@@ -89,8 +90,8 @@ export default function PersonAiJudgeButton({
 
   async function handleClick(forceRejudge = false) {
     const msg = forceRejudge
-      ? `「${personName}」のAI判定済み商品を含めて再判定します。\nプロンプト変更後に使用してください。`
-      : `「${personName}」の商品を楽天から取得してAI判定を実行しますか？\n（既に判定済みの商品はスキップされます）`;
+      ? `「${personName}」のAI判定済み商品を含めて再判定します（保存済み商品のみ、最大10件）。\nプロンプト変更後に使用してください。`
+      : `「${personName}」の保存済み商品からAI判定を実行しますか？（最大10件、楽天APIは呼び出しません）`;
     if (!confirm(msg)) return;
 
     setStatus('running');
@@ -111,38 +112,29 @@ export default function PersonAiJudgeButton({
       // 通知（onComplete）とページ全体のrefreshは、このボタンの表示有無に関わらず必ず行う。
       if (mountedRef.current) {
         if (!succeeded) {
-          if (data.status === 'config_missing') {
-            setStatus('config_missing');
-          } else if (data.status === 'rate_limited') {
-            setStatus('rate_limited');
-          } else if (data.status === 'upstream_error') {
-            setErrorMsg(`楽天API ${data.httpStatus} エラー`);
-            setStatus('error');
-          } else if (data.status === 'network_error') {
-            setErrorMsg('接続失敗（タイムアウト等）');
-            setStatus('error');
+          if (res.status === 409) {
+            setStatus('locked');
           } else {
             setErrorMsg(data.error ?? `HTTP ${res.status}`);
             setStatus('error');
           }
         } else {
           setResult({
-            aiJudged:           data.person.aiJudged           ?? 0,
-            aiQueued:           data.person.aiQueued           ?? 0,
-            autoApproved:       data.person.autoApproved       ?? 0,
-            aiFailed:           data.person.aiFailed           ?? 0,
-            aiKeyMissing:       data.person.aiKeyMissing       ?? false,
-            stored:             data.person.stored             ?? 0,
-            skipped:            data.person.skipped            ?? 0,
-            excluded:           data.person.excluded           ?? 0,
-            relatedCount:       data.person.relatedCount       ?? 0,
-            unrelatedCount:     data.person.unrelatedCount     ?? 0,
-            uncertainCount:     data.person.uncertainCount     ?? 0,
-            fetchFailed:        data.person.fetchFailed        ?? 0,
-            failedCategories:   data.person.failedCategories   ?? [],
-            upstreamHttpStatus: data.person.upstreamHttpStatus,
-            message:            data.person.message,
-            aiFailures:         data.person.aiFailures         ?? [],
+            noStoredProducts:       data.person.noStoredProducts       ?? false,
+            totalUnclassifiedBefore: data.person.totalUnclassifiedBefore ?? 0,
+            attemptedCount:         data.person.attemptedCount         ?? 0,
+            successCount:           data.person.successCount           ?? 0,
+            failedCount:            data.person.failedCount            ?? 0,
+            remainingCount:         data.person.remainingCount         ?? 0,
+            autoApproved:           data.person.autoApproved           ?? 0,
+            excluded:               data.person.excluded               ?? 0,
+            membershipFiltered:     data.person.membershipFiltered     ?? 0,
+            relatedCount:           data.person.relatedCount           ?? 0,
+            unrelatedCount:         data.person.unrelatedCount         ?? 0,
+            uncertainCount:         data.person.uncertainCount         ?? 0,
+            aiKeyMissing:           data.person.aiKeyMissing           ?? false,
+            aiFailures:             data.person.aiFailures             ?? [],
+            message:                data.person.message,
           });
           setStatus('done');
         }
@@ -178,83 +170,54 @@ export default function PersonAiJudgeButton({
         onClick={() => handleClick(true)}
         disabled={status === 'running'}
         className="text-xs px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg font-medium transition-colors disabled:opacity-50 whitespace-nowrap"
-        title="AI判定済み商品を含めて再判定（プロンプト変更後に使用）"
+        title="AI判定済み商品を含めて再判定（プロンプト変更後に使用、保存済み商品のみ）"
       >
         🔄 再判定
       </button>
 
-      {/* API設定不足 — 専用表示 */}
-      {status === 'config_missing' && (
-        <span className="text-xs text-orange-600 whitespace-nowrap font-medium" title="RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEY が未設定です">
-          ⚠ API設定不足
-        </span>
-      )}
-
-      {/* 429 レート制限 */}
-      {status === 'rate_limited' && (
-        <span className="text-xs text-amber-600 whitespace-nowrap" title="HTTP 429 Too Many Requests — しばらく時間を置いてから再実行してください">
-          ⏳ 利用制限中 — しばらく待ってから再実行してください
+      {/* 二重実行拒否（サーバー側ロック、409） */}
+      {status === 'locked' && (
+        <span className="text-xs text-amber-600 whitespace-nowrap">
+          この人物のAI判定はすでに実行中です
         </span>
       )}
 
       {/* 正常完了 */}
       {status === 'done' && result && (() => {
+        if (result.noStoredProducts) {
+          return (
+            <span className="text-xs text-orange-600" title="先に「楽天再取得」ボタンを押してください">
+              保存済みの商品がありません。先に楽天再取得を実行してください
+            </span>
+          );
+        }
         if (result.aiKeyMissing) {
           return (
             <span className="text-xs text-red-500 whitespace-nowrap" title="OPENAI_API_KEYが設定されていないためAI判定をスキップしました">
-              ⚠ AIキー未設定 (取得{result.stored})
+              ⚠ AIキー未設定
             </span>
           );
         }
-        if (result.fetchFailed > 0 && result.stored === 0) {
-          return (
-            <span
-              className="text-xs text-red-500 whitespace-nowrap"
-              title={result.failedCategories.length > 0 ? `失敗カテゴリ: ${result.failedCategories.join(', ')}` : result.message}
-            >
-              ⚠ 検索失敗{result.fetchFailed}カテゴリ
-              {result.upstreamHttpStatus && ` HTTP${result.upstreamHttpStatus}`}
-            </span>
-          );
-        }
-        if (result.stored === 0 && result.skipped === 0 && result.fetchFailed === 0) {
-          return (
-            <span className="text-xs text-gray-400 whitespace-nowrap" title={result.message}>
-              API正常・0件
-            </span>
-          );
+        if (result.totalUnclassifiedBefore === 0) {
+          return <span className="text-xs text-gray-400 whitespace-nowrap">未判定の商品はありません</span>;
         }
 
-        // AI判定が必要な商品が0件（既に全件判定済み・自動承認・除外等）
-        if (result.aiQueued === 0) {
-          return (
-            <span className="text-xs space-x-1.5">
-              <span className="text-gray-500">取得{result.stored}</span>
-              {result.autoApproved > 0 && <span className="text-blue-600">自動承認{result.autoApproved}</span>}
-              <span className="text-gray-400">判定対象の商品はありません</span>
-              {isRefreshing && <span className="text-gray-400">（画面更新中…）</span>}
-            </span>
-          );
-        }
+        // 主メッセージはサーバー(route.ts)が状況に応じて組み立てたものをそのまま信頼して表示する
+        // （全件成功/一部失敗/完了/レート制限/残高上限等の文言はサーバー側の唯一の生成元に統一）
+        const complete = result.remainingCount === 0;
+        const messageColor = result.failedCount > 0 ? 'text-amber-600' : complete ? 'text-green-600' : 'text-green-600';
 
-        const allFailed = result.aiJudged === 0 && result.aiFailed === result.aiQueued;
-        const partialFailed = result.aiFailed > 0 && result.aiJudged > 0;
-        const representativeFailure = result.aiFailures[0]?.message ?? 'AI判定に失敗しました';
+        if (complete && result.attemptedCount === 0 && result.successCount === 0) {
+          return <span className="text-xs text-green-600">{result.message ?? 'すべての商品を判定しました'}</span>;
+        }
 
         return (
-          <span className="text-xs whitespace-nowrap space-x-1.5">
-            <span className="text-gray-500">取得{result.stored}</span>
-            {result.excluded > 0 && <span className="text-orange-500">除外{result.excluded}</span>}
+          <span className="text-xs space-x-1.5">
             {result.autoApproved > 0 && <span className="text-blue-600">自動承認{result.autoApproved}</span>}
-            {allFailed ? (
-              <span className="text-red-600">⚠ 全件失敗（{result.aiQueued}件）: {representativeFailure}</span>
-            ) : partialFailed ? (
-              <span className="text-amber-600">{result.aiJudged}件成功、{result.aiFailed}件失敗</span>
-            ) : (
-              <span className="text-green-600">{result.aiJudged}件を判定しました</span>
-            )}
+            {result.excluded > 0 && <span className="text-orange-500">除外{result.excluded}</span>}
+            <span className={messageColor}>{result.message}</span>
             {result.aiFailures.length > 0 && <FailureDetails failures={result.aiFailures} />}
-            {result.aiQueued > 0 && (
+            {result.successCount > 0 && (
               <span className="text-gray-400">
                 related:{result.relatedCount} unrelated:{result.unrelatedCount} uncertain:{result.uncertainCount}
               </span>

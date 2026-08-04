@@ -14,6 +14,7 @@ export type JudgeFailureCode =
   | 'OPENAI_NOT_CONFIGURED'
   | 'OPENAI_API_ERROR'
   | 'RATE_LIMIT'
+  | 'INSUFFICIENT_QUOTA'
   | 'TIMEOUT'
   | 'INVALID_JSON'
   | 'UNKNOWN';
@@ -219,8 +220,16 @@ ${productText}
     let code: JudgeFailureCode = 'UNKNOWN';
     let message = 'AI判定でエラーが発生しました';
     if (err instanceof RateLimitError) {
-      code = 'RATE_LIMIT';
-      message = 'OpenAI APIのレート制限に達しました';
+      // OpenAIは残高・課金上限もHTTP 429で返す。error.code で区別する
+      // （insufficient_quota / billing_hard_limit_reached はリトライしても解消しないため区別が必要）
+      const quotaCodes = new Set(['insufficient_quota', 'billing_hard_limit_reached']);
+      if (err.code && quotaCodes.has(err.code)) {
+        code = 'INSUFFICIENT_QUOTA';
+        message = 'OpenAI APIの残高または利用上限を確認してください';
+      } else {
+        code = 'RATE_LIMIT';
+        message = 'OpenAI APIのレート制限に達しました';
+      }
     } else if (err instanceof APIConnectionTimeoutError) {
       code = 'TIMEOUT';
       message = 'OpenAI APIへのリクエストがタイムアウトしました';

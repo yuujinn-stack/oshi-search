@@ -4,12 +4,13 @@
 
 import { getAllPersonsWithConfig, getAllPersonsMerged } from './persons';
 import { getProductsByCategory } from './rakuten';
-import { storeProducts, saveBatchMeta, CATEGORIES } from './product-store';
+import { storeProducts, saveBatchMeta, CATEGORIES, getAllStoredProducts } from './product-store';
 import { getAllVerdicts, saveVerdict } from './judgment-store';
 import { judgeProducts, shouldAutoApprove, PROMPT_VERSION } from './ai-judge';
 import type { JudgeFailureCode } from './ai-judge';
 import { checkPostMembershipGroupContent } from './product-membership-guard';
 import { getPersonMeta } from './person-meta';
+import { computePersonProductStats } from './product-check-stats';
 import type { RakutenItem } from '@/types/rakuten';
 import type { PersonWithConfig } from '@/types/person';
 
@@ -451,4 +452,217 @@ export async function processAllPersons(): Promise<BatchSummary> {
   });
 
   return { startedAt, finishedAt, persons: results, totalAiCalls };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI判定のみ（楽天API再取得なし）
+// 呼び出し元: /api/admin/ai-judge （個人単位の「AI判定」ボタン専用）
+//
+// processPerson() との違い:
+//   - 楽天商品検索・products.itemsへの上書きは一切行わない
+//   - 対象商品は Neon の products.items に既に保存されているものだけ
+//   - 書き込むのは verdicts のみ
+//   - 1回の呼び出しで実際にOpenAIへ送信するのは最大 AI_JUDGE_BATCH_SIZE 件
+//     （楽天再取得（processPerson）とは独立の上限。Vercelの実行時間対策と、
+//      1クリックの影響範囲を小さく保つための両方が目的）
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 1回のAI判定クリックで実際にOpenAIへ送信する上限
+export const AI_JUDGE_BATCH_SIZE = 10;
+
+export interface StoredProductsJudgeResult {
+  personName: string;
+  noStoredProducts: boolean;       // products.items が0件（先に楽天再取得が必要）
+  totalUnclassifiedBefore: number; // このクリック開始時点の未判定数
+  attemptedCount: number;          // 今回実際にOpenAIへ送信した件数（最大 AI_JUDGE_BATCH_SIZE）
+  successCount: number;            // 保存に成功した件数
+  failedCount: number;             // AI判定またはDB保存に失敗した件数
+  remainingCount: number;          // このクリック後もなお未判定として残る件数
+  autoApproved: number;            // ルールベース自動承認（AI呼び出し不要）
+  excluded: number;                // 除外キーワード一致
+  membershipFiltered: number;      // 卒業後グループ商品候補
+  relatedCount: number;            // 今回のAI呼び出し分でrelatedになった件数
+  unrelatedCount: number;
+  uncertainCount: number;
+  aiKeyMissing: boolean;
+  aiFailures: AiFailureDetail[];
+  error?: string;
+}
+
+function emptyStoredProductsJudgeResult(personName: string): StoredProductsJudgeResult {
+  return {
+    personName,
+    noStoredProducts: false,
+    totalUnclassifiedBefore: 0,
+    attemptedCount: 0,
+    successCount: 0,
+    failedCount: 0,
+    remainingCount: 0,
+    autoApproved: 0,
+    excluded: 0,
+    membershipFiltered: 0,
+    relatedCount: 0,
+    unrelatedCount: 0,
+    uncertainCount: 0,
+    aiKeyMissing: false,
+    aiFailures: [],
+  };
+}
+
+export async function judgeStoredProducts(
+  personName: string,
+  forceRejudge = false,
+  configOverride?: PersonWithConfig,
+): Promise<StoredProductsJudgeResult> {
+  const all = getAllPersonsWithConfig();
+  const person = configOverride ?? all.find((p) => p.name === personName);
+  if (!person) {
+    return { ...emptyStoredProductsJudgeResult(personName), error: '人物が見つかりません' };
+  }
+
+  // ━━━ 保存済み商品を取得（楽天APIは一切呼ばない） ━━━
+  const storedData = await getAllStoredProducts(person.name);
+  const allProducts: RakutenItem[] = [];
+  const seenIds = new Set<string>();
+  for (const cat of CATEGORIES) {
+    const data = storedData[cat];
+    if (!data) continue;
+    for (const p of data.products) {
+      if (seenIds.has(p.id)) continue;
+      seenIds.add(p.id);
+      allProducts.push(p);
+    }
+  }
+
+  if (allProducts.length === 0) {
+    return { ...emptyStoredProductsJudgeResult(person.name), noStoredProducts: true };
+  }
+
+  const existingVerdicts = await getAllVerdicts(person.name);
+  const personMeta = await getPersonMeta(person.name);
+  const excludeKeywords = person.config.excludeKeywords ?? [];
+  const totalUnclassifiedBefore = computePersonProductStats(storedData, existingVerdicts).unclassified;
+
+  console.log(`[ai-judge-only] 開始: ${person.name} 保存済み商品=${allProducts.length}件 未判定(開始時)=${totalUnclassifiedBefore}件`);
+
+  let excluded = 0;
+  let autoApproved = 0;
+  let membershipFiltered = 0;
+  const toJudge: RakutenItem[] = [];
+
+  for (const p of allProducts) {
+    const existing = existingVerdicts[p.id];
+
+    // ━━━ 最優先: deleted（管理者による論理削除）は何があっても対象外 ━━━
+    if (existing?.verdict === 'deleted') continue;
+
+    // ━━━ 最優先: manual判定は絶対に上書きしない ━━━
+    if (existing?.source === 'manual') continue;
+
+    // ━━━ 除外キーワード一致 → 即 unrelated（AI不要） ━━━
+    if (excludeKeywords.some((kw) => p.title.includes(kw))) {
+      await saveVerdict(person.name, p.id, 'unrelated', 0, 'auto', '除外キーワード一致');
+      excluded++;
+      continue;
+    }
+
+    // ━━━ 自動承認チェック ━━━
+    if (shouldAutoApprove(p, person)) {
+      await saveVerdict(person.name, p.id, 'related', 95, 'ai', '自動承認（人物名+写真集 or グループCD）', PROMPT_VERSION);
+      autoApproved++;
+      continue;
+    }
+
+    // ━━━ ai判定済みはスキップ（forceRejudgeまたはプロンプト変更時のみ再判定・既存仕様を維持） ━━━
+    if (existing?.source === 'ai') {
+      const promptOutdated = existing.promptVersion !== PROMPT_VERSION;
+      if (!forceRejudge && !promptOutdated) continue;
+    }
+
+    // ━━━ 卒業後グループ商品候補チェック ━━━
+    if (personMeta) {
+      const guardResult = checkPostMembershipGroupContent(p.title, person.name, person.config.aliases ?? [], personMeta);
+      if (guardResult.shouldReview) {
+        await saveVerdict(person.name, p.id, 'uncertain', 0, 'auto', guardResult.reason);
+        membershipFiltered++;
+        continue;
+      }
+    }
+
+    toJudge.push(p);
+  }
+
+  let aiKeyMissing = false;
+  let attemptedCount = 0;
+  let successCount = 0;
+  let failedCount = 0;
+  let relatedCount = 0;
+  let unrelatedCount = 0;
+  let uncertainCount = 0;
+  const aiFailures: AiFailureDetail[] = [];
+
+  const batch = toJudge.slice(0, AI_JUDGE_BATCH_SIZE);
+
+  if (batch.length === 0) {
+    console.log(`[ai-judge-only] AI判定対象なし: ${person.name}`);
+  } else if (!process.env.OPENAI_API_KEY) {
+    aiKeyMissing = true;
+    console.log(`[ai-judge-only] ★AI判定スキップ: OPENAI_API_KEY未設定 (対象候補=${toJudge.length}件・今回未送信)`);
+  } else {
+    attemptedCount = batch.length;
+    console.log(`[ai-judge-only] AI判定開始: ${person.name} ${attemptedCount}件を送信（保存済み商品のみ・楽天API呼び出しなし）`);
+    const aiResults = await judgeProducts(batch, person);
+
+    for (const { id, result, failure } of aiResults) {
+      const product = batch.find((p) => p.id === id);
+      if (!result) {
+        const code = failure?.code ?? 'UNKNOWN';
+        const message = failure?.message ?? 'AI判定に失敗しました';
+        aiFailures.push({ productId: id, productTitle: product?.title.slice(0, 60), code, message });
+        failedCount++;
+        continue;
+      }
+      if (!product) {
+        aiFailures.push({ productId: id, code: 'PRODUCT_NOT_FOUND', message: '判定結果に対応する商品が見つかりませんでした' });
+        failedCount++;
+        continue;
+      }
+      try {
+        await saveVerdict(person.name, id, result.verdict, result.score, 'ai', result.reason, PROMPT_VERSION);
+      } catch (err) {
+        console.error(`[ai-judge-only] DB保存失敗(verdict) id=${id} personName=${personName}: ${err instanceof Error ? err.message : String(err)}`);
+        aiFailures.push({ productId: id, productTitle: product.title.slice(0, 60), code: 'DB_SAVE_FAILED', message: '判定結果の保存に失敗しました' });
+        failedCount++;
+        continue;
+      }
+      successCount++;
+      if (result.verdict === 'related') relatedCount++;
+      else if (result.verdict === 'unrelated') unrelatedCount++;
+      else uncertainCount++;
+    }
+  }
+
+  // 残りの未判定数 = このクリックでAI判定が必要だった商品のうち、保存に至らなかった件数
+  // （上限超過で未送信の分・送信したが失敗した分の両方を含む）
+  const remainingCount = toJudge.length - successCount;
+
+  console.log(`[ai-judge-only] ===== 完了: ${person.name} 未判定(開始時)=${totalUnclassifiedBefore} 送信=${attemptedCount} 成功=${successCount} 失敗=${failedCount} 残り=${remainingCount} 自動承認=${autoApproved} 除外=${excluded} 卒業後候補=${membershipFiltered} aiKeyMissing=${aiKeyMissing} =====`);
+
+  return {
+    personName: person.name,
+    noStoredProducts: false,
+    totalUnclassifiedBefore,
+    attemptedCount,
+    successCount,
+    failedCount,
+    remainingCount,
+    autoApproved,
+    excluded,
+    membershipFiltered,
+    relatedCount,
+    unrelatedCount,
+    uncertainCount,
+    aiKeyMissing,
+    aiFailures,
+  };
 }

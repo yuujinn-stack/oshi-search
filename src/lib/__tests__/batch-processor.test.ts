@@ -722,14 +722,82 @@ describe('UIコード品質チェック', () => {
     expect(src).not.toContain('取得エラー');
   });
 
-  it('PersonAiJudgeButton に "利用制限" メッセージが含まれる（429対応）', async () => {
+  // AI判定と楽天再取得の分離後: PersonAiJudgeButton は楽天APIを一切呼ばないため、
+  // 楽天の429("利用制限")を自前でハンドリングする専用コードは持たない。
+  // OpenAI側の一時制限/残高上限メッセージはAPIレスポンスのmessageをそのまま表示するため、
+  // このファイルのソースに"楽天"関連の取得ロジックが含まれていないことを確認する。
+  it('PersonAiJudgeButton は楽天取得関数(rakuten)を一切importしない', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const src = fs.readFileSync(
       path.resolve(process.cwd(), 'src/app/admin/product-check/PersonAiJudgeButton.tsx'),
       'utf-8',
     );
-    expect(src).toContain('利用制限');
+    // "楽天再取得を実行してください"という案内文言（他ボタンへの誘導）はOK。
+    // rakuten.ts由来のimport・API呼び出しが無いことだけを確認する。
+    expect(src).not.toContain('rakuten');
+    expect(src).not.toContain('from \'@/lib/rakuten\'');
+    expect(src).not.toContain('getProductsByCategory');
+  });
+
+  it('PersonAiJudgeButton は /api/admin/ai-judge のみを呼ぶ（/api/admin/rakuten-refetch は呼ばない）', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/app/admin/product-check/PersonAiJudgeButton.tsx'),
+      'utf-8',
+    );
+    expect(src).toContain('/api/admin/ai-judge');
+    expect(src).not.toContain('/api/admin/rakuten-refetch');
+  });
+
+  it('/api/admin/ai-judge/route.ts は楽天取得関数(getProductsByCategory)をimportしない', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/app/api/admin/ai-judge/route.ts'),
+      'utf-8',
+    );
+    expect(src).not.toContain('getProductsByCategory');
+    expect(src).not.toContain("from '@/lib/rakuten'");
+  });
+
+  it('PersonRakutenFetchButton は /api/admin/rakuten-refetch を呼ぶ（分離後の新エンドポイント）', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/app/admin/product-check/PersonRakutenFetchButton.tsx'),
+      'utf-8',
+    );
+    expect(src).toContain('/api/admin/rakuten-refetch');
+  });
+
+  // ── 14: 楽天429とOpenAI制限のUIメッセージが異なる ───────────────────────────
+  it('[14] 楽天429の案内文とOpenAI一時制限の案内文は別の文言である', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const rakutenRefetchSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/app/api/admin/rakuten-refetch/route.ts'),
+      'utf-8',
+    );
+    const aiJudgeRouteSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/app/api/admin/ai-judge/route.ts'),
+      'utf-8',
+    );
+    const RAKUTEN_MSG = '楽天APIが一時的な利用制限中です。しばらく待ってから楽天再取得を実行してください。';
+    const OPENAI_MSG = 'OpenAI APIが一時的な利用制限中です。しばらく待ってから再実行してください';
+    const QUOTA_MSG = 'OpenAI APIの残高または利用上限を確認してください';
+
+    expect(rakutenRefetchSrc).toContain(RAKUTEN_MSG);
+    expect(aiJudgeRouteSrc).toContain(OPENAI_MSG);
+    expect(aiJudgeRouteSrc).toContain(QUOTA_MSG);
+    expect(RAKUTEN_MSG).not.toBe(OPENAI_MSG);
+
+    // ai-judge側(AI判定ボタン)には楽天用の文言が混入していない
+    expect(aiJudgeRouteSrc).not.toContain(RAKUTEN_MSG);
+    // rakuten-refetch側(楽天再取得ボタン)にはOpenAI用の文言が混入していない
+    expect(rakutenRefetchSrc).not.toContain(OPENAI_MSG);
+    expect(rakutenRefetchSrc).not.toContain(QUOTA_MSG);
   });
 });
 

@@ -87,6 +87,20 @@ describe('judgeProduct()', () => {
     expect(outcome.failure?.code).toBe('RATE_LIMIT');
   });
 
+  it('レート制限のうちinsufficient_quota: INSUFFICIENT_QUOTAを返す（RATE_LIMITとは区別する）', async () => {
+    mockCreate.mockRejectedValue(new RateLimitError(429, { code: 'insufficient_quota' }, 'You exceeded your current quota', new Headers()));
+    const outcome = await judgeProduct(makeItem('a'), PERSON);
+    expect(outcome.result).toBeNull();
+    expect(outcome.failure?.code).toBe('INSUFFICIENT_QUOTA');
+    expect(outcome.failure?.message).toContain('残高または利用上限');
+  });
+
+  it('レート制限のうちbilling_hard_limit_reached: INSUFFICIENT_QUOTAを返す', async () => {
+    mockCreate.mockRejectedValue(new RateLimitError(429, { code: 'billing_hard_limit_reached' }, 'Billing hard limit reached', new Headers()));
+    const outcome = await judgeProduct(makeItem('a'), PERSON);
+    expect(outcome.failure?.code).toBe('INSUFFICIENT_QUOTA');
+  });
+
   it('タイムアウト: TIMEOUTを返す', async () => {
     mockCreate.mockRejectedValue(new APIConnectionTimeoutError());
     const outcome = await judgeProduct(makeItem('a'), PERSON);
