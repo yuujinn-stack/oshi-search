@@ -248,10 +248,13 @@ export default function PersonProducts({
   personName,
   allPersons = [],
   personGroup,
+  reloadSignal,
 }: {
   personName: string;
   allPersons?: PersonOption[];
   personGroup?: string;
+  // 0より大きい値に変化するたびに、既にデータ取得済みなら再取得する（AI判定完了通知用）
+  reloadSignal?: number;
 }) {
   type Filter = 'uncertain' | 'all' | 'unrelated';
 
@@ -398,6 +401,16 @@ export default function PersonProducts({
     if (!open && !data) await load();
     setOpen((v) => !v);
   }
+
+  // AI判定完了の通知（reloadSignalの増加）を受けたら、既に一度でも読み込み済みのパネルだけ
+  // 再取得する。reloadSignalは親側で単調増加するカウンタで、初期値0は「まだ通知なし」を表す
+  // ため無視する（0未満に戻ることはないので、この判定だけで初回マウント時の誤発火も防げる）。
+  // data が null（一度も開かれていない）のパネルは何もしない＝不要な通信をしない。
+  useEffect(() => {
+    if (!reloadSignal) return;
+    if (data) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadSignal]);
 
   // ─── Verdict handlers ────────────────────────────────────────────────────
   async function handleVerdict(productId: string, verdict: Verdict, score: number) {

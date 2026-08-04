@@ -533,6 +533,120 @@ describe('processPerson()', () => {
       expect(r.failedCategories).toHaveLength(6);
     });
   });
+
+  // ── テスト18: AI判定失敗の詳細(aiFailures)が記録される ─────────────────────
+  describe('テスト18: AI判定失敗の詳細が記録される', () => {
+    beforeEach(() => {
+      process.env.OPENAI_API_KEY = 'sk-test-key';
+
+      const items = [makeItem('item-ok'), makeItem('item-ng')];
+      vi.mocked(getProductsByCategory).mockImplementation(
+        (_name, _group, cat) =>
+          cat === '写真集'
+            ? Promise.resolve({ status: 'ok', products: items })
+            : Promise.resolve({ status: 'empty' }),
+      );
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockResolvedValue([
+        { id: 'item-ok', result: { verdict: 'related', score: 80, reason: 'ok' } },
+        { id: 'item-ng', result: null, failure: { code: 'RATE_LIMIT', message: 'OpenAI APIのレート制限に達しました' } },
+      ]);
+    });
+
+    it('aiFailuresに失敗商品のcode/messageが入る', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.aiFailures).toHaveLength(1);
+      expect(r.aiFailures[0].productId).toBe('item-ng');
+      expect(r.aiFailures[0].code).toBe('RATE_LIMIT');
+      expect(r.aiFailures[0].message).toBe('OpenAI APIのレート制限に達しました');
+    });
+
+    it('失敗商品は未判定のまま残る（saveVerdictが呼ばれない）', async () => {
+      await processPerson('テスト人物');
+      expect(saveVerdict).toHaveBeenCalledTimes(1);
+      expect(saveVerdict).toHaveBeenCalledWith(
+        'テスト人物', 'item-ok', 'related', 80, 'ai', 'ok', 'v1',
+      );
+    });
+  });
+
+  // ── テスト19: DB保存失敗（1件）でも残りの商品の処理は継続する ────────────────
+  describe('テスト19: verdict保存が1件だけ失敗しても処理を継続する', () => {
+    beforeEach(() => {
+      process.env.OPENAI_API_KEY = 'sk-test-key';
+
+      const items = [makeItem('item-a'), makeItem('item-b')];
+      vi.mocked(getProductsByCategory).mockImplementation(
+        (_name, _group, cat) =>
+          cat === '写真集'
+            ? Promise.resolve({ status: 'ok', products: items })
+            : Promise.resolve({ status: 'empty' }),
+      );
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockResolvedValue([
+        { id: 'item-a', result: { verdict: 'related', score: 85, reason: 'ok' } },
+        { id: 'item-b', result: { verdict: 'unrelated', score: 10, reason: 'ok' } },
+      ]);
+      vi.mocked(saveVerdict)
+        .mockRejectedValueOnce(new Error('DB接続エラー'))
+        .mockResolvedValueOnce(undefined);
+    });
+
+    it('1件目が失敗しても2件目のsaveVerdictは呼ばれる', async () => {
+      await processPerson('テスト人物');
+      expect(saveVerdict).toHaveBeenCalledTimes(2);
+    });
+
+    it('aiJudged=1（成功した1件のみ）、aiFailuresにDB_SAVE_FAILEDが1件入る', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.aiJudged).toBe(1);
+      expect(r.aiFailures).toHaveLength(1);
+      expect(r.aiFailures[0].code).toBe('DB_SAVE_FAILED');
+      expect(r.aiFailures[0].productId).toBe('item-a');
+    });
+
+    it('processPersonはthrowしない（安全な失敗）', async () => {
+      await expect(processPerson('テスト人物')).resolves.not.toThrow();
+    });
+  });
+
+  // ── テスト20: 全件AI失敗 ─────────────────────────────────────────────────
+  describe('テスト20: AI判定が全件失敗する', () => {
+    beforeEach(() => {
+      process.env.OPENAI_API_KEY = 'sk-test-key';
+
+      const items = [makeItem('item-a'), makeItem('item-b')];
+      vi.mocked(getProductsByCategory).mockImplementation(
+        (_name, _group, cat) =>
+          cat === '写真集'
+            ? Promise.resolve({ status: 'ok', products: items })
+            : Promise.resolve({ status: 'empty' }),
+      );
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockResolvedValue([
+        { id: 'item-a', result: null, failure: { code: 'OPENAI_API_ERROR', message: 'OpenAI APIエラー（HTTP 500）' } },
+        { id: 'item-b', result: null, failure: { code: 'INVALID_JSON', message: 'AI応答のJSON解析に失敗しました' } },
+      ]);
+    });
+
+    it('aiJudged=0 aiFailed=aiQueued=2', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.aiJudged).toBe(0);
+      expect(r.aiFailed).toBe(2);
+      expect(r.aiQueued).toBe(2);
+    });
+
+    it('aiFailuresに2件とも記録され、コードがそれぞれ異なる', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.aiFailures).toHaveLength(2);
+      expect(r.aiFailures.map((f) => f.code).sort()).toEqual(['INVALID_JSON', 'OPENAI_API_ERROR']);
+    });
+
+    it('saveVerdictは一度も呼ばれない', async () => {
+      await processPerson('テスト人物');
+      expect(saveVerdict).not.toHaveBeenCalled();
+    });
+  });
 });
 
 // ── ソースコードアサーション（曖昧表示の残留チェック） ──────────────────────────

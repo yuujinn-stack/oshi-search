@@ -1,6 +1,7 @@
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getBatchMeta, getAllStoredProducts } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
+import { computePersonProductStats, type PersonProductStats } from '@/lib/product-check-stats';
 import { getAllImportedPersonsOrThrow } from '@/lib/imported-persons';
 import { getRedis } from '@/lib/redis';
 import { pingRedis } from '@/lib/redis-health';
@@ -71,14 +72,7 @@ export default async function AdminProductCheckPage() {
   const importedMap = new Map(importedPersons.map((p) => [p.name, p]));
 
   // 全人物の判定統計を並列取得
-  interface PersonStats {
-    total: number;
-    related: number;
-    uncertain: number;
-    unrelated: number;
-    unclassified: number;
-  }
-  const statsMap: Record<string, PersonStats> = {};
+  const statsMap: Record<string, PersonProductStats> = {};
   try {
     const statsArr = await Promise.all(
       persons.map(async (p) => {
@@ -87,20 +81,16 @@ export default async function AdminProductCheckPage() {
             getAllStoredProducts(p.name),
             getAllVerdicts(p.name),
           ]);
-          const total = Object.values(storedData)
-            .reduce((sum, d) => sum + (d?.products.length ?? 0), 0);
-          const counts = { related: 0, uncertain: 0, unrelated: 0 };
-          for (const v of Object.values(verdicts)) {
-            if (v.verdict in counts) counts[v.verdict as keyof typeof counts]++;
-          }
-          const unclassified = Math.max(0, total - Object.keys(verdicts).length);
-          return { name: p.name, total, unclassified, ...counts };
+          return { name: p.name, stats: computePersonProductStats(storedData, verdicts) };
         } catch {
-          return { name: p.name, total: 0, related: 0, uncertain: 0, unrelated: 0, unclassified: 0 };
+          return {
+            name: p.name,
+            stats: { total: 0, activeTotal: 0, deleted: 0, related: 0, uncertain: 0, unrelated: 0, unclassified: 0 },
+          };
         }
       })
     );
-    for (const s of statsArr) statsMap[s.name] = s;
+    for (const s of statsArr) statsMap[s.name] = s.stats;
   } catch { /* 統計取得失敗時は表示なし */ }
 
   // enrichedPersons: 全人物情報を統合
@@ -117,7 +107,7 @@ export default async function AdminProductCheckPage() {
       checkStatus: (p.config.checkStatus ?? 'unchecked') as 'ok' | 'needs_fix' | 'unchecked',
       strictMode: p.config.strictMode,
       customKeywords: p.config.customKeywords,
-      stats: statsMap[p.name] ?? { total: 0, related: 0, uncertain: 0, unrelated: 0, unclassified: 0 },
+      stats: statsMap[p.name] ?? { total: 0, activeTotal: 0, deleted: 0, related: 0, uncertain: 0, unrelated: 0, unclassified: 0 },
       memo: meta?.memo,
       priority: meta?.priority as PersonPriority | undefined,
       activityStatus: meta?.activityStatus,

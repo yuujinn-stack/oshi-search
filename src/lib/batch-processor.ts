@@ -7,10 +7,19 @@ import { getProductsByCategory } from './rakuten';
 import { storeProducts, saveBatchMeta, CATEGORIES } from './product-store';
 import { getAllVerdicts, saveVerdict } from './judgment-store';
 import { judgeProducts, shouldAutoApprove, PROMPT_VERSION } from './ai-judge';
+import type { JudgeFailureCode } from './ai-judge';
 import { checkPostMembershipGroupContent } from './product-membership-guard';
 import { getPersonMeta } from './person-meta';
 import type { RakutenItem } from '@/types/rakuten';
 import type { PersonWithConfig } from '@/types/person';
+
+// AI判定1件の失敗詳細（画面の折りたたみ表示・集計用）
+export interface AiFailureDetail {
+  productId: string;
+  productTitle?: string;
+  code: JudgeFailureCode | 'PRODUCT_NOT_FOUND' | 'DB_SAVE_FAILED';
+  message: string;
+}
 
 // 1人あたりの AI 呼び出し上限（Vercel の 300s タイムアウト対策）
 const MAX_AI_PER_PERSON = 150;
@@ -54,6 +63,7 @@ export interface PersonBatchResult {
   uncertainCount: number;          // AI判定（API呼び出し分のみ）で uncertain になった件数
   rakutenConfigMissing: boolean;   // true=RAKUTEN_APP_ID/ACCESS_KEY が未設定または空文字
   upstreamHttpStatus?: number;     // 楽天APIが返した最初の 4xx/5xx ステータスコード
+  aiFailures: AiFailureDetail[];   // AI判定で失敗した商品の詳細（理由の可視化用。件数は aiFailed と一致）
   error?: string;
 }
 
@@ -81,7 +91,7 @@ export async function processPerson(
       usedSuppressed: 0, membershipFiltered: 0,
       fetchFailed: 0, failedCategories: [], aiFailed: 0, aiKeyMissing: false,
       relatedCount: 0, unrelatedCount: 0, uncertainCount: 0,
-      rakutenConfigMissing: false,
+      rakutenConfigMissing: false, aiFailures: [],
       error: '人物が見つかりません',
     };
   }
@@ -178,7 +188,7 @@ export async function processPerson(
         usedSuppressed, membershipFiltered,
         fetchFailed, failedCategories, aiFailed: 0, aiKeyMissing: false,
         relatedCount: 0, unrelatedCount: 0, uncertainCount: 0,
-        rakutenConfigMissing: false, upstreamHttpStatus,
+        rakutenConfigMissing: false, upstreamHttpStatus, aiFailures: [],
         error: `DB保存失敗: ${cat}`,
       };
     }
@@ -325,6 +335,7 @@ export async function processPerson(
   console.log(`[batch] --- AI判定チェック: OPENAI_API_KEY=${apiKeyStatus} ---`);
 
   let aiKeyMissing = false;
+  const aiFailures: AiFailureDetail[] = [];
 
   if (toJudge.length === 0) {
     console.log(`[batch] AI判定なし: 全商品が判定済みまたは除外KW一致`);
@@ -341,21 +352,30 @@ export async function processPerson(
     }
     console.log(`[batch] AI判定開始: ${batch.length}件を送信`);
 
+    // 1件がOpenAIエラーでもDB保存エラーでも、残りの商品の処理は継続する（judgeProducts自体は
+    // 内部で順次catch済みなのでここでは例外を投げない。saveVerdictのみ個別にtry/catchする）
     const aiResults = await judgeProducts(batch, person);
 
-    for (const { id, result } of aiResults) {
+    for (const { id, result, failure } of aiResults) {
+      const product = batch.find((p) => p.id === id);
+
       if (!result) {
-        const product = batch.find((p) => p.id === id);
-        console.log(`[batch]   AI→null (APIエラー) id=${id} | "${product?.title.slice(0, 40) ?? '不明'}"`);
+        const code = failure?.code ?? 'UNKNOWN';
+        const message = failure?.message ?? 'AI判定に失敗しました';
+        aiFailures.push({ productId: id, productTitle: product?.title.slice(0, 60), code, message });
+        console.log(`[batch]   AI失敗 code=${code} id=${id} | "${product?.title.slice(0, 40) ?? '不明'}"`);
         if (product && isTracked(product.title)) {
-          trackLog(`❌ ステップ5: AI→null (APIエラー)`);
+          trackLog(`❌ ステップ5: AI判定失敗 (${code})`);
           trackLog(`   title="${product.title}"`);
-          trackLog(`   id=${id} | 公開表示: ❌ AI判定失敗のため非表示`);
+          trackLog(`   id=${id} | 公開表示: ❌ AI判定失敗のため未判定のまま`);
         }
         continue;
       }
-      const product = batch.find((p) => p.id === id);
-      if (!product) continue;
+      if (!product) {
+        // batch由来のidが見つからない事態は通常発生しないが、黙って破棄せず記録する
+        aiFailures.push({ productId: id, code: 'PRODUCT_NOT_FOUND', message: '判定結果に対応する商品が見つかりませんでした' });
+        continue;
+      }
       const displayable = result.verdict === 'related' && result.score >= 70;
       console.log(`[batch]   AI→${result.verdict} score=${result.score} reason="${result.reason}" | "${product.title.slice(0, 40)}"`);
       console.log(`[PUBLIC_FILTER] itemTitle:"${product.title.slice(0, 60)}" category:${product.category} label:${result.verdict} score:${result.score} isPublic:${displayable} excludeReason:${displayable ? 'none' : `verdict=${result.verdict} score=${result.score}`}`);
@@ -366,9 +386,15 @@ export async function processPerson(
         trackLog(`   reason="${result.reason}"`);
         trackLog(`   公開表示: ${displayable ? '✅ 表示対象（related & score>=70）' : `❌ 非表示（verdict=${result.verdict}, score=${result.score}）`}`);
       }
-      await saveVerdict(
-        person.name, id, result.verdict, result.score, 'ai', result.reason, PROMPT_VERSION
-      );
+      try {
+        await saveVerdict(
+          person.name, id, result.verdict, result.score, 'ai', result.reason, PROMPT_VERSION
+        );
+      } catch (err) {
+        console.error(`[batch] DB保存失敗(verdict) id=${id} personName=${personName}: ${err instanceof Error ? err.message : String(err)}`);
+        aiFailures.push({ productId: id, productTitle: product.title.slice(0, 60), code: 'DB_SAVE_FAILED', message: '判定結果の保存に失敗しました' });
+        continue;
+      }
       aiJudged++;
       if (result.verdict === 'related') relatedCount++;
       else if (result.verdict === 'unrelated') unrelatedCount++;
@@ -376,7 +402,7 @@ export async function processPerson(
     }
 
     if (aiJudged < aiQueued) {
-      console.log(`[batch] ★警告: AI送信${aiQueued}件のうち${aiQueued - aiJudged}件が保存されませんでした（APIエラー？）`);
+      console.log(`[batch] ★警告: AI送信${aiQueued}件のうち${aiQueued - aiJudged}件が保存されませんでした（詳細はaiFailures参照）`);
     }
   }
 
@@ -385,7 +411,7 @@ export async function processPerson(
   return {
     personName, stored, aiJudged, aiQueued, autoApproved, skipped, excluded, usedSuppressed, membershipFiltered,
     fetchFailed, failedCategories, aiFailed, aiKeyMissing, relatedCount, unrelatedCount, uncertainCount,
-    rakutenConfigMissing, upstreamHttpStatus,
+    rakutenConfigMissing, upstreamHttpStatus, aiFailures,
   };
 }
 
@@ -408,7 +434,7 @@ export async function processAllPersons(): Promise<BatchSummary> {
         usedSuppressed: 0, membershipFiltered: 0,
         fetchFailed: 0, failedCategories: [], aiFailed: 0, aiKeyMissing: false,
         relatedCount: 0, unrelatedCount: 0, uncertainCount: 0,
-        rakutenConfigMissing: false,
+        rakutenConfigMissing: false, aiFailures: [],
         error: String(err),
       });
     }

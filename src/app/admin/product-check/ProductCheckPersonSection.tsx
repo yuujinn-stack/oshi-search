@@ -28,6 +28,8 @@ export interface PersonWithProductStats {
   customKeywords?: string[];
   stats: {
     total: number;
+    activeTotal: number;
+    deleted: number;
     related: number;
     uncertain: number;
     unrelated: number;
@@ -134,6 +136,14 @@ function PersonProductCard({ p, allPersons }: { p: PersonWithProductStats; allPe
   const [editMembershipNote, setEditMembershipNote] = useState(p.membershipNote ?? '');
   const [currentActivityStatus, setCurrentActivityStatus] = useState<ActivityStatus | ''>(p.activityStatus ?? '');
   const [currentGeneration, setCurrentGeneration] = useState(p.generation ?? '');
+
+  // AI判定完了のたびにインクリメントし、下のPersonProductsパネルへ「自分のデータを再取得して」と伝える
+  // （router.refresh()はpage.tsx側のstats propは更新するが、PersonProductsは独自にfetchしたclient state
+  //   を持つため、それとは別にこの信号で明示的に再読み込みさせる）
+  const [aiJudgeReloadSignal, setAiJudgeReloadSignal] = useState(0);
+  const handleAiJudgeComplete = useCallback(() => {
+    setAiJudgeReloadSignal((n) => n + 1);
+  }, []);
 
   const handleMetaSave = useCallback(async () => {
     setMetaSaving(true);
@@ -246,22 +256,28 @@ function PersonProductCard({ p, allPersons }: { p: PersonWithProductStats; allPe
             </button>
 
             <PersonRakutenFetchButton personName={p.name} />
-            <PersonAiJudgeButton personName={p.name} />
+            <PersonAiJudgeButton personName={p.name} onComplete={handleAiJudgeComplete} />
             <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_BADGE[status]}`}>
               {STATUS_LABEL[status]}
             </span>
           </div>
         </div>
 
-        {/* 統計バー */}
+        {/* 統計バー: activeTotal = related + uncertain + unrelated + unclassified が常に成立する */}
+        {/* flex-wrap: スマートフォン幅でも横はみ出しせず複数行に折り返す */}
         {p.stats.total > 0 && (
-          <div className="flex gap-3 mt-1 text-xs">
-            <span className="text-gray-500">取得 {p.stats.total}件</span>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-xs">
+            <span className="text-gray-500">取得 {p.stats.activeTotal}件</span>
             <span className="text-green-600">related {p.stats.related}</span>
             <span className="text-yellow-600">uncertain {p.stats.uncertain}</span>
             <span className="text-red-500">unrelated {p.stats.unrelated}</span>
             {p.stats.unclassified > 0 && (
               <span className="text-gray-400">未判定 {p.stats.unclassified}</span>
+            )}
+            {p.stats.deleted > 0 && (
+              <span className="text-gray-300" title="管理者が削除した商品数（上記の内訳には含まれません）">
+                削除済み {p.stats.deleted}
+              </span>
             )}
           </div>
         )}
@@ -390,7 +406,12 @@ function PersonProductCard({ p, allPersons }: { p: PersonWithProductStats; allPe
       </div>
 
       {/* 商品パネル（既存コンポーネント） */}
-      <PersonProducts personName={p.name} allPersons={allPersons} personGroup={p.group || undefined} />
+      <PersonProducts
+        personName={p.name}
+        allPersons={allPersons}
+        personGroup={p.group || undefined}
+        reloadSignal={aiJudgeReloadSignal}
+      />
     </div>
   );
 }
@@ -472,7 +493,7 @@ export default function ProductCheckPersonSection({ persons }: Props) {
   // ダッシュボード集計
   const totalRelated = persons.reduce((sum, p) => sum + p.stats.related, 0);
   const totalUncertain = persons.reduce((sum, p) => sum + p.stats.uncertain, 0);
-  const totalProducts = persons.reduce((sum, p) => sum + p.stats.total, 0);
+  const totalProducts = persons.reduce((sum, p) => sum + p.stats.activeTotal, 0);
 
   return (
     <div className="space-y-4">

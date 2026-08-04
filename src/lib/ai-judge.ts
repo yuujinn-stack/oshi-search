@@ -3,11 +3,31 @@
 //   - 管理画面からの再判定実行時（バッチ処理）
 // 禁止: ユーザーのページアクセス時に直接呼び出すこと
 
-import OpenAI from 'openai';
+import OpenAI, { APIError, RateLimitError, APIConnectionTimeoutError } from 'openai';
 import type { Verdict } from './judgment-store';
 import type { PersonWithConfig } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
 import { logOpenAIUsage } from '@/lib/openai-usage';
+
+// AI判定1件の失敗理由（画面表示・集計用。APIキーやレスポンス本文は含めない）
+export type JudgeFailureCode =
+  | 'OPENAI_NOT_CONFIGURED'
+  | 'OPENAI_API_ERROR'
+  | 'RATE_LIMIT'
+  | 'TIMEOUT'
+  | 'INVALID_JSON'
+  | 'UNKNOWN';
+
+export interface JudgeFailure {
+  code: JudgeFailureCode;
+  message: string;
+}
+
+export interface JudgeOutcome {
+  result: JudgeResult | null;
+  // 実装(judgeProduct)は必ず設定するが、テストでの部分モックを許容するため型上は任意にしている
+  failure?: JudgeFailure | null;
+}
 
 // プロンプトバージョン: このバージョンと異なる ai 判定済み商品は自動再判定される
 // プロンプトを修正したらこの値をインクリメントすること
@@ -82,11 +102,14 @@ function buildProductText(product: RakutenItem): string {
 export async function judgeProduct(
   product: RakutenItem,
   person: PersonWithConfig,
-): Promise<JudgeResult | null> {
+): Promise<JudgeOutcome> {
   const openai = getClient();
   if (!openai) {
     console.log('[ai-judge] SKIP: OPENAI_API_KEY が未設定のため AI 判定をスキップ');
-    return null;
+    return {
+      result: null,
+      failure: { code: 'OPENAI_NOT_CONFIGURED', message: 'OPENAI_API_KEY が設定されていません' },
+    };
   }
 
   const personText = buildPersonText(person);
@@ -138,7 +161,7 @@ ${productText}
 以下のJSONのみ返してください（他のテキスト不要）:
 { "label":"related|uncertain|unrelated", "score":0-100, "reason":"50文字以内" }`;
 
-  console.log(`[AI_INPUT] personName:${person.name} groupName:${person.group ?? ''} productTitle:"${product.title}" category:${product.category} author:${product.author ?? ''} artistName:${product.artistName ?? ''} promptVersion:${PROMPT_VERSION}`);
+  console.log(`[AI_INPUT] personName:${person.name} groupName:${person.group ?? ''} productTitle:"${product.title.slice(0, 60)}" category:${product.category} author:${product.author ?? ''} artistName:${product.artistName ?? ''} promptVersion:${PROMPT_VERSION}`);
 
   const startTime = Date.now();
   try {
@@ -161,7 +184,17 @@ ${productText}
     });
 
     const content = res.choices[0]?.message?.content ?? '{}';
-    const parsed = JSON.parse(content) as { label?: string; score?: number; reason?: string };
+    let parsed: { label?: string; score?: number; reason?: string };
+    try {
+      parsed = JSON.parse(content) as { label?: string; score?: number; reason?: string };
+    } catch {
+      // レスポンス本文は握り潰さず失敗として記録するが、本文自体はログへ出さない
+      console.error(`[ai-judge] JSON解析失敗: ${person.name} | 「${product.title.slice(0, 40)}」`);
+      return {
+        result: null,
+        failure: { code: 'INVALID_JSON', message: 'AI応答のJSON解析に失敗しました' },
+      };
+    }
     const validVerdicts: Verdict[] = ['related', 'uncertain', 'unrelated'];
     const verdict: Verdict = validVerdicts.includes(parsed.label as Verdict)
       ? (parsed.label as Verdict)
@@ -169,7 +202,7 @@ ${productText}
     const score = typeof parsed.score === 'number' ? Math.max(0, Math.min(100, parsed.score)) : 50;
 
     console.log(`[AI_OUTPUT] label:${verdict} score:${score} reason:"${parsed.reason ?? ''}" title:"${product.title.slice(0, 50)}"`);
-    return { verdict, score, reason: parsed.reason ?? '' };
+    return { result: { verdict, score, reason: parsed.reason ?? '' }, failure: null };
   } catch (err) {
     await logOpenAIUsage({
       feature: 'product_ai',
@@ -179,10 +212,28 @@ ${productText}
       durationMs: Date.now() - startTime,
       personName: person.name,
       success: false,
-      errorMessage: String(err),
+      errorMessage: err instanceof Error ? err.message : String(err),
     });
-    console.error(`[ai-judge] エラー: ${person.name} | 「${product.title.slice(0, 40)}」 |`, err);
-    return null;
+
+    // エラー種別を分類する（APIキーやレスポンス本文はログ・メッセージに含めない）
+    let code: JudgeFailureCode = 'UNKNOWN';
+    let message = 'AI判定でエラーが発生しました';
+    if (err instanceof RateLimitError) {
+      code = 'RATE_LIMIT';
+      message = 'OpenAI APIのレート制限に達しました';
+    } else if (err instanceof APIConnectionTimeoutError) {
+      code = 'TIMEOUT';
+      message = 'OpenAI APIへのリクエストがタイムアウトしました';
+    } else if (err instanceof APIError) {
+      code = 'OPENAI_API_ERROR';
+      message = `OpenAI APIエラー（HTTP ${err.status ?? '不明'}）`;
+    } else {
+      code = 'UNKNOWN';
+      message = 'AI判定処理で予期しないエラーが発生しました';
+    }
+
+    console.error(`[ai-judge] エラー: ${person.name} | code:${code} | 「${product.title.slice(0, 40)}」`);
+    return { result: null, failure: { code, message } };
   }
 }
 
@@ -190,11 +241,11 @@ ${productText}
 export async function judgeProducts(
   products: RakutenItem[],
   person: PersonWithConfig,
-): Promise<Array<{ id: string; result: JudgeResult | null }>> {
-  const results: Array<{ id: string; result: JudgeResult | null }> = [];
+): Promise<Array<{ id: string } & JudgeOutcome>> {
+  const results: Array<{ id: string } & JudgeOutcome> = [];
   for (const p of products) {
-    const result = await judgeProduct(p, person);
-    results.push({ id: p.id, result });
+    const outcome = await judgeProduct(p, person);
+    results.push({ id: p.id, ...outcome });
   }
   return results;
 }
