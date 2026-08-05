@@ -11,8 +11,12 @@ import type { JudgeFailureCode } from './ai-judge';
 import { checkPostMembershipGroupContent } from './product-membership-guard';
 import { getPersonMeta } from './person-meta';
 import { computePersonProductStats } from './product-check-stats';
+import { AI_JUDGE_BATCH_SIZE, MAX_EXCLUDE_PRODUCT_IDS } from './ai-judge-constants';
 import type { RakutenItem } from '@/types/rakuten';
 import type { PersonWithConfig } from '@/types/person';
+
+// クライアント/サーバー共通定数を再エクスポート（既存呼び出し元との後方互換性のため）
+export { AI_JUDGE_BATCH_SIZE };
 
 // AI判定1件の失敗詳細（画面の折りたたみ表示・集計用）
 export interface AiFailureDetail {
@@ -467,17 +471,23 @@ export async function processAllPersons(): Promise<BatchSummary> {
 //      1クリックの影響範囲を小さく保つための両方が目的）
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 1回のAI判定クリックで実際にOpenAIへ送信する上限
-export const AI_JUDGE_BATCH_SIZE = 10;
+// 全件AI判定が停止した理由（クライアントのバッチ継続ループが参照する）
+export type StopReason =
+  | 'COMPLETED'            // 未判定が0件になった（正常完了）
+  | 'FAILED_ITEMS_REMAIN'  // 未判定は残っているが、残り全てが今回の実行中に失敗済み（無限再試行防止）
+  | 'INSUFFICIENT_QUOTA'   // OpenAI残高・利用上限（リトライしても解消しないため即停止）
+  | 'AI_KEY_MISSING';      // OPENAI_API_KEY未設定
 
 export interface StoredProductsJudgeResult {
   personName: string;
   noStoredProducts: boolean;       // products.items が0件（先に楽天再取得が必要）
-  totalUnclassifiedBefore: number; // このクリック開始時点の未判定数
-  attemptedCount: number;          // 今回実際にOpenAIへ送信した件数（最大 AI_JUDGE_BATCH_SIZE）
+  totalUnclassifiedBefore: number; // この呼び出し開始時点の、人物全体の未判定数
+  attemptedCount: number;          // 今回実際にOpenAIへ送信した件数（最大 limit）
   successCount: number;            // 保存に成功した件数
-  failedCount: number;             // AI判定またはDB保存に失敗した件数
-  remainingCount: number;          // このクリック後もなお未判定として残る件数
+  failedCount: number;             // AI判定またはDB保存に失敗した件数（このバッチ内）
+  remainingCount: number;          // 人物全体で、なお未判定として残る件数（バッチ内ではなく全体）
+  runnableRemainingCount: number;  // remainingCountのうち、除外リストに入っていない＝次に処理可能な件数
+  failedInThisRunCount: number;    // 今回の実行セッション中に失敗し、除外対象となっている件数（今回分+過去分累計）
   autoApproved: number;            // ルールベース自動承認（AI呼び出し不要）
   excluded: number;                // 除外キーワード一致
   membershipFiltered: number;      // 卒業後グループ商品候補
@@ -486,6 +496,8 @@ export interface StoredProductsJudgeResult {
   uncertainCount: number;
   aiKeyMissing: boolean;
   aiFailures: AiFailureDetail[];
+  stopProcessing: boolean;         // true = 呼び出し元（クライアント）は次のバッチを送らず停止すべき
+  stopReason?: StopReason;
   error?: string;
 }
 
@@ -498,6 +510,8 @@ function emptyStoredProductsJudgeResult(personName: string): StoredProductsJudge
     successCount: 0,
     failedCount: 0,
     remainingCount: 0,
+    runnableRemainingCount: 0,
+    failedInThisRunCount: 0,
     autoApproved: 0,
     excluded: 0,
     membershipFiltered: 0,
@@ -506,13 +520,23 @@ function emptyStoredProductsJudgeResult(personName: string): StoredProductsJudge
     uncertainCount: 0,
     aiKeyMissing: false,
     aiFailures: [],
+    stopProcessing: true,
   };
+}
+
+export interface JudgeStoredProductsOptions {
+  // 1回の呼び出しで実際にOpenAIへ送信する上限（省略時 AI_JUDGE_BATCH_SIZE）
+  limit?: number;
+  // 同じ「全件AI判定」セッション内で既に失敗した商品ID（無限再試行防止のため対象から除外する）。
+  // 永続化はしない。不正なID・存在しないIDは無視し、MAX_EXCLUDE_PRODUCT_IDS件を超える分は切り捨てる。
+  excludeProductIds?: string[];
 }
 
 export async function judgeStoredProducts(
   personName: string,
   forceRejudge = false,
   configOverride?: PersonWithConfig,
+  options?: JudgeStoredProductsOptions,
 ): Promise<StoredProductsJudgeResult> {
   const all = getAllPersonsWithConfig();
   const person = configOverride ?? all.find((p) => p.name === personName);
@@ -538,12 +562,22 @@ export async function judgeStoredProducts(
     return { ...emptyStoredProductsJudgeResult(person.name), noStoredProducts: true };
   }
 
+  // excludeProductIds: 実在するIDのみ・重複除去・上限件数まで（不正なIDは無視）
+  const rawExclude = (options?.excludeProductIds ?? []).filter((id): id is string => typeof id === 'string');
+  const excludeSet = new Set<string>();
+  for (const id of rawExclude) {
+    if (excludeSet.size >= MAX_EXCLUDE_PRODUCT_IDS) break;
+    if (seenIds.has(id)) excludeSet.add(id);
+  }
+
+  const effectiveLimit = Math.max(1, Math.min(AI_JUDGE_BATCH_SIZE, options?.limit ?? AI_JUDGE_BATCH_SIZE));
+
   const existingVerdicts = await getAllVerdicts(person.name);
   const personMeta = await getPersonMeta(person.name);
   const excludeKeywords = person.config.excludeKeywords ?? [];
   const totalUnclassifiedBefore = computePersonProductStats(storedData, existingVerdicts).unclassified;
 
-  console.log(`[ai-judge-only] 開始: ${person.name} 保存済み商品=${allProducts.length}件 未判定(開始時)=${totalUnclassifiedBefore}件`);
+  console.log(`[ai-judge-only] 開始: ${person.name} 保存済み商品=${allProducts.length}件 未判定(開始時)=${totalUnclassifiedBefore}件 除外指定=${excludeSet.size}件 limit=${effectiveLimit}`);
 
   let excluded = 0;
   let autoApproved = 0;
@@ -551,6 +585,9 @@ export async function judgeStoredProducts(
   const toJudge: RakutenItem[] = [];
 
   for (const p of allProducts) {
+    // ━━━ 今回の実行セッション中に既に失敗した商品は再選択しない（無限再試行防止） ━━━
+    if (excludeSet.has(p.id)) continue;
+
     const existing = existingVerdicts[p.id];
 
     // ━━━ 最優先: deleted（管理者による論理削除）は何があっても対象外 ━━━
@@ -599,9 +636,11 @@ export async function judgeStoredProducts(
   let relatedCount = 0;
   let unrelatedCount = 0;
   let uncertainCount = 0;
+  let hitInsufficientQuota = false;
   const aiFailures: AiFailureDetail[] = [];
+  const newlyFailedIds: string[] = [];
 
-  const batch = toJudge.slice(0, AI_JUDGE_BATCH_SIZE);
+  const batch = toJudge.slice(0, effectiveLimit);
 
   if (batch.length === 0) {
     console.log(`[ai-judge-only] AI判定対象なし: ${person.name}`);
@@ -620,11 +659,14 @@ export async function judgeStoredProducts(
         const message = failure?.message ?? 'AI判定に失敗しました';
         aiFailures.push({ productId: id, productTitle: product?.title.slice(0, 60), code, message });
         failedCount++;
+        newlyFailedIds.push(id);
+        if (code === 'INSUFFICIENT_QUOTA') hitInsufficientQuota = true;
         continue;
       }
       if (!product) {
         aiFailures.push({ productId: id, code: 'PRODUCT_NOT_FOUND', message: '判定結果に対応する商品が見つかりませんでした' });
         failedCount++;
+        newlyFailedIds.push(id);
         continue;
       }
       try {
@@ -633,6 +675,7 @@ export async function judgeStoredProducts(
         console.error(`[ai-judge-only] DB保存失敗(verdict) id=${id} personName=${personName}: ${err instanceof Error ? err.message : String(err)}`);
         aiFailures.push({ productId: id, productTitle: product.title.slice(0, 60), code: 'DB_SAVE_FAILED', message: '判定結果の保存に失敗しました' });
         failedCount++;
+        newlyFailedIds.push(id);
         continue;
       }
       successCount++;
@@ -642,11 +685,32 @@ export async function judgeStoredProducts(
     }
   }
 
-  // 残りの未判定数 = このクリックでAI判定が必要だった商品のうち、保存に至らなかった件数
-  // （上限超過で未送信の分・送信したが失敗した分の両方を含む）
-  const remainingCount = toJudge.length - successCount;
+  // remainingCount: 人物全体でなお未判定の件数（DBの真の状態。成功のみが減らす）
+  const remainingCount = Math.max(0, totalUnclassifiedBefore - successCount);
+  // failedInThisRunCount: 今回の実行セッション中に失敗し「除外対象」となった件数（過去分の累計＋今回分）
+  const failedInThisRunCount = excludeSet.size + newlyFailedIds.length;
+  // runnableRemainingCount: 残りのうち、除外されておらず次に処理できる件数
+  const runnableRemainingCount = Math.max(0, remainingCount - failedInThisRunCount);
 
-  console.log(`[ai-judge-only] ===== 完了: ${person.name} 未判定(開始時)=${totalUnclassifiedBefore} 送信=${attemptedCount} 成功=${successCount} 失敗=${failedCount} 残り=${remainingCount} 自動承認=${autoApproved} 除外=${excluded} 卒業後候補=${membershipFiltered} aiKeyMissing=${aiKeyMissing} =====`);
+  let stopProcessing: boolean;
+  let stopReason: StopReason | undefined;
+  if (aiKeyMissing) {
+    stopProcessing = true;
+    stopReason = 'AI_KEY_MISSING';
+  } else if (hitInsufficientQuota) {
+    stopProcessing = true;
+    stopReason = 'INSUFFICIENT_QUOTA';
+  } else if (remainingCount === 0) {
+    stopProcessing = true;
+    stopReason = 'COMPLETED';
+  } else if (runnableRemainingCount === 0) {
+    stopProcessing = true;
+    stopReason = 'FAILED_ITEMS_REMAIN';
+  } else {
+    stopProcessing = false;
+  }
+
+  console.log(`[ai-judge-only] ===== 完了: ${person.name} 未判定(開始時)=${totalUnclassifiedBefore} 送信=${attemptedCount} 成功=${successCount} 失敗=${failedCount} 残り=${remainingCount} 処理可能残り=${runnableRemainingCount} 自動承認=${autoApproved} 除外=${excluded} 卒業後候補=${membershipFiltered} aiKeyMissing=${aiKeyMissing} stopProcessing=${stopProcessing} stopReason=${stopReason ?? '-'} =====`);
 
   return {
     personName: person.name,
@@ -656,6 +720,8 @@ export async function judgeStoredProducts(
     successCount,
     failedCount,
     remainingCount,
+    runnableRemainingCount,
+    failedInThisRunCount,
     autoApproved,
     excluded,
     membershipFiltered,
@@ -664,5 +730,7 @@ export async function judgeStoredProducts(
     uncertainCount,
     aiKeyMissing,
     aiFailures,
+    stopProcessing,
+    stopReason,
   };
 }

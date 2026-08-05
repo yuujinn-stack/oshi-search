@@ -137,23 +137,32 @@ describe('AI判定パイプライン統合（route→judgeStoredProducts→ai-ju
     expect(body.person.message).toBe('10件を判定しました。残り110件');
   });
 
-  it('一部失敗: 実際のRateLimitErrorが分類され、楽天APIは呼ばれない', async () => {
-    mockGetAllVerdicts.mockResolvedValue({});
-    mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('item-ok', '商品OK'), makeItem('item-ng', '商品NG')]));
+  it('一部失敗: リトライを使い切った後にRateLimitErrorがRATE_LIMITとして分類される（楽天APIは呼ばれない）', async () => {
+    vi.useFakeTimers();
+    try {
+      mockGetAllVerdicts.mockResolvedValue({});
+      mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('item-ok', '商品OK'), makeItem('item-ng', '商品NG')]));
 
-    const { RateLimitError } = await vi.importActual<typeof import('openai')>('openai');
-    mockCreate
-      .mockResolvedValueOnce(chatResponse('{"label":"unrelated","score":10,"reason":"無関係"}'))
-      .mockRejectedValueOnce(new RateLimitError(429, {}, 'rate limited', new Headers()));
+      const { RateLimitError } = await vi.importActual<typeof import('openai')>('openai');
+      mockCreate
+        .mockResolvedValueOnce(chatResponse('{"label":"unrelated","score":10,"reason":"無関係"}'))
+        .mockRejectedValue(new RateLimitError(429, {}, 'rate limited', new Headers())); // 2件目は毎回429（リトライも使い切る）
 
-    const res = await POST(makePost({ personName: PERSON_NAME }) as never);
-    const body = await res.json();
+      const promise = POST(makePost({ personName: PERSON_NAME }) as never);
+      const timers = vi.runAllTimersAsync();
+      const [res] = await Promise.all([promise, timers]);
+      const body = await res.json();
 
-    expect(mockGetProductsByCategory).not.toHaveBeenCalled();
-    expect(body.person.successCount).toBe(1);
-    expect(body.person.failedCount).toBe(1);
-    expect(body.person.aiFailures[0].code).toBe('RATE_LIMIT');
-    expect(body.person.message).toBe('OpenAI APIが一時的な利用制限中です。しばらく待ってから再実行してください');
+      expect(mockGetProductsByCategory).not.toHaveBeenCalled();
+      expect(body.person.successCount).toBe(1);
+      expect(body.person.failedCount).toBe(1);
+      expect(body.person.aiFailures[0].code).toBe('RATE_LIMIT');
+      expect(body.person.message).toBe('OpenAI APIが一時的な利用制限中です。しばらく待ってから再実行してください');
+      // 初回 + リトライ2回 = 3回試行してから諦めている
+      expect(mockCreate).toHaveBeenCalledTimes(1 + 3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('OpenAI残高/上限エラー: INSUFFICIENT_QUOTAとして分類され、楽天APIは呼ばれない', async () => {
@@ -208,6 +217,102 @@ describe('AI判定パイプライン統合（route→judgeStoredProducts→ai-ju
     expect(mockCreate).not.toHaveBeenCalled();
     expect(mockGetProductsByCategory).not.toHaveBeenCalled();
     expect(body.person.aiKeyMissing).toBe(true);
+  });
+
+  // ── 「全件AI判定」のクライアント側ループを route レベルでシミュレートする ────────
+  // 実際のReactコンポーネントのロジック（PersonAiJudgeButton.handleAutoJudge）と同じ手順
+  // （excludeProductIdsを蓄積しながら/api/admin/ai-judgeを繰り返し直列に呼ぶ）を再現し、
+  // 120商品が最終的に全件OpenAIへ送信されること・常に直列であることを検証する。
+  describe('全件AI判定（クライアントの直列バッチループをシミュレート）', () => {
+    it('未判定120件を10件ずつ12バッチで処理し、OpenAI呼び出しが最終的に120回になる', async () => {
+      // 商品間ペーシング(350ms)×120回ぶんの実待機を避けるためfake timersで進める
+      vi.useFakeTimers();
+      try {
+        const items = Array.from({ length: 120 }, (_, i) => makeItem(`item-${i}`, `商品${i} 限定グッズ`));
+        mockGetAllStoredProducts.mockResolvedValue(storedDataOf(items));
+
+        // 実DBを模した簡易ストア: saveVerdictで書き込み、getAllVerdictsで読み出す
+        const verdictsStore: Record<string, { verdict: string; score: number; source: string; reason?: string; timestamp: number; promptVersion?: string }> = {};
+        mockGetAllVerdicts.mockImplementation(async () => ({ ...verdictsStore }));
+        mockSaveVerdict.mockImplementation(async (
+          _personName: string, productId: string, verdict: string, score: number, source: string, reason?: string, promptVersion?: string,
+        ) => {
+          verdictsStore[productId] = { verdict, score, source, reason, timestamp: Date.now(), promptVersion };
+        });
+
+        mockCreate.mockResolvedValue(chatResponse('{"label":"unrelated","score":10,"reason":"無関係"}'));
+
+        let excludeProductIds: string[] = [];
+        let batches = 0;
+        let remainingCount = Infinity;
+        const callCountPerBatch: number[] = [];
+
+        const loop = (async () => {
+          while (remainingCount > 0 && batches < 20) {
+            const before = mockCreate.mock.calls.length;
+            const res = await POST(makePost({ personName: PERSON_NAME, excludeProductIds }) as never);
+            const body = await res.json();
+            callCountPerBatch.push(mockCreate.mock.calls.length - before);
+            batches++;
+            remainingCount = body.person.remainingCount;
+            for (const f of body.person.aiFailures) {
+              if (!excludeProductIds.includes(f.productId)) excludeProductIds.push(f.productId);
+            }
+            if (body.person.stopProcessing) break;
+          }
+        })();
+        await Promise.all([loop, vi.runAllTimersAsync()]);
+
+        expect(batches).toBe(12); // 120 / 10 = 12バッチ
+        expect(remainingCount).toBe(0);
+        expect(mockCreate).toHaveBeenCalledTimes(120);
+        // 各バッチとも最大10件（常に直列・複数商品をまとめた1リクエストにはしていない）
+        expect(callCountPerBatch.every((n) => n <= 10)).toBe(true);
+        expect(mockSaveVerdict).toHaveBeenCalledTimes(120);
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 15000);
+
+    it('1件だけ恒常的に失敗する商品があっても無限ループにならず、FAILED_ITEMS_REMAINで停止する', async () => {
+      const items = [makeItem('item-good', '良い商品'), makeItem('item-bad', '失敗する商品')];
+      mockGetAllStoredProducts.mockResolvedValue(storedDataOf(items));
+
+      const verdictsStore: Record<string, { verdict: string; score: number; source: string; timestamp: number; promptVersion?: string }> = {};
+      mockGetAllVerdicts.mockImplementation(async () => ({ ...verdictsStore }));
+      mockSaveVerdict.mockImplementation(async (_p: string, productId: string, verdict: string, score: number, source: string, _r?: string, promptVersion?: string) => {
+        verdictsStore[productId] = { verdict, score, source, timestamp: Date.now(), promptVersion };
+      });
+
+      const { APIError } = await vi.importActual<typeof import('openai')>('openai');
+      mockCreate.mockImplementation(async (params: { messages: { content: string }[] }) => {
+        const content = params.messages[0].content as string;
+        if (content.includes('失敗する商品')) throw new APIError(500, {}, 'always fails', new Headers());
+        return chatResponse('{"label":"related","score":90,"reason":"ok"}');
+      });
+
+      let excludeProductIds: string[] = [];
+      let batches = 0;
+      let stopped = false;
+      let lastBody: { person: { stopReason?: string; remainingCount: number; runnableRemainingCount: number } } | undefined;
+
+      while (batches < 20) {
+        const res = await POST(makePost({ personName: PERSON_NAME, excludeProductIds }) as never);
+        const body = await res.json();
+        lastBody = body;
+        batches++;
+        for (const f of body.person.aiFailures) {
+          if (!excludeProductIds.includes(f.productId)) excludeProductIds.push(f.productId);
+        }
+        if (body.person.stopProcessing) { stopped = true; break; }
+      }
+
+      expect(stopped).toBe(true);
+      expect(batches).toBeLessThan(5); // 無限ループしていない
+      expect(lastBody?.person.stopReason).toBe('FAILED_ITEMS_REMAIN');
+      expect(lastBody?.person.remainingCount).toBe(1); // item-badは未判定のまま残る
+      expect(lastBody?.person.runnableRemainingCount).toBe(0);
+    });
   });
 
   it('AI失敗メッセージにAPIキーやOpenAIレスポンス本文が含まれない', async () => {

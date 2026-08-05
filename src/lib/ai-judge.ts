@@ -42,6 +42,49 @@ function getClient(): OpenAI | null {
   return client;
 }
 
+// ── 商品間のペーシング・一時的レート制限時のリトライ ────────────────────────────
+// 同時実行数は常に1（judgeProductsが順次awaitする構造は不変）。ここでは商品間の間隔と、
+// 「一時的な」レート制限（RATE_LIMIT）だけをリトライ対象にする。残高・上限系
+// （INSUFFICIENT_QUOTA）はリトライしても解消しないため対象外（呼び出し元へ即座に返す）。
+const INTER_CALL_PACING_MS = 350;
+const MAX_RATE_LIMIT_RETRIES = 2;
+const BACKOFF_BASE_MS = 1000;
+const BACKOFF_JITTER_MS = 300;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Retry-Afterヘッダーを優先し、無ければ指数バックオフ＋ジッター
+function resolveBackoffWaitMs(headers: Headers | undefined, attempt: number): number {
+  const headerVal = headers?.get('retry-after');
+  if (headerVal) {
+    const asSeconds = Number(headerVal);
+    if (Number.isFinite(asSeconds) && asSeconds >= 0) return asSeconds * 1000;
+  }
+  const backoff = BACKOFF_BASE_MS * Math.pow(2, attempt);
+  const jitter = Math.random() * BACKOFF_JITTER_MS;
+  return backoff + jitter;
+}
+
+// OpenAIのエラーメッセージ文言から残高・上限系エラーを検出する（フォールバック）。
+// err.code が 'insufficient_quota' / 'billing_hard_limit_reached' と一致しない実例が
+// 本番で確認されたため（例: "no credits remaining" は code が異なる/未設定の場合がある）、
+// メッセージ文字列でも判定できるようにする。レスポンス全文はログへ出さない。
+const QUOTA_MESSAGE_MARKERS = [
+  'no credits remaining',
+  'exceeded your current quota',
+  'insufficient_quota',
+  'billing_hard_limit_reached',
+];
+
+function isQuotaExhaustedError(err: RateLimitError): boolean {
+  const quotaCodes = new Set(['insufficient_quota', 'billing_hard_limit_reached']);
+  if (err.code && quotaCodes.has(err.code)) return true;
+  const msg = (err.message ?? '').toLowerCase();
+  return QUOTA_MESSAGE_MARKERS.some((marker) => msg.includes(marker));
+}
+
 export interface JudgeResult {
   verdict: Verdict;
   score: number;
@@ -164,97 +207,111 @@ ${productText}
 
   console.log(`[AI_INPUT] personName:${person.name} groupName:${person.group ?? ''} productTitle:"${product.title.slice(0, 60)}" category:${product.category} author:${product.author ?? ''} artistName:${product.artistName ?? ''} promptVersion:${PROMPT_VERSION}`);
 
-  const startTime = Date.now();
-  try {
-    const res = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      response_format: { type: 'json_object' },
-      max_tokens: 100,
-      temperature: 0,
-    });
-
-    await logOpenAIUsage({
-      feature: 'product_ai',
-      model: 'gpt-4o-mini',
-      inputTokens: res.usage?.prompt_tokens ?? 0,
-      outputTokens: res.usage?.completion_tokens ?? 0,
-      durationMs: Date.now() - startTime,
-      personName: person.name,
-      success: true,
-    });
-
-    const content = res.choices[0]?.message?.content ?? '{}';
-    let parsed: { label?: string; score?: number; reason?: string };
+  // 一時的なレート制限（RATE_LIMIT、残高・上限系ではないもの）のみ、最大MAX_RATE_LIMIT_RETRIES回
+  // まで待機してリトライする。プロンプト・モデル・パラメータは毎回まったく同一のまま再送する
+  // （複数商品をまとめる・内容を変えるといった変更は一切行わない）。
+  for (let attempt = 0; ; attempt++) {
+    const startTime = Date.now();
     try {
-      parsed = JSON.parse(content) as { label?: string; score?: number; reason?: string };
-    } catch {
-      // レスポンス本文は握り潰さず失敗として記録するが、本文自体はログへ出さない
-      console.error(`[ai-judge] JSON解析失敗: ${person.name} | 「${product.title.slice(0, 40)}」`);
-      return {
-        result: null,
-        failure: { code: 'INVALID_JSON', message: 'AI応答のJSON解析に失敗しました' },
-      };
-    }
-    const validVerdicts: Verdict[] = ['related', 'uncertain', 'unrelated'];
-    const verdict: Verdict = validVerdicts.includes(parsed.label as Verdict)
-      ? (parsed.label as Verdict)
-      : 'uncertain';
-    const score = typeof parsed.score === 'number' ? Math.max(0, Math.min(100, parsed.score)) : 50;
+      const res = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+        max_tokens: 100,
+        temperature: 0,
+      });
 
-    console.log(`[AI_OUTPUT] label:${verdict} score:${score} reason:"${parsed.reason ?? ''}" title:"${product.title.slice(0, 50)}"`);
-    return { result: { verdict, score, reason: parsed.reason ?? '' }, failure: null };
-  } catch (err) {
-    await logOpenAIUsage({
-      feature: 'product_ai',
-      model: 'gpt-4o-mini',
-      inputTokens: 0,
-      outputTokens: 0,
-      durationMs: Date.now() - startTime,
-      personName: person.name,
-      success: false,
-      errorMessage: err instanceof Error ? err.message : String(err),
-    });
+      await logOpenAIUsage({
+        feature: 'product_ai',
+        model: 'gpt-4o-mini',
+        inputTokens: res.usage?.prompt_tokens ?? 0,
+        outputTokens: res.usage?.completion_tokens ?? 0,
+        durationMs: Date.now() - startTime,
+        personName: person.name,
+        success: true,
+      });
 
-    // エラー種別を分類する（APIキーやレスポンス本文はログ・メッセージに含めない）
-    let code: JudgeFailureCode = 'UNKNOWN';
-    let message = 'AI判定でエラーが発生しました';
-    if (err instanceof RateLimitError) {
-      // OpenAIは残高・課金上限もHTTP 429で返す。error.code で区別する
-      // （insufficient_quota / billing_hard_limit_reached はリトライしても解消しないため区別が必要）
-      const quotaCodes = new Set(['insufficient_quota', 'billing_hard_limit_reached']);
-      if (err.code && quotaCodes.has(err.code)) {
-        code = 'INSUFFICIENT_QUOTA';
-        message = 'OpenAI APIの残高または利用上限を確認してください';
-      } else {
-        code = 'RATE_LIMIT';
-        message = 'OpenAI APIのレート制限に達しました';
+      const content = res.choices[0]?.message?.content ?? '{}';
+      let parsed: { label?: string; score?: number; reason?: string };
+      try {
+        parsed = JSON.parse(content) as { label?: string; score?: number; reason?: string };
+      } catch {
+        // レスポンス本文は握り潰さず失敗として記録するが、本文自体はログへ出さない
+        console.error(`[ai-judge] JSON解析失敗: ${person.name} | 「${product.title.slice(0, 40)}」`);
+        return {
+          result: null,
+          failure: { code: 'INVALID_JSON', message: 'AI応答のJSON解析に失敗しました' },
+        };
       }
-    } else if (err instanceof APIConnectionTimeoutError) {
-      code = 'TIMEOUT';
-      message = 'OpenAI APIへのリクエストがタイムアウトしました';
-    } else if (err instanceof APIError) {
-      code = 'OPENAI_API_ERROR';
-      message = `OpenAI APIエラー（HTTP ${err.status ?? '不明'}）`;
-    } else {
-      code = 'UNKNOWN';
-      message = 'AI判定処理で予期しないエラーが発生しました';
-    }
+      const validVerdicts: Verdict[] = ['related', 'uncertain', 'unrelated'];
+      const verdict: Verdict = validVerdicts.includes(parsed.label as Verdict)
+        ? (parsed.label as Verdict)
+        : 'uncertain';
+      const score = typeof parsed.score === 'number' ? Math.max(0, Math.min(100, parsed.score)) : 50;
 
-    console.error(`[ai-judge] エラー: ${person.name} | code:${code} | 「${product.title.slice(0, 40)}」`);
-    return { result: null, failure: { code, message } };
+      console.log(`[AI_OUTPUT] label:${verdict} score:${score} reason:"${parsed.reason ?? ''}" title:"${product.title.slice(0, 50)}"`);
+      return { result: { verdict, score, reason: parsed.reason ?? '' }, failure: null };
+    } catch (err) {
+      await logOpenAIUsage({
+        feature: 'product_ai',
+        model: 'gpt-4o-mini',
+        inputTokens: 0,
+        outputTokens: 0,
+        durationMs: Date.now() - startTime,
+        personName: person.name,
+        success: false,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+
+      // 一時的レート制限（残高・上限系ではない）かつリトライ回数内 → 待機して再送
+      if (err instanceof RateLimitError && !isQuotaExhaustedError(err) && attempt < MAX_RATE_LIMIT_RETRIES) {
+        const waitMs = resolveBackoffWaitMs(err.headers, attempt);
+        console.log(`[ai-judge] 一時的レート制限のためリトライ ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES} | 待機${Math.round(waitMs)}ms`);
+        await sleep(waitMs);
+        continue;
+      }
+
+      // エラー種別を分類する（APIキーやレスポンス本文はログ・メッセージに含めない）
+      let code: JudgeFailureCode = 'UNKNOWN';
+      let message = 'AI判定でエラーが発生しました';
+      if (err instanceof RateLimitError) {
+        // OpenAIは残高・課金上限もHTTP 429で返す。err.code またはメッセージ文言で判定する
+        // （insufficient_quota / billing_hard_limit_reached はリトライしても解消しないため区別が必要）
+        if (isQuotaExhaustedError(err)) {
+          code = 'INSUFFICIENT_QUOTA';
+          message = 'OpenAI APIの残高または利用上限を確認してください';
+        } else {
+          code = 'RATE_LIMIT';
+          message = 'OpenAI APIのレート制限に達しました';
+        }
+      } else if (err instanceof APIConnectionTimeoutError) {
+        code = 'TIMEOUT';
+        message = 'OpenAI APIへのリクエストがタイムアウトしました';
+      } else if (err instanceof APIError) {
+        code = 'OPENAI_API_ERROR';
+        message = `OpenAI APIエラー（HTTP ${err.status ?? '不明'}）`;
+      } else {
+        code = 'UNKNOWN';
+        message = 'AI判定処理で予期しないエラーが発生しました';
+      }
+
+      console.error(`[ai-judge] エラー: ${person.name} | code:${code} | 「${product.title.slice(0, 40)}」`);
+      return { result: null, failure: { code, message } };
+    }
   }
 }
 
-// 複数商品をバッチ判定（順次処理）
+// 複数商品をバッチ判定（順次処理・同時実行数1）
+// 商品間にペーシングを入れる以外、1商品ずつ独立して判定する方式・呼び出し内容は変更しない
 export async function judgeProducts(
   products: RakutenItem[],
   person: PersonWithConfig,
 ): Promise<Array<{ id: string } & JudgeOutcome>> {
   const results: Array<{ id: string } & JudgeOutcome> = [];
-  for (const p of products) {
-    const outcome = await judgeProduct(p, person);
-    results.push({ id: p.id, ...outcome });
+  for (let i = 0; i < products.length; i++) {
+    if (i > 0) await sleep(INTER_CALL_PACING_MS);
+    const outcome = await judgeProduct(products[i], person);
+    results.push({ id: products[i].id, ...outcome });
   }
   return results;
 }

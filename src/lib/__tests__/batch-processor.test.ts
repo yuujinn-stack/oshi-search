@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
 import type { RakutenItem } from '@/types/rakuten';
 import type { PersonWithConfig } from '@/types/person';
 
@@ -798,6 +798,90 @@ describe('UIコード品質チェック', () => {
     // rakuten-refetch側(楽天再取得ボタン)にはOpenAI用の文言が混入していない
     expect(rakutenRefetchSrc).not.toContain(OPENAI_MSG);
     expect(rakutenRefetchSrc).not.toContain(QUOTA_MSG);
+  });
+
+  // ── 「全件AI判定」UIチェック ─────────────────────────────────────────────────
+  // このプロジェクトのvitest環境はjsdom/testing-libraryを含まない(environment: 'node')ため、
+  // 実際のレンダリング・クリック操作を伴うコンポーネントテストは実施できない。
+  // 既存の慣習（このdescribeブロック自体）に倣い、ソースコード上に要求された要素・安全装置が
+  // 実在することをソース文字列で確認する（確認ダイアログ・進捗表示・停止ボタン・二重クリック
+  // 防止・残高不足表示等）。実際の画面表示・クリック挙動はPreview環境での目視確認が必要。
+  describe('全件AI判定ボタンのソースコード確認', () => {
+    let src: string;
+    beforeAll(async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      src = fs.readFileSync(
+        path.resolve(process.cwd(), 'src/app/admin/product-check/PersonAiJudgeButton.tsx'),
+        'utf-8',
+      );
+    });
+
+    it('「AI判定 10件」「全件AI判定」の2つのボタンラベルが存在する', () => {
+      expect(src).toContain('AI判定 10件');
+      expect(src).toContain('全件AI判定');
+    });
+
+    it('全件AI判定クリック時に確認ダイアログ(confirm)を表示する', () => {
+      const autoJudgeSection = src.slice(src.indexOf('handleAutoJudge'));
+      expect(autoJudgeSection).toContain('confirm(');
+    });
+
+    it('停止ボタンが存在し、in-flightリクエストをAbortControllerで中断しない設計になっている', () => {
+      expect(src).toContain('⏹ 停止');
+      expect(src).toContain('handleStopAutoJudge');
+      // 「サーバー側で処理が継続する可能性を考慮」した設計であることのコメントが残っている
+      expect(src).toContain('中断しない');
+      expect(src).not.toContain('AbortController');
+    });
+
+    it('進捗表示（成功・失敗・残数・進捗率）が存在する', () => {
+      expect(src).toContain('successSum');
+      expect(src).toContain('failedSum');
+      expect(src).toContain('remainingCount');
+      expect(src).toMatch(/pct|進捗/);
+    });
+
+    it('二重クリック防止のための同期的なref(busyRef)が、disabled属性とは別に両ハンドラで使われている', () => {
+      expect(src).toContain('busyRef');
+      expect(src).toContain('disabled={anyRunning}');
+      // handleClick・handleAutoJudge の両方が busyRef.current をチェックしている
+      const clickGuardCount = (src.match(/if \(busyRef\.current\) return;/g) ?? []).length;
+      expect(clickGuardCount).toBeGreaterThanOrEqual(2);
+    });
+
+    it('残高不足（INSUFFICIENT_QUOTA）専用の表示分岐がある', () => {
+      expect(src).toContain('INSUFFICIENT_QUOTA');
+    });
+
+    it('失敗商品を次バッチ対象から除外するexcludeProductIdsの蓄積処理がある', () => {
+      expect(src).toContain('excludeProductIds');
+      expect(src).toContain('MAX_EXCLUDE_PRODUCT_IDS');
+    });
+
+    it('successCountが0の連続バッチで停止する安全弁がある', () => {
+      expect(src).toContain('MAX_CONSECUTIVE_EMPTY_BATCHES');
+      expect(src).toContain('consecutiveEmptyBatches');
+    });
+
+    it('MAX_AUTO_JUDGE_ITEMSを超える場合の警告表示がある', () => {
+      expect(src).toContain('MAX_AUTO_JUDGE_ITEMS');
+      expect(src).toContain('overLimitWarning');
+    });
+
+    it('全バッチごとの完全ページリロードはせず、router.refreshは全件完了/停止時のみ最終的に1回だけ呼ぶ', () => {
+      // window.location.reload()を実行コードとして呼んでいないこと（//コメント行は除いて判定する）
+      const codeOnly = src.split('\n').map((line) => line.replace(/\/\/.*$/, '')).join('\n');
+      expect(codeOnly).not.toContain('window.location.reload');
+      // handleAutoJudge関数全体で router.refresh() の呼び出しが1箇所だけ（ループの外）
+      const autoJudgeBody = src.slice(src.indexOf('async function handleAutoJudge'), src.indexOf('function handleStopAutoJudge'));
+      const refreshCount = (autoJudgeBody.match(/router\.refresh\(\)/g) ?? []).length;
+      expect(refreshCount).toBe(1);
+    });
+
+    it('APIキーやOpenAIレスポンス全文をUIへ出す文字列パターンが存在しない', () => {
+      expect(src).not.toMatch(/OPENAI_API_KEY\s*[:=]\s*['"]/);
+    });
   });
 });
 

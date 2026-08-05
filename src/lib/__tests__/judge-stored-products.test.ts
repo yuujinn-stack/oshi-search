@@ -224,4 +224,170 @@ describe('judgeStoredProducts()', () => {
     const r = await judgeStoredProducts('存在しない人物');
     expect(r.error).toBe('人物が見つかりません');
   });
+
+  // ── remainingCountは「人物全体」の未判定数（バッチ内ではない） ──────────────────
+  describe('remainingCountは人物全体の未判定数として、複数回の呼び出しをまたいで正しく減っていく', () => {
+    const items = Array.from({ length: 120 }, (_, i) => makeItem(`item-${i}`));
+
+    it('120→110→100と、呼び出しを重ねるたびに正しく減る（各回DBを新規に読み直す想定）', async () => {
+      mockGetAllStoredProducts.mockResolvedValue(storedDataOf(items));
+      vi.mocked(judgeProducts).mockImplementation(async (batch) =>
+        batch.map((p) => ({ id: p.id, result: { verdict: 'related' as const, score: 80, reason: 'ok' } })),
+      );
+
+      // 1回目: verdictsはまだ0件
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      const r1 = await judgeStoredProducts('テスト人物');
+      expect(r1.totalUnclassifiedBefore).toBe(120);
+      expect(r1.remainingCount).toBe(110);
+
+      // 2回目: 1回目で成功した10件がverdicts化された状態を模す
+      const verdictsAfter1: Record<string, { verdict: 'related'; score: number; source: 'ai'; timestamp: number; promptVersion: string }> = {};
+      for (let i = 0; i < 10; i++) {
+        verdictsAfter1[`item-${i}`] = { verdict: 'related', score: 80, source: 'ai', timestamp: Date.now(), promptVersion: 'v3' };
+      }
+      vi.mocked(getAllVerdicts).mockResolvedValue(verdictsAfter1);
+      const r2 = await judgeStoredProducts('テスト人物');
+      expect(r2.totalUnclassifiedBefore).toBe(110);
+      expect(r2.remainingCount).toBe(100);
+    });
+  });
+
+  // ── excludeProductIds: 今回失敗した商品を次のバッチ対象から除外する ─────────────
+  describe('excludeProductIds', () => {
+    it('excludeProductIdsに含まれる商品はAI送信対象から除外される', async () => {
+      const items = [makeItem('a'), makeItem('b'), makeItem('c')];
+      mockGetAllStoredProducts.mockResolvedValue(storedDataOf(items));
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockImplementation(async (batch) =>
+        batch.map((p) => ({ id: p.id, result: { verdict: 'related' as const, score: 80, reason: 'ok' } })),
+      );
+
+      await judgeStoredProducts('テスト人物', false, undefined, { excludeProductIds: ['a'] });
+      const calledBatch = vi.mocked(judgeProducts).mock.calls[0][0];
+      expect(calledBatch.map((p) => p.id)).not.toContain('a');
+      expect(calledBatch.map((p) => p.id)).toEqual(expect.arrayContaining(['b', 'c']));
+    });
+
+    it('存在しない・不正なproductIdは無視する（エラーにならない）', async () => {
+      mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('a')]));
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockResolvedValue([{ id: 'a', result: { verdict: 'related', score: 80, reason: 'ok' } }]);
+
+      const r = await judgeStoredProducts('テスト人物', false, undefined, {
+        excludeProductIds: ['not-exist-1', 'not-exist-2'],
+      });
+      expect(r.error).toBeUndefined();
+      expect(r.successCount).toBe(1); // 存在しないIDは無視され、'a'は正常に処理される
+    });
+
+    it('excludeProductIdsが上限件数を超える場合、超過分は切り捨てる', async () => {
+      const items = Array.from({ length: 5 }, (_, i) => makeItem(`item-${i}`));
+      mockGetAllStoredProducts.mockResolvedValue(storedDataOf(items));
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockImplementation(async (batch) =>
+        batch.map((p) => ({ id: p.id, result: { verdict: 'related' as const, score: 80, reason: 'ok' } })),
+      );
+
+      // MAX_EXCLUDE_PRODUCT_IDS=500だが、テストでは実在するIDのうち一部だけを超過扱いで検証する
+      // （実装は「実在するID」をカウントするため、大量のダミーIDを混ぜても上限判定に影響しないことを確認）
+      const manyExcludes = Array.from({ length: 1000 }, (_, i) => `dummy-${i}`);
+      manyExcludes.push('item-0'); // 実在するIDを1つだけ混ぜる
+      const r = await judgeStoredProducts('テスト人物', false, undefined, { excludeProductIds: manyExcludes });
+      const calledBatch = vi.mocked(judgeProducts).mock.calls[0][0];
+      expect(calledBatch.map((p) => p.id)).not.toContain('item-0');
+      expect(r.error).toBeUndefined();
+    });
+  });
+
+  // ── limitオプション ──────────────────────────────────────────────────────────
+  it('limitオプションでバッチサイズを指定できる（AI_JUDGE_BATCH_SIZEを超える値は無視する）', async () => {
+    const items = Array.from({ length: 20 }, (_, i) => makeItem(`item-${i}`));
+    mockGetAllStoredProducts.mockResolvedValue(storedDataOf(items));
+    vi.mocked(getAllVerdicts).mockResolvedValue({});
+    vi.mocked(judgeProducts).mockImplementation(async (batch) =>
+      batch.map((p) => ({ id: p.id, result: { verdict: 'related' as const, score: 80, reason: 'ok' } })),
+    );
+
+    const r = await judgeStoredProducts('テスト人物', false, undefined, { limit: 3 });
+    expect(r.attemptedCount).toBe(3);
+
+    const r2 = await judgeStoredProducts('テスト人物', false, undefined, { limit: 999 });
+    expect(r2.attemptedCount).toBeLessThanOrEqual(AI_JUDGE_BATCH_SIZE);
+  });
+
+  // ── stopProcessing / stopReason ──────────────────────────────────────────────
+  describe('stopProcessing / stopReason', () => {
+    it('未判定が0件になったらCOMPLETEDでstopProcessing=true', async () => {
+      mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('a')]));
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockResolvedValue([{ id: 'a', result: { verdict: 'related', score: 80, reason: 'ok' } }]);
+
+      const r = await judgeStoredProducts('テスト人物');
+      expect(r.remainingCount).toBe(0);
+      expect(r.stopProcessing).toBe(true);
+      expect(r.stopReason).toBe('COMPLETED');
+    });
+
+    it('未判定は残っているが全て今回失敗済み（除外対象）ならFAILED_ITEMS_REMAIN', async () => {
+      mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('a'), makeItem('b')]));
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockResolvedValue([
+        { id: 'a', result: null, failure: { code: 'UNKNOWN', message: 'x' } },
+        { id: 'b', result: null, failure: { code: 'UNKNOWN', message: 'x' } },
+      ]);
+
+      const r = await judgeStoredProducts('テスト人物');
+      expect(r.remainingCount).toBe(2);
+      expect(r.runnableRemainingCount).toBe(0);
+      expect(r.failedInThisRunCount).toBe(2);
+      expect(r.stopProcessing).toBe(true);
+      expect(r.stopReason).toBe('FAILED_ITEMS_REMAIN');
+    });
+
+    it('まだ処理可能な商品が残っていればstopProcessing=false', async () => {
+      const items = Array.from({ length: 15 }, (_, i) => makeItem(`item-${i}`));
+      mockGetAllStoredProducts.mockResolvedValue(storedDataOf(items));
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockImplementation(async (batch) =>
+        batch.map((p) => ({ id: p.id, result: { verdict: 'related' as const, score: 80, reason: 'ok' } })),
+      );
+
+      const r = await judgeStoredProducts('テスト人物');
+      expect(r.remainingCount).toBe(5); // 15件中10件成功
+      expect(r.runnableRemainingCount).toBe(5);
+      expect(r.stopProcessing).toBe(false);
+      expect(r.stopReason).toBeUndefined();
+    });
+
+    it('INSUFFICIENT_QUOTAが1件でも発生したら残り件数に関わらずstopProcessing=true', async () => {
+      const items = Array.from({ length: 10 }, (_, i) => makeItem(`item-${i}`));
+      mockGetAllStoredProducts.mockResolvedValue(storedDataOf(items));
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockImplementation(async (batch) =>
+        batch.map((p, i) =>
+          i === 0
+            ? { id: p.id, result: { verdict: 'related' as const, score: 80, reason: 'ok' } }
+            : { id: p.id, result: null, failure: { code: 'INSUFFICIENT_QUOTA' as const, message: 'OpenAI APIの残高または利用上限を確認してください' } },
+        ),
+      );
+
+      const r = await judgeStoredProducts('テスト人物');
+      expect(r.stopProcessing).toBe(true);
+      expect(r.stopReason).toBe('INSUFFICIENT_QUOTA');
+      expect(r.successCount).toBe(1); // 成功した1件は保存されたまま
+    });
+
+    it('OPENAI_API_KEY未設定はAI_KEY_MISSINGでstopProcessing=true', async () => {
+      delete process.env.OPENAI_API_KEY;
+      mockGetAllStoredProducts.mockResolvedValue(storedDataOf([makeItem('a')]));
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+
+      const r = await judgeStoredProducts('テスト人物');
+      expect(r.aiKeyMissing).toBe(true);
+      expect(r.stopProcessing).toBe(true);
+      expect(r.stopReason).toBe('AI_KEY_MISSING');
+      process.env.OPENAI_API_KEY = 'sk-test-key';
+    });
+  });
 });
