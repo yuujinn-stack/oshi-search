@@ -22,6 +22,7 @@ import type { ProductCategory } from '@/types/person';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
 import ManualProductModal from './ManualProductModal';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
+import { compareProductsByTitle } from '@/lib/product-sort-title';
 
 interface ProductData {
   status: string;
@@ -257,11 +258,14 @@ export default function PersonProducts({
   reloadSignal?: number;
 }) {
   type Filter = 'uncertain' | 'all' | 'unrelated';
+  // 商品名順の表示順（既存の並び替え=sortMode/ドラッグ順とは無関係。'default'は現在の標準順のまま）
+  type TitleSortKey = 'default' | 'title_asc' | 'title_desc';
 
   const [data, setData] = useState<AdminData | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>('uncertain');
+  const [titleSort, setTitleSort] = useState<TitleSortKey>('default');
   const [message, setMessage] = useState('');
   const [searchTest, setSearchTest] = useState<SearchTestData | null>(null);
   const [searchTestLoading, setSearchTestLoading] = useState(false);
@@ -349,9 +353,12 @@ export default function PersonProducts({
   }
 
   // ─── Filtered product list (non-sort mode) ───────────────────────────────
+  // フィルター適用は既存仕様のまま。titleSortが指定されている場合のみ、
+  // フィルター後の全件（表示中の一部だけではなく）を商品名順で並び替えてからページ描画する
+  // （このリストはページネーションされておらず全件を1度に描画するため、追加の分割処理は不要）。
   const filteredProductList = useMemo(() => {
     if (!data) return [];
-    return CATEGORIES.flatMap((cat) => {
+    const list = CATEGORIES.flatMap((cat) => {
       const catData = data.categories[cat];
       if (!catData || catData.status !== 'ok') return [];
       return catData.products
@@ -363,7 +370,14 @@ export default function PersonProducts({
           return true;
         });
     });
-  }, [data, filter]);
+
+    if (titleSort === 'default') return list;
+
+    // 元の配列(list)は直接変更せず、コピーした配列を並び替える
+    const sorted = [...list].sort(compareProductsByTitle);
+    if (titleSort === 'title_desc') sorted.reverse();
+    return sorted;
+  }, [data, filter, titleSort]);
 
   const filteredProductIds = useMemo(
     () => filteredProductList.map((p) => p.id),
@@ -578,6 +592,21 @@ export default function PersonProducts({
                   全商品
                 </button>
               </div>
+            )}
+
+            {/* 表示順（商品名順）: 独立したselect。既存の商品操作フォームとは無関係で、
+                クリックイベントの伝播や競合は発生しない */}
+            {!sortMode && (
+              <select
+                value={titleSort}
+                onChange={(e) => setTitleSort(e.target.value as TitleSortKey)}
+                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                title="同じ・似た商品名を近くに表示します"
+              >
+                <option value="default">標準の並び順</option>
+                <option value="title_asc">商品名順（昇順）</option>
+                <option value="title_desc">商品名順（降順）</option>
+              </select>
             )}
 
             {message && <span className="text-xs text-green-600">{message}</span>}
