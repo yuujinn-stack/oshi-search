@@ -131,15 +131,16 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
         {/* レビュー星 */}
         <StarRating avg={reviewAvg} count={reviewCount} />
 
-        {/* CTA（Von Restorff: 目立たせる） */}
+        {/* CTA（Von Restorff: 目立たせる）
+            楽天ブランドを連想しやすい赤色に固定（サイト全体のCTAテーマカラーである
+            var(--ds-cta)は他のCTA・価格表示にも使われているため、このボタンだけ
+            hex値を直接指定し、テーマ変数自体は変更しない） */}
         <a
           href={href}
           target="_blank"
           rel="noopener noreferrer sponsored"
-          className="flex items-center justify-center font-bold text-[13px] tracking-wide active:scale-95 transition-transform duration-100 mt-1"
+          className="flex items-center justify-center font-bold text-[13px] tracking-wide active:scale-95 transition-transform duration-100 mt-1 bg-[#BF0000] hover:bg-[#A60000] active:bg-[#8F0000] text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F3A6A6] focus-visible:ring-offset-2"
           style={{
-            background: 'var(--ds-cta)',
-            color: 'var(--ds-cta-text)',
             borderRadius: 'var(--ds-radius)',
             minHeight: '44px',
             textDecoration: 'none',
