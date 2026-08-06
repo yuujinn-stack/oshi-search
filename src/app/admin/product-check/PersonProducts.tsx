@@ -257,7 +257,7 @@ export default function PersonProducts({
   // 0より大きい値に変化するたびに、既にデータ取得済みなら再取得する（AI判定完了通知用）
   reloadSignal?: number;
 }) {
-  type Filter = 'uncertain' | 'all' | 'unrelated';
+  type Filter = 'uncertain' | 'published' | 'all' | 'unrelated';
   // 商品名順の表示順（既存の並び替え=sortMode/ドラッグ順とは無関係。'default'は現在の標準順のまま）
   type TitleSortKey = 'default' | 'title_asc' | 'title_desc';
 
@@ -367,6 +367,9 @@ export default function PersonProducts({
           if (p.judgment?.verdict === 'deleted') return false;
           if (filter === 'uncertain') return p.judgment?.verdict === 'uncertain';
           if (filter === 'unrelated') return p.judgment?.verdict === 'unrelated';
+          // 「公開商品のみ」= 公開ページ(/person/[slug]/page.tsx)が商品を表示する条件と完全に一致させる
+          // （verdict === 'related' のみが条件。scoreによる追加の閾値は公開ページ側に存在しない）
+          if (filter === 'published') return p.judgment?.verdict === 'related';
           return true;
         });
     });
@@ -580,6 +583,12 @@ export default function PersonProducts({
                   AI判定待ちのみ
                 </button>
                 <button
+                  onClick={() => setFilter('published')}
+                  className={`px-3 py-1.5 border-l border-gray-200 ${filter === 'published' ? 'bg-green-50 text-green-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                >
+                  公開商品のみ
+                </button>
+                <button
                   onClick={() => setFilter('unrelated')}
                   className={`px-3 py-1.5 border-l border-gray-200 ${filter === 'unrelated' ? 'bg-red-50 text-red-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
                 >
@@ -724,6 +733,7 @@ export default function PersonProducts({
                 <p className="text-sm text-gray-400 text-center py-4">
                   {filter === 'uncertain' ? 'AI判定待ちの商品はありません ✓' :
                    filter === 'unrelated' ? '非表示商品はありません' :
+                   filter === 'published' ? '公開中の商品はありません' :
                    'バッチ処理を実行してください'}
                 </p>
               );
