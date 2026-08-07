@@ -1,5 +1,6 @@
 'use client';
 
+import { useCallback, useState, type SyntheticEvent } from 'react';
 import Link from 'next/link';
 import type { WorkRecord } from '@/types/work';
 import { deduplicateProviders, isConfirmedVodAvailability, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
@@ -7,6 +8,7 @@ import { getWorkPublicUrl } from '@/lib/work-url';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL, DISPLAY_WORK_TYPE_ICON } from '@/lib/work-display-type';
 import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
+import { getWorkImageAspectGroup, type WorkImageAspectGroup } from '@/lib/work-filter';
 
 function trackWorkClick(workId: string, title: string, personName: string, workType: string, posterUrl: string) {
   fetch('/api/track', {
@@ -32,19 +34,25 @@ const VOD_SOURCE_BADGE: Record<string, string> = {
   manual_csv: 'bg-orange-50 border-orange-200 text-orange-700',
 };
 
-function getPosterLayout(url: string): { container: string; img: string } {
-  if (url.includes('image.tmdb.org')) {
-    return {
-      container: 'relative aspect-[2/3] bg-gray-100 overflow-hidden flex-shrink-0',
-      img: 'w-full h-full object-contain',
-    };
-  }
-  // YouTube サムネイル・OG 画像は横長として扱う
-  return {
+// 画像アスペクト比ごとのコンテナ・画像スタイル。
+// 縦長（portrait）・横長（landscape）それぞれ専用のアスペクト比でコンテナを固定することで、
+// 同じタイプ同士のカードは画像領域の高さ・タイトル開始位置が揃う。
+// object-cover ではなく object-contain を使い、人物の顔・作品ロゴ・タイトル文字が
+// 大きく欠けないようにする（コンテナとの余白は背景色で埋める＝レターボックス表示）。
+type PosterGroup = Exclude<WorkImageAspectGroup, 'none'>;
+
+const POSTER_LAYOUT: Record<PosterGroup, { container: string; img: string }> = {
+  portrait: {
+    container: 'relative aspect-[2/3] bg-gray-100 overflow-hidden flex-shrink-0',
+    img: 'w-full h-full object-contain',
+  },
+  landscape: {
+    // ライブ・コンサート・テレビ番組等の横長キービジュアル用。16:9 を基準とし、
+    // 人物・タイトル・ロゴが左右で切れないよう object-contain + 背景色で余白を埋める。
     container: 'relative aspect-video bg-gray-800 overflow-hidden flex-shrink-0',
     img: 'w-full h-full object-contain',
-  };
-}
+  },
+};
 
 export default function WorkCard({ work }: { work: WorkRecord }) {
   const displayType = getDisplayWorkType(work);
@@ -53,7 +61,33 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
   const workDetailUrl = getWorkPublicUrl({ workId: work.id, personName: work.personName }) ?? `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
   // 画像優先順位: 手動画像 > TMDb/posterUrl > 自動取得OG画像 > プレースホルダー
   const displayPosterUrl = getRenderableWorkImageUrl(getWorkDisplayImage(work));
-  const posterLayout = displayPosterUrl ? getPosterLayout(displayPosterUrl) : null;
+  // 初期表示・SSR時のフォールバック分類（並べ替えで使っている getWorkImageAspectGroup と
+  // 同一ロジック）。TMDb画像は常に縦長ポスターのため正確だが、TMDb以外のOG自動取得画像は
+  // 実際には縦長キービジュアルであることも多く、URLだけでは正しく判定できない。
+  const fallbackAspectGroup = getWorkImageAspectGroup(work);
+  // 実画像の読み込み完了後、実際の幅・高さから縦長/横長を判定し直す（分かった時点で上書き）。
+  // これにより「本当は縦長なのに横長用の16:9枠に収めて左右に大きな余白ができる」ケースを防ぐ。
+  const [measuredAspectGroup, setMeasuredAspectGroup] = useState<PosterGroup | null>(null);
+  const imageAspectGroup = measuredAspectGroup ?? fallbackAspectGroup;
+  const posterLayout = imageAspectGroup !== 'none' ? POSTER_LAYOUT[imageAspectGroup] : null;
+
+  const measurePosterAspect = useCallback((img: HTMLImageElement) => {
+    const { naturalWidth, naturalHeight } = img;
+    if (!naturalWidth || !naturalHeight) return;
+    setMeasuredAspectGroup(naturalWidth / naturalHeight >= 1 ? 'landscape' : 'portrait');
+  }, []);
+
+  function handlePosterLoad(e: SyntheticEvent<HTMLImageElement>) {
+    measurePosterAspect(e.currentTarget);
+  }
+
+  // SSRされたHTMLをハイドレートする場合、ブラウザが画像を先に読み込み終えて
+  // ネイティブの load イベントが React のハイドレーション（onLoad登録）より先に
+  // 発火してしまうことがある。ref のコールバックはマウント時に同期的に呼ばれるため、
+  // その時点で img.complete を確認することでこの取りこぼしを防ぐ。
+  const posterRef = useCallback((img: HTMLImageElement | null) => {
+    if (img && img.complete) measurePosterAspect(img);
+  }, [measurePosterAspect]);
 
   // 公開ページ用フィルタ:
   //   confidence=low の AI ソースは非表示
@@ -103,10 +137,12 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
           <div className={posterLayout.container}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
+              ref={posterRef}
               src={displayPosterUrl}
               alt={work.title}
               className={posterLayout.img}
               loading="lazy"
+              onLoad={handlePosterLoad}
             />
             {/* 種別バッジ（ポスター上） */}
             <div className="absolute top-2 left-2">
