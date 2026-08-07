@@ -227,6 +227,10 @@ body {
 
 .hero-search-input {
   flex: 1;
+  /* flexアイテムのデフォルトmin-width:auto（size属性由来の内容依存の最小幅）を
+     上書きし、狭い画面幅でも input が正しく縮小できるようにする（ページ全体の
+     横スクロール防止）。 */
+  min-width: 0;
   border: 2px solid rgba(255,255,255,0.35);
   border-radius: 999px;
   padding: 14px 22px;

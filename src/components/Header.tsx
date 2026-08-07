@@ -46,7 +46,7 @@ export default async function Header() {
         <Link href="/" className="text-xl font-black whitespace-nowrap tracking-tight" style={{ color: 'var(--ds-primary)' }}>
           推しサーチ
         </Link>
-        <div className="flex-1 max-w-lg">
+        <div className="flex-1 min-w-0 max-w-lg">
           <SearchForm compact suggestions={suggestions} />
         </div>
       </div>

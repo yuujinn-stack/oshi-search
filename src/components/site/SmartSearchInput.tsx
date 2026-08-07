@@ -163,9 +163,12 @@ export default function SmartSearchInput({
   }, []);
 
   // デフォルトスタイル（Hero用に上書き可能）
+  // min-w-0: <input> はflexアイテムのデフォルトmin-width:auto（size属性由来の内容依存の
+  // 最小幅）のせいでflex-1が効かず縮小しきれないことがある。min-w-0で明示的に上書きし、
+  // 狭い画面幅でもinputがコンテナ幅に収まるよう正しく縮小できるようにする。
   const defaultInputCls = compact
-    ? 'flex-1 border border-gray-300 rounded-full py-2 px-4 text-sm text-slate-800 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent'
-    : 'flex-1 border border-gray-300 rounded-full py-4 px-5 text-slate-800 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent';
+    ? 'flex-1 min-w-0 border border-gray-300 rounded-full py-2 px-4 text-sm text-slate-800 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent'
+    : 'flex-1 min-w-0 border border-gray-300 rounded-full py-4 px-5 text-slate-800 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent';
 
   const defaultButtonCls = compact
     ? 'bg-primary text-white rounded-full font-bold whitespace-nowrap hover:bg-indigo-700 active:bg-indigo-800 transition-colors px-4 py-2 text-sm flex items-center justify-center'
