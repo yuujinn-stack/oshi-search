@@ -816,3 +816,34 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 - `npx tsc --noEmit` エラーなし
 - `npx vitest run` 1000テスト全通過
 - `next build` 成功、ビルドエラー・警告なし
+
+---
+
+## Task 18 — モバイル幅(320〜430px)でのページ全体の横スクロールを修正
+
+**目的：** Task 17の実機確認で発見した、モバイル幅でページ全体が横スクロールしてしまう問題を調査・修正する。出演作品の検索・年代・配信先・並べ替え機能（Task 17）は変更しない別コミットとして対応。
+
+**調査：** Playwrightで`document.documentElement.scrollWidth`と`clientWidth`を比較し、DOMツリーを二分探索的に`display:none`で潰しながら原因要素を特定した。
+
+**原因（2箇所、いずれも同じ根本原因）：**
+1. `src/components/Header.tsx`の共通ヘッダー内、検索ボックスをラップする`<div className="flex-1 max-w-lg">`と、`SmartSearchInput`内の`<input>`（`flex-1`のみでmin-widthの明示指定なし）。
+2. `src/components/site/HeroSearchForm.tsx`が使うトップページのHero検索フォーム（`.hero-search-input { flex: 1; }`、globals.css）。
+
+いずれも、flexアイテムの`<input>`はブラウザのデフォルトで`min-width: auto`（`size`属性由来の内容依存の最小幅、目安20文字分）を持つため、`flex: 1`を指定しても画面幅が足りない場面でその最小幅より縮小できず、結果として親要素・ページ全体が横にはみ出していた（`overflow-x-hidden`で隠すのではなく、この`min-width: auto`が真因）。実際に320px幅のトップページで`scrollWidth`が335px（15px超過）となり、`window.scrollX`をwheelイベントで動かせる＝実際にページ全体が横スワイプできてしまうことも確認した。
+
+**修正：**
+- `src/components/Header.tsx` — 検索ボックスのラッパーに`min-w-0`を追加（`flex-1 max-w-lg` → `flex-1 min-w-0 max-w-lg`）
+- `src/components/site/SmartSearchInput.tsx` — デフォルトinputクラス（compact/通常両方）に`min-w-0`を追加
+- `src/app/globals.css` — `.hero-search-input`に`min-width: 0`を追加
+
+**変更していないもの（確認済み）：** 出演作品の検索・年代フィルター・配信先フィルター・並べ替え（`WorksSection.tsx`・`work-filter.ts`・`WorkCard.tsx`）は一切触れていない。PCヘッダー・Heroフォームの見た目（1280px）はスクリーンショットで変化なしを確認。ロゴ・検索ボタンの固定幅・`whitespace-nowrap`はそのまま維持（アクセシビリティ上のタップ領域確保のため妥当と判断し変更せず）。`overflow-x-hidden`のような症状隠しは使用していない。
+
+**動作確認（Playwright、320/375/390/430/1280pxの5幅×トップページ・検索ページ・人物ページで実施）：**
+- 全幅・全ページで`document.documentElement.scrollWidth > clientWidth`が解消（修正前は320px幅のトップページのみ15px超過）
+- ヘッダー・Hero検索フォームともに、入力欄・ボタンが画面内に収まることを座標ベースで確認
+- スクリーンショットで320〜430px・1280pxいずれもロゴ・検索欄・検索ボタンが自然に折り返し/収まることを目視確認
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1000テスト全通過（Task 17から変更なし）
+- `next build` 成功、ビルドエラー・警告なし
