@@ -447,8 +447,49 @@ export default async function HomePage() {
       {/* ━━━ メインコンテンツ ━━━ */}
       <div style={{ maxWidth: '1152px', margin: '0 auto', padding: 'clamp(32px, 5vw, 56px) 16px' }}>
 
-        {/* ジャンルで探す */}
+        {/* 注目の人物 */}
         <section style={{ marginBottom: '48px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+            <h2 className="section-heading" style={{ marginBottom: 0, fontSize: '16px', fontWeight: 700 }}>注目の人物</h2>
+            <Link href="/search" className="theme-text-link" style={{ fontSize: '14px', fontWeight: 500, textDecoration: 'none' }}>
+              全員を見る →
+            </Link>
+          </div>
+          <div className="persons-grid">
+            {featured.map((person) => (
+              <HomePersonCard key={person.name} person={person} />
+            ))}
+          </div>
+        </section>
+
+        {/* グループで探す */}
+        <section style={{ marginBottom: '48px' }}>
+          <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>グループで探す</h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {groups.map((group) => (
+              <Link
+                key={group}
+                href={groupHrefByName(group, groupMetaList)}
+                className="theme-group-chip"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '9px 16px',
+                  borderRadius: '10px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  textDecoration: 'none',
+                  minHeight: '40px',
+                }}
+              >
+                {group}
+              </Link>
+            ))}
+          </div>
+        </section>
+
+        {/* ジャンルで探す */}
+        <section>
           <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>ジャンルで探す</h2>
           <div style={{
             display: 'grid',
@@ -502,47 +543,6 @@ export default async function HomePage() {
                   ))}
                 </div>
               </div>
-            ))}
-          </div>
-        </section>
-
-        {/* 注目の人物 */}
-        <section style={{ marginBottom: '48px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <h2 className="section-heading" style={{ marginBottom: 0, fontSize: '16px', fontWeight: 700 }}>注目の人物</h2>
-            <Link href="/search" className="theme-text-link" style={{ fontSize: '14px', fontWeight: 500, textDecoration: 'none' }}>
-              全員を見る →
-            </Link>
-          </div>
-          <div className="persons-grid">
-            {featured.map((person) => (
-              <HomePersonCard key={person.name} person={person} />
-            ))}
-          </div>
-        </section>
-
-        {/* グループで探す */}
-        <section>
-          <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>グループで探す</h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-            {groups.map((group) => (
-              <Link
-                key={group}
-                href={groupHrefByName(group, groupMetaList)}
-                className="theme-group-chip"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '9px 16px',
-                  borderRadius: '10px',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                  textDecoration: 'none',
-                  minHeight: '40px',
-                }}
-              >
-                {group}
-              </Link>
             ))}
           </div>
         </section>
