@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { getWork, saveWork } from '@/lib/work-store';
+import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
 
 // POST /api/admin/og-image-fetch
 // body: { personName, workId, debug?, force? }
@@ -256,6 +258,7 @@ export async function POST(req: NextRequest) {
       work.ogImageError = undefined;
       work.updatedAt = now;
       await saveWork(work);
+      revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
       const response: Record<string, unknown> = {
         ok: true, ogImageUrl, ogSourceUrl: url, source: 'youtube', videoId: ytId,
       };
@@ -281,6 +284,7 @@ export async function POST(req: NextRequest) {
       work.ogImageError = undefined;
       work.updatedAt = now;
       await saveWork(work);
+      revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
       const response: Record<string, unknown> = {
         ok: true,
         ogImageUrl: result.ogImageUrl,

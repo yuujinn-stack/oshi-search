@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { getWork, setManualImageUrl } from '@/lib/work-store';
 import { isValidImageUrl, isPlausibleImageUrl } from '@/lib/work-image';
+import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
 
 // PATCH /api/admin/work-manual-image
 // body: { personName, workId, imageUrl }
@@ -53,6 +54,10 @@ export async function PATCH(req: NextRequest) {
 
   revalidatePath(`/work/${encodeURIComponent(workId)}`);
   revalidatePath(`/person/${encodeURIComponent(personName)}`);
+  // ホーム「人気作品」の画像もDBの現在値を参照するため、手動画像の設定/解除を
+  // 即座に反映する（作品自体のクリック実績がありランキングに入っている場合のみ意味を持つが、
+  // 対象外の作品への呼び出しは無害なので条件分岐は不要）
+  revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
 
   const updated = await getWork(personName, workId);
   return NextResponse.json({ ok: true, manualImageUrl: updated?.manualImageUrl ?? null, work: updated });

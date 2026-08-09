@@ -2,11 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockGetWork = vi.hoisted(() => vi.fn());
 const mockSaveWork = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockRevalidateTag = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/work-store', () => ({
   getWork: mockGetWork,
   saveWork: mockSaveWork,
 }));
+vi.mock('next/cache', () => ({ revalidateTag: mockRevalidateTag }));
+// ranking.ts はDBに触れるモジュールを読み込むため、テストではタグ定数のみ提供する
+vi.mock('@/lib/ranking', () => ({ RANKING_DATA_CACHE_TAG: 'ranking-data' }));
 
 import { POST } from '@/app/api/admin/og-image-fetch/route';
 
@@ -65,5 +69,7 @@ describe('POST /api/admin/og-image-fetch — 候補URLの優先順位（sourceUr
     expect(body.ogImageUrl).toBe('https://example.com/work-1-thumb.jpg');
     // 最初に呼ばれたfetchがsourceUrlであることを確認（officialUrlが先に試されていない）
     expect(fetchMock.mock.calls[0][0]).toBe('https://example.com/work-1-page');
+    // OG画像取得に成功した場合、人気作品のランキングキャッシュを即時失効する
+    expect(mockRevalidateTag).toHaveBeenCalledWith('ranking-data', { expire: 0 });
   });
 });

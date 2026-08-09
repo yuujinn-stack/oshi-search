@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockGetWork = vi.hoisted(() => vi.fn());
 const mockSetManualImageUrl = vi.hoisted(() => vi.fn());
 const mockRevalidatePath = vi.hoisted(() => vi.fn());
+const mockRevalidateTag = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/work-store', () => ({
   getWork: mockGetWork,
@@ -10,7 +11,10 @@ vi.mock('@/lib/work-store', () => ({
 }));
 vi.mock('next/cache', () => ({
   revalidatePath: mockRevalidatePath,
+  revalidateTag: mockRevalidateTag,
 }));
+// ranking.ts はDBに触れるモジュールを読み込むため、テストではタグ定数のみ提供する
+vi.mock('@/lib/ranking', () => ({ RANKING_DATA_CACHE_TAG: 'ranking-data' }));
 
 import { PATCH } from '@/app/api/admin/work-manual-image/route';
 
@@ -56,6 +60,7 @@ describe('PATCH /api/admin/work-manual-image', () => {
     expect(mockSetManualImageUrl).toHaveBeenCalledWith('人物A', 'work-1', 'https://example.com/a.jpg');
     expect(mockRevalidatePath).toHaveBeenCalledWith('/work/work-1');
     expect(mockRevalidatePath).toHaveBeenCalledWith('/person/%E4%BA%BA%E7%89%A9A');
+    expect(mockRevalidateTag).toHaveBeenCalledWith('ranking-data', { expire: 0 });
   });
 
   it('imageUrlが空文字なら手動画像を解除する（nullで保存）', async () => {

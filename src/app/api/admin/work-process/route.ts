@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { getPersonWithConfigMerged } from '@/lib/persons';
 import { processPersonWorks } from '@/lib/work-processor';
+import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
 
 // POST /api/admin/work-process
 // body: { personName, action?, forceRejudge?, deleteSupplementFirst?, includeVod? }
@@ -31,5 +33,10 @@ export async function POST(req: NextRequest) {
     deleteSupplementFirst: deleteSupplementFirst ?? false,
     includeVod: includeVod ?? false,
   });
+  // TMDb再取得は既存作品のposterUrlも更新しうるため、正常に処理できた場合のみ
+  // 「人気作品」のホーム表示キャッシュを再検証する
+  if (!result.error) {
+    revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
+  }
   return NextResponse.json(result);
 }

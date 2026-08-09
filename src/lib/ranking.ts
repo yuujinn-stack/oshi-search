@@ -1,10 +1,11 @@
 import { getRedis } from '@/lib/redis';
 import { getAllPersonsMerged } from '@/lib/persons';
-import { getPublishedWorks, getAllPublishedWorkPersonMap } from '@/lib/work-store';
+import { getPublishedWorks, getAllPublishedWorkPersonMap, getPublicWorkById } from '@/lib/work-store';
 import { getAllStoredProducts, getStoredProductImageUrl } from '@/lib/product-store';
 import { isConfirmedVodAvailability } from '@/lib/vod-dedup';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getWorkPublicUrl } from '@/lib/work-url';
+import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
 import type { Redis } from '@upstash/redis';
 import type { Person, ProductCategory } from '@/types/person';
 
@@ -188,7 +189,7 @@ export async function getRankingData(): Promise<RankingData> {
     // 無効IDをRedisから非同期で削除（少数の場合のみ、ページ表示はブロックしない）
     const invalidKeys: string[] = [];
 
-    popularWorks = workKeys
+    const snapshotWorks = workKeys
       .map((key, i) => {
         const workId = key.replace('work:click:', '');
         // DB照合: 公開・未削除の作品のみ採用（DBが正）
@@ -213,6 +214,23 @@ export async function getRankingData(): Promise<RankingData> {
       .filter((w): w is RankedWork => w !== null && w.title !== '')
       .sort((a, b) => b.clickCount - a.clickCount)
       .slice(0, 6);
+
+    // work:meta:* の posterUrl はクリック時点のスナップショットのため、その後
+    // 管理画面での手動画像設定・OG画像再取得等で作品画像が更新されても反映されない
+    // （人物ページ・作品詳細ページは常にDBの現在値を getWorkDisplayImage() で参照するため
+    // そちらは最新になるが、ここだけ古いままになっていた）。表示対象TOP6のみ、
+    // getPublicWorkById()でDBから現在の作品データを取得し、getWorkDisplayImage()+
+    // getRenderableWorkImageUrl()という他画面と全く同じ優先順位ロジックで画像URLを
+    // 再計算し、見つかった場合だけ posterUrl を差し替える（DBが正本）。
+    // 他のフィールド・並び順・クリック集計は一切変更しない。作品が削除済み等で
+    // 見つからない場合はスナップショットのまま。
+    const liveWorks = await Promise.all(snapshotWorks.map((w) => getPublicWorkById(w.workId)));
+    popularWorks = snapshotWorks.map((w, i) => {
+      const liveWork = liveWorks[i];
+      if (!liveWork) return w;
+      const liveImageUrl = getRenderableWorkImageUrl(getWorkDisplayImage(liveWork));
+      return liveImageUrl ? { ...w, posterUrl: liveImageUrl } : w;
+    });
 
     // 無効IDが少数（20件以下）かつDBマップが正常に取得できた場合のみ非同期削除
     // workPersonMap.size === 0 かつ workKeys があるケースはDB障害の可能性があるため削除しない
