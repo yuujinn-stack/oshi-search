@@ -3,7 +3,7 @@
 
 import { db } from '@/db/client';
 import { products as productsTable, batchMeta as batchMetaTable } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { upsertProduct } from '@/db/write';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
@@ -214,6 +214,33 @@ export async function updateProductInCategory(
   items[idx] = { ...items[idx], ...updates };
   await upsertProduct(personName, category, items, row.fetchedAt.getTime());
   return true;
+}
+
+// 商品1件の現在のimageUrlのみを取得する（ホーム「人気商品」のランキング表示専用）。
+// getAllStoredProducts() はそのカテゴリの items 配列を丸ごと取得するため、1人物・
+// 1カテゴリの商品点数が多い場合（数百〜千件規模）に無駄が大きい。jsonb_array_elements
+// + WHERE でDB側から対象商品1件だけを絞り込むことで、カテゴリ内の商品点数が増えても
+// 転送量・JSONパース量が定数に近くなるようにする。
+export async function getStoredProductImageUrl(
+  personName: string,
+  category: ProductCategory,
+  productId: string,
+): Promise<string | null> {
+  try {
+    const result = await db.execute(sql`
+      SELECT item->>'imageUrl' AS image_url
+      FROM products, jsonb_array_elements(items) AS item
+      WHERE person_name = ${personName}
+        AND category = ${category}
+        AND item->>'id' = ${productId}
+      LIMIT 1
+    `);
+    const row = result.rows[0] as { image_url: string | null } | undefined;
+    return row?.image_url ?? null;
+  } catch (err) {
+    console.error('[db] getStoredProductImageUrl failed:', String(err));
+    return null;
+  }
 }
 
 // 人物の全カテゴリを一括取得（人物ページレンダリング時）

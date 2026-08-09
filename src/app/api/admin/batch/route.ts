@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { processAllPersons, processPerson } from '@/lib/batch-processor';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getRedis } from '@/lib/redis';
+import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
 
 // POST /api/admin/batch
 // body: {} → 全員処理
@@ -41,6 +42,10 @@ export async function POST(req: NextRequest) {
       }
       const result = await processPerson(body.personName, false, personConfig);
       revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
+      // 商品（画像含む）が実際に保存された場合のみ、人気商品のホーム表示を再検証する
+      if (result.stored > 0) {
+        revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
+      }
       return NextResponse.json({ ok: true, person: result });
     }
 
@@ -53,6 +58,10 @@ export async function POST(req: NextRequest) {
     const elapsed = ((summary.finishedAt - summary.startedAt) / 1000).toFixed(1);
     const errors = summary.persons.filter((p) => p.error);
     const totalStored = summary.persons.reduce((s, r) => s + r.stored, 0);
+    // いずれかの人物で商品が保存された場合のみ、人気商品のホーム表示を再検証する
+    if (totalStored > 0) {
+      revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
+    }
 
     return NextResponse.json({
       ok: true,

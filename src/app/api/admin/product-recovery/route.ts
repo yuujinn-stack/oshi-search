@@ -3,6 +3,7 @@
 // POST: 商品復旧 — Redis に残るデータを既存 DB 配列へ追記（削除・置換しない）
 
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { db } from '@/db/client';
 import { neonSql } from '@/db/client';
 import { products as productsTable } from '@/db/schema';
@@ -10,6 +11,7 @@ import { eq } from 'drizzle-orm';
 import { upsertProduct, hasIdempotencyKey, insertWorkStatusHistory } from '@/db/write';
 import { getRedis } from '@/lib/redis';
 import { getRecoveryBlockReason } from '@/lib/recovery-guard';
+import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
 import type { RakutenItem } from '@/types/rakuten';
 
 export const dynamic = 'force-dynamic';
@@ -640,6 +642,12 @@ export async function POST(req: NextRequest) {
       skippedIds.push(...newItems.map((i) => i.id));
       console.error(`[product-recovery] category=${category} write failed: ${String(err)}`);
     }
+  }
+
+  // 復旧された商品には画像URLも含まれるため、実際に復旧された場合のみ
+  // 人気商品のホーム表示キャッシュを再検証する
+  if (recovered > 0) {
+    revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
   }
 
   // 監査ログ（fire-and-forget）

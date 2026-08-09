@@ -1,12 +1,12 @@
 import { getRedis } from '@/lib/redis';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getPublishedWorks, getAllPublishedWorkPersonMap } from '@/lib/work-store';
-import { getAllStoredProducts } from '@/lib/product-store';
+import { getAllStoredProducts, getStoredProductImageUrl } from '@/lib/product-store';
 import { isConfirmedVodAvailability } from '@/lib/vod-dedup';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import type { Redis } from '@upstash/redis';
-import type { Person } from '@/types/person';
+import type { Person, ProductCategory } from '@/types/person';
 
 // ─── 型定義 ──────────────────────────────────────────────────────────────────────
 export interface RankedPerson {
@@ -53,6 +53,20 @@ export interface RankingData {
   popularWorks: RankedWork[];
   popularProducts: RankedProduct[];
 }
+
+// ホームの getCachedRankingData（src/app/page.tsx）に付与する unstable_cache タグ名。
+// 商品画像等、ランキング表示に使う元データが更新された書き込み経路（商品手動編集・
+// Rakuten再取得・商品復旧等）から revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 }) を
+// 呼ぶことで、60秒の定期再検証を待たずにこのキャッシュ1件だけを次回リクエストから
+// 更新できる。呼び出し側は必ず { expire: 0 }（即時失効）を使うこと。
+// Next.js 16 の revalidateTag は第2引数（キャッシュプロファイル）が必須で、'max' 等の
+// 名前付きプロファイルは stale 猶予（'max' は stale:300秒）を持つため、無効化直後の
+// 最初のアクセスで古い値が返る可能性がある。{ expire: 0 } は猶予なしで即時失効するため、
+// 「管理画面で商品画像を変更→次にホームを表示→新しい画像」という要件に合う
+// （実機確認: 無効化直後の次リクエストで即座に再計算されることを確認済み）。
+// 人物・作品・商品などランキングの全セクションを1つの関数でまとめて計算しているため、
+// タグの粒度もランキングデータ全体（このキャッシュエントリ単位）が最小単位となる。
+export const RANKING_DATA_CACHE_TAG = 'ranking-data';
 
 // ─── ヘルパー ──────────────────────────────────────────────────────────────────
 async function scanKeys(redis: Redis, pattern: string): Promise<string[]> {
@@ -225,7 +239,7 @@ export async function getRankingData(): Promise<RankingData> {
       metaPipe.hgetall(`product:meta:${k.replace('product:click:', '')}`);
     }
     const metas = await metaPipe.exec() as unknown[];
-    popularProducts = productKeys
+    const snapshotProducts = productKeys
       .map((key, i) => {
         const productId = key.replace('product:click:', '');
         const meta = metas[i] as Record<string, string> | null;
@@ -243,6 +257,27 @@ export async function getRankingData(): Promise<RankingData> {
       .filter((p): p is RankedProduct => p !== null)
       .sort((a, b) => b.clickCount - a.clickCount)
       .slice(0, 8);
+
+    // product:meta:* の imageUrl はクリック時点のスナップショットのため、その後
+    // 管理画面での手動編集やRakuten再取得で商品画像が更新されても反映されない。
+    // 表示対象TOP8のみ、getStoredProductImageUrl()でDB側から対象商品1件だけを
+    // ピンポイントに絞り込んで現在のimageUrlを取得し、見つかった場合だけ差し替える
+    // （他のフィールド・並び順・クリック集計は一切変更しない。商品が削除済み等で
+    // 見つからない場合はスナップショットのまま）。
+    // getAllStoredProducts()（カテゴリ内の商品を丸ごと取得）は使わない。1人物・1カテゴリの
+    // 商品点数が数百〜千件規模になり得るため、TOP8のためだけに丸ごと転送するのは無駄が大きい。
+    const liveImageUrls = await Promise.all(
+      snapshotProducts.map((p) =>
+        p.personSlug && p.category
+          ? getStoredProductImageUrl(p.personSlug, p.category as ProductCategory, p.productId)
+          : Promise.resolve(null),
+      ),
+    );
+
+    popularProducts = snapshotProducts.map((p, i) => {
+      const liveImageUrl = liveImageUrls[i];
+      return liveImageUrl ? { ...p, imageUrl: liveImageUrl } : p;
+    });
   }
 
   return { popularPersons, risingPersons, popularSearches, popularWorks, popularProducts };

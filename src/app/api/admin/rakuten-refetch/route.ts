@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { processPerson } from '@/lib/batch-processor';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getRedis } from '@/lib/redis';
+import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
 
 // POST /api/admin/rakuten-refetch
 // body: { personName: "..." , forceRejudge?: boolean }
@@ -108,6 +109,11 @@ export async function POST(req: NextRequest) {
   }
 
   revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
+  // 楽天再取得は既存商品の画像URLも更新しうるため、実際に商品が保存された場合のみ
+  // 「人気商品」のホーム表示キャッシュを再検証する（取得0件・スキップのみの場合は呼ばない）
+  if (result.stored > 0) {
+    revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
+  }
 
   // ── 正常系ステータス判定 ──────────────────────────────────────────────────
   // partial_success: 一部カテゴリ取得成功 + 一部失敗（fetchFailed > 0 && stored > 0）

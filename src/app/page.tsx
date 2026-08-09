@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { unstable_cache } from 'next/cache';
 import { getAllPersonsEnrichedWithGenres, getAllPersonsWithConfig } from '@/lib/persons';
-import { getRankingData } from '@/lib/ranking';
+import { getRankingData, RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
 import type { RankingData } from '@/lib/ranking';
 import type { PersonCardData } from '@/lib/persons';
 import { DEFAULT_GENRE_ORDER } from '@/lib/genre-utils';
@@ -24,7 +24,7 @@ const getCachedEnrichedData = unstable_cache(
 const getCachedRankingData = unstable_cache(
   getRankingData,
   ['home-ranking-data'],
-  { revalidate: 60 },
+  { revalidate: 60, tags: [RANKING_DATA_CACHE_TAG] },
 );
 
 const getCachedGroupMetas = unstable_cache(

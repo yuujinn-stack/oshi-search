@@ -9,11 +9,14 @@ const mockProcessPerson = vi.hoisted(() => vi.fn());
 const mockGetAllPersonsMerged = vi.hoisted(() => vi.fn());
 const mockGetRedis = vi.hoisted(() => vi.fn());
 const mockRevalidatePath = vi.hoisted(() => vi.fn());
+const mockRevalidateTag = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/batch-processor', () => ({ processPerson: mockProcessPerson }));
 vi.mock('@/lib/persons', () => ({ getAllPersonsMerged: mockGetAllPersonsMerged }));
 vi.mock('@/lib/redis', () => ({ getRedis: mockGetRedis }));
-vi.mock('next/cache', () => ({ revalidatePath: mockRevalidatePath }));
+vi.mock('next/cache', () => ({ revalidatePath: mockRevalidatePath, revalidateTag: mockRevalidateTag }));
+// ranking.ts はDBに触れるモジュール(work-store等)を読み込むため、テストではタグ定数のみ提供する
+vi.mock('@/lib/ranking', () => ({ RANKING_DATA_CACHE_TAG: 'ranking-data' }));
 
 import { POST } from '@/app/api/admin/rakuten-refetch/route';
 
@@ -70,5 +73,17 @@ describe('POST /api/admin/rakuten-refetch', () => {
     mockProcessPerson.mockResolvedValue(BASE_RESULT);
     await POST(makePost({ personName: 'テスト人物' }) as never);
     expect(mockProcessPerson).toHaveBeenCalledTimes(1);
+  });
+
+  it('stored>0の場合、人気商品のランキングキャッシュタグをrevalidateする', async () => {
+    mockProcessPerson.mockResolvedValue({ ...BASE_RESULT, stored: 3 });
+    await POST(makePost({ personName: 'テスト人物' }) as never);
+    expect(mockRevalidateTag).toHaveBeenCalledWith('ranking-data', { expire: 0 });
+  });
+
+  it('stored===0の場合、ランキングキャッシュタグはrevalidateしない（商品が変わっていないため）', async () => {
+    mockProcessPerson.mockResolvedValue({ ...BASE_RESULT, stored: 0 });
+    await POST(makePost({ personName: 'テスト人物' }) as never);
+    expect(mockRevalidateTag).not.toHaveBeenCalled();
   });
 });

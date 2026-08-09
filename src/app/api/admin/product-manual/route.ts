@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { appendProductToCategory, updateProductInCategory } from '@/lib/product-store';
 import { saveVerdict } from '@/lib/judgment-store';
+import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
 import type { ProductCategory } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
 
@@ -60,6 +61,7 @@ export async function POST(req: NextRequest) {
     if (status === 'created') {
       await saveVerdict(personName, id, 'related', 100, 'manual');
       revalidatePath(`/person/${encodeURIComponent(personName)}`);
+      revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
     }
   }
 
@@ -103,5 +105,10 @@ export async function PUT(req: NextRequest) {
   }
 
   revalidatePath(`/person/${encodeURIComponent(personName)}`);
+  // 人気商品のホーム表示は商品画像を含むためimageUrl変更時のみ再検証する
+  // （価格・ショップ名等、ランキング表示に影響しないフィールドのみの変更では呼ばない）
+  if (filteredUpdates.imageUrl !== undefined) {
+    revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
+  }
   return NextResponse.json({ ok: true });
 }
