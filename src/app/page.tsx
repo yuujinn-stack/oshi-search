@@ -13,6 +13,7 @@ import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
 import type { GroupMeta } from '@/types/group';
 import { getRenderableProductTitle } from '@/lib/product-image';
+import { VOD_PAGE_PROVIDERS } from '@/lib/vod-page';
 
 // Redis への問い合わせ結果を 60 秒間 Vercel Data Cache でキャッシュ
 // → 同一デプロイ内でリクエストが集中しても Redis 呼び出しは最大1回/60秒
@@ -187,6 +188,52 @@ export default async function HomePage() {
           <span className="hero-stat-label">配信先をまとめて確認</span>
         </div>
       </div>
+
+      {/* ━━━ 配信サービスから探す ━━━ */}
+      <section style={{ background: 'var(--ds-bg)', borderBottom: '1px solid var(--ds-border)', paddingTop: '24px', paddingBottom: '32px' }}>
+        <div style={{ maxWidth: '1152px', margin: '0 auto', padding: '0 16px' }}>
+          <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>配信サービスから探す</h2>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+            gap: '12px',
+          }}>
+            {VOD_PAGE_PROVIDERS.map((provider) => (
+              <Link
+                key={provider.urlSlug}
+                href={`/vod/${provider.urlSlug}`}
+                className="theme-card"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '16px',
+                  textDecoration: 'none',
+                  borderRadius: 'var(--ds-radius)',
+                }}
+              >
+                <div style={{
+                  width: '40px',
+                  height: '40px',
+                  flexShrink: 0,
+                  borderRadius: '10px',
+                  background: 'var(--ds-primary-soft)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '18px',
+                }} aria-hidden="true">
+                  📺
+                </div>
+                <div>
+                  <p style={{ fontSize: '14px', fontWeight: 700, color: 'var(--ds-text)' }}>{provider.displayName}</p>
+                  <p style={{ fontSize: '11px', color: 'var(--ds-muted)' }}>出演作品を人物から探す</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* ━━━ 🔥 今人気の人物 ━━━ */}
       <section style={{ background: 'var(--ds-surface)', borderBottom: '1px solid var(--ds-border)', paddingTop: '24px', paddingBottom: '32px' }}>

@@ -4,6 +4,7 @@ import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
 import { getAllPublishedWorkPersonMap } from '@/lib/work-store';
 import { getWorkPublicUrl } from '@/lib/work-url';
+import { VOD_PAGE_PROVIDERS } from '@/lib/vod-page';
 
 const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
 
@@ -52,6 +53,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'monthly' as const,
       priority: 0.4,
     },
+    ...VOD_PAGE_PROVIDERS.map((provider) => ({
+      url: `${BASE_URL}/vod/${provider.urlSlug}`,
+      changeFrequency: 'daily' as const,
+      priority: 0.7,
+    })),
     ...groups.map((group) => ({
       url: `${BASE_URL}${groupHrefByName(group, groupMetas)}`,
       changeFrequency: 'weekly' as const,
