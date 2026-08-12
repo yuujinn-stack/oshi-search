@@ -1,5 +1,6 @@
 import { getRedis } from '@/lib/redis';
 import { getAllPersonsMerged } from '@/lib/persons';
+import { getAllGroupMetas } from '@/lib/group-meta';
 import { getPublishedWorks, getAllPublishedWorkPersonMap, getPublicWorkById } from '@/lib/work-store';
 import { getAllStoredProducts, getStoredProductImageUrl } from '@/lib/product-store';
 import { isConfirmedVodAvailability } from '@/lib/vod-dedup';
@@ -8,6 +9,7 @@ import { getWorkPublicUrl } from '@/lib/work-url';
 import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
 import type { Redis } from '@upstash/redis';
 import type { Person, ProductCategory } from '@/types/person';
+import type { GroupMeta } from '@/types/group';
 
 // ─── 型定義 ──────────────────────────────────────────────────────────────────────
 export interface RankedPerson {
@@ -93,6 +95,36 @@ function makePersonFallback(persons: Person[]): RankedPerson[] {
   }));
 }
 
+// src/app/api/search-track/route.ts の normalizeKeyword() と必ず同じ正規化にすること
+// （search:ranking のRedisハッシュキーはこの正規化後の文字列で保存されているため）。
+function normalizeSearchKeyword(raw: string): string {
+  return raw
+    .trim()
+    .replace(/[　\s]+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+// 「人気検索」の公開表示は、自由入力の検索ログをそのまま出さず、実在する人物名・
+// グループ名（グループの旧名・改名前の名称を含む）と完全一致するものだけに限定する。
+// サイトテーマと無関係な語・スパム・不適切な語が公開画面に表示されるのを防ぐため。
+// 戻り値: 正規化済みキーワード → 表示用の正しい表記（人物名/グループ名そのまま）
+function buildSearchKeywordWhitelist(persons: Person[], groupMetas: GroupMeta[]): Map<string, string> {
+  const whitelist = new Map<string, string>();
+  for (const p of persons) {
+    if (p.name) whitelist.set(normalizeSearchKeyword(p.name), p.name);
+    if (p.group) whitelist.set(normalizeSearchKeyword(p.group), p.group);
+  }
+  for (const g of groupMetas) {
+    if (g.groupName) whitelist.set(normalizeSearchKeyword(g.groupName), g.groupName);
+    if (g.renamedFrom) whitelist.set(normalizeSearchKeyword(g.renamedFrom), g.renamedFrom);
+    for (const former of g.formerNames ?? []) {
+      if (former) whitelist.set(normalizeSearchKeyword(former), former);
+    }
+  }
+  return whitelist;
+}
+
 // ─── メイン ──────────────────────────────────────────────────────────────────────
 export async function getRankingData(): Promise<RankingData> {
   const allPersons = await getAllPersonsMerged();
@@ -113,12 +145,13 @@ export async function getRankingData(): Promise<RankingData> {
   // ── 1. 人物閲覧数 + 検索ランキング + SCAN キー + DB全公開作品マップ を並列取得 ──
   const pipe = redis.pipeline();
   for (const p of allPersons) pipe.hgetall(`person:view:${p.name}`);
-  const [pipeResults, searchHash, workKeys, productKeys, workPersonMap] = await Promise.all([
+  const [pipeResults, searchHash, workKeys, productKeys, workPersonMap, groupMetas] = await Promise.all([
     pipe.exec() as Promise<unknown[]>,
     redis.hgetall('search:ranking') as Promise<Record<string, string> | null>,
     scanKeys(redis, 'work:click:*'),
     scanKeys(redis, 'product:click:*'),
     getAllPublishedWorkPersonMap(),
+    getAllGroupMetas(),
   ]);
 
   // 閲覧数でソートして TOP8 を選定
@@ -169,8 +202,16 @@ export async function getRankingData(): Promise<RankingData> {
   const risingPersons = popularPersons;
 
   // ── 3. 検索ランキング ─────────────────────────────────────────────────────────
+  // 自由入力の検索ログをそのまま公開表示せず、実在する人物名・グループ名と完全一致
+  // するものだけに絞り込む（サイトテーマと無関係な語・スパム・不適切な語の表示を防止）。
+  const searchWhitelist = buildSearchKeywordWhitelist(allPersons, groupMetas);
   const popularSearches: RankedSearch[] = Object.entries(searchHash ?? {})
-    .map(([keyword, count]) => ({ keyword, count: parseInt(String(count), 10) || 0 }))
+    .map(([normalizedKeyword, count]) => {
+      const displayName = searchWhitelist.get(normalizedKeyword);
+      if (!displayName) return null;
+      return { keyword: displayName, count: parseInt(String(count), 10) || 0 };
+    })
+    .filter((s): s is RankedSearch => s !== null)
     .sort((a, b) => b.count - a.count)
     .slice(0, 10);
 

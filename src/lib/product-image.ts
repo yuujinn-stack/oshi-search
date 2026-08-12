@@ -11,3 +11,22 @@ export function getBestProductImageUrl(imageUrl: string): string {
   // ?_ex=NxN → ?_ex=500x500  (任意のサイズ指定を 500x500 に変換)
   return imageUrl.replace(/\?_ex=\d+x\d+/, '?_ex=500x500');
 }
+
+/**
+ * 楽天商品名にHTMLエンティティ（&amp; 等）が未デコードのまま混入している場合に、
+ * 表示直前でデコードする（work-image.ts の getRenderableWorkImageUrl と同じ方針）。
+ * DBの値はそのまま保持し、表示時にのみ変換する（DB書き込みは行わない）。
+ */
+const HTML_ENTITY_MAP: Record<string, string> = {
+  '&amp;': '&',
+  '&quot;': '"',
+  '&#39;': "'",
+  '&apos;': "'",
+  '&lt;': '<',
+  '&gt;': '>',
+};
+
+export function getRenderableProductTitle(title: string): string {
+  if (!title) return '';
+  return title.replace(/&amp;|&quot;|&#39;|&apos;|&lt;|&gt;/g, (m) => HTML_ENTITY_MAP[m]);
+}

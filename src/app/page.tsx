@@ -12,6 +12,7 @@ import type { SuggestionItem } from '@/types/search';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
 import type { GroupMeta } from '@/types/group';
+import { getRenderableProductTitle } from '@/lib/product-image';
 
 // Redis への問い合わせ結果を 60 秒間 Vercel Data Cache でキャッシュ
 // → 同一デプロイ内でリクエストが集中しても Redis 呼び出しは最大1回/60秒
@@ -178,7 +179,7 @@ export default async function HomePage() {
         <div className="hero-stat-divider" aria-hidden="true" />
         <div className="hero-stat">
           <span className="hero-stat-num">楽天</span>
-          <span className="hero-stat-label">商品情報を網羅</span>
+          <span className="hero-stat-label">関連商品もまとめてチェック</span>
         </div>
         <div className="hero-stat-divider" aria-hidden="true" />
         <div className="hero-stat">
@@ -358,6 +359,9 @@ export default async function HomePage() {
               {popularProducts.map((product) => {
                 const href = product.affiliateUrl || (product.personSlug ? `/person/${encodeURIComponent(product.personSlug)}` : '/search');
                 const isExternal = !!product.affiliateUrl;
+                // 楽天商品名にHTMLエンティティ（&amp; 等）が未デコードのまま混入している
+                // 場合があるため、表示直前でデコードする（DBの値は変更しない）
+                const displayTitle = getRenderableProductTitle(product.title);
                 return (
                   <a
                     key={product.productId}
@@ -390,7 +394,7 @@ export default async function HomePage() {
                         /* eslint-disable-next-line @next/next/no-img-element */
                         <img
                           src={product.imageUrl}
-                          alt={product.title}
+                          alt={displayTitle}
                           loading="lazy"
                           style={{ width: '100%', height: '100%', objectFit: 'contain', padding: '2px' }}
                         />
@@ -411,7 +415,7 @@ export default async function HomePage() {
                         WebkitBoxOrient: 'vertical' as const,
                         marginBottom: '3px',
                       }}>
-                        {product.title}
+                        {displayTitle}
                       </p>
                       <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
                         {product.personSlug && (

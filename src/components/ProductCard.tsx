@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { RakutenItem } from '@/types/rakuten';
-import { getBestProductImageUrl } from '@/lib/product-image';
+import { getBestProductImageUrl, getRenderableProductTitle } from '@/lib/product-image';
 
 // ─── 星レーティング ───────────────────────────────────────────────────────────
 function StarRating({ avg, count }: { avg: number; count: number }) {
@@ -47,6 +47,9 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
   const price = Number(product.price);
   const reviewAvg = Number(product.reviewAverage);
   const reviewCount = Number(product.reviewCount);
+  // 楽天から取得した商品名にHTMLエンティティ（&amp; 等）が未デコードのまま
+  // 混入している場合があるため、表示直前でデコードする（DBの値は変更しない）
+  const displayTitle = getRenderableProductTitle(product.title);
 
   return (
     <div
@@ -75,7 +78,7 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
         {hasImage ? (
           <img
             src={bestImageUrl}
-            alt={product.title}
+            alt={displayTitle}
             className={`absolute inset-0 w-full h-full object-contain p-2 transition-transform duration-300 group-hover:scale-105 ${
               loaded ? 'opacity-100' : 'opacity-0'
             }`}
@@ -125,7 +128,7 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
           className="text-[11px] font-medium line-clamp-2 leading-snug flex-1 hover:underline"
           style={{ color: 'var(--ds-text)', minHeight: '2.5rem' }}
         >
-          {product.title}
+          {displayTitle}
         </a>
 
         {/* レビュー星 */}
@@ -145,7 +148,7 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
             minHeight: '44px',
             textDecoration: 'none',
           }}
-          onClick={() => trackProductClick(product.id, personSlug, product.title, product.category, bestImageUrl, product.affiliateUrl || product.itemUrl)}
+          onClick={() => trackProductClick(product.id, personSlug, displayTitle, product.category, bestImageUrl, product.affiliateUrl || product.itemUrl)}
         >
           楽天で見る →
         </a>

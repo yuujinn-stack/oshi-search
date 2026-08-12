@@ -14,6 +14,7 @@ const mockGetPublicWorkById = vi.hoisted(() => vi.fn());
 const mockGetAllStoredProducts = vi.hoisted(() => vi.fn());
 const mockGetStoredProductImageUrl = vi.hoisted(() => vi.fn());
 const mockGetInactiveProviderSlugs = vi.hoisted(() => vi.fn());
+const mockGetAllGroupMetas = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/persons', () => ({ getAllPersonsMerged: mockGetAllPersonsMerged }));
 vi.mock('@/lib/redis', () => ({ getRedis: mockGetRedis }));
@@ -27,6 +28,7 @@ vi.mock('@/lib/product-store', () => ({
   getStoredProductImageUrl: mockGetStoredProductImageUrl,
 }));
 vi.mock('@/lib/provider-store', () => ({ getInactiveProviderSlugs: mockGetInactiveProviderSlugs }));
+vi.mock('@/lib/group-meta', () => ({ getAllGroupMetas: mockGetAllGroupMetas }));
 
 import { getRankingData } from '@/lib/ranking';
 
@@ -119,6 +121,7 @@ beforeEach(() => {
   mockGetAllStoredProducts.mockResolvedValue({});
   mockGetInactiveProviderSlugs.mockResolvedValue(new Set());
   mockGetAllPublishedWorkPersonMap.mockResolvedValue(new Map([[WORK_ID, PERSON_NAME]]));
+  mockGetAllGroupMetas.mockResolvedValue([]);
 });
 
 describe('getRankingData() / popularWorks — 画像URLの取得元（回帰テスト）', () => {
@@ -206,5 +209,72 @@ describe('getRankingData() / popularWorks — 画像URLの取得元（回帰テ�
     expect(result.popularPersons).toEqual([]);
     expect(result.risingPersons).toEqual([]);
     expect(mockGetStoredProductImageUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe('getRankingData() / popularSearches — 実在する人物名・グループ名のみ表示', () => {
+  it('サイトテーマと無関係な語・スパム的な語は表示されない（人物DB・グループDBに実在しないため）', async () => {
+    const redis = new FakeRedis();
+    redis.setHash('search:ranking', {
+      '転売': '50',
+      'せどり': '40',
+      'a': '30',
+      'http://example.com/spam': '20',
+      '乃木坂46': '15', // 実在するグループ名
+    });
+    mockGetRedis.mockReturnValue(redis);
+    mockGetAllPersonsMerged.mockResolvedValue([
+      { name: 'テスト花子', group: '乃木坂46', genre: 'アイドル' },
+    ]);
+
+    const result = await getRankingData();
+
+    const keywords = result.popularSearches.map((s) => s.keyword);
+    expect(keywords).toEqual(['乃木坂46']);
+    expect(keywords).not.toContain('転売');
+    expect(keywords).not.toContain('せどり');
+    expect(keywords).not.toContain('a');
+    expect(keywords).not.toContain('http://example.com/spam');
+  });
+
+  it('実在する人物名はそのまま表示される', async () => {
+    const redis = new FakeRedis();
+    redis.setHash('search:ranking', { 'テスト花子': '10' });
+    mockGetRedis.mockReturnValue(redis);
+    mockGetAllPersonsMerged.mockResolvedValue([
+      { name: 'テスト花子', group: '', genre: 'アイドル' },
+    ]);
+
+    const result = await getRankingData();
+
+    expect(result.popularSearches).toEqual([{ keyword: 'テスト花子', count: 10 }]);
+  });
+
+  it('グループの旧名・改名前の名称もgroup_metaに存在すれば表示される', async () => {
+    const redis = new FakeRedis();
+    redis.setHash('search:ranking', { '旧グループ名': '5' });
+    mockGetRedis.mockReturnValue(redis);
+    mockGetAllPersonsMerged.mockResolvedValue([]);
+    mockGetAllGroupMetas.mockResolvedValue([
+      {
+        groupName: '新グループ名',
+        slug: 'new-group',
+        activityStatus: 'active',
+        formerNames: ['旧グループ名'],
+      },
+    ]);
+
+    const result = await getRankingData();
+
+    expect(result.popularSearches).toEqual([{ keyword: '旧グループ名', count: 5 }]);
+  });
+
+  it('検索機能そのものには影響しない（popularSearchesの絞り込みのみで、検索ロジックは対象外）', async () => {
+    // このテストファイルは getRankingData() のみを対象とし、/search ルートの検索処理には
+    // 一切触れていないことの確認（ranking.ts 以外のファイルは変更していない）
+    const redis = new FakeRedis();
+    mockGetRedis.mockReturnValue(redis);
+    const result = await getRankingData();
+    expect(result.popularSearches).toEqual([]);
   });
 });
