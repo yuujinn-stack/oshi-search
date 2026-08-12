@@ -41,6 +41,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <nav aria-label="フッターナビゲーション">
             <ul className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-gray-400">
               <li>
+                <Link href="/about" className="hover:text-gray-600 hover:underline underline-offset-2 transition-colors py-1 px-1 inline-block min-h-[32px] flex items-center">
+                  推しサーチについて
+                </Link>
+              </li>
+              <li>
+                <Link href="/editorial-policy" className="hover:text-gray-600 hover:underline underline-offset-2 transition-colors py-1 px-1 inline-block min-h-[32px] flex items-center">
+                  情報の調査・更新方針
+                </Link>
+              </li>
+              <li>
                 <Link href="/disclaimer" className="hover:text-gray-600 hover:underline underline-offset-2 transition-colors py-1 px-1 inline-block min-h-[32px] flex items-center">
                   免責事項
                 </Link>

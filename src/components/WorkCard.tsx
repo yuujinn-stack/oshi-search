@@ -251,9 +251,11 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
                   : 'AI補完情報'}
               </span>
             )}
-            {/* CSV調査インポートラベル */}
+            {/* CSV調査インポートラベル（"CSV"という内部データ取り込み手段の名称を
+                ユーザーに見せず、実態に即した表現にする。直下の「確認日」表示と
+                合わせて「配信情報を確認済み・確認日：〜」という自然な文脈になる） */}
             {hasManualImportOnly && (
-              <span className="text-[9px] text-orange-400 w-full">CSV調査情報</span>
+              <span className="text-[9px] text-orange-400 w-full">配信情報を確認済み</span>
             )}
           </div>
         ) : (
