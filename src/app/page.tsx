@@ -13,7 +13,7 @@ import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
 import type { GroupMeta } from '@/types/group';
 import { getRenderableProductTitle } from '@/lib/product-image';
-import { VOD_PAGE_PROVIDERS } from '@/lib/vod-page';
+import { VOD_PAGE_PROVIDERS, getVodProviderWorkCounts } from '@/lib/vod-page';
 
 // Redis への問い合わせ結果を 60 秒間 Vercel Data Cache でキャッシュ
 // → 同一デプロイ内でリクエストが集中しても Redis 呼び出しは最大1回/60秒
@@ -32,6 +32,21 @@ const getCachedRankingData = unstable_cache(
 const getCachedGroupMetas = unstable_cache(
   getAllGroupMetas,
   ['home-group-metas'],
+  { revalidate: 60 },
+);
+
+// 「配信サービスから探す」の0件provider除外判定専用。トップページでは詳細な
+// 人物・作品データまでは取得せず、この件数マップだけを使ってカード表示可否を決める
+// （Section 42: 詳細データ取得は各VODページ側で行う）。
+// unstable_cache()はJSONシリアライズを行うためMapをそのまま返せず、プレーンな
+// オブジェクトに変換してからキャッシュする。
+async function getVodProviderWorkCountsObject(): Promise<Record<string, number>> {
+  const map = await getVodProviderWorkCounts();
+  return Object.fromEntries(map);
+}
+const getCachedVodProviderWorkCounts = unstable_cache(
+  getVodProviderWorkCountsObject,
+  ['home-vod-provider-counts'],
   { revalidate: 60 },
 );
 
@@ -90,10 +105,11 @@ function SectionHeader({ title, href, linkText }: { title: string; href?: string
 // ─── ページ ──────────────────────────────────────────────────────────────────────
 export default async function HomePage() {
   // Redis 失敗時も200を返すため allSettled を使用
-  const [enrichedResult, rankingResult, groupMetasResult] = await Promise.allSettled([
+  const [enrichedResult, rankingResult, groupMetasResult, vodCountsResult] = await Promise.allSettled([
     getCachedEnrichedData(),
     getCachedRankingData(),
     getCachedGroupMetas(),
+    getCachedVodProviderWorkCounts(),
   ]);
 
   const { persons, genres: allGenres } = enrichedResult.status === 'fulfilled'
@@ -101,6 +117,10 @@ export default async function HomePage() {
     : { persons: getAllPersonsWithConfig() as unknown as PersonCardData[], genres: Array.from(DEFAULT_GENRE_ORDER) };
 
   const ranking = rankingResult.status === 'fulfilled' ? rankingResult.value : EMPTY_RANKING;
+  // DB取得に失敗した場合は安全側（0件扱い）でフォールバックし、カードを一切表示しない
+  // （実在しない可能性のあるproviderへのリンクを誤って出さないため）。
+  const vodProviderWorkCounts: Record<string, number> = vodCountsResult.status === 'fulfilled' ? vodCountsResult.value : {};
+  const availableVodProviders = VOD_PAGE_PROVIDERS.filter((p) => (vodProviderWorkCounts[p.normalizedSlug] ?? 0) > 0);
   const groupMetaList: GroupMeta[] = groupMetasResult.status === 'fulfilled' ? groupMetasResult.value : [];
 
   if (enrichedResult.status === 'rejected') console.error('[page] enriched data failed:', enrichedResult.reason);
@@ -190,50 +210,36 @@ export default async function HomePage() {
       </div>
 
       {/* ━━━ 配信サービスから探す ━━━ */}
-      <section style={{ background: 'var(--ds-bg)', borderBottom: '1px solid var(--ds-border)', paddingTop: '24px', paddingBottom: '32px' }}>
-        <div style={{ maxWidth: '1152px', margin: '0 auto', padding: '0 16px' }}>
-          <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>配信サービスから探す</h2>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-            gap: '12px',
-          }}>
-            {VOD_PAGE_PROVIDERS.map((provider) => (
-              <Link
-                key={provider.urlSlug}
-                href={`/vod/${provider.urlSlug}`}
-                className="theme-card"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  padding: '16px',
-                  textDecoration: 'none',
-                  borderRadius: 'var(--ds-radius)',
-                }}
-              >
-                <div style={{
-                  width: '40px',
-                  height: '40px',
-                  flexShrink: 0,
-                  borderRadius: '10px',
-                  background: 'var(--ds-primary-soft)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '18px',
-                }} aria-hidden="true">
-                  📺
-                </div>
-                <div>
-                  <p style={{ fontSize: '14px', fontWeight: 700, color: 'var(--ds-text)' }}>{provider.displayName}</p>
-                  <p style={{ fontSize: '11px', color: 'var(--ds-muted)' }}>出演作品を人物から探す</p>
-                </div>
-              </Link>
-            ))}
+      {availableVodProviders.length > 0 && (
+        <section style={{ background: 'var(--ds-bg)', borderBottom: '1px solid var(--ds-border)', paddingTop: '24px', paddingBottom: '32px' }}>
+          <div style={{ maxWidth: '1152px', margin: '0 auto', padding: '0 16px' }}>
+            <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '4px' }}>配信サービスから探す</h2>
+            <p style={{ fontSize: '12px', color: 'var(--ds-muted)', marginBottom: '16px' }}>
+              気になる配信サービスから、推しの出演作品を探せます。
+            </p>
+            <div className="vod-provider-grid">
+              {availableVodProviders.map((provider) => (
+                <Link
+                  key={provider.urlSlug}
+                  href={`/vod/${provider.urlSlug}`}
+                  className="theme-card vod-provider-card"
+                >
+                  <span className="vod-provider-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M10 8l6 4-6 4V8z" fill="currentColor" stroke="none" />
+                    </svg>
+                  </span>
+                  <span className="vod-provider-text">
+                    <span className="vod-provider-name">{provider.displayName}</span>
+                    <span className="vod-provider-desc hidden sm:block">出演作品を人物から探す</span>
+                  </span>
+                </Link>
+              ))}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* ━━━ 🔥 今人気の人物 ━━━ */}
       <section style={{ background: 'var(--ds-surface)', borderBottom: '1px solid var(--ds-border)', paddingTop: '24px', paddingBottom: '32px' }}>

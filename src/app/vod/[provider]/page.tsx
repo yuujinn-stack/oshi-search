@@ -15,7 +15,7 @@ import VodWorkCard from '@/components/VodWorkCard';
 import VodTopPersonCard from '@/components/VodTopPersonCard';
 
 export const revalidate = 60;
-export const dynamicParams = false; // 対象3サービス以外のslugはNext.jsの標準挙動で404にする
+export const dynamicParams = false; // VOD_PAGE_PROVIDERS以外のslugはNext.jsの標準挙動で404にする
 
 interface Props {
   params: Promise<{ provider: string }>;
@@ -138,7 +138,7 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
       {topPersons.length > 0 && (
         <section className="mb-10">
           <h2 className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>
-            {config.displayName}で配信作品が多い人物
+            {config.displayName}の配信作品から人物を探す
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
             {topPersons.map((p) => (

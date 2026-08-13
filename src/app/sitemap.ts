@@ -4,18 +4,24 @@ import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
 import { getAllPublishedWorkPersonMap } from '@/lib/work-store';
 import { getWorkPublicUrl } from '@/lib/work-url';
-import { VOD_PAGE_PROVIDERS } from '@/lib/vod-page';
+import { VOD_PAGE_PROVIDERS, getVodProviderWorkCounts } from '@/lib/vod-page';
 
 const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const [persons, groups, genres, groupMetas, workPersonMap] = await Promise.all([
+  const [persons, groups, genres, groupMetas, workPersonMap, vodProviderWorkCounts] = await Promise.all([
     getAllPersonsMerged(),
     getAllGroupsMerged(),
     getAllGenresMerged(),
     getAllGroupMetas(),
     getAllPublishedWorkPersonMap(),
+    getVodProviderWorkCounts(),
   ]);
+
+  // 作品0件のVODサービスはsitemapへ含めない（トップページのカード表示条件と揃える）
+  const sitemappedVodProviders = VOD_PAGE_PROVIDERS.filter(
+    (p) => (vodProviderWorkCounts.get(p.normalizedSlug) ?? 0) > 0,
+  );
 
   return [
     {
@@ -53,7 +59,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'monthly' as const,
       priority: 0.4,
     },
-    ...VOD_PAGE_PROVIDERS.map((provider) => ({
+    ...sitemappedVodProviders.map((provider) => ({
       url: `${BASE_URL}/vod/${provider.urlSlug}`,
       changeFrequency: 'daily' as const,
       priority: 0.7,

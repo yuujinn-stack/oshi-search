@@ -155,6 +155,64 @@ body {
   box-shadow: 0 8px 24px rgba(219,39,119,0.12);
 }
 
+/* 配信サービスから探す: 対応サービス数が増えても縦に長くならないよう
+   コンパクトなカードをグリッドで並べる（スマホ2列 / タブレット3列 / PC4列）。 */
+.vod-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+@media (min-width: 640px) {
+  .vod-provider-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (min-width: 1024px) {
+  .vod-provider-grid { grid-template-columns: repeat(4, 1fr); }
+}
+.vod-provider-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  text-decoration: none;
+  min-width: 0;
+}
+.vod-provider-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--ds-primary-soft);
+  color: var(--ds-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.vod-provider-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.vod-provider-name {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--ds-text);
+  /* サービス名は省略せず、幅が足りない場合のみ自然に折り返す
+     （例: NHKオンデマンドが375px幅で「NHKオンデマ…」のように途中で
+     切れないようにするため。表示件数が少ないため最大2行までに制限）。 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.vod-provider-desc {
+  font-size: 10px;
+  color: var(--ds-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* 人物グリッド */
 .persons-grid {
   display: grid;

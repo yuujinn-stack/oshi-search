@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vod-page.ts は '@/db/client' を静的import しているため、DB接続文字列が
-// 無いテスト環境でも読み込めるよう execute() をスタブ化する（本テストでは未使用）。
-vi.mock('@/db/client', () => ({ db: { execute: vi.fn() } }));
+// 無いテスト環境でも読み込めるよう execute() をスタブ化する。
+const mockExecute = vi.fn();
+vi.mock('@/db/client', () => ({ db: { execute: (...args: unknown[]) => mockExecute(...args) } }));
 
 import {
   VOD_PAGE_PROVIDERS,
@@ -10,41 +11,52 @@ import {
   CONFIRMED_CONDITION_TEXT,
   parseVodPageParam,
   isVodPageOutOfRange,
+  getVodProviderWorkCounts,
 } from '../vod-page';
 
-describe('getVodPageProviderConfig', () => {
-  it('hulu → Hulu（正規化スラグ hulu）', () => {
-    const config = getVodPageProviderConfig('hulu');
-    expect(config).not.toBeNull();
-    expect(config?.displayName).toBe('Hulu');
-    expect(config?.normalizedSlug).toBe('hulu');
-  });
+describe('getVodPageProviderConfig（対象14サービスのslug/displayName変換）', () => {
+  const expected: { urlSlug: string; displayName: string; normalizedSlug: string }[] = [
+    { urlSlug: 'hulu', displayName: 'Hulu', normalizedSlug: 'hulu' },
+    { urlSlug: 'u-next', displayName: 'U-NEXT', normalizedSlug: 'unext' },
+    { urlSlug: 'netflix', displayName: 'Netflix', normalizedSlug: 'netflix' },
+    { urlSlug: 'prime-video', displayName: 'Prime Video', normalizedSlug: 'primevideo' },
+    { urlSlug: 'disney-plus', displayName: 'Disney+', normalizedSlug: 'disneyplus' },
+    { urlSlug: 'dmm-tv', displayName: 'DMM TV', normalizedSlug: 'dmmtv' },
+    { urlSlug: 'lemino', displayName: 'Lemino', normalizedSlug: 'lemino' },
+    { urlSlug: 'fod', displayName: 'FOD', normalizedSlug: 'fod' },
+    { urlSlug: 'telasa', displayName: 'TELASA', normalizedSlug: 'telasa' },
+    { urlSlug: 'abema', displayName: 'ABEMA', normalizedSlug: 'abema' },
+    { urlSlug: 'tver', displayName: 'TVer', normalizedSlug: 'tver' },
+    { urlSlug: 'youtube', displayName: 'YouTube', normalizedSlug: 'youtube' },
+    { urlSlug: 'nhk-ondemand', displayName: 'NHKオンデマンド', normalizedSlug: 'nhkオンデマンド' },
+    { urlSlug: 'nogidoga', displayName: 'のぎ動画', normalizedSlug: 'のぎ動画' },
+  ];
 
-  it('disney-plus → Disney+（正規化スラグ disneyplus）', () => {
-    const config = getVodPageProviderConfig('disney-plus');
-    expect(config).not.toBeNull();
-    expect(config?.displayName).toBe('Disney+');
-    expect(config?.normalizedSlug).toBe('disneyplus');
-  });
+  for (const { urlSlug, displayName, normalizedSlug } of expected) {
+    it(`${urlSlug} → ${displayName}（正規化スラグ ${normalizedSlug}）`, () => {
+      const config = getVodPageProviderConfig(urlSlug);
+      expect(config).not.toBeNull();
+      expect(config?.displayName).toBe(displayName);
+      expect(config?.normalizedSlug).toBe(normalizedSlug);
+    });
+  }
 
-  it('dmm-tv → DMM TV（正規化スラグ dmmtv）', () => {
-    const config = getVodPageProviderConfig('dmm-tv');
-    expect(config).not.toBeNull();
-    expect(config?.displayName).toBe('DMM TV');
-    expect(config?.normalizedSlug).toBe('dmmtv');
-  });
-
-  it('対象外のプロバイダー（netflix等）は null を返す＝無効', () => {
-    expect(getVodPageProviderConfig('netflix')).toBeNull();
+  it('対象外のプロバイダー（未対応サービス）は null を返す＝無効', () => {
+    expect(getVodPageProviderConfig('spotify')).toBeNull();
     expect(getVodPageProviderConfig('not-existing-provider')).toBeNull();
     expect(getVodPageProviderConfig('')).toBeNull();
   });
 
-  it('VOD_PAGE_PROVIDERS は対象3サービスのみで構成される', () => {
-    expect(VOD_PAGE_PROVIDERS).toHaveLength(3);
+  it('VOD_PAGE_PROVIDERS は対象14サービスのみで構成される', () => {
+    expect(VOD_PAGE_PROVIDERS).toHaveLength(14);
     expect(VOD_PAGE_PROVIDERS.map((p) => p.urlSlug).sort()).toEqual(
-      ['disney-plus', 'dmm-tv', 'hulu'].sort(),
+      expected.map((e) => e.urlSlug).sort(),
     );
+  });
+
+  it('urlSlugに重複がない', () => {
+    const slugs = VOD_PAGE_PROVIDERS.map((p) => p.urlSlug);
+    expect(new Set(slugs).size).toBe(slugs.length);
   });
 });
 
@@ -130,5 +142,50 @@ describe('isVodPageOutOfRange', () => {
 
   it('該当作品が1件もない場合（totalCount=0）は、pageが1でも範囲外扱いにしない（通常の空一覧表示を維持）', () => {
     expect(isVodPageOutOfRange(1, 0, 0)).toBe(false);
+  });
+});
+
+describe('getVodProviderWorkCounts（トップページ・sitemap用の一括件数集計）', () => {
+  beforeEach(() => { mockExecute.mockReset(); });
+
+  it('同一サービスの表記ゆれ（例: Netflix / Netflix Standard with Ads）で同じ作品が両方に該当しても二重カウントしない', async () => {
+    mockExecute
+      // Stage 1: distinct providerName一覧
+      .mockResolvedValueOnce({
+        rows: [
+          { provider_name: 'Netflix' },
+          { provider_name: 'Netflix Standard with Ads' },
+        ],
+      })
+      // Stage 2: (providerName, workId) の組。work-1がNetflixの両表記に該当する
+      .mockResolvedValueOnce({
+        rows: [
+          { provider_name: 'Netflix', work_id: 'work-1' },
+          { provider_name: 'Netflix Standard with Ads', work_id: 'work-1' },
+          { provider_name: 'Netflix', work_id: 'work-2' },
+        ],
+      });
+
+    const counts = await getVodProviderWorkCounts();
+    expect(counts.get('netflix')).toBe(2); // work-1とwork-2のみ（work-1の重複表記は1件として数える）
+  });
+
+  it('対象14サービス以外のproviderNameは集計対象に含めない', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ provider_name: 'Hulu' }, { provider_name: 'Spotify' }] })
+      .mockResolvedValueOnce({ rows: [{ provider_name: 'Hulu', work_id: 'work-1' }] });
+
+    const counts = await getVodProviderWorkCounts();
+    expect(counts.get('hulu')).toBe(1);
+    expect([...counts.keys()]).toHaveLength(VOD_PAGE_PROVIDERS.length);
+  });
+
+  it('該当するproviderNameが1件もない場合は全サービス0件を返す', async () => {
+    mockExecute.mockResolvedValueOnce({ rows: [] });
+
+    const counts = await getVodProviderWorkCounts();
+    for (const p of VOD_PAGE_PROVIDERS) {
+      expect(counts.get(p.normalizedSlug)).toBe(0);
+    }
   });
 });

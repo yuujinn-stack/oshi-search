@@ -33,10 +33,25 @@ export interface VodPageProviderConfig {
   displayName: string;
 }
 
+// 対象14サービス。表示順はユーザーが見つけやすい自然な順（Hulu/U-NEXT/Netflix等の
+// 定額系を先に、TVer/YouTube/のぎ動画等の無料系を後ろに）。
+// displayNameはDB上の生データ表記に関わらず、ここで指定した正式表記のみを表示する
+// （例: Prime Videoの生データ表記が「Amazon Prime Video」等でもdisplayNameは常に「Prime Video」）。
 export const VOD_PAGE_PROVIDERS: VodPageProviderConfig[] = [
   { urlSlug: 'hulu', normalizedSlug: normalizeProviderName('Hulu'), displayName: 'Hulu' },
+  { urlSlug: 'u-next', normalizedSlug: normalizeProviderName('U-NEXT'), displayName: 'U-NEXT' },
+  { urlSlug: 'netflix', normalizedSlug: normalizeProviderName('Netflix'), displayName: 'Netflix' },
+  { urlSlug: 'prime-video', normalizedSlug: normalizeProviderName('Prime Video'), displayName: 'Prime Video' },
   { urlSlug: 'disney-plus', normalizedSlug: normalizeProviderName('Disney+'), displayName: 'Disney+' },
   { urlSlug: 'dmm-tv', normalizedSlug: normalizeProviderName('DMM TV'), displayName: 'DMM TV' },
+  { urlSlug: 'lemino', normalizedSlug: normalizeProviderName('Lemino'), displayName: 'Lemino' },
+  { urlSlug: 'fod', normalizedSlug: normalizeProviderName('FOD'), displayName: 'FOD' },
+  { urlSlug: 'telasa', normalizedSlug: normalizeProviderName('TELASA'), displayName: 'TELASA' },
+  { urlSlug: 'abema', normalizedSlug: normalizeProviderName('ABEMA'), displayName: 'ABEMA' },
+  { urlSlug: 'tver', normalizedSlug: normalizeProviderName('TVer'), displayName: 'TVer' },
+  { urlSlug: 'youtube', normalizedSlug: normalizeProviderName('YouTube'), displayName: 'YouTube' },
+  { urlSlug: 'nhk-ondemand', normalizedSlug: normalizeProviderName('NHKオンデマンド'), displayName: 'NHKオンデマンド' },
+  { urlSlug: 'nogidoga', normalizedSlug: normalizeProviderName('のぎ動画'), displayName: 'のぎ動画' },
 ];
 
 export function getVodPageProviderConfig(urlSlug: string): VodPageProviderConfig | null {
@@ -325,4 +340,50 @@ export async function getTopPersonsForVodProvider(
     group: '',
     workCount: Number(r.work_count),
   }));
+}
+
+// ─── 全provider横断の作品数（トップページ・sitemap用、0件providerの除外判定専用） ──
+// トップページ・sitemapで「対象サービスが増えても重いCOUNTクエリを何度も投げない」
+// ため、1回のSQLで(providerName, workId)の組をまとめて取得し、JS側で
+// normalizeProviderName() によりVOD_PAGE_PROVIDERSの各サービスへ集計する。
+// 注意: 同一サービスに複数の表記ゆれ（例: Netflix / Netflix Standard with Ads）が
+// あり、同じ作品が両方に該当する場合に二重カウントしないよう、providerNameごとの
+// 件数を単純合算するのではなく、workIdをSetに集めてからサイズを数える
+// （既存の単一provider向け関数がCOUNT(DISTINCT w.id)で行っているのと同じ考え方）。
+// 個々のVODページ（getVodProviderStats等）とは別関数とし、そちらの挙動は変更しない。
+export async function getVodProviderWorkCounts(): Promise<Map<string, number>> {
+  // Stage 1: 対象14サービスのいずれかに一致するraw providerName一覧を絞り込む
+  // （既存の各関数と同じ2段階パターン。295件程度のdistinct値なので軽量）。
+  const distinctResult = await db.execute(sql`
+    SELECT DISTINCT item->>'providerName' AS provider_name
+    FROM works w, jsonb_array_elements(w.vod_data->'vodProviders') AS item
+    WHERE ${PUBLISHED_CONDITION_SQL} AND item->>'providerName' IS NOT NULL
+  `);
+  const allRawNames = (distinctResult.rows as Array<{ provider_name: string }>).map((r) => r.provider_name);
+  const targetSlugs = new Set(VOD_PAGE_PROVIDERS.map((p) => p.normalizedSlug));
+  const matchingRawNames = allRawNames.filter((name) => targetSlugs.has(normalizeProviderName(name)));
+
+  const counts = new Map<string, number>();
+  for (const p of VOD_PAGE_PROVIDERS) counts.set(p.normalizedSlug, 0);
+  if (matchingRawNames.length === 0) return counts;
+
+  // Stage 2: 対象サービスに該当する (providerName, workId) の組だけをまとめて取得
+  const pairResult = await db.execute(sql`
+    SELECT DISTINCT item->>'providerName' AS provider_name, w.id AS work_id
+    FROM works w, jsonb_array_elements(w.vod_data->'vodProviders') AS item
+    WHERE ${PUBLISHED_CONDITION_SQL}
+      AND item->>'providerName' = ANY(${textArraySql(matchingRawNames)})
+      AND ${CONFIRMED_CONDITION_SQL}
+  `);
+
+  const workIdsBySlug = new Map<string, Set<string>>();
+  for (const row of pairResult.rows as Array<{ provider_name: string; work_id: string }>) {
+    const slug = normalizeProviderName(row.provider_name);
+    if (!targetSlugs.has(slug)) continue;
+    const set = workIdsBySlug.get(slug) ?? new Set<string>();
+    set.add(row.work_id);
+    workIdsBySlug.set(slug, set);
+  }
+  for (const [slug, workIds] of workIdsBySlug) counts.set(slug, workIds.size);
+  return counts;
 }
