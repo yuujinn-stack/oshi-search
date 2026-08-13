@@ -8,6 +8,7 @@ import { activeWorkFragment, resolveActiveWorkTargets } from '@/lib/vod-recheck-
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { deduplicateProviders, isConfirmedVodAvailability } from '@/lib/vod-dedup';
 import { detectRecheckReasons, RECHECK_REASON_LABEL, RECHECK_PRIORITY_LABEL } from '@/lib/vod-recheck';
+import { getDaysSinceChecked, getVodStaleStatus, VOD_STALE_STATUS_LABEL } from '@/lib/vod-stale';
 import type { VodProvider } from '@/types/vod';
 
 export interface VodRecheckExportItem {
@@ -26,6 +27,10 @@ export interface VodRecheckExportDataRow {
   lastCheckedAt: string;
   recheckReason: string;
   priority: string;
+  /** D-1: 確認からの経過日数（不明な場合は空文字） */
+  daysSinceChecked: string;
+  /** D-1: fresh/aging/stale/unknown の日本語ラベル */
+  staleStatus: string;
 }
 
 export interface ResolveVodRecheckExportDataResult {
@@ -83,6 +88,8 @@ export async function resolveVodRecheckExportData(
     const lastCheckedAt = detection.lastCheckedAt
       ? new Date(detection.lastCheckedAt).toISOString().slice(0, 10)
       : '';
+    const daysSinceChecked = getDaysSinceChecked(detection.lastCheckedAt ?? null, now);
+    const staleStatus = getVodStaleStatus(daysSinceChecked);
 
     return {
       workId: r.work_id as string,
@@ -95,6 +102,8 @@ export async function resolveVodRecheckExportData(
       lastCheckedAt,
       recheckReason: detection.codes.map((c) => RECHECK_REASON_LABEL[c]).join('/'),
       priority: RECHECK_PRIORITY_LABEL[detection.priority],
+      daysSinceChecked: daysSinceChecked !== null ? String(daysSinceChecked) : '',
+      staleStatus: VOD_STALE_STATUS_LABEL[staleStatus],
     };
   });
 

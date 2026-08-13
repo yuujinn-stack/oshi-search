@@ -13,6 +13,7 @@ import VodResearchModal from './VodResearchModal';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
 import ManualWorkModal from './ManualWorkModal';
 import { decideBulkVerdictCsvHandling } from '@/lib/bulk-verdict-guard';
+import { isReleaseYearTooOld } from '@/lib/work-review-signals';
 
 interface Props {
   personName: string;
@@ -35,18 +36,23 @@ interface Props {
   awards?: string[];
   careerStatus?: CareerStatus;
   roleNote?: string;
+  /** Priority D-5: work_dedup_reviews で pending 状態のworkId集合（「重複候補」フィルター用） */
+  pendingDedupWorkIds?: Set<string>;
 }
 
 type StatusFilter = WorkStatus | 'all';
 type SourceFilter = WorkSource | 'all';
+export type ReviewReasonFilter = 'all' | 'too_old' | 'dedup_candidate';
 
 export default function PersonWorks({
   personName, group, counts, priority, memo, dataFetchStatus,
   activityStatus, generation, joinedAt, leftAt,
   currentGroupName, formerGroupNames, membershipNote,
   primaryGenre, genres, titles, publicRoles, awards, careerStatus, roleNote,
+  pendingDedupWorkIds,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [reviewReasonFilter, setReviewReasonFilter] = useState<ReviewReasonFilter>('all');
   const [works, setWorks] = useState<WorkRecord[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState<string | null>(null);
@@ -583,15 +589,24 @@ export default function PersonWorks({
     setTestingWorkId(null);
   }
 
+  // Priority D-5: 対象理由フィルター（「古すぎる可能性」「重複候補」）。
+  // 「同姓同名注意」「生年以前」は、安全に判定できるデータが現状無いため対象外
+  // （work-review-signals.ts のコメント参照）。
   const filteredWorks = useMemo(
     () =>
       works
         ? works
             .filter((w) => statusFilter === 'all' || w.status === statusFilter)
             .filter((w) => sourceFilter === 'all' || w.source === sourceFilter)
+            .filter((w) => {
+              if (reviewReasonFilter === 'all') return true;
+              if (reviewReasonFilter === 'too_old') return isReleaseYearTooOld(w.releaseYear, w.status);
+              if (reviewReasonFilter === 'dedup_candidate') return pendingDedupWorkIds?.has(w.id) ?? false;
+              return true;
+            })
             .sort((a, b) => b.confidenceScore - a.confidenceScore)
         : [],
-    [works, statusFilter, sourceFilter],
+    [works, statusFilter, sourceFilter, reviewReasonFilter, pendingDedupWorkIds],
   );
 
   const filteredWorkIds = useMemo(() => filteredWorks.map((w) => w.id), [filteredWorks]);
@@ -607,7 +622,7 @@ export default function PersonWorks({
   } = useBulkSelection(filteredWorkIds);
 
   // フィルター変更時に選択クリア
-  useEffect(() => { clearSelection(); }, [statusFilter, sourceFilter, clearSelection]);
+  useEffect(() => { clearSelection(); }, [statusFilter, sourceFilter, reviewReasonFilter, clearSelection]);
 
   const selectedInView = filteredWorkIds.filter((id) => selectedIds.has(id));
 
@@ -910,6 +925,8 @@ export default function PersonWorks({
             sourceFilter={sourceFilter}
             onStatusChange={setStatusFilter}
             onSourceChange={setSourceFilter}
+            reviewReasonFilter={reviewReasonFilter}
+            onReviewReasonChange={setReviewReasonFilter}
           />
 
           {message && (
@@ -1081,6 +1098,10 @@ export default function PersonWorks({
                   >
                     <WorkCard
                       work={work}
+                      reviewReasons={[
+                        ...(isReleaseYearTooOld(work.releaseYear, work.status) ? ['古すぎる可能性'] : []),
+                        ...(pendingDedupWorkIds?.has(work.id) ? ['重複候補'] : []),
+                      ]}
                       debugMode={debugMode}
                       vodFetching={vodFetching}
                       recheckingWorkId={recheckingWorkId}

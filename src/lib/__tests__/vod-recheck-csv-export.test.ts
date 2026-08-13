@@ -15,17 +15,36 @@ function sampleRow(overrides: Partial<Parameters<typeof buildVodRecheckExportRow
     lastCheckedAt: '',
     recheckReason: '確認日なし',
     priority: '高',
+    daysSinceChecked: '',
+    staleStatus: '未確認',
     ...overrides,
   };
 }
 
 describe('1. CSV出力に入力用5列が含まれる', () => {
-  it('ヘッダーが指定された順序で workId から note まで15列そろっている', () => {
+  it('ヘッダーが指定された順序で workId から note まで15列、末尾にdaysSinceChecked・staleStatusが続き計17列そろっている', () => {
     expect(VOD_RECHECK_EXPORT_HEADERS).toEqual([
       'workId', 'personName', 'workTitle', 'workType', 'releaseYear', 'roleName',
       'currentVodServices', 'lastCheckedAt', 'recheckReason', 'priority',
       'vodService', 'availabilityType', 'confidence', 'sourceUrl', 'note',
+      'daysSinceChecked', 'staleStatus',
     ]);
+  });
+
+  it('取り込み用5列（vodService〜note）の列名・順序は既存のまま変わっていない（D-1追加列は末尾）', () => {
+    const importRelevant = VOD_RECHECK_EXPORT_HEADERS.slice(10, 15);
+    expect(importRelevant).toEqual(['vodService', 'availabilityType', 'confidence', 'sourceUrl', 'note']);
+  });
+});
+
+describe('D-1: daysSinceChecked・staleStatus列', () => {
+  it('指定した値がそのままCSVに出力される', () => {
+    const csv = buildVodRecheckExportCsv([sampleRow({ daysSinceChecked: '45', staleStatus: 'やや古い' })]);
+    const table = parseCSV(csv);
+    const header = table[0];
+    const row = table[1];
+    expect(row[header.indexOf('daysSinceChecked')]).toBe('45');
+    expect(row[header.indexOf('staleStatus')]).toBe('やや古い');
   });
 });
 

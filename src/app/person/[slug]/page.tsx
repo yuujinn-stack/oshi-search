@@ -212,11 +212,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const groupText = person.group ? `（${person.group}）` : '';
   const title = `${person.name}${groupText}の写真集・グッズ・出演作品・配信情報まとめ`;
   const description = `${person.name}の写真集・CD・Blu-ray・グッズを楽天で検索。出演ドラマ・映画・配信サービスもまとめて確認。`;
+  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
+
   return {
     title,
     description,
     alternates: {
-      canonical: `https://oshi-search.jp/person/${encodeURIComponent(name)}`,
+      canonical: `${siteOrigin}/person/${encodeURIComponent(name)}`,
     },
     openGraph: { title, description, type: 'profile' },
   };

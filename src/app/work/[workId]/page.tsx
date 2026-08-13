@@ -16,6 +16,7 @@ import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
 import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
+import { shouldNoindexWork, safeTitleFallback } from '@/lib/seo-quality';
 import ProviderLogo from '@/components/ProviderLogo';
 import VodTrackLink from '@/components/site/VodTrackLink';
 
@@ -90,18 +91,24 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!work) return {};
   const year = work.releaseYear ? `${work.releaseYear}年` : '';
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
+  // Priority D-3/D-6 (Section 32): タイトルが空文字等の場合に「undefined｜推しサーチ」の
+  // ような不自然なtitleにならないよう安全なfallbackを使う（既存の簡潔なfallback方針）。
+  const displayTitle = safeTitleFallback(work.title, 'この作品');
   // 画像優先順位: 手動画像 > TMDb画像(posterUrl) > 自動取得OG画像(ogImageUrl)。
   // 相対URLの場合は layout.tsx の metadataBase により自動的に絶対URLへ解決される。
   const displayImage = getRenderableWorkImageUrl(getWorkDisplayImage(work));
+  // Priority D-3: タイトル未取得・placeholder状態（既存データ上明確に未完成）の場合のみnoindex。
+  // status='auto_published'の作品のみここに到達するため、公開可否そのものは変更しない。
+  const noindex = shouldNoindexWork({ title: work.title, workId });
   return {
-    title: `${work.title} 配信情報・出演者一覧`,
-    description: `${work.title}（${year}）の配信サービス、出演者、関連商品を掲載。`,
+    title: `${displayTitle} 配信情報・出演者一覧`,
+    description: `${displayTitle}（${year}）の配信サービス、出演者、関連商品を掲載。`,
     alternates: {
       canonical: `${siteOrigin}/work/${encodeURIComponent(workId)}`,
     },
     openGraph: {
-      title: `${work.title} 配信情報・出演者一覧`,
-      description: `${work.title}の配信サービス・出演者・関連商品情報`,
+      title: `${displayTitle} 配信情報・出演者一覧`,
+      description: `${displayTitle}の配信サービス・出演者・関連商品情報`,
       images: displayImage ? [{ url: displayImage }] : [],
       type: 'article',
     },
@@ -109,6 +116,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       card: 'summary_large_image',
       images: displayImage ? [displayImage] : [],
     },
+    ...(noindex && { robots: { index: false, follow: true } }),
   };
 }
 

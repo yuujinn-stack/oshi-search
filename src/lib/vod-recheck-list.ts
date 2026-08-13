@@ -20,6 +20,7 @@ import {
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import { WORK_TYPE_LABEL, type WorkType, type WorkRecord } from '@/types/work';
+import { getVodStaleStatus, VOD_STALE_STATUS_LABEL, type VodStaleStatus } from '@/lib/vod-stale';
 
 export { DEFAULT_PAGE_SIZE };
 
@@ -35,6 +36,9 @@ export interface RecheckListItem {
   unknownCount: number;
   lastCheckedAt: number | null;
   daysSinceLastCheck: number | null;
+  /** 確認からの経過日数による分類（fresh/aging/stale/unknown）。既存の再確認優先度とは別の補助表示。 */
+  staleStatus: VodStaleStatus;
+  staleStatusLabel: string;
   /** Redisから正常に取得できた場合のみ数値。取得できなかった場合はnull（「0件」と誤認させないため） */
   clickCount: number | null;
   reasonCodes: RecheckReasonCode[];
@@ -84,6 +88,8 @@ export async function fetchRecheckListPage(params: RecheckListParams): Promise<R
       now,
     });
     const processStatus = resolveRecheckProcessStatus(row.vodCheckStatus as WorkRecord['vodCheckStatus']);
+    const daysSinceLastCheck = detection.daysSinceLastCheck ?? null;
+    const staleStatus = getVodStaleStatus(daysSinceLastCheck);
 
     return {
       workId: row.workId,
@@ -96,7 +102,9 @@ export async function fetchRecheckListPage(params: RecheckListParams): Promise<R
       activeCount: detection.activeCount,
       unknownCount: detection.unknownCount,
       lastCheckedAt: detection.lastCheckedAt ?? null,
-      daysSinceLastCheck: detection.daysSinceLastCheck ?? null,
+      daysSinceLastCheck,
+      staleStatus,
+      staleStatusLabel: VOD_STALE_STATUS_LABEL[staleStatus],
       clickCount: clickCountsAvailable ? (clickCounts.get(row.workId) ?? 0) : null,
       reasonCodes: detection.codes,
       reasonLabels: detection.codes.map((c) => RECHECK_REASON_LABEL[c]),

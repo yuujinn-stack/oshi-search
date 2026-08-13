@@ -1,6 +1,7 @@
 'use client';
 
 import type { WorkStatus, WorkSource } from '@/types/work';
+import type { ReviewReasonFilter } from './PersonWorks';
 
 type StatusFilter = WorkStatus | 'all';
 type SourceFilter = WorkSource | 'all';
@@ -10,6 +11,9 @@ interface WorkFiltersProps {
   sourceFilter: SourceFilter;
   onStatusChange: (v: StatusFilter) => void;
   onSourceChange: (v: SourceFilter) => void;
+  /** Priority D-5: 対象理由フィルター（省略時は表示しない） */
+  reviewReasonFilter?: ReviewReasonFilter;
+  onReviewReasonChange?: (v: ReviewReasonFilter) => void;
 }
 
 export default function WorkFilters({
@@ -17,6 +21,8 @@ export default function WorkFilters({
   sourceFilter,
   onStatusChange,
   onSourceChange,
+  reviewReasonFilter,
+  onReviewReasonChange,
 }: WorkFiltersProps) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -65,6 +71,29 @@ export default function WorkFilters({
           </button>
         ))}
       </div>
+      {onReviewReasonChange && (
+        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
+          {(
+            [
+              { key: 'all', label: 'すべて' },
+              { key: 'too_old', label: '古すぎる可能性' },
+              { key: 'dedup_candidate', label: '重複候補' },
+            ] as { key: ReviewReasonFilter; label: string }[]
+          ).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => onReviewReasonChange(key)}
+              className={`px-3 py-1.5 border-l first:border-l-0 border-gray-200 ${
+                reviewReasonFilter === key
+                  ? 'bg-slate-700 text-white font-medium'
+                  : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

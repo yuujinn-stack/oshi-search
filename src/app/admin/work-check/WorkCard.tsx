@@ -39,6 +39,8 @@ const SOURCE_LABEL: Record<string, string> = {
 
 interface WorkCardProps {
   work: WorkRecord;
+  /** Priority D-5: 「古すぎる可能性」「重複候補」等のレビュー理由ラベル（管理画面のみ表示） */
+  reviewReasons?: string[];
   debugMode: boolean;
   vodFetching: boolean;
   recheckingWorkId: string | null;
@@ -64,6 +66,7 @@ interface WorkCardProps {
 
 export default function WorkCard({
   work,
+  reviewReasons,
   debugMode,
   vodFetching,
   recheckingWorkId,
@@ -380,6 +383,11 @@ export default function WorkCard({
           <span className={`px-1.5 py-0.5 rounded ${STATUS_BADGE[work.status]}`}>
             {STATUS_LABEL[work.status]}
           </span>
+          {reviewReasons && reviewReasons.length > 0 && reviewReasons.map((reason) => (
+            <span key={reason} className="px-1.5 py-0.5 rounded font-medium bg-rose-100 text-rose-700">
+              要確認: {reason}
+            </span>
+          ))}
           <span
             className={`px-1.5 py-0.5 rounded font-medium ${SOURCE_BADGE[work.source] ?? 'bg-gray-100 text-gray-500'}`}
           >

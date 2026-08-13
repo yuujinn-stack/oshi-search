@@ -4,6 +4,7 @@ import { getAllImportedPersonsOrThrow } from '@/lib/imported-persons';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { pingRedis } from '@/lib/redis-health';
 import { getAllPersonMetas } from '@/lib/person-meta';
+import { getPendingDedupWorkIds } from '@/lib/work-review-signals';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import { LogoutButton } from '@/components/admin/LogoutButton';
 import WorkCheckPersonSection from './WorkCheckPersonSection';
@@ -40,6 +41,10 @@ export default async function WorkCheckPage() {
   try {
     personMetaMap = await getAllPersonMetas();
   } catch { /* ignore */ }
+
+  // Priority D-5: 「重複候補」フィルター用。既存work-dedup機能のpendingレビューを
+  // 1回だけ取得し、以降は各人物の作品一覧に対してSetの参照だけで判定する（N+1回避）。
+  const pendingDedupWorkIds = await getPendingDedupWorkIds();
 
   const countResults = await Promise.all(
     persons.map(async (p) => {
@@ -244,7 +249,11 @@ export default async function WorkCheckPage() {
           <h2 className="text-sm font-bold text-slate-700">作品収集</h2>
           <span className="text-[11px] text-gray-400">TMDb取得・ステータス管理・個別配信調査はこのカードから</span>
         </div>
-        <WorkCheckPersonSection persons={countResults} stats={dashboardStats} />
+        <WorkCheckPersonSection
+          persons={countResults}
+          stats={dashboardStats}
+          pendingDedupWorkIds={[...pendingDedupWorkIds]}
+        />
       </section>
 
       {/* ════════════════════════════════════

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import type { RecheckListResult, RecheckListItem } from '@/lib/vod-recheck-list';
 import type { RecheckReasonCode, RecheckPriority, RecheckAction } from '@/lib/vod-recheck';
+import type { VodStaleStatus } from '@/lib/vod-stale';
 import { parseCSV } from '@/lib/csv-parse';
 import { validateCsvFile, formatFileSize } from '@/lib/csv-file-validation';
 import ChatGptPromptResultPanel from '@/components/admin/ChatGptPromptResultPanel';
@@ -52,6 +53,14 @@ const PRIORITY_OPTIONS: Array<{ value: RecheckPriority; label: string; cls: stri
 const PRIORITY_CLS: Record<RecheckPriority, string> = Object.fromEntries(
   PRIORITY_OPTIONS.map((p) => [p.value, p.cls]),
 ) as Record<RecheckPriority, string>;
+
+// D-1: 確認からの経過日数による分類（既存のPRIORITY_OPTIONS等と同じ「色＋テキスト」表示規約に合わせる）
+const STALE_STATUS_CLS: Record<VodStaleStatus, string> = {
+  fresh: 'bg-green-100 text-green-700',
+  aging: 'bg-yellow-100 text-yellow-700',
+  stale: 'bg-red-100 text-red-700',
+  unknown: 'bg-gray-100 text-gray-500',
+};
 
 const ACTION_OPTIONS: Array<{ value: RecheckAction; label: string }> = [
   { value: 'start', label: '処理開始' },
@@ -485,6 +494,7 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
               <th className="p-2">unknown</th>
               <th className="p-2">最終確認日</th>
               <th className="p-2">経過日数</th>
+              <th className="p-2">鮮度</th>
               <th className="p-2">アクセス数</th>
               <th className="p-2 text-left">再確認理由</th>
               <th className="p-2">優先度</th>
@@ -509,6 +519,11 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
                   <td className="p-2 text-center">{item.unknownCount}</td>
                   <td className="p-2 text-center whitespace-nowrap">{fmtDate(item.lastCheckedAt)}</td>
                   <td className="p-2 text-center">{item.daysSinceLastCheck ?? '—'}</td>
+                  <td className="p-2 text-center">
+                    <span className={`px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${STALE_STATUS_CLS[item.staleStatus]}`}>
+                      {item.staleStatusLabel}
+                    </span>
+                  </td>
                   <td className="p-2 text-center">
                     {item.clickCount === null
                       ? <span className="text-gray-400" title="Redisからアクセス数を取得できませんでした">不明</span>

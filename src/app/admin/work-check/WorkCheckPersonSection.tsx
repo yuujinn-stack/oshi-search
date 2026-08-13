@@ -99,6 +99,8 @@ interface StatCardDef {
 interface Props {
   persons: PersonWithCounts[];
   stats: DashboardStats;
+  /** Priority D-5: work_dedup_reviews で pending 状態のworkId一覧（「重複候補」フィルター用） */
+  pendingDedupWorkIds?: string[];
 }
 
 const RECENT_DAYS = 30;
@@ -112,7 +114,8 @@ const ACTIVITY_STATUS_OPTIONS: { value: ActivityStatus; label: string }[] = [
   { value: 'unknown',   label: '不明' },
 ];
 
-export default function WorkCheckPersonSection({ persons, stats }: Props) {
+export default function WorkCheckPersonSection({ persons, stats, pendingDedupWorkIds }: Props) {
+  const pendingDedupWorkIdSet = useMemo(() => new Set(pendingDedupWorkIds ?? []), [pendingDedupWorkIds]);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [searchQuery, setSearchQuery] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
@@ -500,6 +503,7 @@ export default function WorkCheckPersonSection({ persons, stats }: Props) {
               awards={p.awards}
               careerStatus={p.careerStatus}
               roleNote={p.roleNote}
+              pendingDedupWorkIds={pendingDedupWorkIdSet}
             />
           ))
         )}
