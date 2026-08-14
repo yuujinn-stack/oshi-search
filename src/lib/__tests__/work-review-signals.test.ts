@@ -1,9 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
-// work-review-signals.ts は '@/db/client' を静的importしているため、DB接続文字列が
-// 無いテスト環境でも読み込めるようneonSql()をスタブ化する（本テストの純粋関数では未使用）。
-vi.mock('@/db/client', () => ({ neonSql: vi.fn() }));
-
+// work-review-signals.ts はクライアント安全な純粋関数のみを含む（DBアクセスなし）。
+// PersonWorks.tsx（'use client'）から直接importされるため、@/db/client等への依存を
+// 一切持たないことがこのファイルの安全性の前提（詳細はvod-review-signals-boundary.test.ts参照）。
 import { isReleaseYearTooOld, isReleaseBeforeBirthYear, TOO_OLD_THRESHOLD_YEARS } from '../work-review-signals';
 
 describe('isReleaseYearTooOld', () => {

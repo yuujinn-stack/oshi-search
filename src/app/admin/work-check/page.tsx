@@ -4,7 +4,7 @@ import { getAllImportedPersonsOrThrow } from '@/lib/imported-persons';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { pingRedis } from '@/lib/redis-health';
 import { getAllPersonMetas } from '@/lib/person-meta';
-import { getPendingDedupWorkIds } from '@/lib/work-review-signals';
+import { getPendingDedupWorkIds } from '@/lib/pending-dedup-store';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import { LogoutButton } from '@/components/admin/LogoutButton';
 import WorkCheckPersonSection from './WorkCheckPersonSection';
