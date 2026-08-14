@@ -39,6 +39,7 @@ import {
   getRecheckCandidates,
   getClickCountsForWorkIds,
   getHighTrafficWorkIds,
+  getChatgptResearchProgress,
   resolveActiveWorkTargets,
   clampPage,
   clampPageSize,
@@ -308,5 +309,70 @@ describe('resolveActiveWorkTargets — 候補一覧・CSV出力・CSVインポ�
     const { resolved, unresolved } = await resolveActiveWorkTargets(['dup-id', 'dup-id']);
     expect(unresolved).toEqual([]);
     expect(resolved.size).toBe(1);
+  });
+});
+
+describe('mode（要調査/全作品）', () => {
+  it('mode未指定・candidatesは再確認理由による絞り込み（candidacyFrag）を含む', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 10 });
+    expect(anyCallIncludesText('never_checked') || mockState.calls.some((c) => c.text.includes('GREATEST'))).toBe(true);
+  });
+
+  it('mode=allはTRUE条件になり、再確認理由による絞り込みを行わない', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 10, mode: 'all' });
+    // allWorksFrag()はneonSql`TRUE`を生成する
+    expect(anyCallIncludesText('TRUE')).toBe(true);
+  });
+});
+
+describe('sortBy（並び替え）', () => {
+  it('sortBy=recently_addedはcreated_at DESCを含む', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 10, sortBy: 'recently_added' });
+    expect(anyCallIncludesText('created_at DESC')).toBe(true);
+  });
+
+  it('sortBy未指定時の従来の"ORDER BY id"固定ではなく、GREATEST式による決定論的な並び替えになっている', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 10 });
+    expect(anyCallIncludesText('GREATEST')).toBe(true);
+  });
+});
+
+describe('chatgptStaleDays（30/60/90/180日フィルター）', () => {
+  it('指定時はlastChatgptResearchAtの経過日数条件がSQLに含まれる', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 10, chatgptStaleDays: 30 });
+    expect(anyCallIncludesText('lastChatgptResearchAt')).toBe(true);
+    expect(anyCallIncludesValue(30 * 24 * 60 * 60 * 1000)).toBe(true);
+  });
+
+  it('未指定時はフィルターが付与されない', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 10 });
+    expect(anyCallIncludesText('lastChatgptResearchAt')).toBe(false);
+  });
+
+  it('60/90/180日それぞれ対応するミリ秒値がクエリに渡される', async () => {
+    for (const days of [60, 90, 180] as const) {
+      mockState.calls.length = 0;
+      await getRecheckCandidates({ page: 1, pageSize: 10, chatgptStaleDays: days });
+      expect(anyCallIncludesValue(days * 24 * 60 * 60 * 1000)).toBe(true);
+    }
+  });
+});
+
+describe('getChatgptResearchProgress（進捗表示用）', () => {
+  it('total/researchedを返す', async () => {
+    mockState.setResponder((text) => {
+      if (text.includes('COUNT(DISTINCT id)::int AS total')) {
+        return [{ total: 100, researched: 25 }];
+      }
+      return [];
+    });
+    const result = await getChatgptResearchProgress();
+    expect(result).toEqual({ total: 100, researched: 25 });
+  });
+
+  it('行が無い場合は0/0を返す', async () => {
+    mockState.setResponder(() => []);
+    const result = await getChatgptResearchProgress();
+    expect(result).toEqual({ total: 0, researched: 0 });
   });
 });

@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockResolveVodRecheckExportData = vi.hoisted(() => vi.fn());
+const mockGetAllPersonsMerged = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 
 vi.mock('@/lib/vod-recheck-export-data', () => ({
   resolveVodRecheckExportData: mockResolveVodRecheckExportData,
+}));
+
+vi.mock('@/lib/persons', () => ({
+  getAllPersonsMerged: mockGetAllPersonsMerged,
 }));
 
 import { POST } from '@/app/api/admin/vod-recheck/research-prompt/route';
@@ -24,6 +29,7 @@ function row(overrides: Partial<{ workId: string; personName: string }> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockGetAllPersonsMerged.mockResolvedValue([]);
 });
 
 describe('POST /api/admin/vod-recheck/research-prompt', () => {
@@ -62,5 +68,29 @@ describe('POST /api/admin/vod-recheck/research-prompt', () => {
     expect(body.prompt).toContain('work-1,人物A');
     expect(body.prompt).toContain('work-1,人物B');
     expect(body.prompt).toContain('work-2,人物C');
+  });
+
+  it('groupNameをCSVヘッダー・行に含める（同名作品対策の補助情報）', async () => {
+    mockGetAllPersonsMerged.mockResolvedValue([{ name: '人物A', group: '乃木坂46', genre: 'idol' }]);
+    mockResolveVodRecheckExportData.mockResolvedValue({
+      rows: [row({ workId: 'work-1', personName: '人物A' })],
+      unresolvedWorkIds: [],
+    });
+    const res = await POST(makePost({ items: [{ personName: '人物A', workId: 'work-1' }] }) as never);
+    const body = await res.json() as { prompt: string };
+    expect(body.prompt).toContain('workId,personName,groupName,workTitle,workType,releaseYear,roleName,currentVodServices');
+    expect(body.prompt).toContain('work-1,人物A,乃木坂46,');
+  });
+
+  it('未登録人物のgroupNameは空文字になる（クラッシュしない）', async () => {
+    mockGetAllPersonsMerged.mockResolvedValue([]);
+    mockResolveVodRecheckExportData.mockResolvedValue({
+      rows: [row({ workId: 'work-1', personName: '未登録人物' })],
+      unresolvedWorkIds: [],
+    });
+    const res = await POST(makePost({ items: [{ personName: '未登録人物', workId: 'work-1' }] }) as never);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { prompt: string };
+    expect(body.prompt).toContain('work-1,未登録人物,,');
   });
 });

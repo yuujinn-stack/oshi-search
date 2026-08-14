@@ -72,6 +72,12 @@ export interface WorkRecord {
   vodCheckStatus?: 'fresh' | 'needs_recheck' | 'checking' | 'checked' | 'failed' | 'skipped';
   vodCheckError?: string;
   priorityRecheck?: boolean;       // 管理者が設定した優先再確認フラグ
+  // ChatGPT完全調査（/admin/vod-recheck の「ChatGPT完全同期」CSVインポート）の調査履歴。
+  // 既存のvod_data(JSONB)に追加するのみでDB migrationは発生しない。
+  lastChatgptResearchAt?: number;      // 直近のChatGPT完全同期が成功した日時
+  chatgptResultCount?: number;         // その回でscope内サービスのうち確認できた件数（0も有効な値）
+  chatgptResearchMode?: 'full_sync';   // 調査方式（現状はfull_syncのみ）
+  chatgptServiceScope?: string;        // 調査対象サービスの範囲識別子（例: 'major14'）
   // 表示カテゴリ（CSVインポート時に明示設定・自動分類より優先）
   workDisplayType?: DisplayWorkType;
   // 論理削除

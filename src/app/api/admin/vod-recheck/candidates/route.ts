@@ -3,7 +3,7 @@
 // 既存の /api/admin/vod-recheck（work-check組み込みウィジェット用・N+1あり）とは別経路。
 // query params: page, pageSize, search, workId, reason, priority, workType, processStatus
 import { NextRequest, NextResponse } from 'next/server';
-import { DEFAULT_PAGE_SIZE } from '@/lib/vod-recheck-store';
+import { DEFAULT_PAGE_SIZE, type RecheckListMode, type RecheckSortOption } from '@/lib/vod-recheck-store';
 import { fetchRecheckListPage } from '@/lib/vod-recheck-list';
 import { isValidRecheckPriority, RECHECK_STATUS_LABEL, type RecheckReasonCode, type RecheckPriority } from '@/lib/vod-recheck';
 import { WORK_TYPE_LABEL, type WorkType } from '@/types/work';
@@ -16,6 +16,9 @@ const VALID_REASONS: readonly string[] = [
 ];
 const VALID_WORK_TYPES: readonly string[] = Object.keys(WORK_TYPE_LABEL);
 const VALID_PROCESS_STATUSES: readonly string[] = Object.keys(RECHECK_STATUS_LABEL);
+const VALID_MODES: readonly string[] = ['candidates', 'all'];
+const VALID_SORTS: readonly string[] = ['priority', 'unchecked_first', 'oldest_checked', 'newest_checked', 'recently_added'];
+const VALID_CHATGPT_STALE_DAYS: readonly number[] = [30, 60, 90, 180];
 
 function isValidReason(value: string): value is RecheckReasonCode {
   return VALID_REASONS.includes(value);
@@ -31,7 +34,20 @@ export async function GET(req: NextRequest) {
   const priorityParam = searchParams.get('priority');
   const workTypeParam = searchParams.get('workType');
   const processStatusParam = searchParams.get('processStatus');
+  const modeParam = searchParams.get('mode');
+  const sortByParam = searchParams.get('sortBy');
+  const chatgptStaleDaysParam = searchParams.get('chatgptStaleDays');
 
+  if (modeParam && !VALID_MODES.includes(modeParam)) {
+    return NextResponse.json({ error: `不正な mode です: ${modeParam}` }, { status: 400 });
+  }
+  if (sortByParam && !VALID_SORTS.includes(sortByParam)) {
+    return NextResponse.json({ error: `不正な sortBy です: ${sortByParam}` }, { status: 400 });
+  }
+  const chatgptStaleDays = chatgptStaleDaysParam ? Number(chatgptStaleDaysParam) : undefined;
+  if (chatgptStaleDaysParam && !VALID_CHATGPT_STALE_DAYS.includes(chatgptStaleDays as number)) {
+    return NextResponse.json({ error: `不正な chatgptStaleDays です: ${chatgptStaleDaysParam}` }, { status: 400 });
+  }
   if (reasonParam && !isValidReason(reasonParam)) {
     return NextResponse.json({ error: `不正な reason です: ${reasonParam}` }, { status: 400 });
   }
@@ -55,6 +71,9 @@ export async function GET(req: NextRequest) {
       priority: priorityParam as RecheckPriority | undefined,
       workType: workTypeParam as WorkType | undefined,
       processStatus: processStatusParam ?? undefined,
+      mode: (modeParam as RecheckListMode | null) ?? undefined,
+      sortBy: (sortByParam as RecheckSortOption | null) ?? undefined,
+      chatgptStaleDays: chatgptStaleDays as 30 | 60 | 90 | 180 | undefined,
     });
     return NextResponse.json(result);
   } catch (err) {

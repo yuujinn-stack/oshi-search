@@ -33,7 +33,15 @@ export interface RecheckCandidateRow {
   vodCheckStatus?: string;
   personCount: number;
   mergedAt?: number;
+  lastChatgptResearchAt?: number;
+  chatgptResultCount?: number;
 }
+
+/** 一覧モード: candidates=要調査（再確認理由が1つ以上ある作品のみ）/ all=VOD調査対象の全作品 */
+export type RecheckListMode = 'candidates' | 'all';
+
+/** 並び替え: 調査優先順（未確認優先）/ 未調査優先/ 最終確認が古い順/ 新しい順/ 最近追加された作品順 */
+export type RecheckSortOption = 'priority' | 'unchecked_first' | 'oldest_checked' | 'newest_checked' | 'recently_added';
 
 export interface RecheckListParams {
   page: number;
@@ -48,7 +56,15 @@ export interface RecheckListParams {
   processStatus?: string;
   /** 「アクセス上位」フィルタ・優先度算出用に外部(Redis)で計算したworkId集合 */
   highTrafficWorkIds?: string[];
+  /** 一覧モード（省略時は candidates＝従来どおりの「要調査」一覧） */
+  mode?: RecheckListMode;
+  /** 並び替え（省略時は priority） */
+  sortBy?: RecheckSortOption;
+  /** ChatGPT完全調査からの経過日数フィルター（30/60/90/180日）。未調査の作品は対象外（既存の「未調査」表示で扱う） */
+  chatgptStaleDays?: 30 | 60 | 90 | 180;
 }
+
+export const CHATGPT_STALE_DAY_OPTIONS = [30, 60, 90, 180] as const;
 
 export function clampPage(page: number): number {
   return Math.max(1, Math.floor(Number.isFinite(page) ? page : 1));
@@ -219,6 +235,34 @@ function candidacyFrag(highTrafficWorkIds: string[]) {
   )`;
 }
 
+// 「全作品」モード（mode='all'）用: 絞り込みなし（＝activeWorkFragment()のみ）で常に真。
+// candidacyFrag() と同じ場所に差し込めるよう同じシグネチャにしている。
+function allWorksFrag() {
+  return neonSql`TRUE`;
+}
+
+// 並び替え条件のSQL断片。lastCheckExpr()（未確認=0扱い）を共通の「最終確認日時」として使う。
+// created_atはrepresentative CTEにも含める必要があるため、呼び出し側でSELECT列に追加すること。
+function sortFrag(sortBy: RecheckSortOption | undefined) {
+  switch (sortBy) {
+    case 'unchecked_first':
+      // 未確認（lastCheckExpr=0）を最優先、その次はworkId順（決定論的にするため）
+      return neonSql`(${lastCheckExpr()} = 0) DESC, id ASC`;
+    case 'oldest_checked':
+      // 最終確認が古い順。未確認(0)は「最も古い」として扱い先頭に来る
+      return neonSql`${lastCheckExpr()} ASC, id ASC`;
+    case 'newest_checked':
+      // 最終確認が新しい順。未確認(0)は最後に回す
+      return neonSql`(${lastCheckExpr()} = 0) ASC, ${lastCheckExpr()} DESC, id ASC`;
+    case 'recently_added':
+      return neonSql`created_at DESC, id ASC`;
+    case 'priority':
+    default:
+      // 調査優先順の簡易版: 未確認を最優先、次に確認からの経過が長いもの
+      return neonSql`(${lastCheckExpr()} = 0) DESC, ${lastCheckExpr()} ASC, id ASC`;
+  }
+}
+
 interface QueryResult {
   rows: RecheckCandidateRow[];
   total: number;
@@ -235,6 +279,7 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
   const workType = (params.workType ?? '').trim();
   const processStatus = (params.processStatus ?? '').trim();
   const highTrafficWorkIds = params.highTrafficWorkIds ?? [];
+  const mode: RecheckListMode = params.mode ?? 'candidates';
 
   const extraFilter = params.reason
     ? neonSql`AND ${reasonFrag(params.reason, highTrafficWorkIds)}`
@@ -251,11 +296,20 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
   const processStatusFilter = processStatus
     ? neonSql`AND COALESCE(w.vod_data->>'vodCheckStatus', 'not_started') = ${processStatus}`
     : neonSql``;
+  // mode='all'（全作品モード）の場合は再確認理由による絞り込みを行わない
+  const modeFrag = mode === 'all' ? allWorksFrag() : candidacyFrag(highTrafficWorkIds);
+  const orderByFrag = sortFrag(params.sortBy);
+  // ChatGPT完全調査からの経過日数フィルター（isChatgptResearchStale[vod-chatgpt-sync.ts]と
+  // 同じ境界（>=）で判定。未調査（lastChatgptResearchAtがNULL）は対象外とする）。
+  const chatgptStaleFilter = params.chatgptStaleDays
+    ? neonSql`AND w.vod_data->>'lastChatgptResearchAt' IS NOT NULL
+        AND (${Date.now()}::bigint - (w.vod_data->>'lastChatgptResearchAt')::bigint) >= ${params.chatgptStaleDays * 24 * 60 * 60 * 1000}::bigint`
+    : neonSql``;
 
   const rows = await neonSql`
     WITH representative AS (
       SELECT DISTINCT ON (id)
-        id, person_name, title, type, release_year, vod_data
+        id, person_name, title, type, release_year, vod_data, created_at
       FROM works
       WHERE ${activeWorkFragment()}
       ORDER BY id, person_name
@@ -267,13 +321,14 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
       FROM work_aliases
       GROUP BY canonical_work_id
     ) al ON al.canonical_work_id = w.id
-    WHERE ${candidacyFrag(highTrafficWorkIds)}
+    WHERE ${modeFrag}
       ${extraFilter}
       ${searchFilter}
       ${workIdFilter}
       ${workTypeFilter}
       ${processStatusFilter}
-    ORDER BY id
+      ${chatgptStaleFilter}
+    ORDER BY ${orderByFrag}
     LIMIT ${pageSize} OFFSET ${offset}
   `;
 
@@ -292,12 +347,13 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
       FROM work_aliases
       GROUP BY canonical_work_id
     ) al ON al.canonical_work_id = w.id
-    WHERE ${candidacyFrag(highTrafficWorkIds)}
+    WHERE ${modeFrag}
       ${extraFilter}
       ${searchFilter}
       ${workIdFilter}
       ${workTypeFilter}
       ${processStatusFilter}
+      ${chatgptStaleFilter}
   `;
 
   const workIds = rows.map((r) => r.id as string);
@@ -328,6 +384,8 @@ export async function getRecheckCandidates(params: RecheckListParams): Promise<Q
       vodCheckStatus: vodData.vodCheckStatus as string | undefined,
       personCount: personCountMap.get(r.id as string) ?? 1,
       mergedAt: r.merged_at ? new Date(r.merged_at as string).getTime() : undefined,
+      lastChatgptResearchAt: vodData.lastChatgptResearchAt as number | undefined,
+      chatgptResultCount: vodData.chatgptResultCount as number | undefined,
     };
   });
 
@@ -375,6 +433,24 @@ export async function getClickCountsForWorkIds(workIds: string[]): Promise<Click
 const HIGH_TRAFFIC_PERCENTILE = 0.2;
 const HIGH_TRAFFIC_MIN = 20;
 const HIGH_TRAFFIC_MAX = 500;
+
+// ── ChatGPT完全調査の進捗（/admin/vod-recheckの進捗表示用） ─────────────────────
+export interface ChatgptResearchProgress {
+  total: number;
+  researched: number;
+}
+
+export async function getChatgptResearchProgress(): Promise<ChatgptResearchProgress> {
+  const rows = await neonSql`
+    SELECT
+      COUNT(DISTINCT id)::int AS total,
+      COUNT(DISTINCT id) FILTER (WHERE vod_data->>'lastChatgptResearchAt' IS NOT NULL)::int AS researched
+    FROM works
+    WHERE ${activeWorkFragment()}
+  `;
+  const row = rows[0] as { total: number; researched: number } | undefined;
+  return { total: row?.total ?? 0, researched: row?.researched ?? 0 };
+}
 
 export async function getHighTrafficWorkIds(): Promise<string[]> {
   const redis = getRedis();

@@ -5,6 +5,10 @@ import { works as worksTable } from '@/db/schema';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { upsertWork } from '@/db/write';
 import { normalizeProviderName, deduplicateProviders } from '@/lib/vod-dedup';
+import {
+  computeChatgptFullSync, CHATGPT_SERVICE_SCOPE, isChatgptProtectionActive, stripChatgptScopeServices,
+  type ChatgptSyncServiceInput, type ChatgptSyncDiff,
+} from '@/lib/vod-chatgpt-sync';
 import type { WorkRecord, WorkStatus } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 
@@ -59,6 +63,10 @@ function dbRowToWorkRecord(r: typeof worksTable.$inferSelect): WorkRecord {
     vodCheckStatus:  vod.vodCheckStatus  as WorkRecord['vodCheckStatus'],
     vodCheckError:   vod.vodCheckError   as string | undefined,
     priorityRecheck: vod.priorityRecheck as boolean | undefined,
+    lastChatgptResearchAt: vod.lastChatgptResearchAt as number | undefined,
+    chatgptResultCount:    vod.chatgptResultCount    as number | undefined,
+    chatgptResearchMode:   vod.chatgptResearchMode    as WorkRecord['chatgptResearchMode'],
+    chatgptServiceScope:   vod.chatgptServiceScope    as string | undefined,
   };
 }
 
@@ -224,7 +232,12 @@ export async function updateWorkVod(
   await withWorkFromDB(personName, workId, (work) => {
     const replaceSources = options?.replaceSources ?? ['tmdb_watch_provider', 'openai_supplement', 'openai_web_search'];
     const kept = (work.vodProviders ?? []).filter((p) => !replaceSources.includes(p.source as never));
-    work.vodProviders = [...kept, ...providers];
+    // ChatGPT完全同期の保護期間中（vod-chatgpt-sync.ts参照）は、TMDb/AI由来の新規追加・
+    // 上書きが対象14サービスへ及ばないようにする。ChatGPT側のエントリはsource='manual_csv'
+    // のためreplaceSourcesの対象外＝keptに残ったままなので、ここではincoming側（providers）を
+    // 対象14サービスに限りフィルタするだけでよい（14サービス外は従来どおり素通しする）。
+    const incoming = isChatgptProtectionActive(work) ? stripChatgptScopeServices(providers) : providers;
+    work.vodProviders = [...kept, ...incoming];
     work.vodUpdatedAt = Date.now();
     if (options?.vodAiCheckedAt) work.vodAiCheckedAt = options.vodAiCheckedAt;
     if (options?.vodStatus !== undefined) work.vodStatus = options.vodStatus;
@@ -306,6 +319,40 @@ export async function syncManualCsvVodProviders(
     return true;
   });
   return result;
+}
+
+// ChatGPT完全調査 → 14サービス完全同期を1作品分反映する。
+// 対象14サービス（vod-chatgpt-sync.ts の CHATGPT_SCOPE_SLUGS）に該当するエントリのみを
+// 完全置換し、それ以外（手動登録の特殊provider等）は一切変更しない。
+// 呼び出し成功時のみ ChatGPT調査履歴（lastChatgptResearchAt等）を更新し、
+// 管理者が設定していた優先再確認フラグ（priorityRecheck）を解除する。
+export async function chatgptFullSyncVodProviders(
+  personName: string,
+  workId: string,
+  newServices: ChatgptSyncServiceInput[],
+): Promise<{ diff: ChatgptSyncDiff; resultCount: number } | null> {
+  let output: { diff: ChatgptSyncDiff; resultCount: number } | null = null;
+  const now = Date.now();
+  const ok = await withWorkFromDB(personName, workId, (work) => {
+    const { merged, diff, resultCount } = computeChatgptFullSync(work.vodProviders ?? [], newServices, now);
+    work.vodProviders = merged;
+    work.vodUpdatedAt = now;
+    work.lastChatgptResearchAt = now;
+    work.chatgptResultCount = resultCount;
+    work.chatgptResearchMode = 'full_sync';
+    work.chatgptServiceScope = CHATGPT_SERVICE_SCOPE;
+    work.priorityRecheck = false;
+    // 既存のlastVodCheckAt（/admin/vod-recheckの180日ルール・cron/vod-recheckの対象判定が
+    // 参照する「最終確認日時」）も更新する。ChatGPT完全調査は14サービスを網羅的に確認した
+    // 再確認そのものであるため、これを反映しないと同期直後でも「180日以上未確認」等の理由で
+    // 既存のAI再確認Cron・管理画面が即座に再対象化し、ChatGPT調査結果と異なる判定を
+    // 上書き・追加してしまう可能性がある（詳細は実装報告の「自動処理との競合」参照）。
+    work.lastVodCheckAt = now;
+    work.updatedAt = now;
+    output = { diff, resultCount };
+    return true;
+  });
+  return ok ? output : null;
 }
 
 // VOD配信情報を1件だけ論理削除（hidden: true をセット）

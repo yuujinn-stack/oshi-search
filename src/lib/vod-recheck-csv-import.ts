@@ -3,13 +3,25 @@
 // workIdのcanonical解決・非活性化作品の拒否・manual_csv保存・監査ログ・処理状態変更の
 // ロジックをこの1関数に集約する。
 import { MAX_CSV_FILE_BYTES } from '@/lib/csv-parse';
-import { parseAndValidateImportCsv } from '@/lib/vod-recheck-csv';
+import { parseAndValidateImportCsv, type ParsedImportRow } from '@/lib/vod-recheck-csv';
 import { resolveActiveWorkTargets } from '@/lib/vod-recheck-store';
-import { upsertManualCsvVodProviders, mergeManualCsvVodProviders, getWork } from '@/lib/work-store';
+import { upsertManualCsvVodProviders, mergeManualCsvVodProviders, chatgptFullSyncVodProviders, getWork } from '@/lib/work-store';
+import { computeChatgptFullSync, type ChatgptSyncServiceInput, type ChatgptSyncDiff } from '@/lib/vod-chatgpt-sync';
 import { insertVodRecheckLog } from '@/db/write';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { detectRecheckReasons } from '@/lib/vod-recheck';
 import type { VodProvider, VodProviderType } from '@/types/vod';
+
+export type VodRecheckCsvImportMode = 'merge' | 'chatgpt_full_sync';
+
+// 「同名作品があり対象作品を確実に特定できず」の判定に使う固定フレーズ。
+// buildChatgptFullSyncPrompt（vod-research-prompt.ts）が調査者に出力させる文言と一致させている。
+const AMBIGUOUS_NOTE_MARKER = '同名作品があり';
+
+// vodService列が実質「未確認/対象なし」を意味する行かどうか（大文字小文字を区別しない）
+function isUnknownServiceRow(row: ParsedImportRow): boolean {
+  return row.vodService.trim().toLowerCase() === 'unknown';
+}
 
 // ── サービス辞書（work-vod-import / vod-title-import と同じテーブルをこの機能専用に複製） ──
 const SERVICE_LOOKUP: Record<string, { id: number; logoPath?: string }> = {
@@ -54,27 +66,41 @@ interface PreviewWorkEntry {
   afterUnknownCount: number;
   warnings: string[];
   errors: string[];
+  /** chatgpt_full_sync モード限定: 対象14サービスの追加/更新/削除/変更なし内訳 */
+  diff?: ChatgptSyncDiff;
+  /** chatgpt_full_sync モード限定: 同名作品等で対象作品を特定できなかった旨のnoteが含まれる */
+  ambiguous?: boolean;
 }
 
 interface PreviewResponse {
   commit: false;
+  mode: VodRecheckCsvImportMode;
   preview: PreviewWorkEntry[];
   unresolvedWorkIds: string[];
   hasFatalErrors: boolean;
   totalWorkIds: number;
   totalRows: number;
+  /** chatgpt_full_sync モード限定: 追加/更新/削除/変更なし/VODなしの集計 */
+  summary?: { added: number; updated: number; removed: number; unchanged: number; zeroVod: number };
+  /** 直前に生成したChatGPTプロンプトの対象workIdのうち、今回のCSVに含まれていないもの */
+  missingFromLastPrompt?: string[];
 }
 
 interface ApplyResponse {
   commit: true;
+  mode: VodRecheckCsvImportMode;
   updatedWorks: number;
   unresolvedWorkIds: string[];
   errors: string[];
+  /** chatgpt_full_sync モード限定: 失敗した作品（部分失敗時は調査済みにされない） */
+  failedWorkIds?: string[];
 }
 
 export async function runVodRecheckCsvImport(
   csv: string,
   commit: boolean,
+  mode: VodRecheckCsvImportMode = 'merge',
+  expectedWorkIds?: string[],
 ): Promise<RunCsvImportResult> {
   if (!csv.trim()) {
     return { status: 400, body: { error: 'csv（文字列）が必要です' } };
@@ -98,12 +124,40 @@ export async function runVodRecheckCsvImport(
   const providersByCanonical = new Map<string, VodProvider[]>();
   const personsByCanonical = new Map<string, string[]>();
   const canonicalByInput = new Map<string, { canonicalWorkId: string; resolvedViaAlias: boolean }>();
+  // chatgpt_full_sync モード専用: vodService=unknown の行は「対象サービスなし」を意味するため
+  // provider化しない（既存のmergeManualCsvVodProviders用providersByCanonicalとは別に集計する）
+  const chatgptServicesByCanonical = new Map<string, ChatgptSyncServiceInput[]>();
+  const ambiguousWorkIds = new Set<string>();
+  const allCanonicalWorkIds = new Set<string>();
 
   for (const row of parsed) {
     const target = resolved.get(row.workId);
     if (!target) continue;
     canonicalByInput.set(row.workId, { canonicalWorkId: target.canonicalWorkId, resolvedViaAlias: target.resolvedViaAlias });
     personsByCanonical.set(target.canonicalWorkId, target.personNames);
+    allCanonicalWorkIds.add(target.canonicalWorkId);
+
+    if (mode === 'chatgpt_full_sync') {
+      if (row.note && row.note.includes(AMBIGUOUS_NOTE_MARKER)) {
+        ambiguousWorkIds.add(target.canonicalWorkId);
+      }
+      if (!isUnknownServiceRow(row)) {
+        const list = chatgptServicesByCanonical.get(target.canonicalWorkId) ?? [];
+        list.push({
+          providerName: row.vodService,
+          type: row.availabilityType,
+          sourceUrl: row.sourceUrl,
+          confidence: row.confidence,
+          note: row.note,
+        });
+        chatgptServicesByCanonical.set(target.canonicalWorkId, list);
+      } else if (!chatgptServicesByCanonical.has(target.canonicalWorkId)) {
+        // 「unknown」行のみで実サービス行が1件もない場合でも、この作品を対象として扱う
+        // （0件配信済みとして記録するため、空配列を明示的に持たせる）
+        chatgptServicesByCanonical.set(target.canonicalWorkId, []);
+      }
+      continue;
+    }
 
     const svc = lookupService(row.vodService);
     const list = providersByCanonical.get(target.canonicalWorkId) ?? [];
@@ -122,6 +176,23 @@ export async function runVodRecheckCsvImport(
       updatedAt: Date.now(),
     });
     providersByCanonical.set(target.canonicalWorkId, list);
+  }
+
+  const missingFromLastPrompt = expectedWorkIds
+    ? expectedWorkIds.filter((id) => {
+        const target = resolved.get(id);
+        const canonicalId = target?.canonicalWorkId ?? id;
+        return !allCanonicalWorkIds.has(canonicalId);
+      })
+    : undefined;
+
+  if (mode === 'chatgpt_full_sync') {
+    return commit
+      ? await applyChatgptFullSync(chatgptServicesByCanonical, personsByCanonical, ambiguousWorkIds, unresolvedWorkIds)
+      : await previewChatgptFullSync(
+          chatgptServicesByCanonical, personsByCanonical, canonicalByInput, ambiguousWorkIds,
+          unresolvedWorkIds, parsed.length, missingFromLastPrompt,
+        );
   }
 
   if (!commit) {
@@ -185,6 +256,7 @@ export async function runVodRecheckCsvImport(
       status: 200,
       body: {
         commit: false,
+        mode: 'merge',
         preview,
         unresolvedWorkIds,
         hasFatalErrors,
@@ -258,9 +330,153 @@ export async function runVodRecheckCsvImport(
     status: 200,
     body: {
       commit: true,
+      mode: 'merge',
       updatedWorks,
       unresolvedWorkIds,
       errors: applyErrors,
+    },
+  };
+}
+
+// ── chatgpt_full_sync モード: プレビュー ────────────────────────────────────
+async function previewChatgptFullSync(
+  chatgptServicesByCanonical: Map<string, ChatgptSyncServiceInput[]>,
+  personsByCanonical: Map<string, string[]>,
+  canonicalByInput: Map<string, { canonicalWorkId: string; resolvedViaAlias: boolean }>,
+  ambiguousWorkIds: Set<string>,
+  unresolvedWorkIds: string[],
+  totalRows: number,
+  missingFromLastPrompt: string[] | undefined,
+): Promise<RunCsvImportResult> {
+  const preview: PreviewWorkEntry[] = await Promise.all(
+    [...chatgptServicesByCanonical.entries()].map(async ([canonicalWorkId, services]) => {
+      const persons = personsByCanonical.get(canonicalWorkId) ?? [];
+      const representativePerson = persons[0];
+      const current = representativePerson ? await getWork(representativePerson, canonicalWorkId) : null;
+      const currentProviders = current?.vodProviders ?? [];
+
+      // DB書き込みなしでシミュレーション（実際の反映と同じcomputeChatgptFullSyncを再利用）
+      const { diff, resultCount } = computeChatgptFullSync(currentProviders, services);
+
+      const resolvedFrom = [...canonicalByInput.entries()]
+        .filter(([, v]) => v.canonicalWorkId === canonicalWorkId && v.resolvedViaAlias)
+        .map(([inputWorkId]) => inputWorkId);
+
+      const warnings: string[] = [];
+      if (!current) warnings.push('現在のVOD情報を取得できませんでした（新規登録として扱われます）');
+      const isAmbiguous = ambiguousWorkIds.has(canonicalWorkId);
+      if (isAmbiguous) warnings.push('ChatGPTが同名作品等の理由で対象作品を特定できなかった旨のnoteが含まれています。内容を確認してください。');
+
+      return {
+        workId: canonicalWorkId,
+        resolvedFrom: resolvedFrom.length > 0 ? resolvedFrom : undefined,
+        title: current?.title ?? null,
+        persons,
+        services: services.map((s) => ({ providerName: s.providerName, availabilityType: s.type })),
+        currentVodCount: currentProviders.length,
+        afterVodCount: resultCount,
+        currentUnknownCount: 0,
+        afterUnknownCount: 0,
+        warnings,
+        errors: [] as string[],
+        diff,
+        ambiguous: isAmbiguous,
+      };
+    }),
+  );
+
+  const hasFatalErrors = unresolvedWorkIds.length > 0 || preview.some((p) => p.errors.length > 0);
+  const summary = preview.reduce(
+    (acc, p) => {
+      acc.added += p.diff?.added.length ?? 0;
+      acc.updated += p.diff?.updated.length ?? 0;
+      acc.removed += p.diff?.removed.length ?? 0;
+      acc.unchanged += p.diff?.unchanged.length ?? 0;
+      if (p.afterVodCount === 0) acc.zeroVod += 1;
+      return acc;
+    },
+    { added: 0, updated: 0, removed: 0, unchanged: 0, zeroVod: 0 },
+  );
+
+  return {
+    status: 200,
+    body: {
+      commit: false,
+      mode: 'chatgpt_full_sync',
+      preview,
+      unresolvedWorkIds,
+      hasFatalErrors,
+      totalWorkIds: chatgptServicesByCanonical.size,
+      totalRows,
+      summary,
+      missingFromLastPrompt,
+    },
+  };
+}
+
+// ── chatgpt_full_sync モード: 実行 ────────────────────────────────────────
+// workId単位で「その作品に紐づく全人物行」への反映が全て成功した場合のみ調査済みとして扱う。
+// 1件でも失敗した人物行があれば、その作品全体を失敗扱いとし調査済み更新は行わない
+// （chatgptFullSyncVodProviders自体は人物行ごとに独立して調査履歴を書き込むため、
+// 途中で失敗した場合に「一部の人物行だけ調査済み」という中途半端な状態が残りうる。
+// これは既存のmanual_csvマージにも共通する複数人物行の性質であり、今回新たに導入した
+// ものではない。失敗した作品はfailedWorkIdsとして報告し、管理者が再実行を判断できるようにする）。
+async function applyChatgptFullSync(
+  chatgptServicesByCanonical: Map<string, ChatgptSyncServiceInput[]>,
+  personsByCanonical: Map<string, string[]>,
+  ambiguousWorkIds: Set<string>,
+  unresolvedWorkIds: string[],
+): Promise<RunCsvImportResult> {
+  let updatedWorks = 0;
+  const applyErrors: string[] = [];
+  const failedWorkIds: string[] = [];
+
+  for (const [workId, services] of chatgptServicesByCanonical.entries()) {
+    const persons = personsByCanonical.get(workId) ?? [];
+    let workFailed = false;
+
+    for (const personName of persons) {
+      try {
+        const before = await getWork(personName, workId);
+
+        const result = await chatgptFullSyncVodProviders(personName, workId, services);
+        if (!result) throw new Error('対象の作品行が見つかりません（非公開・削除済みの可能性）');
+
+        try {
+          await insertVodRecheckLog({
+            personName,
+            workId,
+            action: 'complete',
+            performedBy: 'admin:vod-recheck-csv-import:chatgpt_full_sync',
+            note: `ChatGPT完全同期: 追加${result.diff.added.length}/更新${result.diff.updated.length}/削除${result.diff.removed.length}` +
+              (ambiguousWorkIds.has(workId) ? '（同名作品等で特定不可の可能性あり）' : ''),
+            updatedProviderCount: result.resultCount,
+            activeCountBefore: before?.vodProviders?.length,
+            activeCountAfter: result.resultCount,
+          });
+        } catch (logErr) {
+          console.warn('[vod-recheck-csv-import] 監査ログ書き込み失敗:', String(logErr));
+        }
+
+        updatedWorks++;
+      } catch (err) {
+        workFailed = true;
+        applyErrors.push(`${workId} / ${personName}: ${String(err)}`);
+      }
+    }
+
+    if (workFailed) failedWorkIds.push(workId);
+  }
+
+  return {
+    status: 200,
+    body: {
+      commit: true,
+      mode: 'chatgpt_full_sync',
+      updatedWorks,
+      unresolvedWorkIds,
+      errors: applyErrors,
+      failedWorkIds: failedWorkIds.length > 0 ? failedWorkIds : undefined,
     },
   };
 }

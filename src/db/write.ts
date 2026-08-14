@@ -101,6 +101,10 @@ function buildWorkRow(work: WorkRecord): typeof works.$inferInsert {
   if (work.vodCheckStatus !== undefined)  vodData.vodCheckStatus = work.vodCheckStatus;
   if (work.vodCheckError !== undefined)   vodData.vodCheckError = work.vodCheckError;
   if (work.priorityRecheck !== undefined) vodData.priorityRecheck = work.priorityRecheck;
+  if (work.lastChatgptResearchAt !== undefined) vodData.lastChatgptResearchAt = work.lastChatgptResearchAt;
+  if (work.chatgptResultCount !== undefined)    vodData.chatgptResultCount = work.chatgptResultCount;
+  if (work.chatgptResearchMode !== undefined)   vodData.chatgptResearchMode = work.chatgptResearchMode;
+  if (work.chatgptServiceScope !== undefined)   vodData.chatgptServiceScope = work.chatgptServiceScope;
 
   return {
     id:              work.id,

@@ -11,11 +11,14 @@
 // （/admin/vod-recheck の選択上限50件と一致させる）
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveVodRecheckExportData, type VodRecheckExportItem } from '@/lib/vod-recheck-export-data';
-import { buildVodResearchCsvRow, buildBatchVodResearchPrompt, VOD_RESEARCH_CSV_HEADER } from '@/lib/vod-research-prompt';
+import { buildChatgptFullSyncCsvRow, buildChatgptFullSyncPrompt, CHATGPT_FULL_SYNC_CSV_HEADER } from '@/lib/vod-research-prompt';
+import { getAllPersonsMerged } from '@/lib/persons';
 
 export const dynamic = 'force-dynamic';
 
-const MAX_ITEMS = 50;
+// /admin/vod-recheck の運用方針（ChatGPT完全調査 → 完全同期）に合わせ、1回のプロンプトに
+// 含める作品数の上限を14サービス完全調査を前提とした40件に統一する。
+const MAX_ITEMS = 40;
 
 function isExportItem(v: unknown): v is VodRecheckExportItem {
   if (!v || typeof v !== 'object') return false;
@@ -44,11 +47,20 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
-    const csvBody = [VOD_RESEARCH_CSV_HEADER, ...rows.map((r) => buildVodResearchCsvRow(r))].join('\n');
-    const workCount = new Set(rows.map((r) => r.workId)).size;
-    const prompt = buildBatchVodResearchPrompt(csvBody, 'vod-recheck');
+    // groupNameは同名人物・同名作品の判別を助ける補助情報としてのみプロンプトへ渡す
+    // （グループ一致だけで作品を確定させる目的ではない。既存の安全策と同じ考え方）。
+    const persons = await getAllPersonsMerged();
+    const groupByName = new Map(persons.map((p) => [p.name, p.group]));
 
-    return NextResponse.json({ prompt, workCount, unresolvedWorkIds });
+    const csvBody = [
+      CHATGPT_FULL_SYNC_CSV_HEADER,
+      ...rows.map((r) => buildChatgptFullSyncCsvRow({ ...r, groupName: groupByName.get(r.personName) ?? '' })),
+    ].join('\n');
+    const workCount = new Set(rows.map((r) => r.workId)).size;
+    const workIds = [...new Set(rows.map((r) => r.workId))];
+    const prompt = buildChatgptFullSyncPrompt(csvBody, 'vod-recheck');
+
+    return NextResponse.json({ prompt, workCount, workIds, unresolvedWorkIds });
   } catch (err) {
     console.error('[vod-recheck/research-prompt] error:', err);
     return NextResponse.json({ error: 'プロンプト生成に失敗しました' }, { status: 500 });

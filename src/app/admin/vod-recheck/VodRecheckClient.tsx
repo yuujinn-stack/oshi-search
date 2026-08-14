@@ -4,10 +4,17 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import type { RecheckListResult, RecheckListItem } from '@/lib/vod-recheck-list';
 import type { RecheckReasonCode, RecheckPriority, RecheckAction } from '@/lib/vod-recheck';
+import type { RecheckListMode, RecheckSortOption } from '@/lib/vod-recheck-store';
+import type { VodRecheckCsvImportMode } from '@/lib/vod-recheck-csv-import';
+import type { ChatgptSyncDiff } from '@/lib/vod-chatgpt-sync';
 import type { VodStaleStatus } from '@/lib/vod-stale';
 import { parseCSV } from '@/lib/csv-parse';
 import { validateCsvFile, formatFileSize } from '@/lib/csv-file-validation';
+import { addSelection, removeSelection, clearSelection as clearSelectionPure } from '@/lib/vod-recheck-selection';
+import { CHATGPT_PROTECTION_DAYS } from '@/lib/vod-chatgpt-sync';
 import ChatGptPromptResultPanel from '@/components/admin/ChatGptPromptResultPanel';
+
+const CHATGPT_STALE_DAY_OPTIONS = [30, 60, 90, 180] as const;
 
 interface CsvPreviewWork {
   workId: string;
@@ -19,16 +26,36 @@ interface CsvPreviewWork {
   afterVodCount: number;
   warnings: string[];
   errors: string[];
+  diff?: ChatgptSyncDiff;
+  ambiguous?: boolean;
 }
 
 interface CsvPreviewResponse {
   commit: false;
+  mode: VodRecheckCsvImportMode;
   preview: CsvPreviewWork[];
   unresolvedWorkIds: string[];
   hasFatalErrors: boolean;
   totalWorkIds: number;
   totalRows: number;
+  summary?: { added: number; updated: number; removed: number; unchanged: number; zeroVod: number };
+  missingFromLastPrompt?: string[];
 }
+
+const MODE_OPTIONS: Array<{ value: RecheckListMode; label: string; description: string }> = [
+  { value: 'candidates', label: '要調査', description: '再確認が必要な理由がある作品のみ表示' },
+  { value: 'all', label: '全作品', description: 'VOD調査対象の全作品を表示（一度に送るわけではありません）' },
+];
+
+const SORT_OPTIONS: Array<{ value: RecheckSortOption; label: string }> = [
+  { value: 'priority', label: '調査優先順' },
+  { value: 'unchecked_first', label: '未調査優先' },
+  { value: 'oldest_checked', label: '最終調査が古い順' },
+  { value: 'newest_checked', label: '最終調査が新しい順' },
+  { value: 'recently_added', label: '最近追加された作品順' },
+];
+
+const BULK_STEPS = [5, 10, 15, 20, 25, 30, 35, 40] as const;
 
 const REASON_OPTIONS: Array<{ value: RecheckReasonCode; label: string }> = [
   { value: 'stale_180_days', label: '180日以上未確認' },
@@ -85,7 +112,8 @@ const PROCESS_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'skipped', label: 'スキップ' },
 ];
 
-const MAX_BULK_ITEMS = 50;
+// ChatGPT完全調査プロンプトへ一度に含められる作品数の上限（対象14サービス完全調査を前提とした運用上限）
+const MAX_BULK_ITEMS = 40;
 
 function fmtDate(ts: number | null): string {
   if (!ts) return '—';
@@ -99,6 +127,9 @@ function rowKey(item: Pick<RecheckListItem, 'personName' | 'workId'>): string {
 export default function VodRecheckClient({ initial }: { initial: RecheckListResult }) {
   const [data, setData] = useState<RecheckListResult>(initial);
   const [page, setPage] = useState(initial.page);
+  const [mode, setMode] = useState<RecheckListMode>('candidates');
+  const [sortBy, setSortBy] = useState<RecheckSortOption>('priority');
+  const [chatgptStaleDays, setChatgptStaleDays] = useState<typeof CHATGPT_STALE_DAY_OPTIONS[number] | ''>('');
   const [search, setSearch] = useState('');
   const [workIdSearch, setWorkIdSearch] = useState('');
   const [reason, setReason] = useState<RecheckReasonCode | ''>('');
@@ -114,6 +145,10 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
   const [researchWorkCount, setResearchWorkCount] = useState(0);
   const [researchBusy, setResearchBusy] = useState(false);
   const [researchError, setResearchError] = useState('');
+  // 直前に生成したChatGPT調査プロンプトの対象workId（同一セッション内のみ保持。
+  // ブラウザ再読み込み等で失われてもCSVインポート自体は引き続き可能）
+  const [lastPromptWorkIds, setLastPromptWorkIds] = useState<string[] | null>(null);
+  const [importMode, setImportMode] = useState<VodRecheckCsvImportMode>('chatgpt_full_sync');
   const [csvText, setCsvText] = useState('');
   const [csvPreview, setCsvPreview] = useState<CsvPreviewResponse | null>(null);
   const [csvBusy, setCsvBusy] = useState(false);
@@ -132,6 +167,9 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
     try {
       const params = new URLSearchParams();
       params.set('page', String(page));
+      params.set('mode', mode);
+      params.set('sortBy', sortBy);
+      if (chatgptStaleDays) params.set('chatgptStaleDays', String(chatgptStaleDays));
       if (search.trim()) params.set('search', search.trim());
       if (workIdSearch.trim()) params.set('workId', workIdSearch.trim());
       if (reason) params.set('reason', reason);
@@ -148,7 +186,7 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
     } finally {
       setLoading(false);
     }
-  }, [page, search, workIdSearch, reason, priority, workType, processStatus]);
+  }, [page, mode, sortBy, chatgptStaleDays, search, workIdSearch, reason, priority, workType, processStatus]);
 
   useEffect(() => {
     if (isFirstRun.current) { isFirstRun.current = false; return; }
@@ -156,13 +194,13 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
-  // フィルタ変更時は1ページ目に戻して再取得
+  // フィルタ・モード・並び替え変更時は1ページ目に戻して再取得
   useEffect(() => {
     if (isFirstRun.current) return;
     if (page !== 1) { setPage(1); return; }
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, workIdSearch, reason, priority, workType, processStatus]);
+  }, [mode, sortBy, chatgptStaleDays, search, workIdSearch, reason, priority, workType, processStatus]);
 
   function toggleSelect(item: RecheckListItem) {
     const key = rowKey(item);
@@ -176,6 +214,22 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
 
   function selectedItems(): RecheckListItem[] {
     return data.items.filter((i) => selected.has(rowKey(i)));
+  }
+
+  // 一括選択の増減ロジックは src/lib/vod-recheck-selection.ts の純粋関数を使う
+  // （ブラウザ実地確認ができない環境でもユニットテストで検証できるようにするため）。
+  const currentRowKeys = data.items.map((item) => ({ key: rowKey(item) }));
+
+  function addN(n: number) {
+    setSelected((prev) => addSelection(prev, currentRowKeys, n, MAX_BULK_ITEMS));
+  }
+
+  function removeN(n: number) {
+    setSelected((prev) => removeSelection(prev, currentRowKeys, n));
+  }
+
+  function clearSelection() {
+    setSelected(clearSelectionPure());
   }
 
   async function runAction(action: RecheckAction, items: RecheckListItem[]) {
@@ -243,6 +297,9 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
       if (!res.ok) throw new Error(json.error ?? 'プロンプト生成に失敗しました');
       setResearchPrompt(json.prompt);
       setResearchWorkCount(json.workCount);
+      // プロンプトを生成・コピーしただけでは調査済みにしない（DB書き込みなし）。
+      // ここではCSVインポート時の「結果が足りない作品」警告のためworkId一覧を覚えておくだけ。
+      setLastPromptWorkIds(Array.isArray(json.workIds) ? json.workIds : null);
     } catch (err) {
       setResearchError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -324,7 +381,12 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
       const res = await fetch('/api/admin/vod-recheck/csv-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv: csvText, commit: false }),
+        body: JSON.stringify({
+          csv: csvText,
+          commit: false,
+          mode: importMode,
+          expectedWorkIds: importMode === 'chatgpt_full_sync' && lastPromptWorkIds ? lastPromptWorkIds : undefined,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? (json.details ? json.details.join(' / ') : 'CSVの解析に失敗しました'));
@@ -347,13 +409,23 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
       const res = await fetch('/api/admin/vod-recheck/csv-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv: csvText, commit: true }),
+        body: JSON.stringify({
+          csv: csvText,
+          commit: true,
+          mode: importMode,
+          expectedWorkIds: importMode === 'chatgpt_full_sync' && lastPromptWorkIds ? lastPromptWorkIds : undefined,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'CSVの反映に失敗しました');
-      setActionMsg(`${json.updatedWorks}件のVOD情報を反映しました。同じCSVを再度反映しないようご注意ください。`);
+      const failedNote = Array.isArray(json.failedWorkIds) && json.failedWorkIds.length > 0
+        ? `（失敗: ${json.failedWorkIds.join(', ')} は調査済みにしていません）`
+        : '';
+      setActionMsg(`${json.updatedWorks}件のVOD情報を反映しました。同じCSVを再度反映しないようご注意ください。${failedNote}`);
       // 成功後は状態をリセット（同じCSVを誤って再反映することを防ぐ）
       clearFile();
+      // 「未調査」フィルター等を使用している場合、今回調査済みになった作品は次回取得時に
+      // 自動的に一覧から外れる（別データ保存等はしていない・既存のfetchDataをそのまま再利用）
       fetchData();
     } catch (err) {
       setActionMsg(err instanceof Error ? err.message : String(err));
@@ -367,6 +439,57 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
 
   return (
     <div className="space-y-4">
+      {/* モード切り替え */}
+      <div className="flex flex-wrap gap-2 items-center bg-white border border-gray-200 rounded-xl p-3">
+        <span className="text-xs font-semibold text-slate-600">表示モード:</span>
+        <div className="flex rounded-lg overflow-hidden border border-gray-300">
+          {MODE_OPTIONS.map((m) => (
+            <button
+              key={m.value}
+              type="button"
+              onClick={() => setMode(m.value)}
+              title={m.description}
+              className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
+                mode === m.value ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-gray-50'
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-gray-400">{MODE_OPTIONS.find((m) => m.value === mode)?.description}</span>
+        <span className="text-xs font-semibold text-slate-600 ml-4">並び替え:</span>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value as RecheckSortOption)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+          {SORT_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+        <span className="text-xs font-semibold text-slate-600 ml-4">ChatGPT再調査フィルター:</span>
+        <select
+          value={chatgptStaleDays}
+          onChange={(e) => setChatgptStaleDays(e.target.value ? (Number(e.target.value) as typeof CHATGPT_STALE_DAY_OPTIONS[number]) : '')}
+          title="ChatGPT完全調査からの経過日数で絞り込みます（未調査の作品は含まれません）"
+          className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+        >
+          <option value="">指定なし</option>
+          {CHATGPT_STALE_DAY_OPTIONS.map((d) => <option key={d} value={d}>{d}日以上経過</option>)}
+        </select>
+      </div>
+
+      {/* ChatGPT完全調査 進捗 */}
+      <div className="flex flex-wrap items-center gap-3 bg-white border border-gray-200 rounded-xl p-3 text-xs">
+        <span className="font-semibold text-slate-600">ChatGPT完全調査 進捗：</span>
+        <span>
+          {data.chatgptProgress.researched.toLocaleString()} / {data.chatgptProgress.total.toLocaleString()}件
+          （{data.chatgptProgress.total > 0 ? Math.round((data.chatgptProgress.researched / data.chatgptProgress.total) * 1000) / 10 : 0}%）
+        </span>
+        <div className="flex-1 min-w-[120px] max-w-xs h-2 bg-gray-100 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-indigo-500"
+            style={{ width: `${data.chatgptProgress.total > 0 ? Math.min(100, (data.chatgptProgress.researched / data.chatgptProgress.total) * 100) : 0}%` }}
+          />
+        </div>
+        <span className="text-gray-400">完全同期結果は同期後{CHATGPT_PROTECTION_DAYS}日間、TMDb/AI自動更新による対象14サービスへの追加・上書きから保護されます</span>
+      </div>
+
       {/* フィルタ */}
       <div className="flex flex-wrap gap-2 items-center bg-white border border-gray-200 rounded-xl p-3">
         <input
@@ -412,6 +535,48 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{error}</div>}
       {actionMsg && <div className="bg-blue-50 border border-blue-200 text-blue-700 text-sm rounded-lg px-3 py-2">{actionMsg}</div>}
+
+      {/* 一括選択（現在のフィルター＋並び順に対して動作） */}
+      <div className="flex flex-wrap items-center gap-2 bg-white border border-gray-200 rounded-xl p-3">
+        <span className="text-xs font-semibold text-slate-700">選択中：{selected.size}作品（最大40作品）</span>
+        <div className="flex flex-wrap gap-1">
+          {BULK_STEPS.map((n) => (
+            <button
+              key={`add-${n}`}
+              type="button"
+              onClick={() => addN(n)}
+              disabled={selected.size >= MAX_BULK_ITEMS}
+              title="現在の一覧の上から、まだ選択されていない作品を追加します"
+              className="px-2 py-1 text-[11px] font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40 transition-colors"
+            >
+              +{n}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {BULK_STEPS.map((n) => (
+            <button
+              key={`remove-${n}`}
+              type="button"
+              onClick={() => removeN(n)}
+              disabled={selected.size === 0}
+              title="現在の一覧順で後ろにある選択済み作品から解除します"
+              className="px-2 py-1 text-[11px] font-semibold rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-40 transition-colors"
+            >
+              -{n}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={clearSelection}
+          disabled={selected.size === 0}
+          className="px-2 py-1 text-[11px] font-semibold rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
+        >
+          全解除
+        </button>
+        <span className="text-[11px] text-gray-400">ChatGPTプロンプトには最大40作品まで含められます（10〜20作品程度が扱いやすい目安です）</span>
+      </div>
 
       {/* 一括操作バー */}
       <div className="flex flex-wrap items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-xl p-3">
@@ -490,7 +655,7 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
               <th className="p-2">種別</th>
               <th className="p-2">公開年</th>
               <th className="p-2">出演者数</th>
-              <th className="p-2">有効VOD</th>
+              <th className="p-2">現在のVOD</th>
               <th className="p-2">unknown</th>
               <th className="p-2">最終確認日</th>
               <th className="p-2">経過日数</th>
@@ -499,6 +664,7 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
               <th className="p-2 text-left">再確認理由</th>
               <th className="p-2">優先度</th>
               <th className="p-2">処理状態</th>
+              <th className="p-2">ChatGPT調査</th>
               <th className="p-2">リンク</th>
             </tr>
           </thead>
@@ -511,7 +677,14 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
                     <input type="checkbox" checked={selected.has(key)} onChange={() => toggleSelect(item)} />
                   </td>
                   <td className="p-2 font-mono text-[10px] max-w-[140px] truncate" title={item.workId}>{item.workId}</td>
-                  <td className="p-2 max-w-[180px] truncate" title={item.title}>{item.title}</td>
+                  <td className="p-2 max-w-[180px] truncate" title={item.title}>
+                    {item.title}
+                    {item.hasSameTitleWork && (
+                      <span className="ml-1 inline-block px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[9px] font-semibold whitespace-nowrap" title="同じタイトルの別workIdが存在します。CSVインポート時はworkId基準で処理されるため誤紐付けの心配はありませんが、ChatGPTへの調査依頼時は結果を確認してください。">
+                        同名作品あり
+                      </span>
+                    )}
+                  </td>
                   <td className="p-2 text-center whitespace-nowrap">{item.workTypeLabel}</td>
                   <td className="p-2 text-center">{item.releaseYear ?? '—'}</td>
                   <td className="p-2 text-center">{item.personCount}</td>
@@ -542,6 +715,11 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
                     </span>
                   </td>
                   <td className="p-2 text-center whitespace-nowrap">{item.processStatusLabel}</td>
+                  <td className="p-2 text-center whitespace-nowrap">
+                    {item.lastChatgptResearchAt
+                      ? <span title={`結果${item.chatgptResultCount ?? 0}件`}>{fmtDate(item.lastChatgptResearchAt)}（{item.chatgptResultCount ?? 0}件）</span>
+                      : <span className="text-gray-400">未調査</span>}
+                  </td>
                   <td className="p-2 whitespace-nowrap">
                     {item.workUrl && (
                       <Link href={item.workUrl} target="_blank" className="text-indigo-600 hover:underline mr-2">作品</Link>
@@ -552,7 +730,7 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
               );
             })}
             {data.items.length === 0 && !loading && (
-              <tr><td colSpan={15} className="p-6 text-center text-gray-400">該当する作品はありません</td></tr>
+              <tr><td colSpan={16} className="p-6 text-center text-gray-400">該当する作品はありません</td></tr>
             )}
           </tbody>
         </table>
@@ -576,12 +754,40 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
       {/* CSVインポート */}
       <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
         <h2 className="text-sm font-bold text-slate-700">調査結果CSVの取り込み</h2>
+
+        {/* インポート方式 */}
+        <div className="flex flex-wrap items-center gap-4 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+          <span className="text-xs font-semibold text-slate-600">インポート方式:</span>
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+            <input
+              type="radio"
+              checked={importMode === 'merge'}
+              onChange={() => { setImportMode('merge'); setCsvPreview(null); }}
+            />
+            追加・更新（CSVにあるサービスのみ追加・更新。ないものは削除しません）
+          </label>
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+            <input
+              type="radio"
+              checked={importMode === 'chatgpt_full_sync'}
+              onChange={() => { setImportMode('chatgpt_full_sync'); setCsvPreview(null); }}
+            />
+            ChatGPT完全同期（対象14サービスをCSVの内容で完全に置き換えます。14サービス以外は変更しません）
+          </label>
+        </div>
+
         <p className="text-xs text-gray-500">
           必須列: workId, vodService（1作品1サービス1行）。任意列: availabilityType（flatrate/rent/buy/free/unknown）, sourceUrl, confidence, note
         </p>
         <p className="text-xs text-slate-600 font-medium">
           CSVファイルを選択するか、下の入力欄へCSVを貼り付けてください
         </p>
+
+        {importMode === 'chatgpt_full_sync' && lastPromptWorkIds === null && (
+          <p className="text-xs text-gray-400">
+            （このブラウザセッション内でChatGPT調査用プロンプトを生成していないため、CSVがプロンプト対象を全てカバーしているかの照合は行われません。インポート自体は可能です）
+          </p>
+        )}
 
         {/* ファイル選択・ドラッグ＆ドロップ領域 */}
         <div
@@ -645,9 +851,14 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
             title={csvPreview?.hasFatalErrors ? '致命的エラーがあるため反映できません。CSVを修正して再プレビューしてください。' : undefined}
             className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
           >
-            反映する
+            {importMode === 'chatgpt_full_sync' ? 'この内容で完全同期' : '反映する'}
           </button>
         </div>
+        {importMode === 'chatgpt_full_sync' && csvPreview && !csvPreview.hasFatalErrors && (csvPreview.summary?.removed ?? 0) > 0 && (
+          <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            ⚠️ この操作には削除（{csvPreview.summary?.removed}件）が含まれます。「この内容で完全同期」を押すと、CSVに含まれない対象14サービスの登録は削除されます。内容を確認してから実行してください。
+          </p>
+        )}
 
         {csvPreview && (
           <div className="text-xs text-gray-600 space-y-2">
@@ -657,9 +868,35 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
                 <p className="text-red-600 mt-1">未解決のworkId（公開作品として見つかりません）: {csvPreview.unresolvedWorkIds.join(', ')}</p>
               )}
               {csvPreview.hasFatalErrors && (
-                <p className="text-red-600 mt-1 font-semibold">致命的エラーがあるため「反映する」は無効化されています。</p>
+                <p className="text-red-600 mt-1 font-semibold">
+                  致命的エラーがあるため「{importMode === 'chatgpt_full_sync' ? 'この内容で完全同期' : '反映する'}」は無効化されています。
+                </p>
+              )}
+              {csvPreview.missingFromLastPrompt && csvPreview.missingFromLastPrompt.length > 0 && (
+                <p className="text-amber-600 mt-1 font-semibold">
+                  {csvPreview.missingFromLastPrompt.length}作品分の結果がありません（直前に生成したプロンプトに含まれていましたが、このCSVには含まれていません）:
+                  {' '}{csvPreview.missingFromLastPrompt.join(', ')}
+                </p>
               )}
             </div>
+
+            {importMode === 'chatgpt_full_sync' && csvPreview.summary && (
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
+                {[
+                  { label: '対象作品', value: csvPreview.totalWorkIds, cls: 'bg-slate-50 text-slate-700' },
+                  { label: '追加', value: csvPreview.summary.added, cls: 'bg-green-50 text-green-700' },
+                  { label: '更新', value: csvPreview.summary.updated, cls: 'bg-yellow-50 text-yellow-700' },
+                  { label: '削除', value: csvPreview.summary.removed, cls: 'bg-red-50 text-red-700' },
+                  { label: '変更なし', value: csvPreview.summary.unchanged, cls: 'bg-gray-50 text-gray-600' },
+                  { label: 'VODなし', value: csvPreview.summary.zeroVod, cls: 'bg-gray-50 text-gray-500' },
+                ].map((s) => (
+                  <div key={s.label} className={`rounded-lg px-2 py-1.5 ${s.cls}`}>
+                    <div className="text-sm font-black">{s.value}</div>
+                    <div className="text-[10px]">{s.label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="overflow-x-auto border border-gray-200 rounded-lg">
               <table className="w-full text-xs">
@@ -667,15 +904,19 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
                   <tr>
                     <th className="p-2 text-left">workId</th>
                     <th className="p-2 text-left">タイトル</th>
-                    <th className="p-2 text-left">追加/更新サービス</th>
+                    {importMode === 'chatgpt_full_sync' ? (
+                      <th className="p-2 text-left">差分（追加 / 更新 / 削除 / 変更なし）</th>
+                    ) : (
+                      <th className="p-2 text-left">追加/更新サービス</th>
+                    )}
                     <th className="p-2">現在のVOD件数</th>
-                    <th className="p-2">反映後のVOD件数</th>
+                    <th className="p-2">{importMode === 'chatgpt_full_sync' ? '同期後のVOD件数' : '反映後のVOD件数'}</th>
                     <th className="p-2 text-left">注意</th>
                   </tr>
                 </thead>
                 <tbody>
                   {csvPreview.preview.map((w) => (
-                    <tr key={w.workId} className="border-t border-gray-100">
+                    <tr key={w.workId} className={`border-t border-gray-100 ${w.ambiguous ? 'bg-amber-50/50' : ''}`}>
                       <td className="p-2 font-mono max-w-[160px] truncate" title={w.workId}>
                         {w.workId}
                         {w.resolvedFrom && (
@@ -683,16 +924,29 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
                         )}
                       </td>
                       <td className="p-2 max-w-[160px] truncate" title={w.title ?? undefined}>{w.title ?? '(取得できず)'}</td>
-                      <td className="p-2">
-                        {w.services.map((s, i) => (
-                          <span key={i} className="inline-block px-1.5 py-0.5 mr-1 mb-1 rounded-full bg-slate-100 text-slate-600 whitespace-nowrap">
-                            {s.providerName}（{s.availabilityType}）
-                          </span>
-                        ))}
-                      </td>
+                      {importMode === 'chatgpt_full_sync' && w.diff ? (
+                        <td className="p-2">
+                          {w.diff.added.map((s, i) => <span key={`a${i}`} className="inline-block px-1.5 py-0.5 mr-1 mb-1 rounded-full bg-green-100 text-green-700 whitespace-nowrap">+ {s}</span>)}
+                          {w.diff.updated.map((u, i) => <span key={`u${i}`} className="inline-block px-1.5 py-0.5 mr-1 mb-1 rounded-full bg-yellow-100 text-yellow-700 whitespace-nowrap">{u.service}: {u.before}→{u.after}</span>)}
+                          {w.diff.removed.map((s, i) => <span key={`r${i}`} className="inline-block px-1.5 py-0.5 mr-1 mb-1 rounded-full bg-red-100 text-red-700 whitespace-nowrap">- {s}</span>)}
+                          {w.diff.unchanged.map((s, i) => <span key={`n${i}`} className="inline-block px-1.5 py-0.5 mr-1 mb-1 rounded-full bg-gray-100 text-gray-500 whitespace-nowrap">{s}</span>)}
+                          {w.diff.added.length + w.diff.updated.length + w.diff.removed.length + w.diff.unchanged.length === 0 && (
+                            <span className="text-gray-400">対象14サービスなし（0件）</span>
+                          )}
+                        </td>
+                      ) : (
+                        <td className="p-2">
+                          {w.services.map((s, i) => (
+                            <span key={i} className="inline-block px-1.5 py-0.5 mr-1 mb-1 rounded-full bg-slate-100 text-slate-600 whitespace-nowrap">
+                              {s.providerName}（{s.availabilityType}）
+                            </span>
+                          ))}
+                        </td>
+                      )}
                       <td className="p-2 text-center">{w.currentVodCount}</td>
                       <td className="p-2 text-center font-semibold">{w.afterVodCount}</td>
                       <td className="p-2">
+                        {w.ambiguous && <p className="text-orange-600 font-semibold">⚠️ 同名作品あり：ChatGPTが対象作品を特定できなかった可能性</p>}
                         {w.warnings.map((msg, i) => <p key={i} className="text-amber-600">{msg}</p>)}
                         {w.errors.map((msg, i) => <p key={i} className="text-red-600">{msg}</p>)}
                       </td>
