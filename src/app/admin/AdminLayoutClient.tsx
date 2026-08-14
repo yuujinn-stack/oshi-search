@@ -3,7 +3,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 
-const NAV_ITEMS = [
+export const NAV_ITEMS = [
   { href: '/admin/people/import',              label: '人物登録' },
   { href: '/admin/people-progress',            label: '進捗管理' },
   { href: '/admin/work-check',                 label: '作品管理' },
@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { href: '/admin/rakuten-search',             label: '楽天検索' },
   { href: '/admin/groups',                     label: 'グループ管理' },
   { href: '/admin/providers',                  label: '配信サービス' },
+  { href: '/admin/vod-recheck',                label: 'VOD再確認' },
   { href: '/admin/people-membership-import',   label: '所属CSV' },
   { href: '/admin/work-import',                label: '作品CSV' },
   { href: '/admin/import-history',             label: 'インポート履歴' },
@@ -20,7 +21,6 @@ const NAV_ITEMS = [
   { href: '/admin/analytics',                  label: '📊 アナリティクス' },
   { href: '/admin/redis-backup',               label: '💾 バックアップ' },
   { href: '/admin/db-init',                    label: '🗄️ DBスキーマ初期化' },
-  { href: '/admin/vod-recheck',                label: '📺 VOD再確認' },
 ] as const;
 
 export function isNavItemActive(pathname: string, href: string): boolean {
