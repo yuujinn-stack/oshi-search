@@ -7,6 +7,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, upsertManualCsvVodProviders } from '@/lib/work-store';
 import { saveImportHistory } from '@/lib/import-history';
 import { normalizeProviderName } from '@/lib/vod-dedup';
+import { normalizeVodMatchTitle, resolveVodMatch, type VodMatchCandidate } from '@/lib/vod-work-match';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 
 export const dynamic = 'force-dynamic';
@@ -58,14 +59,6 @@ const TYPE_MAP: Record<string, VodProviderType> = {
 };
 
 // ── ユーティリティ ───────────────────────────────────────────────────────────
-
-function normalizeTitle(t: string): string {
-  return t
-    .toLowerCase()
-    .replace(/[\s　]+/g, '')
-    .replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-    .replace(/[「」『』【】〈〉《》（）()[\]、。・～〜~]/g, '');
-}
 
 function lookupService(name: string): { id: number; logoPath?: string } {
   const key = Object.keys(SERVICE_LOOKUP).find(
@@ -124,7 +117,7 @@ export interface VodTitlePreviewRow {
   personName: string;
   matchedWorkId: string;
   matchedWorkTitle: string;
-  action: 'add' | 'update' | 'unmatched' | 'error';
+  action: 'add' | 'update' | 'unmatched' | 'ambiguous' | 'error';
   reason: string;
 }
 
@@ -184,7 +177,7 @@ export async function POST(req: NextRequest) {
         for (const work of works) {
           const candidates = [work.title, work.originalTitle].filter(Boolean) as string[];
           for (const t of candidates) {
-            const key = normalizeTitle(t);
+            const key = normalizeVodMatchTitle(t);
             if (!key) continue;
             const list = titleIndex.get(key) ?? [];
             // 重複エントリを防ぐ（同タイトル・同人物）
@@ -202,6 +195,7 @@ export async function POST(req: NextRequest) {
   const previewRows: VodTitlePreviewRow[] = [];
   let matchedTitleCount = 0;
   let unmatchedTitleCount = 0;
+  let ambiguousTitleCount = 0;
   let addCount = 0;
   let errorCount = 0;
 
@@ -230,7 +224,7 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const matches = titleIndex.get(normalizeTitle(workTitle)) ?? [];
+    const matches = titleIndex.get(normalizeVodMatchTitle(workTitle)) ?? [];
 
     if (matches.length === 0) {
       previewRows.push({
@@ -240,6 +234,31 @@ export async function POST(req: NextRequest) {
         reason: 'TMDb取得済み作品と一致する作品が見つかりません（先にデータ取得を実行してください）',
       });
       unmatchedTitleCount++;
+      continue;
+    }
+
+    // workTitleだけの照合のため、同名だが実際には異なる作品(workId)が複数
+    // ヒットする危険がある（例:「アクトレス」）。ヒットした実workIdが1種類だけの
+    // 場合のみ「同一作品」と確定する（同一workIdへの複数人物行は曖昧ではない）。
+    // 2種類以上のworkIdが残る場合は同名別作品の可能性として自動登録しない。
+    const matchCandidates: VodMatchCandidate[] = matches.map((m) => ({
+      personName: m.personName,
+      workId: m.workId,
+      title: m.title,
+    }));
+    const matchOutcome = resolveVodMatch(matchCandidates);
+
+    if (matchOutcome.status === 'ambiguous') {
+      const candidateSummary = [...new Map(matches.map((m) => [m.workId, m])).values()]
+        .map((m) => `${m.workId}（${m.personName}ほか「${m.title}」）`)
+        .join(', ');
+      previewRows.push({
+        rowNum: i + 1, workTitle, vodService, availabilityType, confidence, sourceUrl, note,
+        personName: '', matchedWorkId: '', matchedWorkTitle: '',
+        action: 'ambiguous',
+        reason: `同名タイトルが異なる複数の作品(workId)にまたがっており一意に決定できません（同名別作品の可能性）。候補: ${candidateSummary}。work-vod-importでpersonName・releaseYearを指定して個別に登録してください。`,
+      });
+      ambiguousTitleCount++;
       continue;
     }
 
@@ -293,6 +312,7 @@ export async function POST(req: NextRequest) {
       previewRows,
       matchedTitleCount,
       unmatchedTitleCount,
+      ambiguousTitleCount,
       addCount,
       errorCount,
     });

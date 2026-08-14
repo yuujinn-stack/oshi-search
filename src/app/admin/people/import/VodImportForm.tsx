@@ -12,12 +12,14 @@ const ACTION_BADGE: Record<VodTitlePreviewRow['action'], string> = {
   add:       'bg-green-100 text-green-700',
   update:    'bg-yellow-100 text-yellow-700',
   unmatched: 'bg-gray-100 text-gray-500',
+  ambiguous: 'bg-amber-100 text-amber-700',
   error:     'bg-red-100 text-red-700',
 };
 const ACTION_LABEL: Record<VodTitlePreviewRow['action'], string> = {
   add:       '追加',
   update:    '更新',
   unmatched: '未照合',
+  ambiguous: '候補複数（要確認）',
   error:     'エラー',
 };
 
@@ -25,6 +27,7 @@ interface PreviewSummary {
   previewRows: VodTitlePreviewRow[];
   matchedTitleCount: number;
   unmatchedTitleCount: number;
+  ambiguousTitleCount: number;
   addCount: number;
   errorCount: number;
 }
@@ -202,6 +205,11 @@ export default function VodImportForm() {
               未照合 {preview.unmatchedTitleCount}件
             </span>
           )}
+          {preview.ambiguousTitleCount > 0 && (
+            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+              候補複数（要確認） {preview.ambiguousTitleCount}件
+            </span>
+          )}
           {preview.errorCount > 0 && (
             <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">
               エラー {preview.errorCount}件
@@ -223,6 +231,14 @@ export default function VodImportForm() {
           <div className="px-5 py-2 bg-amber-50 border-b border-amber-100 text-xs text-amber-700">
             <strong>未照合タイトル {uniqueUnmatched.length}件</strong>: 先にデータ取得（TMDb）を実行してください。
             <span className="ml-2 text-amber-600">{uniqueUnmatched.slice(0, 5).join('、')}{uniqueUnmatched.length > 5 ? '…' : ''}</span>
+          </div>
+        )}
+
+        {/* 候補複数（同名別作品の可能性）の注意 */}
+        {preview.ambiguousTitleCount > 0 && (
+          <div className="px-5 py-2 bg-amber-50 border-b border-amber-100 text-xs text-amber-700">
+            <strong>候補複数のため未登録 {preview.ambiguousTitleCount}件</strong>: 同じタイトルで異なる作品(workId)が複数ヒットし、
+            同名別作品の可能性があるため自動登録していません。「配信情報CSV（人物指定）」でpersonName・releaseYearを指定して個別に登録してください。
           </div>
         )}
 
@@ -380,7 +396,9 @@ export default function VodImportForm() {
         <div className="px-4 pb-4 text-xs text-gray-500 space-y-2">
           <p className="font-semibold text-gray-700">照合の仕組み</p>
           <p>workTitle を TMDb 取得済み全作品のタイトル（日本語 / 原題）と照合します。</p>
-          <p>同一タイトルが複数人物の作品一覧に存在する場合、全員に適用されます。</p>
+          <p>同一タイトル・同一作品(workId)に複数人物が出演している場合は全員に適用されます。</p>
+          <p>ただし、同一タイトルでも実際には異なる作品(workId)が複数ヒットした場合（同名別作品の可能性）は、
+            同名別作品への誤登録を防ぐため自動登録せず「候補複数（要確認）」として報告のみ行います。</p>
           <p className="font-semibold text-gray-700 mt-3">availabilityType の値</p>
           <ul className="ml-2 space-y-0.5">
             <li><code className="bg-gray-100 px-1 rounded">flatrate</code> — 見放題（デフォルト）</li>

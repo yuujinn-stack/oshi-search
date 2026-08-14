@@ -14,6 +14,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, saveWorkIfAbsent, upsertManualCsvVodProviders } from '@/lib/work-store';
 import { saveImportHistory } from '@/lib/import-history';
 import { normalizeProviderName } from '@/lib/vod-dedup';
+import { matchWorksByTitle, resolveVodMatch, normalizeVodMatchTitle } from '@/lib/vod-work-match';
 import type { WorkRecord } from '@/types/work';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 
@@ -67,14 +68,6 @@ const TYPE_MAP: Record<string, VodProviderType> = {
 
 // ── ユーティリティ ───────────────────────────────────────────────────────────
 
-function normalizeTitle(t: string): string {
-  return t
-    .toLowerCase()
-    .replace(/[\s　]+/g, '')
-    .replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
-    .replace(/[「」『』【】〈〉《》（）()[\]、。・～〜~]/g, '');
-}
-
 function lookupService(name: string): { id: number; logoPath?: string } {
   const key = Object.keys(SERVICE_LOOKUP).find((k) => k.toLowerCase() === name.toLowerCase());
   if (!key) {
@@ -122,7 +115,7 @@ function parseCSV(content: string): string[][] {
 
 // ── 型定義 ──────────────────────────────────────────────────────────────────
 
-export type WorkVodRowAction = 'add_vod' | 'create_work' | 'unknown_person' | 'error';
+export type WorkVodRowAction = 'add_vod' | 'create_work' | 'ambiguous' | 'unknown_person' | 'error';
 
 export interface WorkVodPreviewRow {
   rowNum: number;
@@ -211,6 +204,7 @@ export async function POST(req: NextRequest) {
 
   let addVodCount = 0;
   let createWorkCount = 0;
+  let ambiguousCount = 0;
   let unknownPersonCount = 0;
   let errorCount = 0;
 
@@ -258,15 +252,7 @@ export async function POST(req: NextRequest) {
       worksCache.set(personName, await getAllWorks(personName));
     }
     const allWorks = worksCache.get(personName)!;
-    const normQuery = normalizeTitle(workTitle);
-
-    const candidates = allWorks.filter((w) => {
-      if (normalizeTitle(w.title) !== normQuery &&
-          (!w.originalTitle || normalizeTitle(w.originalTitle) !== normQuery)) return false;
-      if (w.type !== workType) return false;
-      if (releaseYear && w.releaseYear && w.releaseYear !== releaseYear) return false;
-      return true;
-    });
+    const candidates = matchWorksByTitle(allWorks, { workTitle, workType, releaseYear });
 
     const svc  = lookupService(vodService);
     const type = TYPE_MAP[availType.toLowerCase()] ?? 'flatrate';
@@ -290,9 +276,30 @@ export async function POST(req: NextRequest) {
       updatedAt:    Date.now(),
     };
 
-    if (candidates.length > 0) {
+    const matchOutcome = resolveVodMatch(
+      candidates.map((w) => ({ personName, workId: w.id, title: w.title, workType: w.type, releaseYear: w.releaseYear })),
+    );
+
+    if (matchOutcome.status === 'ambiguous') {
+      // ③-c 候補が複数の異なる作品(workId)にまたがり一意に決定できない
+      // → 同名別作品の誤紐付けを避けるため自動登録しない（要手動確認）
+      const candidateSummary = candidates
+        .map((w) => `${w.id}(${w.type}/${w.releaseYear ?? '年不明'})`)
+        .join(', ');
+      previewRows.push({
+        rowNum, personName, workTitle, workType, releaseYear, roleName,
+        vodService, availabilityType: availType, confidence, sourceUrl, note,
+        action: 'ambiguous',
+        reason: `タイトル一致する作品が複数存在し一意に決定できません（同名別作品の可能性）。候補: ${candidateSummary}。releaseYearを指定して再実行してください。`,
+        isNewWork: false,
+      });
+      ambiguousCount++;
+      continue;
+    }
+
+    if (matchOutcome.status === 'matched') {
       // ③-a 既存作品に配信情報追加
-      const matched = candidates[0];
+      const matched = candidates.find((w) => w.id === matchOutcome.workId)!;
       const key = `${personName}\x00${matched.id}`;
 
       previewRows.push({
@@ -313,7 +320,7 @@ export async function POST(req: NextRequest) {
 
     } else {
       // ③-b 新規作品を作成して配信情報を追加
-      const normTitle  = normalizeTitle(workTitle);
+      const normTitle  = normalizeVodMatchTitle(workTitle);
       const newWorkId  = manualWorkId(personName, normTitle, workType);
       const key        = `${personName}\x00${newWorkId}`;
 
@@ -359,6 +366,7 @@ export async function POST(req: NextRequest) {
       previewRows,
       addVodCount,
       createWorkCount,
+      ambiguousCount,
       unknownPersonCount,
       errorCount,
     });
