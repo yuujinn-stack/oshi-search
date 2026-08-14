@@ -763,3 +763,52 @@ describe('Amazon Video 表示名統一', () => {
     expect(info.displayName).toContain('Prime Video内');
   });
 });
+
+// 本番データで発見された不整合（tmdb-tv-228620「アクトレス」の作品詳細ページで
+// providerName="Disney+ (ディズニープラス)"が生値のまま表示されていた）の再発防止テスト。
+// DB生値のバリエーションが、公開画面用の正式表記へ正しく統一されることを検証する。
+describe('getVodProviderDisplayInfo（対象14サービスの表記統一・実際にプロジェクト内に存在するalias）', () => {
+  it('Disney+ (ディズニープラス) → Disney+', () => {
+    expect(getVodProviderDisplayInfo('Disney+ (ディズニープラス)').displayName).toBe('Disney+');
+  });
+
+  it('Disney Plus → Disney+', () => {
+    expect(getVodProviderDisplayInfo('Disney Plus').displayName).toBe('Disney+');
+  });
+
+  it('Amazon Prime Video → Prime Video', () => {
+    expect(getVodProviderDisplayInfo('Amazon Prime Video').displayName).toBe('Prime Video');
+  });
+
+  it('DMM TV → DMM TV（生値のまま正式表記と一致）', () => {
+    expect(getVodProviderDisplayInfo('DMM TV').displayName).toBe('DMM TV');
+  });
+
+  it('U-NEXT → U-NEXT', () => {
+    expect(getVodProviderDisplayInfo('U-NEXT').displayName).toBe('U-NEXT');
+  });
+
+  it('Netflix Standard with Ads → Netflix', () => {
+    expect(getVodProviderDisplayInfo('Netflix Standard with Ads').displayName).toBe('Netflix');
+  });
+
+  it('Leminoプレミアム → Lemino', () => {
+    expect(getVodProviderDisplayInfo('Leminoプレミアム').displayName).toBe('Lemino');
+  });
+
+  it('AbemaTV → ABEMA', () => {
+    expect(getVodProviderDisplayInfo('AbemaTV').displayName).toBe('ABEMA');
+  });
+
+  it('NHKオンデマンド → NHKオンデマンド（生値のまま正式表記と一致）', () => {
+    expect(getVodProviderDisplayInfo('NHKオンデマンド').displayName).toBe('NHKオンデマンド');
+  });
+
+  it('のぎ動画 → のぎ動画（生値のまま正式表記と一致）', () => {
+    expect(getVodProviderDisplayInfo('のぎ動画').displayName).toBe('のぎ動画');
+  });
+
+  it('対象14サービス以外（例: dTV）は影響を受けない（従来どおり生値のまま）', () => {
+    expect(getVodProviderDisplayInfo('dTV').displayName).toBe('dTV');
+  });
+});

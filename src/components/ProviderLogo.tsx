@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { normalizeProviderName } from '@/lib/vod-dedup';
+import { normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
 
 const TMDB_LOGO_BASE = 'https://image.tmdb.org/t/p/w92';
 
@@ -126,6 +126,23 @@ function getLocalSlug(providerName: string): string | undefined {
   return PROVIDER_SLUG[resolveServiceKey(providerName)];
 }
 
+// ─── ローカルロゴ画像（/public/providers/）の実在確認 ─────────────────────────
+// /public/providers/ には現時点で実ファイルが1件も置かれていない（.gitkeepのみ）。
+// このため PROVIDER_SLUG に定義があっても実際には全て404になっていた
+// （例: providerName="Disney+" → /providers/disney-plus.png への404リクエスト）。
+// 実ファイルが存在するslugだけをここに列挙し、それ以外はローカル画像を
+// 一切リクエストせずSVGフォールバックへ直接進む。実ファイルを追加した場合のみ
+// このSetへ追記すること（新しいロゴ画像を勝手に取得・追加してはいけない）。
+const AVAILABLE_LOCAL_LOGO_SLUGS = new Set<string>([]);
+
+// providerNameからローカルロゴのURLを解決する（存在しない場合はnull）。
+// 純粋関数として分離し、単体テスト可能にしている。
+export function getLocalLogoUrl(providerName: string): string | null {
+  const slug = getLocalSlug(providerName);
+  if (!slug || !AVAILABLE_LOCAL_LOGO_SLUGS.has(slug)) return null;
+  return `/providers/${slug}.png`;
+}
+
 // ─── サイズ定義 ────────────────────────────────────────────────────────────────
 type Size = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 const SIZE_CLASS: Record<Size, string> = {
@@ -163,12 +180,15 @@ export default function ProviderLogo({
   size = 'md',
   className = '',
 }: Props) {
-  const localSlug = getLocalSlug(providerName);
+  const localLogoUrl = getLocalLogoUrl(providerName);
+  // alt属性はスクリーンリーダー・画像読み込み失敗時に露出するため、DB生値ではなく
+  // 正式表示名を使う（ロゴ画像自体の解決にはproviderNameの生値を引き続き使用する）。
+  const altText = getVodProviderDisplayInfo(providerName).displayName;
 
   // 初期状態: 登録ロゴ取得中は tmdb/local/fallback で先行表示
   const [imgState, setImgState] = useState<ImgState>(() => {
     if (logoPath) return 'tmdb';
-    if (localSlug) return 'local';
+    if (localLogoUrl) return 'local';
     return 'fallback';
   });
 
@@ -196,13 +216,13 @@ export default function ProviderLogo({
       registeredFailed.current = true;
       if (logoPath) {
         setImgState('tmdb');
-      } else if (localSlug) {
+      } else if (localLogoUrl) {
         setImgState('local');
       } else {
         setImgState('fallback');
       }
     } else if (imgState === 'tmdb') {
-      setImgState(localSlug ? 'local' : 'fallback');
+      setImgState(localLogoUrl ? 'local' : 'fallback');
     } else {
       setImgState('fallback');
     }
@@ -211,7 +231,7 @@ export default function ProviderLogo({
   const imgSrc =
     imgState === 'registered' ? registeredUrl :
     imgState === 'tmdb'       ? `${TMDB_LOGO_BASE}${logoPath}` :
-    imgState === 'local'      ? `/providers/${localSlug}.png` :
+    imgState === 'local'      ? localLogoUrl :
     null;
 
   return (
@@ -222,7 +242,7 @@ export default function ProviderLogo({
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={imgSrc}
-          alt={providerName}
+          alt={altText}
           onError={handleError}
           className="w-full h-full object-contain"
         />

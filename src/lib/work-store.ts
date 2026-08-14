@@ -2,9 +2,9 @@
 
 import { db } from '@/db/client';
 import { works as worksTable } from '@/db/schema';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { upsertWork } from '@/db/write';
-import { normalizeProviderName } from '@/lib/vod-dedup';
+import { normalizeProviderName, deduplicateProviders } from '@/lib/vod-dedup';
 import type { WorkRecord, WorkStatus } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 
@@ -442,13 +442,32 @@ export async function getWorksForImport(
 // 同一workIdに複数人物がある場合は最初の行を代表として返す。
 export async function getPublicWorkById(workId: string): Promise<WorkRecord | null> {
   try {
+    // 同一workIdに複数人物（複数行）が紐づく場合、各行のvod_dataは人物ごとに
+    // 独立して調査・更新される。ある人物の行だけ最近「unknown（確認できず）」で
+    // 再チェックされ、別の人物の行には以前AI Web検索で見つかった確認済み
+    // provider（例: Disney+）が残っている、というケースが実際に存在する
+    // （tmdb-tv-228620「アクトレス」で確認）。
+    // 単純に1行だけ選ぶ（先頭行 or 最新更新行）と、たまたま選ばれなかった行に
+    // ある確認済みproviderが作品詳細から消えてしまう。
+    // vod-page.ts（/vod/[provider]一覧）は「いずれかの行にそのproviderの確認済み
+    // 情報があれば対象に含める」という条件のため、作品詳細もこれに揃えるべく、
+    // 全行のvodProvidersを合算し、既存のdeduplicateProviders()で1本化する。
     const rows = await db.select().from(worksTable)
       .where(and(
         eq(worksTable.id, workId),
         eq(worksTable.status, 'auto_published'),
         eq(worksTable.deleted, false),
-      ));
-    return rows.length > 0 ? dbRowToWorkRecord(rows[0]) : null;
+      ))
+      .orderBy(sql`(${worksTable.vodData}->>'vodUpdatedAt')::bigint DESC NULLS LAST`);
+    if (rows.length === 0) return null;
+
+    const base = dbRowToWorkRecord(rows[0]);
+    if (rows.length === 1) return base;
+
+    const mergedProviders = deduplicateProviders(
+      rows.flatMap((r) => dbRowToWorkRecord(r).vodProviders ?? []),
+    );
+    return { ...base, vodProviders: mergedProviders };
   } catch (err) {
     console.error('[db] getPublicWorkById failed:', String(err));
     return null;

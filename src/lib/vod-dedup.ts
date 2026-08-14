@@ -1,4 +1,5 @@
 import type { VodProvider } from '@/types/vod';
+import { VOD_PROVIDER_DISPLAY_NAMES } from '@/lib/vod-provider-names';
 
 // ソース優先順位（数値が小さいほど高優先度）
 // 同じサービス名が複数ソースにある場合、この順序で1件を残す
@@ -223,10 +224,11 @@ export type VodProviderDisplayInfo = {
 
 // 正規化スラグ → 統一表示名（公開画面での表示に使用）
 // DB・providerName は変更しない。表示層のみで変換する。
+// 対象14サービス分はvod-provider-names.ts（Single Source of Truth）を優先して使う。
+// ここには、14サービスの対象外だが表示名統一が必要な独立スラグのみを残す。
 // 'amazonvideo' は独立スラグを維持（rentエントリと flatrate エントリは別扱い）し、
 // 表示名のみ "Prime Video" に統一する。
 const SLUG_DISPLAY_NAME: Record<string, string> = {
-  'primevideo':  'Prime Video',
   'amazonvideo': 'Prime Video',
 };
 
@@ -309,7 +311,7 @@ function extractChannelName(providerName: string): string {
 export function getVodProviderDisplayInfo(providerName: string): VodProviderDisplayInfo {
   if (!isPrimeVideoChannel(providerName)) {
     const slug = normalizeProviderName(providerName);
-    const displayName = SLUG_DISPLAY_NAME[slug] ?? providerName;
+    const displayName = VOD_PROVIDER_DISPLAY_NAMES[slug] ?? SLUG_DISPLAY_NAME[slug] ?? providerName;
     return {
       displayName,
       shortName: displayName,

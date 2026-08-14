@@ -12,7 +12,16 @@ import {
   parseVodPageParam,
   isVodPageOutOfRange,
   getVodProviderWorkCounts,
+  getWorksForVodProvider,
 } from '../vod-page';
+
+// db.execute()に渡された引数（drizzleのsqlタグ付きテンプレート）をJSON文字列化し、
+// 中に特定の文字列（providerName等）が含まれるかを検証するためのヘルパー。
+// provider絞り込み用のARRAY[...]::text[]がJS配列をそのまま埋め込まず、
+// 対象providerの生名のみを含んでいることを確認する（provider isolationの検証用）。
+function sqlArgContains(sqlArg: unknown, needle: string): boolean {
+  return JSON.stringify(sqlArg).includes(JSON.stringify(needle).slice(1, -1));
+}
 
 describe('getVodPageProviderConfig（対象14サービスのslug/displayName変換）', () => {
   const expected: { urlSlug: string; displayName: string; normalizedSlug: string }[] = [
@@ -187,5 +196,82 @@ describe('getVodProviderWorkCounts（トップページ・sitemap用の一括件
     for (const p of VOD_PAGE_PROVIDERS) {
       expect(counts.get(p.normalizedSlug)).toBe(0);
     }
+  });
+});
+
+// 本番データで発見された不整合（tmdb-tv-228620「アクトレス」がDisney+ページに
+// 表示される一方、作品詳細ページ側にDisney+が表示されない）の再発防止テスト。
+// 根本原因はgetPublicWorkById側（work-store-public-work.test.ts参照）だったが、
+// ここではvod-page.ts側の「provider絞り込みが正しく分離されているか」
+// （Lemino限定の作品がDisney+ページのSQL絞り込み対象に混入しないか）を検証する。
+describe('provider isolation（getWorksForVodProviderのSQL絞り込み）', () => {
+  beforeEach(() => { mockExecute.mockReset(); });
+
+  it('Disney+を問い合わせた際、SQLのANY(...)絞り込みにLeminoの生名が含まれない', async () => {
+    mockExecute
+      // Stage 1: distinct providerName一覧（LeminoとDisney+の両方が存在）
+      .mockResolvedValueOnce({ rows: [{ provider_name: 'Lemino' }, { provider_name: 'Disney+' }] })
+      // Stage 2: count
+      .mockResolvedValueOnce({ rows: [{ cnt: '0' }] });
+
+    await getWorksForVodProvider('disneyplus', 1);
+
+    // Stage 2（count）に渡されたSQL引数を検証
+    const countCallArg = mockExecute.mock.calls[1][0];
+    expect(sqlArgContains(countCallArg, 'Disney+')).toBe(true);
+    expect(sqlArgContains(countCallArg, 'Lemino')).toBe(false);
+  });
+
+  it('Leminoを問い合わせた際、SQLのANY(...)絞り込みにDisney+の生名が含まれない', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ provider_name: 'Lemino' }, { provider_name: 'Disney+' }] })
+      .mockResolvedValueOnce({ rows: [{ cnt: '0' }] });
+
+    await getWorksForVodProvider('lemino', 1);
+
+    const countCallArg = mockExecute.mock.calls[1][0];
+    expect(sqlArgContains(countCallArg, 'Lemino')).toBe(true);
+    expect(sqlArgContains(countCallArg, 'Disney+')).toBe(false);
+  });
+
+  it('Hulu・Netflixの両方を含む作品は、Hulu問い合わせ・Netflix問い合わせの両方でSQL絞り込み対象になる', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ provider_name: 'Hulu' }, { provider_name: 'Netflix' }, { provider_name: 'Disney+' }] })
+      .mockResolvedValueOnce({ rows: [{ cnt: '0' }] });
+    await getWorksForVodProvider('hulu', 1);
+    let countCallArg = mockExecute.mock.calls[1][0];
+    expect(sqlArgContains(countCallArg, 'Hulu')).toBe(true);
+    expect(sqlArgContains(countCallArg, 'Netflix')).toBe(false);
+    expect(sqlArgContains(countCallArg, 'Disney+')).toBe(false);
+
+    mockExecute.mockReset();
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ provider_name: 'Hulu' }, { provider_name: 'Netflix' }, { provider_name: 'Disney+' }] })
+      .mockResolvedValueOnce({ rows: [{ cnt: '0' }] });
+    await getWorksForVodProvider('netflix', 1);
+    countCallArg = mockExecute.mock.calls[1][0];
+    expect(sqlArgContains(countCallArg, 'Netflix')).toBe(true);
+    expect(sqlArgContains(countCallArg, 'Hulu')).toBe(false);
+  });
+});
+
+describe('count consistency（totalCountとworks件数の整合）', () => {
+  beforeEach(() => { mockExecute.mockReset(); });
+
+  it('1ページに収まる件数の場合、totalCountと実際に返るworks件数が一致する', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ provider_name: 'Hulu' }] }) // distinct
+      .mockResolvedValueOnce({ rows: [{ cnt: '2' }] }) // count
+      .mockResolvedValueOnce({
+        rows: [
+          { id: 'work-1', title: 'タイトル1', release_year: 2020, type: 'movie', poster_url: null, manual_image_url: null, og_image_url: null, ai_data: {}, vod_updated_at_ms: '1000', availability_type: 'flatrate' },
+          { id: 'work-2', title: 'タイトル2', release_year: 2021, type: 'movie', poster_url: null, manual_image_url: null, og_image_url: null, ai_data: {}, vod_updated_at_ms: '2000', availability_type: 'flatrate' },
+        ],
+      }) // list
+      .mockResolvedValueOnce({ rows: [] }); // cast
+
+    const result = await getWorksForVodProvider('hulu', 1);
+    expect(result.totalCount).toBe(2);
+    expect(result.works).toHaveLength(2);
   });
 });
