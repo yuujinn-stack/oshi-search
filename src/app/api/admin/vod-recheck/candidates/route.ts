@@ -37,6 +37,7 @@ export async function GET(req: NextRequest) {
   const modeParam = searchParams.get('mode');
   const sortByParam = searchParams.get('sortBy');
   const chatgptStaleDaysParam = searchParams.get('chatgptStaleDays');
+  const offsetParam = searchParams.get('offset');
 
   if (modeParam && !VALID_MODES.includes(modeParam)) {
     return NextResponse.json({ error: `不正な mode です: ${modeParam}` }, { status: 400 });
@@ -60,6 +61,14 @@ export async function GET(req: NextRequest) {
   if (processStatusParam && !VALID_PROCESS_STATUSES.includes(processStatusParam)) {
     return NextResponse.json({ error: `不正な processStatus です: ${processStatusParam}` }, { status: 400 });
   }
+  let offset: number | undefined;
+  if (offsetParam !== null) {
+    const parsed = Number(offsetParam);
+    if (!Number.isFinite(parsed) || parsed < 0 || !Number.isInteger(parsed)) {
+      return NextResponse.json({ error: `不正な offset です: ${offsetParam}` }, { status: 400 });
+    }
+    offset = parsed;
+  }
 
   try {
     const result = await fetchRecheckListPage({
@@ -74,6 +83,7 @@ export async function GET(req: NextRequest) {
       mode: (modeParam as RecheckListMode | null) ?? undefined,
       sortBy: (sortByParam as RecheckSortOption | null) ?? undefined,
       chatgptStaleDays: chatgptStaleDays as 30 | 60 | 90 | 180 | undefined,
+      offset,
     });
     return NextResponse.json(result);
   } catch (err) {

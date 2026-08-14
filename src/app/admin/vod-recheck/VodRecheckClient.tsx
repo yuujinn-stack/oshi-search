@@ -10,7 +10,7 @@ import type { ChatgptSyncDiff } from '@/lib/vod-chatgpt-sync';
 import type { VodStaleStatus } from '@/lib/vod-stale';
 import { parseCSV } from '@/lib/csv-parse';
 import { validateCsvFile, formatFileSize } from '@/lib/csv-file-validation';
-import { addSelection, removeSelection, clearSelection as clearSelectionPure } from '@/lib/vod-recheck-selection';
+import { addSelection, removeSelection, computeNextBatch } from '@/lib/vod-recheck-selection';
 import { CHATGPT_PROTECTION_DAYS } from '@/lib/vod-chatgpt-sync';
 import ChatGptPromptResultPanel from '@/components/admin/ChatGptPromptResultPanel';
 
@@ -138,7 +138,12 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
   const [processStatus, setProcessStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // 選択状態はkeyだけでなく作品オブジェクト本体を保持する（Map）。
+  // 「次のN件」で選択される作品は現在テーブルに表示中のページ外（data.items外）にも
+  // なりうるため、Set<string>だけでは選択後にCSV出力・プロンプト生成等が対象作品の
+  // 詳細情報を参照できなくなる。Map.has()/Map.sizeはSetと同じAPIのため、
+  // 表示側（selected.size・selected.has(key)）のコードは変更不要。
+  const [selected, setSelected] = useState<Map<string, RecheckListItem>>(new Map());
   const [note, setNote] = useState('');
   const [actionMsg, setActionMsg] = useState('');
   const [researchPrompt, setResearchPrompt] = useState<string | null>(null);
@@ -148,6 +153,11 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
   // 直前に生成したChatGPT調査プロンプトの対象workId（同一セッション内のみ保持。
   // ブラウザ再読み込み等で失われてもCSVインポート自体は引き続き可能）
   const [lastPromptWorkIds, setLastPromptWorkIds] = useState<string[] | null>(null);
+  // 「次のN件」バッチ選択のカーソル位置（現在のフィルター＋並び順の中で、
+  // 直前までにバッチとして扱った作品数）。フィルター・並び順変更時に0へリセットする。
+  const [batchCursor, setBatchCursor] = useState(0);
+  const [nextBatchBusy, setNextBatchBusy] = useState(false);
+  const [nextBatchMessage, setNextBatchMessage] = useState('');
   const [importMode, setImportMode] = useState<VodRecheckCsvImportMode>('chatgpt_full_sync');
   const [csvText, setCsvText] = useState('');
   const [csvPreview, setCsvPreview] = useState<CsvPreviewResponse | null>(null);
@@ -194,9 +204,13 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
-  // フィルタ・モード・並び替え変更時は1ページ目に戻して再取得
+  // フィルタ・モード・並び替え変更時は1ページ目に戻して再取得し、
+  // 「次のN件」バッチカーソルも先頭へリセットする（新しい絞り込み結果の先頭から
+  // 選択し直せるようにするため。ケース7）。
   useEffect(() => {
     if (isFirstRun.current) return;
+    setBatchCursor(0);
+    setNextBatchMessage('');
     if (page !== 1) { setPage(1); return; }
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -205,31 +219,112 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
   function toggleSelect(item: RecheckListItem) {
     const key = rowKey(item);
     setSelected((prev) => {
-      const next = new Set(prev);
+      const next = new Map(prev);
       if (next.has(key)) next.delete(key);
-      else if (next.size < MAX_BULK_ITEMS) next.add(key);
+      else if (next.size < MAX_BULK_ITEMS) next.set(key, item);
       return next;
     });
   }
 
   function selectedItems(): RecheckListItem[] {
-    return data.items.filter((i) => selected.has(rowKey(i)));
+    return [...selected.values()];
   }
 
-  // 一括選択の増減ロジックは src/lib/vod-recheck-selection.ts の純粋関数を使う
-  // （ブラウザ実地確認ができない環境でもユニットテストで検証できるようにするため）。
+  // 一括選択の増減ロジックは src/lib/vod-recheck-selection.ts の純粋関数（Set<string>ベース）を
+  // 使う（ブラウザ実地確認ができない環境でもユニットテストで検証できるようにするため）。
+  // selected自体はMap<string, RecheckListItem>のため、鍵集合だけを取り出して既存の
+  // 純粋関数へ渡し、結果の鍵集合をもとにMapへ反映し直す。
   const currentRowKeys = data.items.map((item) => ({ key: rowKey(item) }));
 
   function addN(n: number) {
-    setSelected((prev) => addSelection(prev, currentRowKeys, n, MAX_BULK_ITEMS));
+    setSelected((prev) => {
+      const prevKeys = new Set(prev.keys());
+      const nextKeys = addSelection(prevKeys, currentRowKeys, n, MAX_BULK_ITEMS);
+      const next = new Map(prev);
+      for (const item of data.items) {
+        const key = rowKey(item);
+        if (nextKeys.has(key) && !next.has(key)) next.set(key, item);
+      }
+      return next;
+    });
   }
 
   function removeN(n: number) {
-    setSelected((prev) => removeSelection(prev, currentRowKeys, n));
+    setSelected((prev) => {
+      const prevKeys = new Set(prev.keys());
+      const nextKeys = removeSelection(prevKeys, currentRowKeys, n);
+      const next = new Map(prev);
+      for (const key of prev.keys()) {
+        if (!nextKeys.has(key)) next.delete(key);
+      }
+      return next;
+    });
   }
 
   function clearSelection() {
-    setSelected(clearSelectionPure());
+    setSelected(new Map());
+  }
+
+  // ── 「次のN件」バッチ選択 ────────────────────────────────────────────────
+  // 現在のフィルター＋並び順に対して、直前までに「バッチ」として扱った位置（batchCursor）
+  // より後ろからN件を選び、選択を追加ではなく置き換える。同じ作品へ毎回戻らないよう、
+  // カーソルは常に前進のみ（フィルター変更時のみ0へリセットする）。
+  //
+  // 1回のfetchでMAX_BULK_ITEMS（40）件分先読みし、そのうち先頭N件だけをバッチとして
+  // 選択・カーソル前進に使う。残り（N+1件目〜40件目）はdata.itemsとしてテーブルにも
+  // 表示し、直後に+Nを押した場合に「そのバッチへさらに追加」できるようにする
+  // （+N自体はdata.itemsの中から未選択分を追加する既存ロジックのまま）。
+  function buildFilterParams(): URLSearchParams {
+    const params = new URLSearchParams();
+    params.set('mode', mode);
+    params.set('sortBy', sortBy);
+    if (chatgptStaleDays) params.set('chatgptStaleDays', String(chatgptStaleDays));
+    if (search.trim()) params.set('search', search.trim());
+    if (workIdSearch.trim()) params.set('workId', workIdSearch.trim());
+    if (reason) params.set('reason', reason);
+    if (priority) params.set('priority', priority);
+    if (workType) params.set('workType', workType);
+    if (processStatus) params.set('processStatus', processStatus);
+    return params;
+  }
+
+  async function nextBatch(n: number) {
+    if (nextBatchBusy) return;
+    setNextBatchBusy(true);
+    setNextBatchMessage('');
+    try {
+      const params = buildFilterParams();
+      params.set('offset', String(batchCursor));
+      params.set('pageSize', String(MAX_BULK_ITEMS));
+      const res = await fetch(`/api/admin/vod-recheck/candidates?${params.toString()}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? '取得に失敗しました');
+      const fetched: RecheckListItem[] = json.items ?? [];
+      const result = computeNextBatch(fetched, n);
+      if (result.isEnd) {
+        setNextBatchMessage('次の作品はありません（一覧の末尾に到達しました）');
+        return;
+      }
+      const next = new Map<string, RecheckListItem>();
+      for (const item of result.batchItems) next.set(rowKey(item), item);
+      setSelected(next);
+      setBatchCursor((c) => c + result.advancedBy);
+      // テーブル表示もこのバッチ位置の一覧へ更新する（+Nでの追加対象と一致させるため）。
+      // 通常のページネーション状態（page）はここでは変更しない。
+      setData(json);
+      if (result.isPartial) {
+        setNextBatchMessage(`残り${result.batchItems.length}件のみ選択しました（一覧の末尾に到達）`);
+      }
+    } catch (err) {
+      setNextBatchMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setNextBatchBusy(false);
+    }
+  }
+
+  function resetBatchCursor() {
+    setBatchCursor(0);
+    setNextBatchMessage('');
   }
 
   async function runAction(action: RecheckAction, items: RecheckListItem[]) {
@@ -248,7 +343,7 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? '操作に失敗しました');
       setActionMsg(`${json.processed}件を更新しました${json.failed > 0 ? `（失敗${json.failed}件）` : ''}`);
-      setSelected(new Set());
+      setSelected(new Map());
       setNote('');
       fetchData();
     } catch (err) {
@@ -576,6 +671,38 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
           全解除
         </button>
         <span className="text-[11px] text-gray-400">ChatGPTプロンプトには最大40作品まで含められます（10〜20作品程度が扱いやすい目安です）</span>
+      </div>
+
+      {/* 次のN件（バッチ入れ替え・現在の選択を置き換えて未処理分へ進む） */}
+      <div className="flex flex-wrap items-center gap-2 bg-white border border-gray-200 rounded-xl p-3">
+        <span className="text-xs font-semibold text-slate-700">
+          次のバッチへ進む：<span className="text-gray-400 font-normal">（{batchCursor}件目まで処理済み）</span>
+        </span>
+        <div className="flex flex-wrap gap-1">
+          {BULK_STEPS.map((n) => (
+            <button
+              key={`next-${n}`}
+              type="button"
+              onClick={() => nextBatch(n)}
+              disabled={nextBatchBusy}
+              title="現在の選択を解除し、直前のバッチより後ろの未処理分からN件を新たに選択します（追加ではなく置き換え）"
+              className="px-2 py-1 text-[11px] font-semibold rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 disabled:opacity-40 transition-colors"
+            >
+              次の{n}件
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={resetBatchCursor}
+          disabled={nextBatchBusy || batchCursor === 0}
+          title="バッチ位置を先頭へ戻します（選択自体は解除されません）"
+          className="px-2 py-1 text-[11px] font-semibold rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-40 transition-colors"
+        >
+          先頭から
+        </button>
+        {nextBatchBusy && <span className="text-[11px] text-gray-400">取得中...</span>}
+        {nextBatchMessage && <span className="text-[11px] text-amber-600">{nextBatchMessage}</span>}
       </div>
 
       {/* 一括操作バー */}

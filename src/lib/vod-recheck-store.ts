@@ -62,6 +62,12 @@ export interface RecheckListParams {
   sortBy?: RecheckSortOption;
   /** ChatGPT完全調査からの経過日数フィルター（30/60/90/180日）。未調査の作品は対象外（既存の「未調査」表示で扱う） */
   chatgptStaleDays?: 30 | 60 | 90 | 180;
+  /**
+   * 「次のN件」バッチ選択用: page/pageSizeから計算されるoffsetの代わりに、任意のoffsetを
+   * 直接指定する（1件単位のバッチカーソル移動に対応するため。page*pageSize単位に丸めない）。
+   * 指定時は pageSize を「取得件数（LIMIT）」として扱う。
+   */
+  offset?: number;
 }
 
 export const CHATGPT_STALE_DAY_OPTIONS = [30, 60, 90, 180] as const;
@@ -273,7 +279,9 @@ interface QueryResult {
 export async function getRecheckCandidates(params: RecheckListParams): Promise<QueryResult> {
   const page = clampPage(params.page);
   const pageSize = clampPageSize(params.pageSize);
-  const offset = (page - 1) * pageSize;
+  // 「次のN件」バッチ選択: offsetが明示指定された場合はpage計算を無視し、そのまま使う
+  // （page*pageSize単位に丸めると、Nを毎回変えた場合にカーソル位置がずれるため）。
+  const offset = params.offset !== undefined ? Math.max(0, Math.floor(params.offset)) : (page - 1) * pageSize;
   const search = (params.search ?? '').trim();
   const workIdSearch = (params.workId ?? '').trim();
   const workType = (params.workType ?? '').trim();

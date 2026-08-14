@@ -34,3 +34,36 @@ export function removeSelection(current: ReadonlySet<string>, items: ReadonlyArr
 export function clearSelection(): Set<string> {
   return new Set();
 }
+
+// ── 「次のN件」バッチ選択（追加ではなく置き換え） ───────────────────────────────
+// 実際の運用フロー: 最初の25件を調査 → 次の25件を調査 → さらに次の25件…と、
+// 現在のフィルター・並び順に対して、直前までに扱った位置（カーソル）より後ろから
+// N件を選び直したい。同じ作品へ毎回戻らないよう、呼び出し側は
+// 「カーソル位置からN件（余裕を持たせるならMAX_BULK_SELECT件）を取得したうえで
+// この関数へ渡す」→「返ってきたbatchItemsで選択を置き換える」→
+// 「advancedByの分だけカーソルを前進させる」という手順を踏む。
+//
+// この関数自体はfetch結果を受け取るだけの純粋関数（DBアクセス・カーソル状態は持たない）。
+export interface NextBatchResult<T> {
+  /** 今回のバッチとして選択すべき項目（先頭からn件、末尾に近い場合はそれ未満） */
+  batchItems: T[];
+  /** カーソルを前進させるべき件数（= batchItems.length） */
+  advancedBy: number;
+  /** fetchedItemsが0件だった場合true（一覧の末尾に到達し、これ以上進めない） */
+  isEnd: boolean;
+  /** batchItemsがn件に満たない場合true（このバッチで末尾に到達した） */
+  isPartial: boolean;
+}
+
+export function computeNextBatch<T>(fetchedItems: readonly T[], n: number): NextBatchResult<T> {
+  if (fetchedItems.length === 0) {
+    return { batchItems: [], advancedBy: 0, isEnd: true, isPartial: false };
+  }
+  const batchItems = fetchedItems.slice(0, n);
+  return {
+    batchItems,
+    advancedBy: batchItems.length,
+    isEnd: false,
+    isPartial: batchItems.length < n,
+  };
+}

@@ -358,6 +358,32 @@ describe('chatgptStaleDays（30/60/90/180日フィルター）', () => {
   });
 });
 
+describe('offset（「次のN件」バッチ選択用の直接オフセット指定）', () => {
+  it('offset指定時はpage/pageSizeから計算されるOFFSETではなく、指定値がそのままLIMIT/OFFSETに使われる', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 25, offset: 75 });
+    // page=1のpage-basedなら本来offset=0になるはずだが、offset指定によりOFFSET=75になる
+    expect(anyCallIncludesValue(75)).toBe(true);
+    expect(anyCallIncludesValue(25)).toBe(true); // pageSizeはLIMITとしてそのまま使われる
+  });
+
+  it('offset未指定時は従来通り (page-1)*pageSize で計算される', async () => {
+    await getRecheckCandidates({ page: 3, pageSize: 20 });
+    // (3-1)*20 = 40
+    expect(anyCallIncludesValue(40)).toBe(true);
+  });
+
+  it('offset=0は明示的に0として扱われる（先頭から取得）', async () => {
+    await getRecheckCandidates({ page: 5, pageSize: 20, offset: 0 });
+    // page=5なら本来(5-1)*20=80になるところ、offset=0が優先される
+    expect(anyCallIncludesValue(0)).toBe(true);
+  });
+
+  it('負のoffsetは0に矯正される', async () => {
+    await getRecheckCandidates({ page: 1, pageSize: 20, offset: -5 });
+    expect(anyCallIncludesValue(0)).toBe(true);
+  });
+});
+
 describe('getChatgptResearchProgress（進捗表示用）', () => {
   it('total/researchedを返す', async () => {
     mockState.setResponder((text) => {

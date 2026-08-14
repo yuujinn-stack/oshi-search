@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addSelection, removeSelection, clearSelection, MAX_BULK_SELECT } from '../vod-recheck-selection';
+import { addSelection, removeSelection, clearSelection, computeNextBatch, MAX_BULK_SELECT } from '../vod-recheck-selection';
 
 function items(n: number) {
   return Array.from({ length: n }, (_, i) => ({ key: `w-${i + 1}` }));
@@ -90,5 +90,68 @@ describe('addSelection → removeSelection の往復動作', () => {
     const added = addSelection(new Set(), list, 20);
     const removed = removeSelection(added, list, 20);
     expect(removed.size).toBe(0);
+  });
+});
+
+describe('computeNextBatch（「次のN件」バッチ入れ替え）', () => {
+  // 呼び出し側（VodRecheckClient）は「カーソル位置からoffsetでAPI取得した結果」を
+  // fetchedItemsとして渡す想定。この関数自体はoffset計算やAPI呼び出しを行わない。
+
+  it('ケース1相当: 通常のバッチ取得（25件要求・25件取得）は全件が対象になる', () => {
+    const fetched = Array.from({ length: 40 }, (_, i) => `w-${i + 1}`); // 40件先読み
+    const result = computeNextBatch(fetched, 25);
+    expect(result.batchItems).toEqual(fetched.slice(0, 25));
+    expect(result.advancedBy).toBe(25);
+    expect(result.isEnd).toBe(false);
+    expect(result.isPartial).toBe(false);
+  });
+
+  it('ケース2〜4相当: カーソルを進めながら3回連続で呼んでも重複しない（A〜E → F〜J → K〜O）', () => {
+    const all = Array.from({ length: 100 }, (_, i) => String.fromCharCode(65 + (i % 26)) + i); // 一意な100件
+    let cursor = 0;
+    const batches: string[][] = [];
+    for (let i = 0; i < 3; i++) {
+      const fetched = all.slice(cursor, cursor + 40); // 呼び出し側が40件先読みで取得した想定
+      const result = computeNextBatch(fetched, 25);
+      batches.push(result.batchItems);
+      cursor += result.advancedBy;
+    }
+    expect(batches[0]).toEqual(all.slice(0, 25));
+    expect(batches[1]).toEqual(all.slice(25, 50));
+    expect(batches[2]).toEqual(all.slice(50, 75));
+    // 重複がないことも確認
+    const flat = batches.flat();
+    expect(new Set(flat).size).toBe(flat.length);
+  });
+
+  it('ケース5相当: 残り10件しかない状態で「次の25件」→10件だけ選択される', () => {
+    const remaining = Array.from({ length: 10 }, (_, i) => `w-${i + 1}`);
+    const result = computeNextBatch(remaining, 25);
+    expect(result.batchItems.length).toBe(10);
+    expect(result.advancedBy).toBe(10);
+    expect(result.isPartial).toBe(true);
+    expect(result.isEnd).toBe(false);
+  });
+
+  it('ケース6相当: 一覧末尾（fetchedItemsが0件）では isEnd=true になり、先頭へ戻らない', () => {
+    const result = computeNextBatch([], 25);
+    expect(result.isEnd).toBe(true);
+    expect(result.batchItems).toEqual([]);
+    expect(result.advancedBy).toBe(0);
+  });
+
+  it('ケース9相当: nが40以下である限りbatchItemsは常に40件以下（上限を超えない）', () => {
+    const fetched = Array.from({ length: 40 }, (_, i) => `w-${i + 1}`);
+    for (const n of [5, 10, 15, 20, 25, 30, 35, 40] as const) {
+      const result = computeNextBatch(fetched, n);
+      expect(result.batchItems.length).toBeLessThanOrEqual(40);
+      expect(result.batchItems.length).toBeLessThanOrEqual(n);
+    }
+  });
+
+  it('ちょうどn件しか取得できなかった場合はisPartial=falseになる（末尾ぴったり）', () => {
+    const result = computeNextBatch(Array.from({ length: 25 }, (_, i) => i), 25);
+    expect(result.isPartial).toBe(false);
+    expect(result.advancedBy).toBe(25);
   });
 });
