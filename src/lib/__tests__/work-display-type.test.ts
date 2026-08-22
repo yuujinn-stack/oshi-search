@@ -54,7 +54,7 @@ describe('getDisplayWorkType / getDisplayWorkTypeTrace — 優先順位', () => 
     // stage(③) が movie(⑧) より先に確定してしまっていた。
     const w1 = work({ type: 'movie', title: '劇場版 名探偵ミステリー' });
     expect(getDisplayWorkType(w1)).toBe('movie');
-    expect(getDisplayWorkTypeTrace(w1).rule).toBe('movie');
+    expect(getDisplayWorkTypeTrace(w1).rule).toBe('movie_marker');
 
     const w2 = work({ type: 'anime', title: '○○ THE MOVIE 劇場版' });
     expect(getDisplayWorkType(w2)).toBe('movie');
@@ -63,6 +63,32 @@ describe('getDisplayWorkType / getDisplayWorkTypeTrace — 優先順位', () => 
   it('「劇場版」を含んでいても、他の舞台キーワードが別に含まれていれば stage と判定される', () => {
     const w = work({ type: 'movie', title: '劇場版と同時上演の舞台◯◯ミュージカル' });
     expect(getDisplayWorkType(w)).toBe('stage');
+  });
+
+  it('回帰テスト（TYPE_MAPPING_BUG）: 「ゴッドタン キス我慢選手権 THE MOVIE」は variety ではなく movie と判定される', () => {
+    // 監査でCONFIRMED_WRONGと確定した実例。修正前はVARIETY_KEYWORDSの「ゴッドタン」が
+    // movie_marker(THE MOVIE)より先に一致し、variety と誤判定されていた。
+    const w = work({ type: 'movie', title: 'ゴッドタン キス我慢選手権 THE MOVIE' });
+    expect(getDisplayWorkType(w)).toBe('movie');
+    expect(getDisplayWorkTypeTrace(w).rule).toBe('movie_marker');
+  });
+
+  it('movie_markerはtype=movieの場合のみ発動し、type=tvの番組タイトルには影響しない', () => {
+    // 「ゴッドタン」のレギュラー放送回（type=tv）はこれまで通り variety のまま。
+    const w = work({ type: 'tv', title: 'ゴッドタン 深夜の巨匠会議' });
+    expect(getDisplayWorkType(w)).toBe('variety');
+    expect(getDisplayWorkTypeTrace(w).rule).toBe('variety');
+  });
+
+  it('movie_markerより具体的なカテゴリ（idol_show・music・drama）が別に一致する場合はそちらが優先される', () => {
+    const idol = work({ type: 'movie', title: '乃木坂工事中 THE MOVIE' });
+    expect(getDisplayWorkTypeTrace(idol).rule).toBe('idol_show');
+
+    const music = work({ type: 'movie', title: 'MUSIC STATION THE MOVIE' });
+    expect(getDisplayWorkTypeTrace(music).rule).toBe('music');
+
+    const drama = work({ type: 'movie', title: '火曜ドラマ THE MOVIE' });
+    expect(getDisplayWorkTypeTrace(drama).rule).toBe('drama');
   });
 
   it('アイドル番組はバラエティ・音楽番組キーワードより優先される', () => {

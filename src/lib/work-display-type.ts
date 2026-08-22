@@ -6,13 +6,14 @@
  *
  * 重要: DB・Redis の作品データは変更しない。あくまで表示用の分類。
  *
- * 判定優先順位:
+ * 判定優先順位（実体は DISPLAY_TYPE_RULES 配列。この一覧はその説明用コピー）:
  *   1. ライブ・コンサート (live)
  *   2. ドキュメンタリー    (documentary)
  *   3. 舞台・ミュージカル  (stage)
  *   4. アイドル番組        (idol_show)
  *   5. 音楽番組            (music)
  *   6. ドラマ              (drama)
+ *   6.5 劇場公開マーカー   (movie_marker: workType='movie'かつ「劇場版」「THE MOVIE」を含む場合のみ)
  *   7. バラエティ          (variety)
  *   8. 映画                (movie)
  *   9. 配信番組・Web       (web)
@@ -239,21 +240,38 @@ const ANIME_VOICE_KEYWORDS = [
 interface DisplayTypeRule {
   /** 監査・デバッグ用のルール名（getDisplayWorkTypeTrace の戻り値にのみ使用） */
   name: string;
-  match: (title: string, overview: string) => boolean;
+  match: (type: WorkRecord['type'], title: string, overview: string) => boolean;
   result: DisplayWorkType;
 }
 
+// 「劇場版」「THE MOVIE」は、TV番組発のスピンオフ映画等に頻出する明確な劇場公開
+// マーカー。workType が既に 'movie'（TMDb等で映画と確認済み）の場合に限り、
+// 他カテゴリのキーワード（例: VARIETYの番組名キーワード）より優先してmovieと
+// 判定する。type==='movie'を条件にすることで、tv番組のタイトルに同じ文字列が
+// たまたま含まれていても誤反応しない（監査で確認したCONFIRMED_WRONG事例:
+// 「ゴッドタン キス我慢選手権 THE MOVIE」がVARIETYの「ゴッドタン」に先に一致していた）。
+const MOVIE_MARKER_PATTERNS = ['劇場版', 'THE MOVIE'] as const;
+function hasMovieMarker(title: string): boolean {
+  return MOVIE_MARKER_PATTERNS.some((p) => title.includes(p));
+}
+
+// movie_marker は、より具体的な舞台・アイドル番組・音楽番組・ドラマの
+// キーワードに一致する場合はそちらを優先させたいため、drama(⑥)の直後・
+// variety(⑦)の直前に配置する（VARIETYの「ゴッドタン」等の番組名キーワードに
+// 先に一致してしまう問題だけを狙って修正し、より具体的な他カテゴリの判定は
+// 変更しない）。
 const DISPLAY_TYPE_RULES: readonly DisplayTypeRule[] = [
-  { name: 'live',         match: (title) => matchesAny(title, LIVE_KEYWORDS), result: 'live' },
-  { name: 'documentary',  match: (title, overview) => matchesAny(title, DOCUMENTARY_TITLE_KEYWORDS) || matchesAny(overview, DOCUMENTARY_OVERVIEW_KEYWORDS), result: 'documentary' },
-  { name: 'stage',        match: (title) => matchesStageKeywords(title), result: 'stage' },
-  { name: 'idol_show',    match: (title) => matchesAny(title, IDOL_SHOW_KEYWORDS), result: 'idol_show' },
-  { name: 'music',        match: (title) => matchesAny(title, MUSIC_KEYWORDS), result: 'music' },
-  { name: 'drama',        match: (title) => matchesAny(title, DRAMA_KEYWORDS), result: 'drama' },
-  { name: 'variety',      match: (title) => matchesAny(title, VARIETY_KEYWORDS), result: 'variety' },
-  { name: 'movie',        match: (title) => matchesAny(title, MOVIE_KEYWORDS), result: 'movie' },
-  { name: 'web',          match: (title) => matchesAny(title, WEB_KEYWORDS), result: 'web' },
-  { name: 'anime_voice',  match: (title) => matchesAny(title, ANIME_VOICE_KEYWORDS), result: 'anime_voice' },
+  { name: 'live',         match: (_t, title) => matchesAny(title, LIVE_KEYWORDS), result: 'live' },
+  { name: 'documentary',  match: (_t, title, overview) => matchesAny(title, DOCUMENTARY_TITLE_KEYWORDS) || matchesAny(overview, DOCUMENTARY_OVERVIEW_KEYWORDS), result: 'documentary' },
+  { name: 'stage',        match: (_t, title) => matchesStageKeywords(title), result: 'stage' },
+  { name: 'idol_show',    match: (_t, title) => matchesAny(title, IDOL_SHOW_KEYWORDS), result: 'idol_show' },
+  { name: 'music',        match: (_t, title) => matchesAny(title, MUSIC_KEYWORDS), result: 'music' },
+  { name: 'drama',        match: (_t, title) => matchesAny(title, DRAMA_KEYWORDS), result: 'drama' },
+  { name: 'movie_marker', match: (type, title) => type === 'movie' && hasMovieMarker(title), result: 'movie' },
+  { name: 'variety',      match: (_t, title) => matchesAny(title, VARIETY_KEYWORDS), result: 'variety' },
+  { name: 'movie',        match: (_t, title) => matchesAny(title, MOVIE_KEYWORDS), result: 'movie' },
+  { name: 'web',          match: (_t, title) => matchesAny(title, WEB_KEYWORDS), result: 'web' },
+  { name: 'anime_voice',  match: (_t, title) => matchesAny(title, ANIME_VOICE_KEYWORDS), result: 'anime_voice' },
 ];
 
 // 上記のどのキーワードにも一致しなかった場合の、DB の workType からの推定値。
@@ -286,7 +304,7 @@ export function getDisplayWorkTypeTrace(work: WorkRecord): DisplayWorkTypeTrace 
   const overview = work.overview ?? '';
 
   for (const rule of DISPLAY_TYPE_RULES) {
-    if (rule.match(title, overview)) return { result: rule.result, rule: rule.name };
+    if (rule.match(work.type, title, overview)) return { result: rule.result, rule: rule.name };
   }
 
   // フォールバック: DB の workType から推定（未知の workType は 'other' へ）
