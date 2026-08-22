@@ -110,8 +110,10 @@ function findForbiddenPath(entryFile: string): string[] | null {
   return walk(entryFile, []);
 }
 
-const allAdminTsxFiles = findTsxFilesRecursive(resolve(SRC, 'app/admin'));
-const clientFiles = allAdminTsxFiles.filter((f) => {
+// 元々 app/admin 配下のみを対象にしていたが、公開ページ（/vod/[provider] 等）への
+// 追加変更でも同種の事故が起きないよう、app配下全体（公開ページ含む）を対象にする。
+const allAppTsxFiles = findTsxFilesRecursive(resolve(SRC, 'app'));
+const clientFiles = allAppTsxFiles.filter((f) => {
   const head = readFileSync(f, 'utf-8').slice(0, 200);
   return /^\s*['"]use client['"]/.test(head);
 });

@@ -11,6 +11,7 @@ import {
   isVodPageOutOfRange,
 } from '@/lib/vod-page';
 import { getAllPersonsMerged } from '@/lib/persons';
+import { getVodPageEditorial } from '@/lib/vod-page-editorial';
 import VodWorkCard from '@/components/VodWorkCard';
 import VodTopPersonCard from '@/components/VodTopPersonCard';
 
@@ -54,6 +55,9 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
   const { provider } = await params;
   const config = getVodPageProviderConfig(provider);
   if (!config) notFound();
+
+  // Hulu / DMM TV / Disney+ の3ページのみ追加コンテンツを表示する（他11サービスはnullのまま）。
+  const editorial = getVodPageEditorial(config.urlSlug);
 
   const { page: pageParam } = await searchParams;
   const page = parseVodPageParam(pageParam);
@@ -133,6 +137,51 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
           好きな俳優・アイドル・アーティストの出演作品を探したいときにご活用ください。
         </p>
       </section>
+
+      {/* Hulu / DMM TV / Disney+ 限定: このサイトならではの活用法・情報の透明性・FAQ */}
+      {editorial && (
+        <>
+          <section className="mb-10">
+            <h2 className="text-base font-bold mb-2" style={{ color: 'var(--ds-text)' }}>
+              {editorial.uniqueValueHeading}
+            </h2>
+            <p className="text-sm leading-relaxed" style={{ color: 'var(--ds-muted)' }}>
+              {editorial.uniqueValueBody}
+            </p>
+          </section>
+
+          <section className="mb-10 rounded-xl px-4 py-4" style={{ background: 'var(--ds-surface)', border: '1px solid var(--ds-border)' }}>
+            <h2 className="text-base font-bold mb-2" style={{ color: 'var(--ds-text)' }}>
+              配信情報について
+            </h2>
+            <ul className="text-xs leading-relaxed list-disc pl-4 space-y-1" style={{ color: 'var(--ds-muted)' }}>
+              <li>掲載しているのは日本国内向けの配信情報です。</li>
+              <li>推しサーチが現在確認できている範囲の情報を掲載しています。</li>
+              <li>各作品カードに、その配信情報を確認した日付を表示しています。</li>
+              <li>配信状況はサービス側の都合により変更・終了されることがあります。</li>
+              <li>実際に視聴する際は、最終的な視聴可否・料金等を{config.displayName}の公式サービスでご確認ください。</li>
+            </ul>
+          </section>
+
+          <section className="mb-10">
+            <h2 className="text-base font-bold mb-3" style={{ color: 'var(--ds-text)' }}>
+              よくある質問
+            </h2>
+            <div className="space-y-2">
+              {editorial.faq.map((item) => (
+                <details key={item.question} className="rounded-xl px-4 py-3" style={{ background: 'var(--ds-surface)', border: '1px solid var(--ds-border)' }}>
+                  <summary className="text-sm font-semibold cursor-pointer" style={{ color: 'var(--ds-text)' }}>
+                    {item.question}
+                  </summary>
+                  <p className="text-xs leading-relaxed mt-2" style={{ color: 'var(--ds-muted)' }}>
+                    {item.answer}
+                  </p>
+                </details>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
 
       {/* 人物から探す */}
       {topPersons.length > 0 && (

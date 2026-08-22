@@ -101,6 +101,15 @@ function matchesAny(text: string, keywords: readonly string[]): boolean {
   return keywords.some((kw) => text.includes(kw));
 }
 
+// STAGE_KEYWORDS の「劇場」は劇場“会場”（帝国劇場・梅田芸術劇場等）を指す想定だが、
+// 「劇場版」は映画の公開形態を示す一般的な用語（例:「○○ 劇場版」）で舞台とは無関係。
+// 「劇場」は「劇場版」の部分文字列としても一致してしまうため、stage 判定の際だけ
+// 「劇場版」という並びを取り除いてから STAGE_KEYWORDS と照合する
+// （TYPE_MAPPING_BUG: 修正前は「劇場版」を含むタイトルが誤って stage と判定されていた）。
+function matchesStageKeywords(title: string): boolean {
+  return matchesAny(title.replaceAll('劇場版', ''), STAGE_KEYWORDS);
+}
+
 // ── ① ライブ・コンサート ────────────────────────────────────────────────────
 // THEATER MILANO-Za はライブ会場のためライブ優先（STAGE の THEATER より先に判定）
 const LIVE_KEYWORDS = [
@@ -161,6 +170,8 @@ const IDOL_SHOW_KEYWORDS = [
   // ＝LOVE系
   'イコノイジョイ', 'イコラブ', 'ノイミー', 'ニアジョイ',
   '＝LOVE', '≠ME', '≒JOY',
+  // 監査で確認済み: DB保存済みoverviewに「ドキュメントバラエティ番組」と明記
+  '乃木坂、逃避行。',
 ] as const;
 
 // ── ⑤ 音楽番組 ──────────────────────────────────────────────────────────────
@@ -191,6 +202,12 @@ const VARIETY_KEYWORDS = [
   'ネプリーグ', '突破ファイル', '世界まる見え',
   '上田と女が吠える夜', 'めちゃイケ', 'ぐるナイ',
   'しゃべくり', '有吉ぃぃeeeee',
+  // 監査で確認済み: DB保存済みoverviewにジャンルが明記されているもの
+  //（沸騰ワード10=「バラエティ番組」、有吉の壁=お笑い企画番組、
+  // 　オードぜひ=「深夜バラエティ番組」、ヒロミのおせっ買い=「ロケバラエティ番組」、
+  // 　春日ロケーション=「旅番組」、テレビギャング=バラエティ番組MC陣による企画番組）
+  '沸騰ワード10', '有吉の壁', '会ってほしい人がいるんです',
+  'ヒロミのおせっ買い', '春日ロケーション', 'テレビギャング',
 ] as const;
 
 // ── ⑧ 映画キーワード ────────────────────────────────────────────────────────
@@ -202,6 +219,8 @@ const MOVIE_KEYWORDS = [
 // 配信ドラマ/ライブ/アイドル番組は先の判定で catch 済み
 const WEB_KEYWORDS = [
   'のぎ動画', 'ひな図書', 'ひなこい', 'SHOWROOM',
+  // 監査で確認済み: DB保存済みoverviewに「のぎ動画」発の解説コンテンツと明記
+  '久保チャンネル',
   'ABEMAオリジナル', 'Leminoオリジナル',
   'YouTubeオリジナル', 'YouTubePremium',
 ] as const;
@@ -212,56 +231,75 @@ const ANIME_VOICE_KEYWORDS = [
 ] as const;
 
 // ── メイン関数 ───────────────────────────────────────────────────────────────
+//
+// 判定優先順位（ファイル冒頭のコメントと同一の唯一の定義。優先順位を変更する
+// 場合はこの配列だけを編集すればよく、コメントとロジックが別々に乖離すること
+// を防ぐ）。getDisplayWorkType() と getDisplayWorkTypeTrace() は同じ配列を
+// 参照するため、判定ロジックが複数箇所へ重複することはない。
+interface DisplayTypeRule {
+  /** 監査・デバッグ用のルール名（getDisplayWorkTypeTrace の戻り値にのみ使用） */
+  name: string;
+  match: (title: string, overview: string) => boolean;
+  result: DisplayWorkType;
+}
+
+const DISPLAY_TYPE_RULES: readonly DisplayTypeRule[] = [
+  { name: 'live',         match: (title) => matchesAny(title, LIVE_KEYWORDS), result: 'live' },
+  { name: 'documentary',  match: (title, overview) => matchesAny(title, DOCUMENTARY_TITLE_KEYWORDS) || matchesAny(overview, DOCUMENTARY_OVERVIEW_KEYWORDS), result: 'documentary' },
+  { name: 'stage',        match: (title) => matchesStageKeywords(title), result: 'stage' },
+  { name: 'idol_show',    match: (title) => matchesAny(title, IDOL_SHOW_KEYWORDS), result: 'idol_show' },
+  { name: 'music',        match: (title) => matchesAny(title, MUSIC_KEYWORDS), result: 'music' },
+  { name: 'drama',        match: (title) => matchesAny(title, DRAMA_KEYWORDS), result: 'drama' },
+  { name: 'variety',      match: (title) => matchesAny(title, VARIETY_KEYWORDS), result: 'variety' },
+  { name: 'movie',        match: (title) => matchesAny(title, MOVIE_KEYWORDS), result: 'movie' },
+  { name: 'web',          match: (title) => matchesAny(title, WEB_KEYWORDS), result: 'web' },
+  { name: 'anime_voice',  match: (title) => matchesAny(title, ANIME_VOICE_KEYWORDS), result: 'anime_voice' },
+];
+
+// 上記のどのキーワードにも一致しなかった場合の、DB の workType からの推定値。
+// 未知の workType（DB不整合等）は意図的にここへ含めず、危険なカテゴリへ
+// 自動変換しない安全な 'other' へ落ちる（getDisplayWorkTypeTrace 参照）。
+const TYPE_FALLBACK: Partial<Record<WorkRecord['type'], DisplayWorkType>> = {
+  tv:      'drama',   // tv の残りはドラマが最多
+  movie:   'movie',
+  variety: 'variety',
+  anime:   'anime_voice',
+};
+
+export interface DisplayWorkTypeTrace {
+  result: DisplayWorkType;
+  /** 'manual_override' | キーワードルール名 | 'type_fallback:<workType>' | 'other_fallback' */
+  rule: string;
+}
+
+/**
+ * 作品の表示用分類を、判定根拠（rule）付きで返す。
+ * DB の workType は変更しない。タイトル文字列で判定する表示専用の値。
+ * 監査・デバッグ用途で「キーワード一致による確定的な分類」と「workType からの
+ * 推測フォールバック」を区別したい場合はこちらを使う。
+ */
+export function getDisplayWorkTypeTrace(work: WorkRecord): DisplayWorkTypeTrace {
+  // ① 保存済み明示カテゴリを最優先（CSVインポートで設定した値）
+  if (work.workDisplayType) return { result: work.workDisplayType, rule: 'manual_override' };
+
+  const title    = work.title    ?? '';
+  const overview = work.overview ?? '';
+
+  for (const rule of DISPLAY_TYPE_RULES) {
+    if (rule.match(title, overview)) return { result: rule.result, rule: rule.name };
+  }
+
+  // フォールバック: DB の workType から推定（未知の workType は 'other' へ）
+  const fallback = TYPE_FALLBACK[work.type];
+  if (fallback) return { result: fallback, rule: `type_fallback:${work.type}` };
+
+  return { result: 'other', rule: 'other_fallback' };
+}
 
 /**
  * 作品の表示用分類を返す。
  * DB の workType は変更しない。タイトル文字列で判定する表示専用の値。
  */
 export function getDisplayWorkType(work: WorkRecord): DisplayWorkType {
-  // ① 保存済み明示カテゴリを最優先（CSVインポートで設定した値）
-  if (work.workDisplayType) return work.workDisplayType;
-
-  const title    = work.title    ?? '';
-  const overview = work.overview ?? '';
-
-  // ② ライブ・コンサート（キーワード自動判定の最優先）
-  if (matchesAny(title, LIVE_KEYWORDS)) return 'live';
-
-  // ② ドキュメンタリー（タイトル + overview も参照）
-  if (
-    matchesAny(title, DOCUMENTARY_TITLE_KEYWORDS) ||
-    matchesAny(overview, DOCUMENTARY_OVERVIEW_KEYWORDS)
-  ) return 'documentary';
-
-  // ③ 舞台・ミュージカル
-  if (matchesAny(title, STAGE_KEYWORDS)) return 'stage';
-
-  // ④ アイドル番組（バラエティ・音楽番組より優先）
-  if (matchesAny(title, IDOL_SHOW_KEYWORDS)) return 'idol_show';
-
-  // ⑤ 音楽番組
-  if (matchesAny(title, MUSIC_KEYWORDS)) return 'music';
-
-  // ⑥ ドラマ（キーワード or DB type=tv のフォールバック）
-  if (matchesAny(title, DRAMA_KEYWORDS)) return 'drama';
-
-  // ⑦ バラエティ（キーワード or DB type=variety のフォールバック）
-  if (matchesAny(title, VARIETY_KEYWORDS)) return 'variety';
-
-  // ⑧ 映画（キーワード or DB type=movie のフォールバック）
-  if (matchesAny(title, MOVIE_KEYWORDS)) return 'movie';
-
-  // ⑨ 配信番組・Web
-  if (matchesAny(title, WEB_KEYWORDS)) return 'web';
-
-  // ⑩ アニメ・声優（キーワード or DB type=anime のフォールバック）
-  if (matchesAny(title, ANIME_VOICE_KEYWORDS)) return 'anime_voice';
-
-  // フォールバック: DB の workType から推定
-  if (work.type === 'tv')      return 'drama';       // tv の残りはドラマが最多
-  if (work.type === 'movie')   return 'movie';
-  if (work.type === 'variety') return 'variety';
-  if (work.type === 'anime')   return 'anime_voice';
-
-  return 'other';
+  return getDisplayWorkTypeTrace(work).result;
 }
