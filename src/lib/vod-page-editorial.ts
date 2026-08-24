@@ -23,6 +23,12 @@ export interface VodPageEditorial {
   uniqueValueBody: string;
   /** よくある質問（実際のページ機能と一致するもののみ、2〜4問） */
   faq: VodPageFaqItem[];
+  /**
+   * 「配信情報について」リストの末尾に追加表示する、公式サイトとの誤認防止のための一文。
+   * 未設定のサービスでは何も追加表示されない（既存3サービスのうちHulu/DMM TVは今回未設定のまま、
+   * 表示・挙動を変更しない）。
+   */
+  officialDisclaimer?: string;
 }
 
 function buildDefaultFaq(displayName: string): VodPageFaqItem[] {
@@ -60,6 +66,8 @@ export const VOD_PAGE_EDITORIAL: Partial<Record<string, VodPageEditorial>> = {
     uniqueValueBody:
       'Disney+はディズニー・ピクサー・マーベル・スター・ウォーズに加え、国内ドラマやバラエティも含む「スター」ブランド作品まで扱う配信サービスです。作品ジャンルが幅広いぶん、推しの出演作だけを効率よく探すのは大変です。推しサーチでは、Disney+で配信を確認できた作品を出演者から検索できるようまとめています。',
     faq: buildDefaultFaq('Disney+'),
+    officialDisclaimer:
+      '推しサーチはDisney+の公式サイトではなく、独自に配信情報を収集・確認して掲載している非公式の情報サイトです。Disney+および関連するロゴ・商標は各権利者に帰属します。',
   },
 };
 

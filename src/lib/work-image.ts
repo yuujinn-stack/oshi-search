@@ -34,12 +34,33 @@ export function isValidImageUrl(url: string): boolean {
   }
 }
 
-// 「形式は正しいURLだが、実際には画像ではなく検索結果ページ等を指しているもの」を除外する。
+// 公式配信サービスのCDNなど、実際には有効な画像だが無許諾転載を避けるため公開ページの
+// 画像として使用しない発信元。ogImageUrl（各作品のsourceUrl/officialUrlページから自動取得した
+// og:image）や manualImageUrl（管理者が手動入力したURL）が、配信サービス自身の公式ページの
+// og:imageをそのまま指してしまうケースへの対策。TMDb画像（image.tmdb.org）は対象外。
+// Disney+のみが対象（bamgrid.comはDisney Streaming／Disney+の配信基盤CDN）。他社のCDNを
+// 追加する場合も、必ずその会社の画像利用ポリシーを確認した上でここに追記すること。
+const RESTRICTED_IMAGE_HOSTNAME_SUFFIXES = ['bamgrid.com'];
+
+function isRestrictedOfficialCdnUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return RESTRICTED_IMAGE_HOSTNAME_SUFFIXES.some(
+      (suffix) => host === suffix || host.endsWith(`.${suffix}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
+// 「形式は正しいURLだが、画像候補として採用すべきでないもの」を除外する。
 // 実際に発生した事例: Google画像検索の結果一覧からブラウザで「画像アドレスをコピー」した際、
 // 直接の画像URL（imgurlパラメータの値）ではなく検索結果ページ自体（/imgres?...）のURLが
 // コピーされてしまい、そのまま手動画像URLとして保存されるケースがあった。/imgres はHTML
 // ページを返すため<img>には表示できない。DBの値自体は変更せず、表示時にこの候補をスキップして
 // 次の優先順位（TMDb画像・自動取得OG画像）へフォールバックすることで解決する。
+// 同様に、配信サービス公式CDN（RESTRICTED_IMAGE_HOSTNAME_SUFFIXES）のURLも、画像としては
+// 有効だが無許諾転載を避けるためここでスキップし、次点（TMDb画像・画像なし）へフォールバックする。
 export function isPlausibleImageUrl(url: string): boolean {
   if (!isValidImageUrl(url)) return false;
   try {
@@ -55,6 +76,7 @@ export function isPlausibleImageUrl(url: string): boolean {
   } catch {
     return false;
   }
+  if (isRestrictedOfficialCdnUrl(url)) return false;
   return true;
 }
 

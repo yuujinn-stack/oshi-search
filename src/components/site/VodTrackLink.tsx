@@ -7,9 +7,16 @@ interface Props {
   service: string;
   className?: string;
   children: ReactNode;
+  /**
+   * リンク先がアフィリエイトリンクの場合に true を渡すと rel に "sponsored" を付与する。
+   * 未指定（false）の場合は従来どおり "noopener noreferrer" のみ（現在は全VODサービスとも
+   * 未承認のためfalseで、挙動は変更していない）。承認済みのアフィリエイトリンクを設定する際に
+   * 呼び出し側でtrueを渡せばよい。
+   */
+  sponsored?: boolean;
 }
 
-export default function VodTrackLink({ href, service, className, children }: Props) {
+export default function VodTrackLink({ href, service, className, children, sponsored = false }: Props) {
   const handleClick = () => {
     fetch('/api/track', {
       method: 'POST',
@@ -22,7 +29,7 @@ export default function VodTrackLink({ href, service, className, children }: Pro
     <a
       href={href}
       target="_blank"
-      rel="noopener noreferrer"
+      rel={sponsored ? 'sponsored noopener noreferrer' : 'noopener noreferrer'}
       className={className}
       onClick={handleClick}
     >

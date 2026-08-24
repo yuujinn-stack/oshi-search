@@ -29,7 +29,7 @@ export async function generateStaticParams() {
 
 const SITE_ORIGIN = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
 
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
+export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const { provider } = await params;
   const config = getVodPageProviderConfig(provider);
   if (!config) return {};
@@ -37,13 +37,22 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = `${config.displayName}で見られる芸能人・アイドルの出演作品`;
   const description = `${config.displayName}で現在配信を確認できる映画・ドラマ・番組などを、芸能人・アイドル・俳優・アーティストから探せます。`;
 
+  // ページごとに内容が異なる一覧ページのため、page=2以降は自ページを自己canonicalにする
+  // （常にpage1を指すと、page2以降がGoogleにインデックスされにくくなる／重複コンテンツ扱いの
+  // リスクがあるため）。不正なpage値の場合はpage1のURLにフォールバックする。
+  const { page: pageParam } = await searchParams;
+  const parsedPage = parseVodPageParam(pageParam);
+  const page = parsedPage && parsedPage > 1 ? parsedPage : 1;
+  const canonicalUrl =
+    page > 1 ? `${SITE_ORIGIN}/vod/${config.urlSlug}?page=${page}` : `${SITE_ORIGIN}/vod/${config.urlSlug}`;
+
   return {
     title,
     description,
     alternates: {
-      canonical: `${SITE_ORIGIN}/vod/${config.urlSlug}`,
+      canonical: canonicalUrl,
     },
-    openGraph: { title, description, type: 'website' },
+    openGraph: { title, description, type: 'website', url: canonicalUrl },
   };
 }
 
@@ -88,9 +97,26 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
     ],
   };
 
+  // このページ（現在のページ分）に実際に表示している作品のみを反映する。全件を含む
+  // ItemListではない（result.worksは現在のpageの24件のみ）ため、positionは
+  // このページ内での通し番号（全体通し番号ではなく1始まり）とする。
+  const itemListJsonLd = result.works.length > 0 ? {
+    '@context': 'https://schema.org',
+    '@type': 'ItemList',
+    itemListElement: result.works.map((work, index) => ({
+      '@type': 'ListItem',
+      position: index + 1,
+      url: `${SITE_ORIGIN}${work.detailUrl}`,
+      name: work.title,
+    })),
+  } : null;
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }} />
+      {itemListJsonLd && (
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(itemListJsonLd) }} />
+      )}
 
       {/* パンくず */}
       <nav className="text-xs mb-6 flex items-center gap-1.5" style={{ color: 'var(--ds-muted)' }}>
@@ -160,6 +186,7 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
               <li>各作品カードに、その配信情報を確認した日付を表示しています。</li>
               <li>配信状況はサービス側の都合により変更・終了されることがあります。</li>
               <li>実際に視聴する際は、最終的な視聴可否・料金等を{config.displayName}の公式サービスでご確認ください。</li>
+              {editorial.officialDisclaimer && <li>{editorial.officialDisclaimer}</li>}
             </ul>
           </section>
 

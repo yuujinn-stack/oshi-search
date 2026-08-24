@@ -64,6 +64,31 @@ describe('getWorkDisplayImage — 画像優先順位', () => {
     });
     expect(image).toBe('https://image.tmdb.org/poster.jpg');
   });
+
+  // Disney+審査対応: ogImageUrlがDisney公式配信基盤CDN(bamgrid.com)を指す場合は無許諾転載を
+  // 避けるためスキップし、TMDb画像へフォールバックする。DBの値自体は変更しない。
+  it('自動取得OG画像がDisney公式CDN(bamgrid.com)の場合はスキップし、TMDb画像へフォールバックする', () => {
+    const image = getWorkDisplayImage({
+      posterUrl: 'https://image.tmdb.org/poster.jpg',
+      ogImageUrl: 'https://disney.images.edge.bamgrid.com/foo/bar.jpg',
+    });
+    expect(image).toBe('https://image.tmdb.org/poster.jpg');
+  });
+
+  it('自動取得OG画像がDisney公式CDNで、TMDb画像も無い場合は画像なし(undefined)になる', () => {
+    const image = getWorkDisplayImage({
+      ogImageUrl: 'https://disney.images.edge.bamgrid.com/foo/bar.jpg',
+    });
+    expect(image).toBeUndefined();
+  });
+
+  it('手動画像がDisney公式CDNの場合もスキップする', () => {
+    const image = getWorkDisplayImage({
+      manualImageUrl: 'https://disney.images.edge.bamgrid.com/manual.jpg',
+      posterUrl: 'https://image.tmdb.org/poster.jpg',
+    });
+    expect(image).toBe('https://image.tmdb.org/poster.jpg');
+  });
 });
 
 describe('isPlausibleImageUrl', () => {
@@ -82,6 +107,10 @@ describe('isPlausibleImageUrl', () => {
   });
   it('形式が不正なURLは妥当ではないと判定する', () => {
     expect(isPlausibleImageUrl('not-a-url')).toBe(false);
+  });
+  it('Disney公式CDN(bamgrid.com)のURLは妥当ではないと判定する', () => {
+    expect(isPlausibleImageUrl('https://disney.images.edge.bamgrid.com/foo.jpg')).toBe(false);
+    expect(isPlausibleImageUrl('https://bamgrid.com/foo.jpg')).toBe(false);
   });
 });
 

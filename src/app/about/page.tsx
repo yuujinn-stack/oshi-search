@@ -64,8 +64,13 @@ export default function AboutPage() {
             運営者情報
           </h2>
           <dl className="space-y-2">
+            {/*
+              実名・法人名を公開する場合はこの値を差し替える。
+              現時点でサイト設定・環境変数に運営者の実名・法人名・所在地の登録がないため、
+              架空の氏名や住所は記載していない（推測での記載を避けるため）。
+            */}
             <div className="flex flex-wrap gap-x-2">
-              <dt className="font-semibold text-gray-800 w-24 flex-shrink-0">運営</dt>
+              <dt className="font-semibold text-gray-800 w-24 flex-shrink-0">運営主体</dt>
               <dd className="text-gray-600">推しサーチ運営</dd>
             </div>
             <div className="flex flex-wrap gap-x-2">
@@ -83,6 +88,18 @@ export default function AboutPage() {
                 よりご連絡ください。
               </dd>
             </div>
+            <div className="flex flex-wrap gap-x-2">
+              <dt className="font-semibold text-gray-800 w-24 flex-shrink-0">情報の訂正依頼</dt>
+              <dd className="text-gray-600">
+                掲載情報の誤りは<Link href="/contact" className="text-indigo-600 hover:underline">お問い合わせページ</Link>から連絡先を明記の上ご連絡ください。調査・確認方法や訂正方針は<Link href="/editorial-policy" className="text-indigo-600 hover:underline">情報の調査・更新方針</Link>に記載しています。
+              </dd>
+            </div>
+            <div className="flex flex-wrap gap-x-2">
+              <dt className="font-semibold text-gray-800 w-24 flex-shrink-0">広告・アフィリエイト</dt>
+              <dd className="text-gray-600">
+                当サイトはアフィリエイト広告を掲載して運営しています。広告の利用が掲載内容の客観性に影響しない旨を含め、詳細は<Link href="/disclaimer" className="text-indigo-600 hover:underline">免責事項</Link>に記載しています。
+              </dd>
+            </div>
           </dl>
         </section>
 
@@ -93,6 +110,9 @@ export default function AboutPage() {
           <p>
             掲載情報の正確性向上に努めていますが、内容の完全性・正確性・最新性を保証するものではありません。
             詳しくは<Link href="/disclaimer" className="text-indigo-600 hover:underline">免責事項</Link>をご確認ください。
+          </p>
+          <p className="mt-2">
+            当サイトは各動画配信サービスの公式サイトではなく、独自に情報を収集・確認して掲載している非公式の情報サイトです。
           </p>
         </section>
 
