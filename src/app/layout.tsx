@@ -4,6 +4,7 @@ import Link from 'next/link';
 import './globals.css';
 import Header from '@/components/Header';
 import DesignPreviewToggle from '@/components/site/DesignPreviewToggle';
+import AnalyticsGate from '@/components/site/AnalyticsGate';
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp'),
@@ -72,6 +73,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* クライアント専用UIは独立した Suspense に隔離 */}
         <Suspense fallback={null}>
           <DesignPreviewToggle />
+        </Suspense>
+        {/* GA4計測。/admin配下では読み込まない（AnalyticsGate内で判定） */}
+        <Suspense fallback={null}>
+          <AnalyticsGate />
         </Suspense>
       </body>
     </html>
