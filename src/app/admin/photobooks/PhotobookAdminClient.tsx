@@ -11,9 +11,21 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import PersonCombobox, { type PersonOption } from '@/components/admin/PersonCombobox';
 
+export interface SettingsTarget {
+  personName: string;
+  productId: string;
+}
+
+// サーバー側(getAdminPhotobookRows)で重複統合済みの1商品(=1グループ)を表す行。
+// 同一productIdが複数人物に紐づくグループ写真集も、ここでは既に1行に統合されている。
 export interface AdminRow {
   personName: string;
   groupName: string;
+  displayName: string;
+  displayMode: 'group' | 'person';
+  displayHref: string;
+  linkedPersonNames: string[];
+  linkedGroupNames: string[];
   gender: 'female' | 'male' | null;
   genreBucket: '女優' | 'アイドル' | '俳優' | 'その他';
   productId: string;
@@ -27,7 +39,9 @@ export interface AdminRow {
   homeState: 'auto' | 'pinned' | 'hidden';
   homePinnedPosition: number | null;
   sortOrder: number | null;
-  dedupKey: string;
+  groupSiblingCount: number;
+  groupProductIds: string[];
+  settingsTargets: SettingsTarget[];
   isAutoDetected: boolean;
 }
 
@@ -52,7 +66,37 @@ const STATUS_BADGE: Record<AdminRow['status'], string> = {
   manual_exclude: 'bg-red-100 text-red-600',
 };
 
-async function callSetting(payload: Record<string, unknown>) {
+// 統合グループへの操作は、そのグループを構成する全ての(personName, productId)組へ
+// 一貫して反映する（fan-out）。これにより「1人物だけ除外して残りの人物経由で
+// 同じ商品が復活する」事態を防ぐ。既存のphotobook_settingsテーブル（person_name +
+// product_id単位）をそのまま利用し、新しいテーブル・スキーマ変更は行わない。
+async function callSettingForTargets(targets: SettingsTarget[], payload: Record<string, unknown>) {
+  const results = await Promise.all(
+    targets.map((t) =>
+      fetch('/api/admin/photobooks/setting', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personName: t.personName, productId: t.productId, ...payload }),
+      }),
+    ),
+  );
+  if (results.some((r) => !r.ok)) throw new Error('保存に失敗しました（一部の人物への反映に失敗した可能性があります）');
+}
+
+async function callResetForTargets(targets: SettingsTarget[]) {
+  const results = await Promise.all(
+    targets.map((t) =>
+      fetch('/api/admin/photobooks/setting', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personName: t.personName, productId: t.productId }),
+      }),
+    ),
+  );
+  if (results.some((r) => !r.ok)) throw new Error('リセットに失敗しました');
+}
+
+async function callSettingSingle(payload: Record<string, unknown>) {
   const res = await fetch('/api/admin/photobooks/setting', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -62,19 +106,9 @@ async function callSetting(payload: Record<string, unknown>) {
   return res.json();
 }
 
-async function callReset(personName: string, productId: string) {
-  const res = await fetch('/api/admin/photobooks/setting', {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ personName, productId }),
-  });
-  if (!res.ok) throw new Error('リセットに失敗しました');
-  return res.json();
-}
-
 // ─── ホーム固定枠 並び替え(dnd-kit再利用) ────────────────────────────────────────
 function SortablePinnedRow({ row }: { row: AdminRow }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `${row.personName}::${row.productId}` });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.productId });
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -88,7 +122,7 @@ function SortablePinnedRow({ row }: { row: AdminRow }) {
         // eslint-disable-next-line @next/next/no-img-element
         <img src={row.imageUrl} alt="" className="w-8 h-8 object-contain rounded" />
       )}
-      <span className="text-xs font-semibold text-slate-700 truncate flex-1">{row.personName}</span>
+      <span className="text-xs font-semibold text-slate-700 truncate flex-1">{row.displayName}</span>
       <span className="text-[10px] text-gray-400 truncate max-w-[160px]">{row.title}</span>
     </div>
   );
@@ -104,47 +138,34 @@ export default function PhotobookAdminClient({ initialRows, persons }: { initial
   const [error, setError] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
 
-  const key = (r: { personName: string; productId: string }) => `${r.personName}::${r.productId}`;
-
-  function patchRow(personName: string, productId: string, patch: Partial<AdminRow>) {
-    setRows((prev) => prev.map((r) => (r.personName === personName && r.productId === productId ? { ...r, ...patch } : r)));
+  function patchRow(productId: string, patch: Partial<AdminRow>) {
+    setRows((prev) => prev.map((r) => (r.productId === productId ? { ...r, ...patch } : r)));
   }
-
-  // dedupKey単位でグルーピング（重複候補確認用）
-  const groups = useMemo(() => {
-    const map = new Map<string, AdminRow[]>();
-    for (const r of rows) {
-      if (!map.has(r.dedupKey)) map.set(r.dedupKey, []);
-      map.get(r.dedupKey)!.push(r);
-    }
-    return map;
-  }, [rows]);
 
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (genderFilter !== 'all' && r.gender !== genderFilter) return false;
-      if (dedupOnly && (groups.get(r.dedupKey)?.length ?? 1) <= 1) return false;
-      if (q && !(r.personName.toLowerCase().includes(q) || r.title.toLowerCase().includes(q))) return false;
+      if (dedupOnly && r.groupSiblingCount <= 0) return false;
+      if (q && !(r.displayName.toLowerCase().includes(q) || r.title.toLowerCase().includes(q) || r.linkedPersonNames.some((n) => n.toLowerCase().includes(q)))) return false;
       return true;
     });
-  }, [rows, statusFilter, genderFilter, dedupOnly, query, groups]);
+  }, [rows, statusFilter, genderFilter, dedupOnly, query]);
 
   const stats = useMemo(() => ({
     total: rows.length,
     auto: rows.filter((r) => r.status === 'auto' && r.isAutoDetected).length,
     manualInclude: rows.filter((r) => r.status === 'manual_include').length,
     manualExclude: rows.filter((r) => r.status === 'manual_exclude').length,
-    dedupGroups: [...groups.values()].filter((g) => g.length > 1).length,
-  }), [rows, groups]);
+    dedupGroups: rows.filter((r) => r.groupSiblingCount > 0).length,
+  }), [rows]);
 
   async function handleAction(row: AdminRow, action: () => Promise<unknown>, optimisticPatch: Partial<AdminRow>) {
-    const k = key(row);
-    setBusy(k);
+    setBusy(row.productId);
     setError('');
     const prev = rows;
-    patchRow(row.personName, row.productId, optimisticPatch);
+    patchRow(row.productId, optimisticPatch);
     try {
       await action();
     } catch (e) {
@@ -156,47 +177,26 @@ export default function PhotobookAdminClient({ initialRows, persons }: { initial
   }
 
   function handleInclude(row: AdminRow) {
-    void handleAction(row, () => callSetting({
-      personName: row.personName, productId: row.productId, status: 'manual_include',
-    }), { status: 'manual_include' });
+    void handleAction(row, () => callSettingForTargets(row.settingsTargets, { status: 'manual_include' }), { status: 'manual_include' });
   }
   function handleExclude(row: AdminRow) {
-    void handleAction(row, () => callSetting({
-      personName: row.personName, productId: row.productId, status: 'manual_exclude',
-    }), { status: 'manual_exclude' });
+    void handleAction(row, () => callSettingForTargets(row.settingsTargets, { status: 'manual_exclude' }), { status: 'manual_exclude' });
   }
   function handleResetToAuto(row: AdminRow) {
-    void handleAction(row, () => callReset(row.personName, row.productId), { status: 'auto' });
+    void handleAction(row, () => callResetForTargets(row.settingsTargets), { status: 'auto' });
   }
   function handleTogglePublished(row: AdminRow) {
     const next = !row.published;
-    void handleAction(row, () => callSetting({
-      personName: row.personName, productId: row.productId, published: next,
-    }), { published: next });
+    void handleAction(row, () => callSettingForTargets(row.settingsTargets, { published: next }), { published: next });
   }
   function handleSetHomeState(row: AdminRow, homeState: AdminRow['homeState']) {
-    void handleAction(row, () => callSetting({
-      personName: row.personName, productId: row.productId, homeState,
-      homePinnedPosition: homeState === 'pinned' ? (row.homePinnedPosition ?? 0) : null,
-    }), { homeState, homePinnedPosition: homeState === 'pinned' ? (row.homePinnedPosition ?? 0) : null });
+    const homePinnedPosition = homeState === 'pinned' ? (row.homePinnedPosition ?? 0) : null;
+    void handleAction(row, () => callSettingForTargets(row.settingsTargets, { homeState, homePinnedPosition }), { homeState, homePinnedPosition });
   }
   function handleSetSortOrder(row: AdminRow, value: string) {
     const n = value.trim() === '' ? null : Number(value);
     if (n !== null && !Number.isFinite(n)) return;
-    void handleAction(row, () => callSetting({
-      personName: row.personName, productId: row.productId, sortOrder: n,
-    }), { sortOrder: n });
-  }
-  function handleForceSeparate(row: AdminRow) {
-    const overrideKey = `${row.personName}::${row.productId}__solo`;
-    void handleAction(row, () => callSetting({
-      personName: row.personName, productId: row.productId, dedupGroupOverride: overrideKey,
-    }), { dedupKey: overrideKey });
-  }
-  function handleForceMerge(row: AdminRow, targetKey: string) {
-    void handleAction(row, () => callSetting({
-      personName: row.personName, productId: row.productId, dedupGroupOverride: targetKey,
-    }), { dedupKey: targetKey });
+    void handleAction(row, () => callSettingForTargets(row.settingsTargets, { sortOrder: n }), { sortOrder: n });
   }
 
   // ─── ホーム固定枠の並び替え ──────────────────────────────────────────────────
@@ -211,15 +211,15 @@ export default function PhotobookAdminClient({ initialRows, persons }: { initial
     return async (e: DragEndEvent) => {
       const { active, over } = e;
       if (!over || active.id === over.id) return;
-      const oldIndex = list.findIndex((r) => key(r) === active.id);
-      const newIndex = list.findIndex((r) => key(r) === over.id);
+      const oldIndex = list.findIndex((r) => r.productId === active.id);
+      const newIndex = list.findIndex((r) => r.productId === over.id);
       if (oldIndex === -1 || newIndex === -1) return;
       const reordered = arrayMove(list, oldIndex, newIndex);
-      reordered.forEach((r, i) => patchRow(r.personName, r.productId, { homePinnedPosition: i }));
+      reordered.forEach((r, i) => patchRow(r.productId, { homePinnedPosition: i }));
       try {
-        await Promise.all(reordered.map((r, i) => callSetting({
-          personName: r.personName, productId: r.productId, homeState: 'pinned', homePinnedPosition: i,
-        })));
+        await Promise.all(reordered.map((r, i) =>
+          callSettingForTargets(r.settingsTargets, { homeState: 'pinned', homePinnedPosition: i }),
+        ));
       } catch {
         setError('並び替えの保存に失敗しました');
       }
@@ -239,7 +239,7 @@ export default function PhotobookAdminClient({ initialRows, persons }: { initial
           { label: '自動判定', value: stats.auto },
           { label: '手動追加', value: stats.manualInclude },
           { label: '手動除外', value: stats.manualExclude },
-          { label: '重複候補グループ', value: stats.dedupGroups },
+          { label: '重複統合グループ', value: stats.dedupGroups },
         ].map((s) => (
           <div key={s.label} className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-center">
             <p className="text-lg font-black text-slate-800">{s.value}</p>
@@ -257,9 +257,9 @@ export default function PhotobookAdminClient({ initialRows, persons }: { initial
               <p className="text-[11px] text-gray-400">固定商品はありません</p>
             ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handlePinnedDragEnd(list)}>
-                <SortableContext items={list.map(key)} strategy={verticalListSortingStrategy}>
+                <SortableContext items={list.map((r) => r.productId)} strategy={verticalListSortingStrategy}>
                   <div className="space-y-1.5">
-                    {list.map((r) => <SortablePinnedRow key={key(r)} row={r} />)}
+                    {list.map((r) => <SortablePinnedRow key={r.productId} row={r} />)}
                   </div>
                 </SortableContext>
               </DndContext>
@@ -274,7 +274,7 @@ export default function PhotobookAdminClient({ initialRows, persons }: { initial
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="人物名・タイトルで検索"
+          placeholder="人物名・グループ名・タイトルで検索"
           className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs min-w-[200px]"
         />
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
@@ -292,7 +292,7 @@ export default function PhotobookAdminClient({ initialRows, persons }: { initial
         </select>
         <label className="flex items-center gap-1 text-xs text-gray-600">
           <input type="checkbox" checked={dedupOnly} onChange={(e) => setDedupOnly(e.target.checked)} />
-          重複候補のみ
+          統合済み（複数商品/人物をまとめた）もののみ
         </label>
         <button
           onClick={() => setShowAddModal(true)}
@@ -305,12 +305,10 @@ export default function PhotobookAdminClient({ initialRows, persons }: { initial
       {/* 一覧 */}
       <div className="space-y-2">
         {filteredRows.map((row) => {
-          const group = groups.get(row.dedupKey) ?? [row];
-          const hasSiblings = group.length > 1;
-          const k = key(row);
-          const isBusy = busy === k;
+          const hasSiblings = row.groupSiblingCount > 0;
+          const isBusy = busy === row.productId;
           return (
-            <div key={k} className={`bg-white border rounded-xl p-3 ${hasSiblings ? 'border-amber-300' : 'border-gray-200'}`}>
+            <div key={row.productId} className={`bg-white border rounded-xl p-3 ${hasSiblings ? 'border-amber-300' : 'border-gray-200'}`}>
               <div className="flex gap-3">
                 {row.imageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -320,18 +318,25 @@ export default function PhotobookAdminClient({ initialRows, persons }: { initial
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
-                    <span className="text-sm font-semibold text-slate-800">{row.personName}</span>
-                    {row.groupName && <span className="text-[10px] text-gray-400">{row.groupName}</span>}
+                    <span className="text-sm font-semibold text-slate-800">{row.displayName}</span>
+                    {row.displayMode === 'group' && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600" title={`紐づく人物: ${row.linkedPersonNames.join(', ')}`}>
+                        グループ写真集（{row.linkedPersonNames.length}名紐付け）
+                      </span>
+                    )}
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${STATUS_BADGE[row.status]}`}>{STATUS_LABEL[row.status]}</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600">{row.gender === 'female' ? '女性' : row.gender === 'male' ? '男性' : '性別未分類'}</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600">{row.genreBucket}</span>
                     {!row.published && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-500">非公開</span>}
-                    {hasSiblings && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">重複候補 {group.length}件</span>}
+                    {hasSiblings && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">統合 {row.groupSiblingCount + 1}件</span>}
                   </div>
                   <p className="text-xs text-gray-600 truncate mb-1">{row.title}</p>
                   <div className="flex flex-wrap items-center gap-2 text-[10px] text-gray-400">
                     <span>{row.price > 0 ? `¥${row.price.toLocaleString()}` : '価格未取得'}</span>
                     <a href={row.itemUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:underline">商品URL</a>
+                    {row.displayMode === 'group' && (
+                      <span className="truncate max-w-[280px]">紐付け人物: {row.linkedPersonNames.join(', ')}</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -367,21 +372,12 @@ export default function PhotobookAdminClient({ initialRows, persons }: { initial
                   onChange={(e) => handleSetSortOrder(row, e.target.value)}
                   className="w-16 text-[11px] border border-gray-300 rounded-lg px-1.5 py-1"
                 />
-                {hasSiblings && (
-                  <button disabled={isBusy} onClick={() => handleForceSeparate(row)} className="text-[11px] px-2 py-1 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50">
-                    別表紙として分離
-                  </button>
-                )}
-                {row.dedupKey.includes('__solo') && (
-                  <button
-                    disabled={isBusy}
-                    onClick={() => handleForceMerge(row, `${row.personName}::${row.title}`)}
-                    className="text-[11px] px-2 py-1 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 disabled:opacity-50"
-                  >
-                    自動グループに戻す
-                  </button>
-                )}
               </div>
+              {hasSiblings && (
+                <p className="text-[10px] text-amber-600 mt-1.5">
+                  ※ この操作は統合されている{row.groupSiblingCount + 1}件全て（{row.settingsTargets.length}件の人物×商品の組み合わせ）へ一括で反映されます。
+                </p>
+              )}
             </div>
           );
         })}
@@ -395,7 +391,7 @@ export default function PhotobookAdminClient({ initialRows, persons }: { initial
           persons={persons}
           onClose={() => setShowAddModal(false)}
           onAdded={(row) => {
-            setRows((prev) => (prev.some((r) => key(r) === key(row)) ? prev : [...prev, row]));
+            setRows((prev) => (prev.some((r) => r.productId === row.productId) ? prev : [...prev, row]));
           }}
         />
       )}
@@ -443,7 +439,7 @@ function AddPhotobookModal({
     setAddingId(item.productId);
     setError('');
     try {
-      await callSetting({
+      await callSettingSingle({
         personName: item.personName,
         productId: item.productId,
         sourceCategory: item.category,
@@ -453,6 +449,11 @@ function AddPhotobookModal({
       onAdded({
         personName: item.personName,
         groupName: person?.group ?? '',
+        displayName: item.personName,
+        displayMode: 'person',
+        displayHref: `/person/${encodeURIComponent(item.personName)}`,
+        linkedPersonNames: [item.personName],
+        linkedGroupNames: person?.group ? [person.group] : [],
         gender: null,
         genreBucket: 'その他',
         productId: item.productId,
@@ -466,7 +467,9 @@ function AddPhotobookModal({
         homeState: 'auto',
         homePinnedPosition: null,
         sortOrder: null,
-        dedupKey: `${item.personName}::${item.title}`,
+        groupSiblingCount: 0,
+        groupProductIds: [item.productId],
+        settingsTargets: [{ personName: item.personName, productId: item.productId }],
         isAutoDetected: false,
       });
     } catch {

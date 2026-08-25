@@ -198,6 +198,174 @@ export function genreBucketOrder(gender: PhotobookGender | null, bucket: Photobo
   return (gender === 'male' ? BUCKET_ORDER_MALE : BUCKET_ORDER_FEMALE)[bucket];
 }
 
+// ── 重複統合（productId完全一致による人物またぎ統合） ─────────────────────────────
+//
+// 実データ確認（2026）で、グループ写真集（乃木撮/日向撮/櫻撮/M!LK写真集等）が
+// 所属メンバー全員の商品データに独立して同一のRakuten商品IDで紐づいていることが判明した。
+// 従来の重複キー（人物＋正規化タイトル）は人物名を含むため、同一商品でも人物が違うだけで
+// 別グループとして扱われ、最大70件もの重複表示が発生していた。
+//
+// 統合は「独立した2ルール」として適用する（互いに連鎖(transitive)させない）:
+//   ルールA（productId完全一致）: 同一productIdは人物を問わず常に統合する（絶対ルール）。
+//     Rakuten商品IDが完全一致する場合、物理的に同一の商品リスティングであることが確定して
+//     いるため、表紙違いが発生する余地がない。
+//   ルールB（人物＋正規化タイトル、またはdedupGroupOverrideによる手動指定）:
+//     productIdが異なる場合のみ、既存の安全なロジックで統合する。表紙違い（限定カバー等）
+//     を誤って統合しないための安全策。
+//
+// 重要な安全策（2026再改訂）: ルールAで2人以上の人物にまたがる「確定グループ写真集」と
+// 判定されたアイテム（productIdの同一集合サイズが2以上）は、ルールBによるタイトル統合の
+// 対象から除外（凍結）する。これにより、
+//   A --(productId一致)--> B --(人物+タイトル一致)--> C
+// のようにAとCが直接一致条件を満たさないのに連鎖的に統合される事態を完全に防ぐ
+// （実データ検証では危険な連鎖統合は0件だったが、将来のデータに対しても構造的に
+// 安全であることを保証するため、ルールAとBを独立させる設計にした）。
+// 「人物を無視してタイトルだけで全商品を統合する」処理は行わない（過剰統合の防止）。
+
+export interface GroupableCandidate {
+  personName: string;
+  productId: string;
+  title: string;
+  dedupGroupOverride?: string | null;
+}
+
+function unionFind(n: number): { find: (x: number) => number; union: (a: number, b: number) => void; parent: number[] } {
+  const parent = Array.from({ length: n }, (_, i) => i);
+  function find(x: number): number {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  }
+  function union(a: number, b: number): void {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  }
+  return { find, union, parent };
+}
+
+/**
+ * 写真集候補を重複統合グループへ分割する（Union-Find）。
+ * 戻り値の各要素は「同一商品とみなすアイテム群」（元の配列内でのインデックス配列）。
+ */
+export function groupPhotobookCandidates<T extends GroupableCandidate>(items: readonly T[]): number[][] {
+  const n = items.length;
+  if (n === 0) return [];
+  const uf = unionFind(n);
+
+  // 第1段階: 同一productIdは常に統合（人物を問わない・絶対ルール）
+  const byProductId = new Map<string, number[]>();
+  for (let i = 0; i < n; i++) {
+    const pid = items[i].productId;
+    if (!byProductId.has(pid)) byProductId.set(pid, []);
+    byProductId.get(pid)!.push(i);
+  }
+  for (const idxs of byProductId.values()) {
+    for (let k = 1; k < idxs.length; k++) uf.union(idxs[0], idxs[k]);
+  }
+
+  // ルールAで2人以上にまたがった（＝確定グループ写真集と判定された）アイテムは、
+  // ルールBの対象から凍結する。これによりルールA・ルールBが互いに連鎖(transitive)しない。
+  const frozenByRuleA = new Set<number>();
+  for (const idxs of byProductId.values()) {
+    if (idxs.length >= 2) for (const i of idxs) frozenByRuleA.add(i);
+  }
+
+  // ルールB: productIdが異なり、かつルールAで凍結されていないアイテムのみ、
+  // 人物＋正規化タイトル（または手動override）で統合する。
+  const byPersonTitle = new Map<string, number[]>();
+  for (let i = 0; i < n; i++) {
+    if (frozenByRuleA.has(i)) continue;
+    const override = items[i].dedupGroupOverride?.trim();
+    const key = override || computeDedupKey(items[i].personName, items[i].title);
+    if (!byPersonTitle.has(key)) byPersonTitle.set(key, []);
+    byPersonTitle.get(key)!.push(i);
+  }
+  for (const idxs of byPersonTitle.values()) {
+    for (let k = 1; k < idxs.length; k++) uf.union(idxs[0], idxs[k]);
+  }
+
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const root = uf.find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root)!.push(i);
+  }
+  return [...groups.values()];
+}
+
+// ── 統合グループの代表表示名の決定 ────────────────────────────────────────────────
+
+export interface DisplayLabelResult {
+  mode: 'group' | 'person';
+  displayName: string;
+  groupName?: string;
+}
+
+/**
+ * 統合グループの代表表示名を決定する。
+ * 紐づく人物が2人以上いて、かつ全員が同一の空でないグループに所属している場合のみ
+ * グループ名を代表表示する（例: 乃木撮 → "乃木坂46"）。
+ * それ以外（単独人物の場合、または複数人物でもグループが一致しない/空のグループを
+ * 含む場合）は、代表人物名をそのまま使う（誤解を招く代表表示を避ける安全策）。
+ * グループ名からの性別・ジャンル等の推測は一切行わない（表示名の決定のみ）。
+ */
+export function resolveDisplayLabel(
+  linkedPersonNames: readonly string[],
+  personGroupMap: ReadonlyMap<string, string>,
+  representativePersonName: string,
+): DisplayLabelResult {
+  const uniqueNames = [...new Set(linkedPersonNames)];
+  if (uniqueNames.length >= 2) {
+    const groups = new Set(uniqueNames.map((n) => personGroupMap.get(n) ?? ''));
+    if (groups.size === 1) {
+      const [onlyGroup] = groups;
+      if (onlyGroup) {
+        return { mode: 'group', displayName: onlyGroup, groupName: onlyGroup };
+      }
+    }
+  }
+  return { mode: 'person', displayName: representativePersonName };
+}
+
+// ── 統合グループの設定集約（manual操作の一貫性担保） ────────────────────────────────
+//
+// photobook_settingsは(personName, productId)単位で保存されるが、同一productIdが
+// 複数人物に紐づく場合、そのうち1人物分だけ設定変更しても残りの人物経由で同じ商品が
+// 復活しないよう、読み取り時にグループ内の全設定行を安全側（除外・非公開・非表示を
+// 優先）に集約する。書き込み時は呼び出し側（store層）がグループ内の全(personName,
+// productId)組へ同じ設定を反映する（fan-out）ため、通常はこの集約が効く場面は少ないが、
+// fan-out漏れ（新規メンバー追加等）に対する保険として機能する。
+
+export interface AggregatableSettings {
+  status: 'auto' | 'manual_include' | 'manual_exclude';
+  published: boolean;
+  homeState: 'auto' | 'pinned' | 'hidden';
+  homePinnedPosition: number | null;
+  sortOrder: number | null;
+}
+
+export function aggregatePhotobookSettings<T extends AggregatableSettings>(rows: readonly T[]): AggregatableSettings {
+  const hasExclude = rows.some((r) => r.status === 'manual_exclude');
+  const hasInclude = rows.some((r) => r.status === 'manual_include');
+  const status: AggregatableSettings['status'] = hasExclude ? 'manual_exclude' : hasInclude ? 'manual_include' : 'auto';
+
+  const published = !rows.some((r) => !r.published);
+
+  const hasHidden = rows.some((r) => r.homeState === 'hidden');
+  const hasPinned = rows.some((r) => r.homeState === 'pinned');
+  const homeState: AggregatableSettings['homeState'] = hasHidden ? 'hidden' : hasPinned ? 'pinned' : 'auto';
+  const pinnedRow = rows.find((r) => r.homeState === 'pinned' && r.homePinnedPosition !== null);
+  const homePinnedPosition = homeState === 'pinned' ? (pinnedRow?.homePinnedPosition ?? null) : null;
+
+  const sortOrderRow = rows.find((r) => r.sortOrder !== null);
+  const sortOrder = sortOrderRow?.sortOrder ?? null;
+
+  return { status, published, homeState, homePinnedPosition, sortOrder };
+}
+
 // ── ホーム表示: 同一人物の連続を避ける分散並び替え ─────────────────────────────
 
 export interface DistributableItem {

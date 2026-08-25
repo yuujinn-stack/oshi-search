@@ -6,6 +6,10 @@ import { getBestProductImageUrl, getRenderableProductTitle } from '@/lib/product
 
 export interface PhotobookCardData {
   personName: string;
+  /** カードに表示する名前。グループ写真集の場合はグループ名、それ以外は人物名 */
+  displayName: string;
+  /** displayName クリック時の遷移先（グループページ or 人物ページ） */
+  displayHref: string;
   productId: string;
   title: string;
   imageUrl: string;
@@ -87,11 +91,11 @@ export default function PhotobookCard({ data }: { data: PhotobookCardData }) {
       {/* テキスト情報 */}
       <div className="p-2.5 flex flex-col gap-1 flex-1">
         <Link
-          href={`/person/${encodeURIComponent(data.personName)}`}
+          href={data.displayHref}
           className="text-[11px] font-semibold truncate hover:underline"
           style={{ color: 'var(--ds-primary)' }}
         >
-          {data.personName}
+          {data.displayName}
         </Link>
         <a
           href={href}

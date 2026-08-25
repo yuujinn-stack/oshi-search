@@ -6,6 +6,13 @@
 // そのまま再利用する（このファイルで独自の「公開条件」を作らない）。
 //
 // OpenAI等の外部AIは一切呼び出さない。判定は photobook.ts の決定的ルールのみで行う。
+//
+// 重複統合（2026-改訂）:
+//   グループ写真集（乃木撮/日向撮/櫻撮/M!LK写真集等）は、所属メンバー全員の商品データに
+//   独立して同一のRakuten商品IDで紐づいていることが実データで確認された。従来の
+//   「人物＋正規化タイトル」だけのキーでは、同一商品でも人物が違うだけで別グループに
+//   分かれてしまうため、photobook.ts の groupPhotobookCandidates()（productId完全一致に
+//   よる人物またぎ統合）を使って2段階で統合する。詳細は photobook.ts のコメント参照。
 
 import { sql } from 'drizzle-orm';
 import { db } from '@/db/client';
@@ -13,14 +20,17 @@ import { getAllPersonsMerged } from './persons';
 import { getAllPersonMetas } from './person-meta';
 import { getAllGroupMetas } from './group-meta';
 import { getStoredProductItemById } from './product-store';
+import { groupHrefByName } from './group-slug';
 import {
   isAutoDetectedPhotobook,
-  computeDedupKey,
   selectRepresentative,
   resolvePersonGender,
   resolveGenreBucket,
   genreBucketOrder,
   distributeAvoidingConsecutivePerson,
+  groupPhotobookCandidates,
+  resolveDisplayLabel,
+  aggregatePhotobookSettings,
   type PhotobookGender,
   type PhotobookGenreBucket,
 } from './photobook';
@@ -39,16 +49,12 @@ import type { ProductCategory } from '@/types/person';
 //                    タイトルに"CD"を含むため除外語ルールで正しく弾かれる。
 //   - Blu-ray・DVD: "Blu-ray+Photobook"等のバンドル商品を確認したが、いずれも
 //                    タイトルに"Blu-ray"/"DVD"を含むため除外語ルールで正しく弾かれる。
-//                    単独写真集がこのカテゴリから見つかるケースは確認できなかったが、
-//                    バンドル商品の誤検出リスクが無いため安全側に含める。
 //
 // 除外したカテゴリ:
-//   - 中古        : ユーザー指定により常に除外（isUsedByTitle等とは別に、カテゴリ自体を
-//                    スキャン対象から外す）
-//   - グッズ      : タイトルがタグ羅列型（例:「...雑誌 写真集 アイドル ...グッズ」）で、
-//                    「グッズ」という除外語自体が末尾の定型タグとして頻出するため、
-//                    誤除外(false negative)と誤検出(false positive)の衝突リスクが高いと
-//                    判断し自動スキャン対象から外した。該当商品は管理画面から手動追加できる。
+//   - 中古        : ユーザー指定により常に除外
+//   - グッズ      : タイトルがタグ羅列型で「グッズ」という除外語自体が定型タグとして
+//                    頻出するため、誤除外/誤検出の衝突リスクが高いと判断し除外。
+//                    該当商品は管理画面から手動追加できる。
 const PHOTOBOOK_SCAN_CATEGORIES: ProductCategory[] = ['写真集', '本・雑誌', 'CD', 'Blu-ray・DVD'];
 
 // neon-httpドライバは `= ANY($1)` にJS配列をそのまま渡すとPostgres配列リテラルとして
@@ -112,16 +118,32 @@ interface RawManualRow {
   note: string | null;
 }
 
-// 内部表現: 1商品 = 1候補（重複統合前）
+// 内部表現: 1商品×1人物の紐付け = 1候補（重複統合前）
 interface CandidateItem {
   personName: string;
   item: RakutenItem;
   settings: PhotobookSettingsView;
 }
 
+/** 管理操作(manual_include/exclude・公開・ホーム設定等)の反映先 (personName, productId) 組 */
+export interface PhotobookSettingsTarget {
+  personName: string;
+  productId: string;
+}
+
 export interface PhotobookItem {
+  /** 代表人物名（displayMode='person'のときの表示名、group時も内部参照用に保持） */
   personName: string;
   groupName: string;
+  /** カードに表示する名前（'group'時はグループ名、'person'時は代表人物名） */
+  displayName: string;
+  displayMode: 'group' | 'person';
+  /** 表示名クリック時の遷移先（グループページ or 人物ページ） */
+  displayHref: string;
+  /** この商品(productId)に紐づく全人物名（人物検索のマッチングに使用） */
+  linkedPersonNames: string[];
+  /** 紐づく人物が所属する全グループ名（グループ検索のマッチングに使用） */
+  linkedGroupNames: string[];
   gender: PhotobookGender | null;
   genreBucket: PhotobookGenreBucket;
   productId: string;
@@ -136,11 +158,12 @@ export interface PhotobookItem {
   homeState: PhotobookHomeState;
   homePinnedPosition: number | null;
   sortOrder: number | null;
-  dedupKey: string;
   /** 同一重複グループ内で統合された他商品の件数（代表商品自身を除く） */
   groupSiblingCount: number;
-  /** 同一重複グループ内の全商品ID（管理画面の重複候補確認用） */
+  /** 同一重複グループ内の全商品ID（重複候補確認用） */
   groupProductIds: string[];
+  /** 管理操作の反映先。同一グループ内の全(personName,productId)組（fan-out書き込み用） */
+  settingsTargets: PhotobookSettingsTarget[];
 }
 
 // ── Step 1: スキャン対象カテゴリの自動候補（verdict=related のみ）───────────────
@@ -207,240 +230,15 @@ function toSettingsView(row: {
   };
 }
 
-// ── Step 1+2 統合 + ステータスフィルタ ───────────────────────────────────────────
-async function fetchAllCandidates(): Promise<CandidateItem[]> {
+async function fetchCandidatesRaw(): Promise<{ autoRows: RawCandidateRow[]; manualRows: RawManualRow[] }> {
   const [autoRows, manualRows] = await Promise.all([
     fetchAutoCandidateRows(),
     fetchManualIncludeCrossCategoryRows(),
   ]);
-
-  const result: CandidateItem[] = [];
-  const seen = new Set<string>();
-
-  for (const row of autoRows) {
-    const settings = toSettingsView(row);
-    const key = `${row.person_name}::${row.item.id}`;
-    if (seen.has(key)) continue;
-    if (settings.status === 'manual_exclude') continue;
-    if (settings.status === 'auto' && !isAutoDetectedPhotobook(row.item)) continue;
-    seen.add(key);
-    result.push({ personName: row.person_name, item: row.item, settings });
-  }
-
-  // 手動追加(他カテゴリ)は実データを取得できたものだけ対象にする
-  const manualItems = await Promise.all(
-    manualRows.map(async (row) => {
-      const key = `${row.person_name}::${row.product_id}`;
-      if (seen.has(key)) return null;
-      const item = await getStoredProductItemById(
-        row.person_name,
-        row.source_category as ProductCategory,
-        row.product_id,
-      );
-      if (!item) return null;
-      seen.add(key);
-      return { personName: row.person_name, item, settings: toSettingsView(row) };
-    }),
-  );
-  for (const m of manualItems) if (m) result.push(m);
-
-  return result;
+  return { autoRows, manualRows };
 }
 
-// ── 人物メタ解決（性別・グループ・ジャンル）──────────────────────────────────────
-interface PersonResolveMaps {
-  publishedNames: Set<string>;
-  groupByName: Map<string, string>;
-  genreByName: Map<string, string>;
-  genderByName: Map<string, string | null>;
-  genderByGroup: Map<string, string | null>;
-  primaryGenreByName: Map<string, string | null>;
-  genresByName: Map<string, string[] | null>;
-}
-
-async function buildPersonResolveMaps(): Promise<PersonResolveMaps> {
-  const [persons, metaMap, groupMetas] = await Promise.all([
-    getAllPersonsMerged(),
-    getAllPersonMetas(),
-    getAllGroupMetas(),
-  ]);
-  const publishedNames = new Set(persons.map((p) => p.name));
-  const groupByName = new Map(persons.map((p) => [p.name, p.group]));
-  const genreByName = new Map(persons.map((p) => [p.name, p.genre]));
-  const genderByName = new Map<string, string | null>();
-  const primaryGenreByName = new Map<string, string | null>();
-  const genresByName = new Map<string, string[] | null>();
-  for (const [name, meta] of Object.entries(metaMap)) {
-    genderByName.set(name, (meta as { gender?: string }).gender ?? null);
-    primaryGenreByName.set(name, meta.primaryGenre ?? null);
-    genresByName.set(name, meta.genres ?? null);
-  }
-  const genderByGroup = new Map(groupMetas.map((g) => [g.groupName, (g as { gender?: string }).gender ?? null]));
-  return { publishedNames, groupByName, genreByName, genderByName, genderByGroup, primaryGenreByName, genresByName };
-}
-
-// ── 候補 → 表示用アイテム（公開人物のみ・性別/ジャンル解決込み）────────────────────
-function enrichCandidate(
-  c: CandidateItem,
-  maps: PersonResolveMaps,
-): Omit<PhotobookItem, 'dedupKey' | 'groupSiblingCount' | 'groupProductIds'> | null {
-  if (!maps.publishedNames.has(c.personName)) return null;
-  const groupName = maps.groupByName.get(c.personName) ?? '';
-  const personGender = maps.genderByName.get(c.personName) ?? null;
-  const groupGender = groupName ? maps.genderByGroup.get(groupName) ?? null : null;
-  const gender = resolvePersonGender(personGender, groupGender);
-  const genreValues = [
-    maps.genreByName.get(c.personName),
-    maps.primaryGenreByName.get(c.personName),
-    ...(maps.genresByName.get(c.personName) ?? []),
-  ];
-  const genreBucket = resolveGenreBucket(gender, genreValues);
-
-  return {
-    personName: c.personName,
-    groupName,
-    gender,
-    genreBucket,
-    productId: c.item.id,
-    title: c.item.title ?? '',
-    imageUrl: c.item.imageUrl ?? '',
-    price: Number(c.item.price) || 0,
-    itemUrl: c.item.itemUrl ?? '',
-    affiliateUrl: c.item.affiliateUrl ?? '',
-    shopName: c.item.shopName,
-    status: c.settings.status,
-    published: c.settings.published,
-    homeState: c.settings.homeState,
-    homePinnedPosition: c.settings.homePinnedPosition,
-    sortOrder: c.settings.sortOrder,
-  };
-}
-
-// ── 重複統合（表紙違いは別グループのまま保持）────────────────────────────────────
-function dedupeItems(
-  candidates: CandidateItem[],
-  enriched: Map<string, ReturnType<typeof enrichCandidate>>,
-): PhotobookItem[] {
-  const groups = new Map<string, CandidateItem[]>();
-  for (const c of candidates) {
-    const key = `${c.personName}::${c.item.id}`;
-    const info = enriched.get(key);
-    if (!info) continue;
-    const dedupKey = c.settings.dedupGroupOverride?.trim() || computeDedupKey(c.personName, c.item.title ?? '');
-    if (!groups.has(dedupKey)) groups.set(dedupKey, []);
-    groups.get(dedupKey)!.push(c);
-  }
-
-  const result: PhotobookItem[] = [];
-  for (const [dedupKey, group] of groups) {
-    const forced = group.filter((c) => c.settings.forceRepresentative);
-    const repCandidate: CandidateItem = forced.length > 0
-      ? forced[0]
-      : group.find((c) => c.item.id === selectRepresentative(group.map((g) => g.item)).id)!;
-    const info = enriched.get(`${repCandidate.personName}::${repCandidate.item.id}`);
-    if (!info) continue;
-    result.push({
-      ...info,
-      dedupKey,
-      groupSiblingCount: group.length - 1,
-      groupProductIds: group.map((c) => c.item.id),
-    });
-  }
-  return result;
-}
-
-// ── メイン: 全写真集アイテム（重複統合済み）を取得 ────────────────────────────────
-// 公開可否(published設定)は呼び出し側でフィルタする（管理画面は非公開も見る必要があるため）。
-export async function getAllPhotobookItems(): Promise<PhotobookItem[]> {
-  const [candidates, maps] = await Promise.all([fetchAllCandidates(), buildPersonResolveMaps()]);
-  const enriched = new Map(
-    candidates.map((c) => [`${c.personName}::${c.item.id}`, enrichCandidate(c, maps)] as const),
-  );
-  return dedupeItems(candidates, enriched);
-}
-
-// ── 公開ページ用: published=trueのみ ────────────────────────────────────────────
-export async function getPublishedPhotobookItems(): Promise<PhotobookItem[]> {
-  const all = await getAllPhotobookItems();
-  return all.filter((i) => i.published);
-}
-
-// ── 管理画面用: 重複統合前の生データ（manual_exclude・非公開も含む全件）─────────
-export interface PhotobookAdminRow {
-  personName: string;
-  groupName: string;
-  gender: PhotobookGender | null;
-  genreBucket: PhotobookGenreBucket;
-  productId: string;
-  title: string;
-  imageUrl: string;
-  price: number;
-  itemUrl: string;
-  affiliateUrl: string;
-  status: PhotobookStatus;
-  published: boolean;
-  homeState: PhotobookHomeState;
-  homePinnedPosition: number | null;
-  sortOrder: number | null;
-  dedupKey: string;
-  isAutoDetected: boolean;
-}
-
-export async function getAdminPhotobookRows(): Promise<PhotobookAdminRow[]> {
-  const [candidates, maps] = await Promise.all([fetchAllCandidatesIncludingExcluded(), buildPersonResolveMaps()]);
-  const rows: PhotobookAdminRow[] = [];
-  for (const c of candidates) {
-    if (!maps.publishedNames.has(c.personName)) continue;
-    // 重要: 「status='auto'かつisAutoDetectedPhotobook()=false」の商品（例: CD/Blu-ray
-    // バンドル商品など、スキャン対象カテゴリに含まれるだけで写真集シグナルを一切持たない
-    // 商品）は、公開側(fetchAllCandidates)と同じ条件で除外する。以前はここでフィルタを
-    // 掛けていなかったため、写真集として一度も検出されていない無関係な商品（CD/Blu-ray等）
-    // まで管理画面に「自動判定」として大量に表示されてしまう不具合があった（公開ページには
-    // 表示されないため実害はなかったが、管理画面の表示が著しく紛らわしかった）。
-    // manual_include/manual_exclude（明示的な手動設定がある商品）は判定結果に関わらず
-    // 常に表示する（除外の確認・取り消しや、手動追加した商品の確認に必要なため）。
-    const isAutoDetected = isAutoDetectedPhotobook(c.item);
-    if (c.settings.status === 'auto' && !isAutoDetected) continue;
-    const groupName = maps.groupByName.get(c.personName) ?? '';
-    const personGender = maps.genderByName.get(c.personName) ?? null;
-    const groupGender = groupName ? maps.genderByGroup.get(groupName) ?? null : null;
-    const gender = resolvePersonGender(personGender, groupGender);
-    const genreValues = [
-      maps.genreByName.get(c.personName),
-      maps.primaryGenreByName.get(c.personName),
-      ...(maps.genresByName.get(c.personName) ?? []),
-    ];
-    rows.push({
-      personName: c.personName,
-      groupName,
-      gender,
-      genreBucket: resolveGenreBucket(gender, genreValues),
-      productId: c.item.id,
-      title: c.item.title ?? '',
-      imageUrl: c.item.imageUrl ?? '',
-      price: Number(c.item.price) || 0,
-      itemUrl: c.item.itemUrl ?? '',
-      affiliateUrl: c.item.affiliateUrl ?? '',
-      status: c.settings.status,
-      published: c.settings.published,
-      homeState: c.settings.homeState,
-      homePinnedPosition: c.settings.homePinnedPosition,
-      sortOrder: c.settings.sortOrder,
-      dedupKey: c.settings.dedupGroupOverride?.trim() || computeDedupKey(c.personName, c.item.title ?? ''),
-      isAutoDetected,
-    });
-  }
-  return rows;
-}
-
-// fetchAllCandidates() は auto判定に落ちた商品・manual_exclude商品を除外するが、
-// 管理画面は「除外されたもの」「自動判定に漏れたもの」も確認できる必要があるため、
-// フィルタなしの全候補（category='写真集'の全商品 + 手動追加した他カテゴリ商品）を返す。
-async function fetchAllCandidatesIncludingExcluded(): Promise<CandidateItem[]> {
-  const [autoRows, manualRows] = await Promise.all([
-    fetchAutoCandidateRows(),
-    fetchManualIncludeCrossCategoryRows(),
-  ]);
+async function toCandidateItems(autoRows: RawCandidateRow[], manualRows: RawManualRow[]): Promise<CandidateItem[]> {
   const result: CandidateItem[] = [];
   const seen = new Set<string>();
   for (const row of autoRows) {
@@ -467,11 +265,202 @@ async function fetchAllCandidatesIncludingExcluded(): Promise<CandidateItem[]> {
   return result;
 }
 
-const HOME_LIMIT = 8;
-
-export interface PhotobookHomeResult {
-  items: PhotobookItem[];
+// 公開側（写真集一覧・ホーム）: auto判定に落ちた商品・manual_exclude商品を除外する
+async function fetchAllCandidates(): Promise<CandidateItem[]> {
+  const { autoRows, manualRows } = await fetchCandidatesRaw();
+  const all = await toCandidateItems(autoRows, manualRows);
+  return all.filter((c) => {
+    if (c.settings.status === 'manual_exclude') return false;
+    if (c.settings.status === 'auto' && !isAutoDetectedPhotobook(c.item)) return false;
+    return true;
+  });
 }
+
+// 管理画面用: 「除外されたもの」「自動判定に漏れたもの(手動追加候補)」も確認できるよう、
+// manual_include/manual_exclude（明示的な手動設定がある商品）はステータスに関わらず含める。
+// status='auto'かつisAutoDetectedPhotobook()=falseの商品（写真集シグナルを一切持たない
+// CD/Blu-ray等）は除外する（自動判定に一度も乗っていない無関係な商品を大量表示しないため）。
+async function fetchAllCandidatesForAdmin(): Promise<CandidateItem[]> {
+  const { autoRows, manualRows } = await fetchCandidatesRaw();
+  const all = await toCandidateItems(autoRows, manualRows);
+  return all.filter((c) => {
+    if (c.settings.status !== 'auto') return true;
+    return isAutoDetectedPhotobook(c.item);
+  });
+}
+
+// ── 人物メタ解決（性別・グループ・ジャンル）──────────────────────────────────────
+interface PersonResolveMaps {
+  publishedNames: Set<string>;
+  groupByName: Map<string, string>;
+  genreByName: Map<string, string>;
+  genderByName: Map<string, string | null>;
+  genderByGroup: Map<string, string | null>;
+  primaryGenreByName: Map<string, string | null>;
+  genresByName: Map<string, string[] | null>;
+  groupMetas: Awaited<ReturnType<typeof getAllGroupMetas>>;
+}
+
+async function buildPersonResolveMaps(): Promise<PersonResolveMaps> {
+  const [persons, metaMap, groupMetas] = await Promise.all([
+    getAllPersonsMerged(),
+    getAllPersonMetas(),
+    getAllGroupMetas(),
+  ]);
+  const publishedNames = new Set(persons.map((p) => p.name));
+  const groupByName = new Map(persons.map((p) => [p.name, p.group]));
+  const genreByName = new Map(persons.map((p) => [p.name, p.genre]));
+  const genderByName = new Map<string, string | null>();
+  const primaryGenreByName = new Map<string, string | null>();
+  const genresByName = new Map<string, string[] | null>();
+  for (const [name, meta] of Object.entries(metaMap)) {
+    genderByName.set(name, (meta as { gender?: string }).gender ?? null);
+    primaryGenreByName.set(name, meta.primaryGenre ?? null);
+    genresByName.set(name, meta.genres ?? null);
+  }
+  const genderByGroup = new Map(groupMetas.map((g) => [g.groupName, (g as { gender?: string }).gender ?? null]));
+  return {
+    publishedNames, groupByName, genreByName, genderByName, genderByGroup,
+    primaryGenreByName, genresByName, groupMetas,
+  };
+}
+
+// ── 候補 → 重複統合済みアイテム一覧 ─────────────────────────────────────────────
+function buildGroupedItems(candidates: CandidateItem[], maps: PersonResolveMaps): PhotobookItem[] {
+  const published = candidates.filter((c) => maps.publishedNames.has(c.personName));
+  const groupableInputs = published.map((c) => ({
+    personName: c.personName,
+    productId: c.item.id,
+    title: c.item.title ?? '',
+    dedupGroupOverride: c.settings.dedupGroupOverride,
+  }));
+  const indexGroups = groupPhotobookCandidates(groupableInputs);
+
+  const result: PhotobookItem[] = [];
+  for (const idxs of indexGroups) {
+    const group = idxs.map((i) => published[i]);
+
+    // 代表商品（表示に使う画像/価格/URL）を選ぶ: forceRepresentative優先、
+    // なければ「ユニークな商品」の中からselectRepresentativeで選定
+    // （同一productIdの複数人物紐付けは同一商品データのため重複排除してから選ぶ）
+    const forced = group.filter((c) => c.settings.forceRepresentative);
+    let repCandidate: CandidateItem;
+    if (forced.length > 0) {
+      repCandidate = forced[0];
+    } else {
+      const uniqueItemsById = new Map<string, RakutenItem>();
+      for (const c of group) if (!uniqueItemsById.has(c.item.id)) uniqueItemsById.set(c.item.id, c.item);
+      const repItem = selectRepresentative([...uniqueItemsById.values()]);
+      repCandidate = group.find((c) => c.item.id === repItem.id)!;
+    }
+
+    const linkedPersonNames = [...new Set(group.map((c) => c.personName))];
+    const linkedGroupNames = [...new Set(
+      linkedPersonNames.map((n) => maps.groupByName.get(n) ?? '').filter((g): g is string => !!g),
+    )];
+
+    const label = resolveDisplayLabel(linkedPersonNames, maps.groupByName, repCandidate.personName);
+
+    // 性別解決: グループ代表表示のときはグループのgenderを優先的に使う
+    // （個々のメンバーのpersonMeta.gender上書きは、グループ全体を代表する1枚のカードには
+    // 適用しない。ジャンル・名前からの推測は一切行わない）。
+    let gender: PhotobookGender | null;
+    let genreValues: (string | null | undefined)[];
+    if (label.mode === 'group' && label.groupName) {
+      gender = resolvePersonGender(undefined, maps.genderByGroup.get(label.groupName) ?? null);
+      const genreSet = new Set<string | null | undefined>();
+      for (const name of linkedPersonNames) {
+        genreSet.add(maps.genreByName.get(name));
+        genreSet.add(maps.primaryGenreByName.get(name));
+        for (const g of maps.genresByName.get(name) ?? []) genreSet.add(g);
+      }
+      genreValues = [...genreSet];
+    } else {
+      const personGender = maps.genderByName.get(repCandidate.personName) ?? null;
+      const repGroupName = maps.groupByName.get(repCandidate.personName) ?? '';
+      const groupGender = repGroupName ? maps.genderByGroup.get(repGroupName) ?? null : null;
+      gender = resolvePersonGender(personGender, groupGender);
+      genreValues = [
+        maps.genreByName.get(repCandidate.personName),
+        maps.primaryGenreByName.get(repCandidate.personName),
+        ...(maps.genresByName.get(repCandidate.personName) ?? []),
+      ];
+    }
+    const genreBucket = resolveGenreBucket(gender, genreValues);
+
+    const agg = aggregatePhotobookSettings(group.map((c) => c.settings));
+
+    const displayHref = label.mode === 'group' && label.groupName
+      ? groupHrefByName(label.groupName, maps.groupMetas)
+      : `/person/${encodeURIComponent(label.displayName)}`;
+
+    const settingsTargets: PhotobookSettingsTarget[] = [...new Map(
+      group.map((c) => [`${c.personName}::${c.item.id}`, { personName: c.personName, productId: c.item.id }]),
+    ).values()];
+
+    result.push({
+      personName: repCandidate.personName,
+      groupName: maps.groupByName.get(repCandidate.personName) ?? '',
+      displayName: label.displayName,
+      displayMode: label.mode,
+      displayHref,
+      linkedPersonNames,
+      linkedGroupNames,
+      gender,
+      genreBucket,
+      productId: repCandidate.item.id,
+      title: repCandidate.item.title ?? '',
+      imageUrl: repCandidate.item.imageUrl ?? '',
+      price: Number(repCandidate.item.price) || 0,
+      itemUrl: repCandidate.item.itemUrl ?? '',
+      affiliateUrl: repCandidate.item.affiliateUrl ?? '',
+      shopName: repCandidate.item.shopName,
+      status: agg.status,
+      published: agg.published,
+      homeState: agg.homeState,
+      homePinnedPosition: agg.homePinnedPosition,
+      sortOrder: agg.sortOrder,
+      groupSiblingCount: group.length - 1,
+      groupProductIds: [...new Set(group.map((c) => c.item.id))],
+      settingsTargets,
+    });
+  }
+  return result;
+}
+
+// ── メイン: 全写真集アイテム（重複統合済み）を取得 ────────────────────────────────
+// 公開可否(published設定)は呼び出し側でフィルタする（管理画面は非公開も見る必要があるため）。
+export async function getAllPhotobookItems(): Promise<PhotobookItem[]> {
+  const [candidates, maps] = await Promise.all([fetchAllCandidates(), buildPersonResolveMaps()]);
+  return buildGroupedItems(candidates, maps);
+}
+
+// ── 公開ページ用: published=trueのみ ────────────────────────────────────────────
+export async function getPublishedPhotobookItems(): Promise<PhotobookItem[]> {
+  const all = await getAllPhotobookItems();
+  return all.filter((i) => i.published);
+}
+
+// ── 管理画面用: 重複統合済み（manual_exclude・非公開も含む）─────────────────────
+export type PhotobookAdminRow = PhotobookItem & { isAutoDetected: boolean };
+
+export async function getAdminPhotobookRows(): Promise<PhotobookAdminRow[]> {
+  const [candidates, maps] = await Promise.all([fetchAllCandidatesForAdmin(), buildPersonResolveMaps()]);
+  const items = buildGroupedItems(candidates, maps);
+  // isAutoDetected: グループ内のいずれかの商品が実際に自動判定に合格していたか
+  // （productId統合の場合は基本的に全員同じ商品なので一致するが、念のためOR判定にする）
+  const byProductIdAutoDetected = new Map<string, boolean>();
+  for (const c of candidates) {
+    const cur = byProductIdAutoDetected.get(c.item.id) ?? false;
+    byProductIdAutoDetected.set(c.item.id, cur || isAutoDetectedPhotobook(c.item));
+  }
+  return items.map((item) => ({
+    ...item,
+    isAutoDetected: item.groupProductIds.some((id) => byProductIdAutoDetected.get(id) ?? false),
+  }));
+}
+
+const HOME_LIMIT = 8;
 
 // ── ホーム表示: 固定枠 + 自動枠(分散)を合成 ──────────────────────────────────────
 export async function getPhotobookHomeItems(gender: PhotobookGender, limit = HOME_LIMIT): Promise<PhotobookItem[]> {
@@ -490,24 +479,26 @@ export async function getPhotobookHomeItems(gender: PhotobookGender, limit = HOM
       if (a.sortOrder !== null && b.sortOrder !== null && a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
       return a.productId.localeCompare(b.productId);
     });
-  const distributedAuto = distributeAvoidingConsecutivePerson(autoPool);
+  // 同一人物の連続を避ける分散は displayName（グループ代表時はグループ名）単位で行う
+  const distributedAuto = distributeAvoidingConsecutivePerson(
+    autoPool.map((i) => ({ ...i, personName: i.displayName })),
+  ) as PhotobookItem[];
 
-  // 固定枠を指定位置に配置し、残りを自動枠で埋める
   const slots: (PhotobookItem | null)[] = Array.from({ length: limit }, () => null);
   for (const p of pinned) {
     const pos = p.homePinnedPosition ?? 0;
     if (pos >= 0 && pos < limit && !slots[pos]) slots[pos] = p;
   }
   let autoIdx = 0;
-  const usedIds = new Set(pinned.map((p) => `${p.personName}::${p.productId}`));
+  const usedIds = new Set(pinned.map((p) => p.productId));
   for (let i = 0; i < limit; i++) {
     if (slots[i]) continue;
-    while (autoIdx < distributedAuto.length && usedIds.has(`${distributedAuto[autoIdx].personName}::${distributedAuto[autoIdx].productId}`)) {
+    while (autoIdx < distributedAuto.length && usedIds.has(distributedAuto[autoIdx].productId)) {
       autoIdx++;
     }
     if (autoIdx < distributedAuto.length) {
       slots[i] = distributedAuto[autoIdx];
-      usedIds.add(`${distributedAuto[autoIdx].personName}::${distributedAuto[autoIdx].productId}`);
+      usedIds.add(distributedAuto[autoIdx].productId);
       autoIdx++;
     }
   }
@@ -539,8 +530,11 @@ export async function getPhotobookListItems(
   const all = await getPublishedPhotobookItems();
   let filtered = all;
   if (filters.gender) filtered = filtered.filter((i) => i.gender === filters.gender);
-  if (filters.personName) filtered = filtered.filter((i) => i.personName === filters.personName);
-  if (filters.groupName) filtered = filtered.filter((i) => i.groupName === filters.groupName);
+  // 人物検索: 統合前にそのproductIdへ紐づいていた人物なら誰でもヒットする
+  // （グループ代表表示になっていても、個々のメンバー名で検索すればヒットする）
+  if (filters.personName) filtered = filtered.filter((i) => i.linkedPersonNames.includes(filters.personName!));
+  // グループ検索: 紐づく人物のいずれかが該当グループに所属していればヒットする
+  if (filters.groupName) filtered = filtered.filter((i) => i.linkedGroupNames.includes(filters.groupName!));
   if (filters.genreBucket) filtered = filtered.filter((i) => i.genreBucket === filters.genreBucket);
 
   filtered = [...filtered].sort((a, b) => {
@@ -563,15 +557,17 @@ export async function getPhotobookFacets(): Promise<{
   persons: { name: string; group: string; gender: PhotobookGender | null }[];
   groups: { name: string; gender: PhotobookGender | null }[];
 }> {
-  const all = await getPublishedPhotobookItems();
+  const [all, maps] = await Promise.all([getPublishedPhotobookItems(), buildPersonResolveMaps()]);
   const personMap = new Map<string, { name: string; group: string; gender: PhotobookGender | null }>();
   const groupMap = new Map<string, { name: string; gender: PhotobookGender | null }>();
   for (const item of all) {
-    if (!personMap.has(item.personName)) {
-      personMap.set(item.personName, { name: item.personName, group: item.groupName, gender: item.gender });
+    for (const name of item.linkedPersonNames) {
+      if (!personMap.has(name)) {
+        personMap.set(name, { name, group: maps.groupByName.get(name) ?? '', gender: item.gender });
+      }
     }
-    if (item.groupName && !groupMap.has(item.groupName)) {
-      groupMap.set(item.groupName, { name: item.groupName, gender: item.gender });
+    for (const g of item.linkedGroupNames) {
+      if (!groupMap.has(g)) groupMap.set(g, { name: g, gender: item.gender });
     }
   }
   return { persons: [...personMap.values()], groups: [...groupMap.values()] };
