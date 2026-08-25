@@ -1,6 +1,7 @@
 import { getAdminPhotobookRows } from '@/lib/photobook-store';
 import { getAllPersonsMerged } from '@/lib/persons';
 import PhotobookAdminClient from './PhotobookAdminClient';
+import GenderManagerPanel from './GenderManagerPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,9 @@ export default async function AdminPhotobooksPage() {
         グループ写真集（同一商品が複数メンバーに紐づくもの）は自動的に1件へ統合して表示しています。
         手動追加・除外・公開設定・ホーム掲載設定を行えます。
       </p>
+      <div className="mb-6">
+        <GenderManagerPanel />
+      </div>
       <PhotobookAdminClient initialRows={rows} persons={personOptions} />
     </div>
   );

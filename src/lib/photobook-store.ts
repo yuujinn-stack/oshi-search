@@ -572,3 +572,95 @@ export async function getPhotobookFacets(): Promise<{
   }
   return { persons: [...personMap.values()], groups: [...groupMap.values()] };
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// gender管理UI用のデータ取得（写真集自動判定・重複統合ロジックには一切触れない。
+// 既に計算済みの getAllPhotobookItems() の結果を「集計」するだけ）。
+// ══════════════════════════════════════════════════════════════════════════
+
+export interface PersonGenderRow {
+  personName: string;
+  groupName: string;
+  /** persons.genre（坂道/俳優/テレビ/アーティスト等の共通ジャンル） */
+  genre: string;
+  /** personMeta.primaryGenre（女優/俳優/アイドル/歌手等、個別設定されている場合のみ） */
+  primaryGenre: string | null;
+  /** personMeta.genres（複数ジャンルタグ） */
+  genres: string[];
+  /** personMeta.gender の現在値（'female'|'male'|null）。groupMeta経由の解決は行わない生値 */
+  gender: PhotobookGender | null;
+  /** この人物が紐づく写真集候補（重複統合後）の件数 */
+  photobookCandidateCount: number;
+}
+
+// 人物のジャンル絞り込み候補として使う値（既存ジャンル体系をそのまま使う。新規分類は作らない）
+export const PERSON_GENDER_GENRE_FILTERS = ['女優', '俳優', 'アイドル', '歌手'] as const;
+export type PersonGenderGenreFilter = typeof PERSON_GENDER_GENRE_FILTERS[number] | 'その他' | 'すべて';
+
+export async function getPersonGenderRows(): Promise<PersonGenderRow[]> {
+  const [persons, metaMap, allItems] = await Promise.all([
+    getAllPersonsMerged(),
+    getAllPersonMetas(),
+    getAllPhotobookItems(),
+  ]);
+  const countByPerson = new Map<string, number>();
+  for (const item of allItems) {
+    for (const name of item.linkedPersonNames) {
+      countByPerson.set(name, (countByPerson.get(name) ?? 0) + 1);
+    }
+  }
+  return persons.map((p) => {
+    const meta = metaMap[p.name] as { primaryGenre?: string; genres?: string[]; gender?: string } | undefined;
+    const rawGender = meta?.gender;
+    return {
+      personName: p.name,
+      groupName: p.group,
+      genre: p.genre,
+      primaryGenre: meta?.primaryGenre ?? null,
+      genres: meta?.genres ?? [],
+      gender: rawGender === 'female' || rawGender === 'male' ? rawGender : null,
+      photobookCandidateCount: countByPerson.get(p.name) ?? 0,
+    };
+  });
+}
+
+export interface GroupGenderRow {
+  groupName: string;
+  gender: PhotobookGender | null;
+  memberCount: number;
+  photobookCandidateCount: number;
+}
+
+export async function getGroupGenderRows(): Promise<GroupGenderRow[]> {
+  const [persons, groupMetas, allItems] = await Promise.all([
+    getAllPersonsMerged(),
+    getAllGroupMetas(),
+    getAllPhotobookItems(),
+  ]);
+  const memberCountByGroup = new Map<string, number>();
+  for (const p of persons) {
+    if (!p.group) continue;
+    memberCountByGroup.set(p.group, (memberCountByGroup.get(p.group) ?? 0) + 1);
+  }
+  const candidateCountByGroup = new Map<string, number>();
+  for (const item of allItems) {
+    for (const g of item.linkedGroupNames) {
+      candidateCountByGroup.set(g, (candidateCountByGroup.get(g) ?? 0) + 1);
+    }
+  }
+  const groupNames = new Set<string>([...memberCountByGroup.keys(), ...groupMetas.map((g) => g.groupName)]);
+  return [...groupNames]
+    .map((groupName): GroupGenderRow => {
+      const meta = groupMetas.find((g) => g.groupName === groupName) as { gender?: string } | undefined;
+      const rawGender = meta?.gender;
+      const gender: PhotobookGender | null = rawGender === 'female' ? 'female' : rawGender === 'male' ? 'male' : null;
+      return {
+        groupName,
+        gender,
+        memberCount: memberCountByGroup.get(groupName) ?? 0,
+        photobookCandidateCount: candidateCountByGroup.get(groupName) ?? 0,
+      };
+    })
+    .filter((g) => g.memberCount > 0)
+    .sort((a, b) => a.groupName.localeCompare(b.groupName, 'ja'));
+}

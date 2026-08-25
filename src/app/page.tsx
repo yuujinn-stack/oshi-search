@@ -64,7 +64,7 @@ async function getHomePhotobookItems(): Promise<{ female: Awaited<ReturnType<typ
 const getCachedHomePhotobookItems = unstable_cache(
   getHomePhotobookItems,
   ['home-photobook-items'],
-  { revalidate: 60 },
+  { revalidate: 60, tags: ['photobook-home'] },
 );
 
 const EMPTY_RANKING: RankingData = {
