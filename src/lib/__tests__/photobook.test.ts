@@ -45,6 +45,27 @@ describe('hasPhotobookExcludeSignal', () => {
   it('該当しないタイトルはfalse', () => {
     expect(hasPhotobookExcludeSignal('◯◯ 1st写真集 感情の隙間')).toBe(false);
   });
+
+  // 実データ確認(2026)で発覚した回帰: 「是非に及ばず（初回仕様限定盤 CD＋Blu-ray Type-A）」
+  // のようなCD/Blu-ray音楽商品がスキャン対象カテゴリ(CD)に含まれており、除外語ハードニングを行った。
+  it('CD/Blu-rayの版・形態を表す語（初回仕様限定盤/通常盤/Type-A等）を検出する', () => {
+    expect(hasPhotobookExcludeSignal('是非に及ばず (初回仕様限定盤 CD＋Blu-ray Type-A)')).toBe(true);
+    expect(hasPhotobookExcludeSignal('是非に及ばず (初回仕様限定盤 CD＋Blu-ray Type-B)')).toBe(true);
+    expect(hasPhotobookExcludeSignal('是非に及ばず (初回仕様限定盤A＋B＋C＋Dセット)')).toBe(true);
+    expect(hasPhotobookExcludeSignal('是非に及ばず (通常盤)')).toBe(true);
+    expect(hasPhotobookExcludeSignal('◯◯ 完全生産限定盤')).toBe(true);
+    expect(hasPhotobookExcludeSignal('◯◯ 期間生産限定盤')).toBe(true);
+    expect(hasPhotobookExcludeSignal('◯◯ 1stシングル')).toBe(true);
+    expect(hasPhotobookExcludeSignal('◯◯ ベストアルバム')).toBe(true);
+  });
+  it('大文字小文字が異なるTYPE-A表記も検出する', () => {
+    expect(hasPhotobookExcludeSignal('◯◯ (TYPE-A)')).toBe(true);
+    expect(hasPhotobookExcludeSignal('◯◯ (type-a)')).toBe(true);
+  });
+  it('「通常盤」(CD)と「通常版」(書籍の版違いを表す語)は別物として扱う', () => {
+    // 通常版(版)は誤統合防止のテストで確認済みの版表記であり、除外対象ではない
+    expect(hasPhotobookExcludeSignal('◯◯ 1st写真集 通常版')).toBe(false);
+  });
 });
 
 describe('isAutoDetectedPhotobook', () => {
@@ -59,6 +80,24 @@ describe('isAutoDetectedPhotobook', () => {
   });
   it('中古品は自動判定対象から除外する', () => {
     expect(isAutoDetectedPhotobook({ title: '賀喜遥香 1st写真集', isUsed: true })).toBe(false);
+  });
+
+  // 本番確認(2026)で発覚した実際の誤判定商品（一ノ瀬美空 / CD カテゴリ）の回帰テスト。
+  // いずれも「写真集」等の肯定シグナルを一切含まないため、そもそも肯定シグナル不一致で
+  // falseになる（除外語チェックを待たずに弾かれる）ことを確認する。
+  it('実際に誤判定されたCD/Blu-ray商品(一ノ瀬美空「是非に及ばず」)はfalseになる', () => {
+    expect(isAutoDetectedPhotobook({
+      title: '【楽天ブックス限定先着特典】是非に及ばず (初回仕様限定盤 CD＋Blu-ray Type-A)(ポストカード(通常盤))',
+    })).toBe(false);
+    expect(isAutoDetectedPhotobook({
+      title: '是非に及ばず (初回仕様限定盤 CD＋Blu-ray Type-B)',
+    })).toBe(false);
+    expect(isAutoDetectedPhotobook({
+      title: '是非に及ばず (初回仕様限定盤A＋B＋C＋Dセット) (特典なし)',
+    })).toBe(false);
+  });
+  it('主商品が写真集で、CD等の除外語を含まない場合はtrueのまま維持する（誤除外防止）', () => {
+    expect(isAutoDetectedPhotobook({ title: '◯◯ ファースト写真集「タイトル」' })).toBe(true);
   });
 });
 

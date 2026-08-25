@@ -391,6 +391,16 @@ export async function getAdminPhotobookRows(): Promise<PhotobookAdminRow[]> {
   const rows: PhotobookAdminRow[] = [];
   for (const c of candidates) {
     if (!maps.publishedNames.has(c.personName)) continue;
+    // 重要: 「status='auto'かつisAutoDetectedPhotobook()=false」の商品（例: CD/Blu-ray
+    // バンドル商品など、スキャン対象カテゴリに含まれるだけで写真集シグナルを一切持たない
+    // 商品）は、公開側(fetchAllCandidates)と同じ条件で除外する。以前はここでフィルタを
+    // 掛けていなかったため、写真集として一度も検出されていない無関係な商品（CD/Blu-ray等）
+    // まで管理画面に「自動判定」として大量に表示されてしまう不具合があった（公開ページには
+    // 表示されないため実害はなかったが、管理画面の表示が著しく紛らわしかった）。
+    // manual_include/manual_exclude（明示的な手動設定がある商品）は判定結果に関わらず
+    // 常に表示する（除外の確認・取り消しや、手動追加した商品の確認に必要なため）。
+    const isAutoDetected = isAutoDetectedPhotobook(c.item);
+    if (c.settings.status === 'auto' && !isAutoDetected) continue;
     const groupName = maps.groupByName.get(c.personName) ?? '';
     const personGender = maps.genderByName.get(c.personName) ?? null;
     const groupGender = groupName ? maps.genderByGroup.get(groupName) ?? null : null;
@@ -417,7 +427,7 @@ export async function getAdminPhotobookRows(): Promise<PhotobookAdminRow[]> {
       homePinnedPosition: c.settings.homePinnedPosition,
       sortOrder: c.settings.sortOrder,
       dedupKey: c.settings.dedupGroupOverride?.trim() || computeDedupKey(c.personName, c.item.title ?? ''),
-      isAutoDetected: isAutoDetectedPhotobook(c.item),
+      isAutoDetected,
     });
   }
   return rows;

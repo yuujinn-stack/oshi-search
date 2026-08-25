@@ -19,7 +19,11 @@ const POSITIVE_PATTERNS: RegExp[] = [
 ];
 
 // 誤判定しやすいため除外する語（category='写真集'として取得された商品にも
-// カレンダー等が混入するため、タイトル側でも安全側に倒す）
+// カレンダー等が混入するため、タイトル側でも安全側に倒す）。
+// 実データ確認（2026）で、CD/Blu-rayの音楽・映像商品（例:「是非に及ばず（初回仕様限定盤
+// CD＋Blu-ray Type-A）」）がスキャン対象カテゴリ(CD等)に含まれていることを確認したため、
+// 音楽・映像商品であることを示す語も除外語に追加した。
+// マッチングは大文字小文字を区別しない（実データに"Type-A"と"TYPE-A"の両方の表記が存在するため）。
 const EXCLUDE_KEYWORDS: string[] = [
   '雑誌',
   'Blu-ray', 'ブルーレイ', 'DVD', 'CD',
@@ -31,6 +35,11 @@ const EXCLUDE_KEYWORDS: string[] = [
   'トレーディングカード', 'トレカ',
   'アクリルスタンド',
   'グッズ',
+  // 音楽・映像商品の明確なシグナル（CD/Blu-ray/DVDの版・形態を表す語）
+  '初回仕様限定盤', '初回限定盤', '通常盤',
+  '完全生産限定盤', '期間生産限定盤',
+  'Type-A', 'Type-B', 'Type-C', 'Type-D',
+  'シングル', 'アルバム',
 ];
 
 /** タイトルに肯定シグナル（写真集/フォトブック/PHOTO BOOK等）が含まれるか */
@@ -39,10 +48,11 @@ export function hasPhotobookPositiveSignal(title: string): boolean {
   return POSITIVE_PATTERNS.some((re) => re.test(title));
 }
 
-/** タイトルに誤判定しやすい除外語が含まれるか */
+/** タイトルに誤判定しやすい除外語が含まれるか（大文字小文字を区別しない） */
 export function hasPhotobookExcludeSignal(title: string): boolean {
   if (!title) return false;
-  return EXCLUDE_KEYWORDS.some((kw) => title.includes(kw));
+  const lower = title.toLowerCase();
+  return EXCLUDE_KEYWORDS.some((kw) => lower.includes(kw.toLowerCase()));
 }
 
 /**
