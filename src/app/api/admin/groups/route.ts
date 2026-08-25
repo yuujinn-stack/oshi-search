@@ -54,6 +54,7 @@ export async function POST(req: Request) {
       formerNames: (body.formerNames ?? []).filter(Boolean),
       officialSite: body.officialSite?.trim() || undefined,
       note: body.note?.trim() || undefined,
+      gender: body.gender === 'female' || body.gender === 'male' ? body.gender : undefined,
       createdAt: body.createdAt ?? Date.now(),
     };
     await saveGroupMeta(meta);

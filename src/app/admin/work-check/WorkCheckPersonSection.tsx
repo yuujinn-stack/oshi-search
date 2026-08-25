@@ -496,6 +496,7 @@ export default function WorkCheckPersonSection({ persons, stats, pendingDedupWor
               currentGroupName={p.currentGroupName}
               formerGroupNames={p.formerGroupNames}
               membershipNote={p.membershipNote}
+              gender={p.gender}
               primaryGenre={p.primaryGenre}
               genres={p.genres}
               titles={p.titles}

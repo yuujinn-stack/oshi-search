@@ -83,4 +83,6 @@ export interface PersonWithCounts {
   awards?: string[];
   careerStatus?: CareerStatus;
   roleNote?: string;
+  /** 'female' | 'male' | undefined(未設定)。写真集機能用。管理画面からの手動設定のみ。 */
+  gender?: 'female' | 'male';
 }

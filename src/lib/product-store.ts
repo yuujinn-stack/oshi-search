@@ -243,6 +243,31 @@ export async function getStoredProductImageUrl(
   }
 }
 
+// 商品1件のフルデータを取得する（写真集機能: 手動追加された商品が'写真集'以外の
+// カテゴリに属する場合に、そのカテゴリから実データを引き当てるために使う）。
+// getStoredProductImageUrl と同じ「DB側で1件だけ絞り込む」方針。
+export async function getStoredProductItemById(
+  personName: string,
+  category: ProductCategory,
+  productId: string,
+): Promise<RakutenItem | null> {
+  try {
+    const result = await db.execute(sql`
+      SELECT item
+      FROM products, jsonb_array_elements(items) AS item
+      WHERE person_name = ${personName}
+        AND category = ${category}
+        AND item->>'id' = ${productId}
+      LIMIT 1
+    `);
+    const row = result.rows[0] as { item: RakutenItem } | undefined;
+    return row?.item ?? null;
+  } catch (err) {
+    console.error('[db] getStoredProductItemById failed:', String(err));
+    return null;
+  }
+}
+
 // 人物の全カテゴリを一括取得（人物ページレンダリング時）
 export async function getAllStoredProducts(
   personName: string

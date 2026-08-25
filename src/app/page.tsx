@@ -14,6 +14,8 @@ import { groupHrefByName } from '@/lib/group-slug';
 import type { GroupMeta } from '@/types/group';
 import { getRenderableProductTitle } from '@/lib/product-image';
 import { VOD_PAGE_PROVIDERS, getVodProviderWorkCounts } from '@/lib/vod-page';
+import { getPhotobookHomeItems } from '@/lib/photobook-store';
+import PhotobookHomeSection from '@/components/site/PhotobookHomeSection';
 
 // Redis への問い合わせ結果を 60 秒間 Vercel Data Cache でキャッシュ
 // → 同一デプロイ内でリクエストが集中しても Redis 呼び出しは最大1回/60秒
@@ -47,6 +49,21 @@ async function getVodProviderWorkCountsObject(): Promise<Record<string, number>>
 const getCachedVodProviderWorkCounts = unstable_cache(
   getVodProviderWorkCountsObject,
   ['home-vod-provider-counts'],
+  { revalidate: 60 },
+);
+
+const HOME_PHOTOBOOK_LIMIT = 8;
+
+async function getHomePhotobookItems(): Promise<{ female: Awaited<ReturnType<typeof getPhotobookHomeItems>>; male: Awaited<ReturnType<typeof getPhotobookHomeItems>> }> {
+  const [female, male] = await Promise.all([
+    getPhotobookHomeItems('female', HOME_PHOTOBOOK_LIMIT),
+    getPhotobookHomeItems('male', HOME_PHOTOBOOK_LIMIT),
+  ]);
+  return { female, male };
+}
+const getCachedHomePhotobookItems = unstable_cache(
+  getHomePhotobookItems,
+  ['home-photobook-items'],
   { revalidate: 60 },
 );
 
@@ -105,11 +122,12 @@ function SectionHeader({ title, href, linkText }: { title: string; href?: string
 // ─── ページ ──────────────────────────────────────────────────────────────────────
 export default async function HomePage() {
   // Redis 失敗時も200を返すため allSettled を使用
-  const [enrichedResult, rankingResult, groupMetasResult, vodCountsResult] = await Promise.allSettled([
+  const [enrichedResult, rankingResult, groupMetasResult, vodCountsResult, photobookResult] = await Promise.allSettled([
     getCachedEnrichedData(),
     getCachedRankingData(),
     getCachedGroupMetas(),
     getCachedVodProviderWorkCounts(),
+    getCachedHomePhotobookItems(),
   ]);
 
   const { persons, genres: allGenres } = enrichedResult.status === 'fulfilled'
@@ -125,6 +143,10 @@ export default async function HomePage() {
 
   if (enrichedResult.status === 'rejected') console.error('[page] enriched data failed:', enrichedResult.reason);
   if (rankingResult.status === 'rejected') console.error('[page] ranking data failed:', rankingResult.reason);
+  if (photobookResult.status === 'rejected') console.error('[page] photobook data failed:', photobookResult.reason);
+
+  const photobookFemale = photobookResult.status === 'fulfilled' ? photobookResult.value.female : [];
+  const photobookMale = photobookResult.status === 'fulfilled' ? photobookResult.value.male : [];
 
   const groups = [...new Set(persons.map((p) => p.group).filter(Boolean))];
 
@@ -499,6 +521,11 @@ export default async function HomePage() {
             </div>
           </div>
         </section>
+      )}
+
+      {/* ━━━ 📷 写真集を探す ━━━ */}
+      {(photobookFemale.length > 0 || photobookMale.length > 0) && (
+        <PhotobookHomeSection femaleItems={photobookFemale} maleItems={photobookMale} />
       )}
 
       {/* ━━━ メインコンテンツ ━━━ */}

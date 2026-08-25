@@ -25,7 +25,14 @@ export interface PersonMeta {
   awards?: string[];
   careerStatus?: CareerStatus;
   roleNote?: string;
+  /** 'female' | 'male' | undefined(未設定)。写真集機能用。管理画面からの手動設定のみ。 */
+  gender?: 'female' | 'male';
 }
+
+// POSTの body.gender専用の型。null は「未設定に戻す（明示的にクリア）」、
+// undefined は「このリクエストではgenderを変更しない」を意味する（他フィールドと違い、
+// 未設定に戻す操作を必須要件としてサポートするため区別する）。
+type GenderPatchValue = 'female' | 'male' | null;
 
 export async function GET() {
   try {
@@ -55,12 +62,14 @@ export async function POST(req: NextRequest) {
     awards?: string[];
     careerStatus?: CareerStatus;
     roleNote?: string;
+    gender?: GenderPatchValue;
   };
   const {
     personName, memo, priority,
     activityStatus, generation, joinedAt, leftAt,
     currentGroupName, formerGroupNames, membershipNote,
     primaryGenre, genres, titles, publicRoles, awards, careerStatus, roleNote,
+    gender,
   } = body;
   if (!personName) {
     return NextResponse.json({ error: 'personName required' }, { status: 400 });
@@ -83,6 +92,9 @@ export async function POST(req: NextRequest) {
     ...(awards !== undefined ? { awards } : {}),
     ...(careerStatus !== undefined ? { careerStatus } : {}),
     ...(roleNote !== undefined ? { roleNote } : {}),
+    // gender: null は「未設定に戻す」の明示的な指示として扱う（他フィールドと異なり
+    // クリア操作をサポートする必要があるため、undefinedとnullを区別する）。
+    ...(gender !== undefined ? { gender: gender ?? undefined } : {}),
     updatedAt: Date.now(),
   };
 

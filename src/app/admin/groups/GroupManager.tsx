@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { GroupMeta, GroupActivityStatus } from '@/types/group';
+import type { GroupMeta, GroupActivityStatus, GroupGender } from '@/types/group';
 import { GROUP_NAME_TO_SLUG, isAsciiSlug, generateSlugCandidate } from '@/lib/group-slug';
 
 const STATUS_OPTIONS: { value: GroupActivityStatus; label: string }[] = [
@@ -10,6 +10,14 @@ const STATUS_OPTIONS: { value: GroupActivityStatus; label: string }[] = [
   { value: 'disbanded', label: '解散' },
   { value: 'hiatus',   label: '活動休止' },
   { value: 'unknown',  label: '不明' },
+];
+
+// 写真集機能用の性別設定。既存DBに性別情報がないため、ここでの手動設定のみが情報源になる
+// （AI推測・グループ名からの自動推測は行わない）。未設定のままでも他機能には一切影響しない。
+const GENDER_OPTIONS: { value: GroupGender | ''; label: string }[] = [
+  { value: '',       label: '未設定' },
+  { value: 'female', label: '女性' },
+  { value: 'male',   label: '男性' },
 ];
 
 const STATUS_BADGE: Record<GroupActivityStatus, string> = {
@@ -146,6 +154,7 @@ function AddForm({ onAdded, metas }: AddFormProps) {
   const [formerNamesStr, setFormerNamesStr] = useState('');
   const [officialSite, setOfficialSite] = useState('');
   const [note, setNote] = useState('');
+  const [gender, setGender] = useState<GroupGender | ''>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -171,7 +180,7 @@ function AddForm({ onAdded, metas }: AddFormProps) {
   function reset() {
     setGroupName(''); setSlug(''); setActivityStatus('active');
     setFormedAt(''); setEndedAt(''); setRenamedFrom(''); setRenamedTo('');
-    setFormerNamesStr(''); setOfficialSite(''); setNote('');
+    setFormerNamesStr(''); setOfficialSite(''); setNote(''); setGender('');
     setError('');
   }
 
@@ -197,6 +206,7 @@ function AddForm({ onAdded, metas }: AddFormProps) {
           formerNames,
           officialSite: officialSite.trim() || undefined,
           note: note.trim() || undefined,
+          gender: gender || undefined,
           createdAt: Date.now(),
         }),
       });
@@ -243,6 +253,17 @@ function AddForm({ onAdded, metas }: AddFormProps) {
             <select value={activityStatus} onChange={(e) => setActivityStatus(e.target.value as GroupActivityStatus)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
               {STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              性別（写真集機能用）
+            </label>
+            <select value={gender} onChange={(e) => setGender(e.target.value as GroupGender | '')}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+              {GENDER_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
@@ -343,6 +364,7 @@ function EditRow({ record, metas, onSaved, onCancel }: EditRowProps) {
   const [formerNamesStr, setFormerNamesStr] = useState((record.formerNames ?? []).join(', '));
   const [officialSite, setOfficialSite] = useState(record.officialSite ?? '');
   const [note, setNote] = useState(record.note ?? '');
+  const [gender, setGender] = useState<GroupGender | ''>(record.gender ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -384,6 +406,7 @@ function EditRow({ record, metas, onSaved, onCancel }: EditRowProps) {
           formerNames,
           officialSite: officialSite.trim() || undefined,
           note: note.trim() || undefined,
+          gender: gender || undefined,
         }),
       });
       if (!res.ok) {
@@ -419,6 +442,15 @@ function EditRow({ record, metas, onSaved, onCancel }: EditRowProps) {
           <select value={activityStatus} onChange={(e) => setActivityStatus(e.target.value as GroupActivityStatus)}
             className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
             {STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[11px] font-medium text-gray-500 mb-1">性別（写真集用）</label>
+          <select value={gender} onChange={(e) => setGender(e.target.value as GroupGender | '')}
+            className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            {GENDER_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
@@ -546,6 +578,15 @@ export default function GroupManager({ initialMetas }: Props) {
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[g.activityStatus]}`}>
                         {STATUS_OPTIONS.find((o) => o.value === g.activityStatus)?.label}
                       </span>
+                      {g.gender ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-pink-50 text-pink-600 border border-pink-100">
+                          {g.gender === 'female' ? '女性' : '男性'}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-gray-50 text-gray-400 border border-gray-200">
+                          性別未設定
+                        </span>
+                      )}
                       {g.renamedFrom && (
                         <span className="text-[10px] text-gray-400">旧名: {g.renamedFrom}</span>
                       )}

@@ -153,6 +153,25 @@ const CREATE_STATEMENTS = [
   )`,
   sql`CREATE INDEX IF NOT EXISTS vrl_person_work_idx ON vod_recheck_logs (person_name, work_id)`,
   sql`CREATE INDEX IF NOT EXISTS vrl_created_at_idx ON vod_recheck_logs (created_at)`,
+  sql`CREATE TABLE IF NOT EXISTS photobook_settings (
+    person_name            TEXT NOT NULL,
+    product_id             TEXT NOT NULL,
+    source_category        TEXT,
+    status                 TEXT NOT NULL DEFAULT 'auto',
+    published              BOOLEAN NOT NULL DEFAULT TRUE,
+    home_state             TEXT NOT NULL DEFAULT 'auto',
+    home_pinned_position   INTEGER,
+    sort_order             INTEGER,
+    dedup_group_override   TEXT,
+    force_representative   BOOLEAN NOT NULL DEFAULT FALSE,
+    note                   TEXT,
+    updated_by             TEXT,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (person_name, product_id)
+  )`,
+  sql`CREATE INDEX IF NOT EXISTS pbs_status_idx ON photobook_settings (status)`,
+  sql`CREATE INDEX IF NOT EXISTS pbs_home_state_idx ON photobook_settings (home_state)`,
 ];
 
 // ── ALTER TABLE ADD COLUMN IF NOT EXISTS ─────────────────────────────────────
@@ -193,6 +212,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE person_meta ADD COLUMN IF NOT EXISTS role_note TEXT`),
   sql.raw(`ALTER TABLE person_meta ADD COLUMN IF NOT EXISTS memo TEXT`),
   sql.raw(`ALTER TABLE person_meta ADD COLUMN IF NOT EXISTS priority TEXT`),
+  sql.raw(`ALTER TABLE person_meta ADD COLUMN IF NOT EXISTS gender TEXT`),
   sql.raw(`ALTER TABLE person_meta ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
 
   // ── group_meta ─────────────────────────────────────────────────────────────
@@ -205,6 +225,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS former_names JSONB NOT NULL DEFAULT '[]'`),
   sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS official_site TEXT`),
   sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS note TEXT`),
+  sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS gender TEXT`),
   sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
   sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
 
@@ -241,7 +262,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE verdicts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
 ];
 
-const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs'];
+const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings'];
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。

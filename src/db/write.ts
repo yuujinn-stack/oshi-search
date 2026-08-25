@@ -3,7 +3,7 @@
 // 失敗時は console.warn('[dual-write] DB_ERR ...') のみ出力し、本番処理を失敗扱いにしない。
 
 import { db, neonSql } from './client';
-import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons, workStatusHistory, vodRecheckLogs } from './schema';
+import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons, workStatusHistory, vodRecheckLogs, photobookSettings } from './schema';
 import { eq, and } from 'drizzle-orm';
 import type { WorkRecord } from '@/types/work';
 
@@ -264,6 +264,8 @@ export interface PersonMetaInput {
   awards?: string[];
   careerStatus?: string;
   roleNote?: string;
+  /** 'female' | 'male' | undefined(未設定)。写真集機能用。管理画面からの手動設定のみ。 */
+  gender?: string;
 }
 
 export async function upsertPersonMeta(name: string, meta: PersonMetaInput): Promise<void> {
@@ -286,6 +288,7 @@ export async function upsertPersonMeta(name: string, meta: PersonMetaInput): Pro
     roleNote:         meta.roleNote ?? null,
     memo:             meta.memo ?? null,
     priority:         meta.priority ?? null,
+    gender:           meta.gender ?? null,
     updatedAt:        now,
   };
   await db
@@ -310,6 +313,7 @@ export async function upsertPersonMeta(name: string, meta: PersonMetaInput): Pro
         roleNote:         row.roleNote,
         memo:             row.memo,
         priority:         row.priority,
+        gender:           row.gender,
         updatedAt:        now,
       },
     });
@@ -329,6 +333,8 @@ export interface GroupMetaInput {
   officialSite?: string;
   note?: string;
   updatedAt?: number;
+  /** 'female' | 'male' | undefined(未設定)。写真集機能用。管理画面からの手動設定のみ。 */
+  gender?: string;
 }
 
 export async function upsertGroupMeta(meta: GroupMetaInput): Promise<void> {
@@ -345,6 +351,7 @@ export async function upsertGroupMeta(meta: GroupMetaInput): Promise<void> {
     formerNames:    meta.formerNames ?? [],
     officialSite:   meta.officialSite ?? null,
     note:           meta.note ?? null,
+    gender:         meta.gender ?? null,
     updatedAt:      now,
   };
   await db
@@ -362,9 +369,75 @@ export async function upsertGroupMeta(meta: GroupMetaInput): Promise<void> {
         formerNames:    row.formerNames,
         officialSite:   row.officialSite,
         note:           row.note,
+        gender:         row.gender,
         updatedAt:      row.updatedAt,
       },
     });
+}
+
+// ── 写真集 表示設定・例外設定（photobook_settings）──────────────────────────
+
+export interface PhotobookSettingInput {
+  personName:          string;
+  productId:           string;
+  sourceCategory?:     string | null;
+  status?:             string;  // 'auto' | 'manual_include' | 'manual_exclude'
+  published?:          boolean;
+  homeState?:          string;  // 'auto' | 'pinned' | 'hidden'
+  homePinnedPosition?: number | null;
+  sortOrder?:          number | null;
+  dedupGroupOverride?: string | null;
+  forceRepresentative?: boolean;
+  note?:               string | null;
+  updatedBy?:          string;
+}
+
+// 部分更新: 指定したフィールドのみ変更し、それ以外は既存値を保持する
+// （PersonMeta/GroupMetaと異なり、こちらは呼び出し側が必ず現在値を取得済みの前提を置かず、
+//   SQL側でCOALESCEして未指定フィールドを保護する）。
+export async function upsertPhotobookSetting(input: PhotobookSettingInput): Promise<void> {
+  const now = new Date();
+  const defaults = {
+    personName:          input.personName,
+    productId:           input.productId,
+    sourceCategory:      input.sourceCategory ?? null,
+    status:              input.status ?? 'auto',
+    published:           input.published ?? true,
+    homeState:           input.homeState ?? 'auto',
+    homePinnedPosition:  input.homePinnedPosition ?? null,
+    sortOrder:           input.sortOrder ?? null,
+    dedupGroupOverride:  input.dedupGroupOverride ?? null,
+    forceRepresentative: input.forceRepresentative ?? false,
+    note:                input.note ?? null,
+    updatedBy:           input.updatedBy ?? null,
+    updatedAt:           now,
+  };
+  const setClause: Record<string, unknown> = { updatedAt: now };
+  if (input.sourceCategory !== undefined) setClause.sourceCategory = input.sourceCategory;
+  if (input.status !== undefined) setClause.status = input.status;
+  if (input.published !== undefined) setClause.published = input.published;
+  if (input.homeState !== undefined) setClause.homeState = input.homeState;
+  if (input.homePinnedPosition !== undefined) setClause.homePinnedPosition = input.homePinnedPosition;
+  if (input.sortOrder !== undefined) setClause.sortOrder = input.sortOrder;
+  if (input.dedupGroupOverride !== undefined) setClause.dedupGroupOverride = input.dedupGroupOverride;
+  if (input.forceRepresentative !== undefined) setClause.forceRepresentative = input.forceRepresentative;
+  if (input.note !== undefined) setClause.note = input.note;
+  if (input.updatedBy !== undefined) setClause.updatedBy = input.updatedBy;
+
+  await db
+    .insert(photobookSettings)
+    .values(defaults)
+    .onConflictDoUpdate({
+      target: [photobookSettings.personName, photobookSettings.productId],
+      set: setClause,
+    });
+}
+
+// 手動除外を解除して自動判定(auto)に戻す（設定行ごと削除。存在しなければ何もしない）
+export async function resetPhotobookSetting(personName: string, productId: string): Promise<void> {
+  await db.delete(photobookSettings).where(
+    and(eq(photobookSettings.personName, personName), eq(photobookSettings.productId, productId)),
+  );
 }
 
 // ── VODプロバイダー（vod_providers）──────────────────────────────────────────

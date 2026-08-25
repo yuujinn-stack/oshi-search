@@ -432,6 +432,13 @@ body {
   width: 136px;
 }
 
+/* ─── 写真集 横スクロールカード（.persons-row を共用し、幅だけ変える） ───────── */
+.photobook-row-item {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+  width: 150px;
+}
+
 /* ─── スクロールバー非表示ユーティリティ ─────────────────────────────── */
 .scrollbar-none {
   scrollbar-width: none;

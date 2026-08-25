@@ -50,6 +50,10 @@ export const personMeta = pgTable('person_meta', {
   roleNote:         text('role_note'),
   memo:             text('memo'),
   priority:         text('priority'),
+  // 性別（写真集機能用）。既存DBに性別情報が存在しないため新設。'female' | 'male' | null(未設定)。
+  // 管理画面から手動設定する以外に値は入らない（AI推測・自動判定は一切行わない）。
+  // 人物単位の上書き。未設定時は所属グループの groupMeta.gender にフォールバックする。
+  gender:           text('gender'),
   updatedAt:        timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -65,6 +69,9 @@ export const groupMeta = pgTable('group_meta', {
   formerNames:    jsonb('former_names').$type<string[]>().notNull().default([]),
   officialSite:   text('official_site'),
   note:           text('note'),
+  // 性別（写真集機能用）。'female' | 'male' | null(未設定)。管理画面からの手動設定のみで、
+  // AI推測・グループ名からの自動推測は一切行わない（新設カラムのためデフォルトは全件null）。
+  gender:         text('gender'),
   createdAt:      timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt:      timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -338,4 +345,40 @@ export const vodRecheckLogs = pgTable('vod_recheck_logs', {
 }, (t) => [
   index('vrl_person_work_idx').on(t.personName, t.workId),
   index('vrl_created_at_idx').on(t.createdAt),
+]);
+
+// ── 写真集 表示設定・例外設定（photobook_settings）──────────────────────────
+// 商品本体は既存の products テーブル（personName, category='写真集', items JSONB）を
+// single source of truth として利用し、このテーブルは「表示設定・例外設定」だけを持つ。
+// 商品データの二重保存はしない。PK は verdicts テーブルと同じ (personName, productId) パターン。
+export const photobookSettings = pgTable('photobook_settings', {
+  personName:          text('person_name').notNull(),
+  productId:           text('product_id').notNull(),
+  // status='manual_include'の商品を products テーブルから引き当てるためのカテゴリ。
+  // 自動判定(auto)の商品は常にcategory='写真集'から見つかるため未設定でよい。
+  sourceCategory:      text('source_category'),
+  // 'auto'（ルールベース自動判定） | 'manual_include'（手動追加） | 'manual_exclude'（手動除外）
+  // manual_include / manual_exclude は auto より常に優先される。
+  status:              text('status').notNull().default('auto'),
+  // 写真集一覧・ホームへの公開可否（除外時とは別に一時非公開にしたい場合用）
+  published:           boolean('published').notNull().default(true),
+  // ホーム掲載状態: 'auto'（自動枠の対象） | 'pinned'（固定表示） | 'hidden'（ホームには出さない）
+  homeState:           text('home_state').notNull().default('auto'),
+  // homeState='pinned' のときの固定表示位置（0始まり）。pinned以外はnull。
+  homePinnedPosition:  integer('home_pinned_position'),
+  // 一覧・管理画面での手動並び順（小さいほど先頭）。未設定はnull（自動順）。
+  sortOrder:           integer('sort_order'),
+  // 重複判定の手動上書きキー。同じ値を持つ商品同士を「同一表紙」として1グループにまとめる。
+  // 未設定時は自動計算キー（personName+正規化タイトル）を使う。
+  dedupGroupOverride:  text('dedup_group_override'),
+  // true の場合、同一重複グループ内で自動スコアより優先して代表商品として扱う
+  forceRepresentative: boolean('force_representative').notNull().default(false),
+  note:                text('note'),
+  updatedBy:           text('updated_by'),
+  createdAt:           timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:           timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  primaryKey({ columns: [t.personName, t.productId] }),
+  index('pbs_status_idx').on(t.status),
+  index('pbs_home_state_idx').on(t.homeState),
 ]);

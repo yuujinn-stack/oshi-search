@@ -26,6 +26,7 @@ function dbRowToPersonMeta(r: typeof personMetaTable.$inferSelect): PersonMeta {
   if (r.roleNote)         meta.roleNote         = r.roleNote;
   if (r.memo)             meta.memo             = r.memo;
   if (r.priority)         meta.priority         = r.priority as PersonPriority;
+  if (r.gender === 'female' || r.gender === 'male') meta.gender = r.gender;
   meta.updatedAt = r.updatedAt.getTime();
   return meta;
 }

@@ -36,6 +36,8 @@ interface Props {
   awards?: string[];
   careerStatus?: CareerStatus;
   roleNote?: string;
+  /** 'female' | 'male' | undefined(未設定)。写真集機能用。管理画面からの手動設定のみ（推測しない）。 */
+  gender?: 'female' | 'male';
   /** Priority D-5: work_dedup_reviews で pending 状態のworkId集合（「重複候補」フィルター用） */
   pendingDedupWorkIds?: Set<string>;
 }
@@ -49,6 +51,7 @@ export default function PersonWorks({
   activityStatus, generation, joinedAt, leftAt,
   currentGroupName, formerGroupNames, membershipNote,
   primaryGenre, genres, titles, publicRoles, awards, careerStatus, roleNote,
+  gender,
   pendingDedupWorkIds,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -111,8 +114,10 @@ export default function PersonWorks({
   const [editAwards, setEditAwards] = useState((awards ?? []).join(', '));
   const [editCareerStatus, setEditCareerStatus] = useState<CareerStatus | ''>(careerStatus ?? '');
   const [editRoleNote, setEditRoleNote] = useState(roleNote ?? '');
+  const [editGender, setEditGender] = useState<'female' | 'male' | ''>(gender ?? '');
   const [currentActivityStatus, setCurrentActivityStatus] = useState<ActivityStatus | ''>(activityStatus ?? '');
   const [currentGeneration, setCurrentGeneration] = useState(generation ?? '');
+  const [currentGender, setCurrentGender] = useState<'female' | 'male' | ''>(gender ?? '');
 
   async function handleMetaSave() {
     setMetaSaving(true);
@@ -142,12 +147,15 @@ export default function PersonWorks({
           awards: editAwards ? editAwards.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
           careerStatus: editCareerStatus || undefined,
           roleNote: editRoleNote || undefined,
+          // null = 明示的に「未設定」に戻す（他フィールドと異なりクリア操作が必須要件のため）
+          gender: editGender || null,
         }),
       });
       setCurrentMemo(editMemo);
       setCurrentPriority(editPriority);
       setCurrentActivityStatus(editActivityStatus);
       setCurrentGeneration(editGeneration);
+      setCurrentGender(editGender);
       setMetaOpen(false);
     } finally {
       setMetaSaving(false);
@@ -711,6 +719,20 @@ export default function PersonWorks({
             generation={currentGeneration || undefined}
           />
         </div>
+        <div className="flex items-center px-2 shrink-0">
+          <span
+            className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${
+              currentGender === 'female'
+                ? 'bg-pink-50 text-pink-600'
+                : currentGender === 'male'
+                  ? 'bg-blue-50 text-blue-600'
+                  : 'bg-gray-100 text-gray-400'
+            }`}
+            title="写真集機能用の性別設定（📝から編集）"
+          >
+            {currentGender === 'female' ? '女性' : currentGender === 'male' ? '男性' : '性別未設定'}
+          </span>
+        </div>
         <button
           onClick={(e) => { e.stopPropagation(); setMetaOpen((v) => !v); }}
           className={`px-3 text-sm transition-colors shrink-0 ${
@@ -839,6 +861,18 @@ export default function PersonWorks({
                 placeholder="例: 女優"
                 className="w-20 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
               />
+            </div>
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-gray-500 whitespace-nowrap">性別（写真集用）:</label>
+              <select
+                value={editGender}
+                onChange={(e) => setEditGender(e.target.value as 'female' | 'male' | '')}
+                className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
+              >
+                <option value="">未設定</option>
+                <option value="female">女性</option>
+                <option value="male">男性</option>
+              </select>
             </div>
             <div className="flex items-center gap-1">
               <label className="text-xs text-gray-500 whitespace-nowrap">肩書き:</label>

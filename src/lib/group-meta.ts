@@ -19,6 +19,7 @@ function dbRowToGroupMeta(r: typeof groupMetaTable.$inferSelect): GroupMeta {
     formerNames:    r.formerNames?.length ? r.formerNames : undefined,
     officialSite:   r.officialSite ?? undefined,
     note:           r.note ?? undefined,
+    gender:         r.gender === 'female' || r.gender === 'male' ? r.gender : undefined,
     createdAt:      r.createdAt.getTime(),
     updatedAt:      r.updatedAt.getTime(),
   };
