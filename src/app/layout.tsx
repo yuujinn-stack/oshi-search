@@ -37,7 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <p className="font-bold text-primary mb-1">推しサーチ</p>
           <p className="mb-1">© 2026 推しサーチ. All rights reserved.</p>
           <p className="text-xs text-gray-400 mb-4">
-            本サイトはアフィリエイト広告（楽天市場・楽天ブックス）を掲載しています。
+            本サイトはアフィリエイト広告を利用しています。
           </p>
           <nav aria-label="フッターナビゲーション">
             <ul className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-gray-400">

@@ -19,6 +19,7 @@ import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image
 import { shouldNoindexWork, safeTitleFallback } from '@/lib/seo-quality';
 import ProviderLogo from '@/components/ProviderLogo';
 import VodTrackLink from '@/components/site/VodTrackLink';
+import AffiliateSlot from '@/components/site/AffiliateSlot';
 
 interface Props {
   params: Promise<{ workId: string }>;
@@ -439,19 +440,25 @@ export default async function WorkDetailPage({ params }: Props) {
                           </span>
                         )}
                       </div>
-                      {link ? (
-                        <VodTrackLink
-                          href={link}
-                          service={p.providerName}
-                          className={`mt-3 flex items-center justify-center gap-1.5 w-full text-sm font-bold text-white py-2.5 rounded-xl transition-colors ${cfg.btn}`}
-                        >
-                          {ctaText} →
-                        </VodTrackLink>
-                      ) : (
-                        <p className="mt-3 text-xs text-center text-gray-400 py-1.5 bg-white/60 rounded-lg">
-                          {info.displayName}で視聴可能（公式サイトでご確認ください）
-                        </p>
-                      )}
+                      <AffiliateSlot
+                        vodService={normalizeProviderName(p.providerName)}
+                        slotKey="work_provider"
+                        fallback={
+                          link ? (
+                            <VodTrackLink
+                              href={link}
+                              service={p.providerName}
+                              className={`mt-3 flex items-center justify-center gap-1.5 w-full text-sm font-bold text-white py-2.5 rounded-xl transition-colors ${cfg.btn}`}
+                            >
+                              {ctaText} →
+                            </VodTrackLink>
+                          ) : (
+                            <p className="mt-3 text-xs text-center text-gray-400 py-1.5 bg-white/60 rounded-lg">
+                              {info.displayName}で視聴可能（公式サイトでご確認ください）
+                            </p>
+                          )
+                        }
+                      />
                     </div>
                   );
                 })}

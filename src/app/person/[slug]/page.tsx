@@ -17,6 +17,7 @@ import PersonCard from '@/components/PersonCard';
 import WorksSection from '@/components/WorksSection';
 import ProviderLogo from '@/components/ProviderLogo';
 import PageViewTracker from '@/components/site/PageViewTracker';
+import AffiliateSlot from '@/components/site/AffiliateSlot';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
 import type { ActivityStatus } from '@/types/person';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
@@ -857,6 +858,7 @@ export default async function PersonPage({ params }: Props) {
                       </span>
                     </summary>
                     <div className="px-4 py-3" style={{ borderTop: '1px solid var(--ds-border)' }}>
+                      <AffiliateSlot vodService={normalizeProviderName(providerName)} slotKey="person_vod" className="mb-3" />
                       <div className="space-y-2">
                         {pWorks.slice(0, 8).map((work) => (
                           <Link

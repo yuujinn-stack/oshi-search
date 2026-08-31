@@ -14,6 +14,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getVodPageEditorial } from '@/lib/vod-page-editorial';
 import VodWorkCard from '@/components/VodWorkCard';
 import VodTopPersonCard from '@/components/VodTopPersonCard';
+import AffiliateSlot from '@/components/site/AffiliateSlot';
 
 export const revalidate = 60;
 export const dynamicParams = false; // VOD_PAGE_PROVIDERS以外のslugはNext.jsの標準挙動で404にする
@@ -136,6 +137,8 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
         </p>
       </div>
 
+      <AffiliateSlot vodService={config.normalizedSlug} slotKey="vod_hero" className="mb-6" />
+
       {/* 配信状況に関する注意文 */}
       <p className="text-xs rounded-xl px-4 py-3 mb-6" style={{ background: 'var(--ds-surface)', border: '1px solid var(--ds-border)', color: 'var(--ds-muted)' }}>
         配信状況は変更・終了する場合があります。実際に視聴する際は、各動画配信サービスの公式サイトで最新情報をご確認ください。
@@ -224,6 +227,8 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
         </section>
       )}
 
+      <AffiliateSlot vodService={config.normalizedSlug} slotKey="vod_mid" className="mb-10" />
+
       {/* 作品一覧 */}
       <section>
         <div className="flex items-center justify-between mb-4">
@@ -276,6 +281,8 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
           </nav>
         )}
       </section>
+
+      <AffiliateSlot vodService={config.normalizedSlug} slotKey="vod_bottom" className="mt-10" />
 
       {/* 情報の調査・更新方針への控えめなリンク */}
       <p className="text-xs text-center mt-10" style={{ color: 'var(--ds-muted)' }}>

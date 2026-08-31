@@ -14,6 +14,7 @@ export const NAV_ITEMS = [
   { href: '/admin/groups',                     label: 'グループ管理' },
   { href: '/admin/providers',                  label: '配信サービス' },
   { href: '/admin/vod-recheck',                label: 'VOD再確認' },
+  { href: '/admin/affiliates',                 label: '💰 アフィリエイト' },
   { href: '/admin/people-membership-import',   label: '所属CSV' },
   { href: '/admin/work-import',                label: '作品CSV' },
   { href: '/admin/import-history',             label: 'インポート履歴' },

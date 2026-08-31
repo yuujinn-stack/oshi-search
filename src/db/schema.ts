@@ -382,3 +382,73 @@ export const photobookSettings = pgTable('photobook_settings', {
   index('pbs_status_idx').on(t.status),
   index('pbs_home_state_idx').on(t.homeState),
 ]);
+
+// ── VODアフィリエイト案件（affiliate_programs）────────────────────────────────
+// 「作品がどのVODで配信されているか」（works.vod_data / vod_providers）とは完全に別概念。
+// VODサービスごとのASPアフィリエイト提携情報のみを保持する。既存VOD配信情報・配信リンク
+// 生成ロジックはこのテーブルの有無に一切影響されない（未提携・未登録は既存リンクへフォールバック）。
+// vodService は normalizeProviderName()（src/lib/vod-dedup.ts）が返す正規化スラグと統一する
+// （例: hulu, lemino, unext, disneyplus, dmmtv, fod, telasa, abema）。
+export const affiliatePrograms = pgTable('affiliate_programs', {
+  id:                    serial('id').primaryKey(),
+  vodService:            text('vod_service').notNull(),
+  aspName:               text('asp_name').notNull(),
+  programName:           text('program_name').notNull(),
+  // 'active' | 'paused' | 'pending' | 'ended'
+  status:                text('status').notNull().default('active'),
+  // 管理者用メモ（例: 広告コード改変禁止／画像素材のみ使用可）。公開ページには出さない。
+  rulesNote:             text('rules_note'),
+  directUrlAllowed:      boolean('direct_url_allowed').notNull().default(true),
+  customCreativeAllowed: boolean('custom_creative_allowed').notNull().default(true),
+  // false の場合、この案件に紐づく広告素材は公開ページへ一切表示しない（既存VODリンクは維持）。
+  isActive:              boolean('is_active').notNull().default(true),
+  createdAt:             timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:             timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('ap_vod_service_idx').on(t.vodService),
+  index('ap_is_active_idx').on(t.isActive),
+]);
+
+// ── VODアフィリエイト広告素材（affiliate_creatives）───────────────────────────
+// ASPごとに素材形式が異なるため、URL単体には限定しない。rawCode は ASP から提供された
+// HTML広告コードをそのまま保存する（内部の href / img src / tracking parameter 等は
+// 一切改変しない。改変禁止のASPが存在するため）。
+export const affiliateCreatives = pgTable('affiliate_creatives', {
+  id:             serial('id').primaryKey(),
+  programId:      integer('program_id').notNull(),
+  name:           text('name').notNull(),
+  // 'raw_html' | 'direct_url' | 'banner' | 'text' | 'embed'
+  type:           text('type').notNull(),
+  rawCode:        text('raw_code'),
+  destinationUrl: text('destination_url'),
+  imageUrl:       text('image_url'),
+  altText:        text('alt_text'),
+  width:          integer('width'),
+  height:         integer('height'),
+  // 'all' | 'desktop' | 'mobile'
+  device:         text('device').notNull().default('all'),
+  priority:       integer('priority').notNull().default(0),
+  isActive:       boolean('is_active').notNull().default(true),
+  startsAt:       timestamp('starts_at', { withTimezone: true }),
+  endsAt:         timestamp('ends_at', { withTimezone: true }),
+  createdAt:      timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:      timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('ac_program_id_idx').on(t.programId),
+  index('ac_is_active_idx').on(t.isActive),
+]);
+
+// ── VODアフィリエイト掲載位置（affiliate_placements）──────────────────────────
+// 1つの広告素材を複数の掲載箇所（slotKey）で使い回せるようにする中間テーブル。
+// slotKey は文字列管理（初期値: work_provider / vod_hero / vod_mid / vod_bottom / person_vod）。
+export const affiliatePlacements = pgTable('affiliate_placements', {
+  id:         serial('id').primaryKey(),
+  creativeId: integer('creative_id').notNull(),
+  slotKey:    text('slot_key').notNull(),
+  isActive:   boolean('is_active').notNull().default(true),
+  createdAt:  timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:  timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('apl_creative_id_idx').on(t.creativeId),
+  index('apl_slot_key_idx').on(t.slotKey),
+]);

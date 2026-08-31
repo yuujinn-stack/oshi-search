@@ -847,3 +847,56 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 - `npx tsc --noEmit` エラーなし
 - `npx vitest run` 1000テスト全通過（Task 17から変更なし）
 - `next build` 成功、ビルドエラー・警告なし
+
+---
+
+## Task 19 — VODアフィリエイト広告管理機能
+
+**目的：** 「作品がどのVODで配信されているか」（既存の`works.vod_data`／配信リンク生成）とは完全に分離した「VODアフィリエイト提携」レイヤーを新設し、管理画面から広告素材を追加・変更・停止できるようにする。Hulu / Lemino を皮切りに、今後のVOD追加はコード変更なしで管理画面から行えるようにする。クリック数・表示回数・CTR等の計測機能は作らない（ASP側で確認する方針）。
+
+**実装前調査：** `src/db/schema.ts`（命名規則・id戦略）、`src/app/api/admin/db-init/route.ts`（本番マイグレーション運用が「CREATE TABLE IF NOT EXISTS配列への追記＋手動POST」であること）、`src/lib/provider-store.ts`+`ProviderManager.tsx`+`/admin/providers`（管理CRUDの標準パターン：fetchベースAPI・素朴なバリデーション・2クリック削除確認）、`src/proxy.ts`（`/admin/*`・`/api/admin/*`は自動で認証必須になるため個別ページでの認証実装は不要）、`src/app/work/[workId]/page.tsx`（配信サービスカードの構造・`getVodLink()`フォールバック・`normalizeProviderName()`）、`src/app/vod/[provider]/page.tsx`（ISR revalidate=60・`VOD_PAGE_PROVIDERS`のurlSlug/normalizedSlug対応）、`src/app/person/[slug]/page.tsx`（VOD配信アコーディオン）、`src/app/layout.tsx`・`privacy`・`disclaimer`（既存のアフィリエイト表記）を確認。
+
+**新規DBテーブル（既存テーブルへの変更なし）：**
+- `affiliate_programs` — VODサービス×ASP案件（`vodService`は`normalizeProviderName()`が返す正規化スラグと統一。例: hulu, lemino, unext, disneyplus, dmmtv, fod, telasa, abema）
+- `affiliate_creatives` — 広告素材本体（`type`: raw_html/direct_url/banner/text/embed、`rawCode`にASP提供HTMLをそのまま保存、`device`: all/desktop/mobile、`priority`、`startsAt`/`endsAt`）
+- `affiliate_placements` — 広告素材と掲載箇所（`slotKey`）の中間テーブル。1素材を複数箇所に掲載可能
+- migration記録: `drizzle/0009_affiliate_tables.sql`（既存運用と同じく実際の本番適用は`/admin/db-init`から実行）
+- `src/app/api/admin/db-init/route.ts`にCREATE_STATEMENTS 3件・TABLE_NAMES 3件を追記
+
+**新規ファイル：**
+- `src/db/schema.ts`（追記） — 上記3テーブル定義
+- `src/lib/affiliate-constants.ts` — `KNOWN_SLOT_KEYS`（work_provider/vod_hero/vod_mid/vod_bottom/person_vod）。DBに依存しない定数のみを分離（'use client'から安全にimportするため。後述のclient/server境界テストで発覚し対応）
+- `src/lib/affiliate-store.ts` — 案件・素材・掲載位置のCRUD、および公開ページ向けの`resolveAffiliateSlot(vodService, slotKey)`（有効案件→有効素材→該当slotKey→期限内→device一致→priority降順で1件解決。例外を投げず失敗時は`{mobile:null,desktop:null}`を返す設計）
+- `src/lib/affiliate-revalidate.ts` — `/vod/[urlSlug]`のISRキャッシュを管理画面からの変更時に再検証するヘルパー
+- `src/components/site/AffiliateSlot.tsx` — 公開ページ共通の広告表示Server Component。`fallback`未指定なら広告0件時は何も描画せず（VODページ・人物ページ用）、`fallback`指定時は広告0件時にfallback（＝既存VODリンク）をそのまま描画する（作品詳細ページ用）。desktop/mobileで別素材が選ばれる場合のみCSSレスポンシブ切替（`hidden md:block`/`md:hidden`）で出し分け、同一の場合は二重出力しない
+- `src/app/api/admin/affiliates/route.ts`（GET一覧集約・POST案件作成）
+- `src/app/api/admin/affiliates/[id]/route.ts`（PUT/DELETE 案件）
+- `src/app/api/admin/affiliates/[id]/creatives/route.ts`（POST 素材作成）
+- `src/app/api/admin/affiliates/creatives/[id]/route.ts`（PUT/DELETE 素材）
+- `src/app/api/admin/affiliates/creatives/[id]/placements/route.ts`（POST 掲載位置追加）
+- `src/app/api/admin/affiliates/placements/[id]/route.ts`（PUT isActive切替／DELETE 掲載位置削除）
+- `src/app/admin/affiliates/page.tsx` + `AffiliateManager.tsx` — 新規管理画面。`/admin/providers`のUIパターン（Tailwindベタ書き・2クリック削除確認・fetchベース保存）を踏襲。案件カード展開→素材追加/編集（type別に入力欄を出し分け・プレビューは`pointer-events:none`+透明オーバーレイでクリック不可）→掲載位置チェックボックス（個別isActiveトグル付き）の3階層UI
+
+**既存ファイルの変更（差し込みのみ・既存ロジック本体は無変更）：**
+- `src/app/work/[workId]/page.tsx` — 配信サービスカードの「〇〇で今すぐ見る→」ボタン／フォールバック文言を、`<AffiliateSlot vodService={normalizeProviderName(p.providerName)} slotKey="work_provider" fallback={...(既存JSXそのまま)} />`でラップ。availabilityType判定・配信データ取得ロジックは一切変更していない
+- `src/app/vod/[provider]/page.tsx` — `vod_hero`（導入文の直後）・`vod_mid`（人物一覧と作品一覧の間）・`vod_bottom`（作品一覧の後）の3箇所に`<AffiliateSlot vodService={config.normalizedSlug} slotKey="..." />`を追加（fallbackなし＝広告0件なら何も描画されない）。SEO文章・JSON-LD・ページネーション・generateStaticParams等は無変更
+- `src/app/person/[slug]/page.tsx` — VOD配信アコーディオンの各プロバイダー展開部分に`<AffiliateSlot vodService={normalizeProviderName(providerName)} slotKey="person_vod" />`を追加（fallbackなし）。出演作品・商品・SEOセクションは無変更
+- `src/app/admin/AdminLayoutClient.tsx` — `NAV_ITEMS`に「💰 アフィリエイト」を追加（既存テストが「VOD再確認は配信サービスの直後」を検証していたため、アフィリエイトはVOD再確認の直後に配置し既存順序を壊さないようにした）
+- `src/app/layout.tsx` — フッター表記を「本サイトはアフィリエイト広告（楽天市場・楽天ブックス）を掲載しています。」→「本サイトはアフィリエイト広告を利用しています。」に変更（VOD広告にも対応する汎用表現）
+- `src/app/privacy/page.tsx` / `src/app/disclaimer/page.tsx` — 「アフィリエイト広告について」セクションに、提携VODサービスの広告掲載がありうる旨を追記
+
+**PR表記：** `AffiliateSlot`内の`AdWrapper`が広告表示時のみ小さく「PR」ラベルを付与（ASP広告コード自体は改変しない。外側に表示）。広告が無い場合（fallback表示時含む）はPRラベルは出さない。
+
+**優先度・期限・device判定：** `resolveAffiliateSlot()`内で、有効な案件→有効な素材→該当slotKeyの掲載→`startsAt`/`endsAt`が現在時刻を含む→`device`が'all'または対象端末、の順にフィルタし、残った候補を`priority`降順（同点は`createdAt`昇順で安定）にソートして1件選択。desktop/mobileは別々に解決し、同じ素材が選ばれた場合のみ1回だけレンダリングする（User-Agent判定は`/vod/[provider]`のISRを壊すため使わない設計判断）。
+
+**フォールバック設計：** `resolveAffiliateSlot()`はtry/catchで全DB例外を吸収し、失敗時は空の解決結果を返す（本体ページを500にしない）。`AffiliateSlot`は広告0件時、`fallback` propが渡されていればそれを描画し（作品詳細の既存リンクはこの経路で常に維持される）、無ければ何も描画しない（VODページ・人物ページの新規枠は広告が無ければ余白ゼロ）。
+
+**client/server境界の注意点（実装中に発見）：** 当初`KNOWN_SLOT_KEYS`を`affiliate-store.ts`（DB接続あり）に置いていたところ、'use client'の`AffiliateManager.tsx`がそれを値importしたことで、既存の`client-server-boundary.test.ts`（'use client'ファイルが`src/db/client.ts`等に到達しないことを検証する回帰テスト）が失敗した。DBに依存しない`affiliate-constants.ts`へ`KNOWN_SLOT_KEYS`を分離し、`affiliate-store.ts`側は re-export のみにすることで解消。同様の理由で、`AffiliateManager.tsx`が使う型は全て`import type`にしている。
+
+**動作確認：**
+- affiliate関連3テーブルが空の状態で`npx vitest run`（既存1400テスト）・`npx tsc --noEmit`・`next build`をすべて実行し、既存ページ（work/vod/person等）に影響がないことを確認
+- `next build`で`/admin/affiliates`・`/api/admin/affiliates/*`が正しくルーティングされることを確認
+- `/vod/[provider]`が本変更前後どちらでも`ƒ`(Dynamic)表示になることを確認済み（AffiliateSlot追加前の状態に一時的に戻して再ビルドし比較。既存コードの挙動であり今回の変更による退行ではない）
+- 実データでのHulu/Lemino広告登録・表示確認はASP広告コード入力後に別途実施が必要（今回は架空データを本番へ投入していない）
+
+**未実施（意図的）：** クリック数・表示回数・CTR計測、affiliate_stats、独自リダイレクトURL、A/Bテスト、ASP API連携は要件通り実装していない。Hulu/Leminoの実際のASP広告コードは登録していない（管理画面から後日入力する運用）。
