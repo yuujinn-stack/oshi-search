@@ -900,3 +900,20 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 - 実データでのHulu/Lemino広告登録・表示確認はASP広告コード入力後に別途実施が必要（今回は架空データを本番へ投入していない）
 
 **未実施（意図的）：** クリック数・表示回数・CTR計測、affiliate_stats、独自リダイレクトURL、A/Bテスト、ASP API連携は要件通り実装していない。Hulu/Leminoの実際のASP広告コードは登録していない（管理画面から後日入力する運用）。
+
+---
+
+## Task 19 追記 — vodService表記ゆれによるフォールバック不具合の修正
+
+**背景：** 本番で `/admin/affiliates` からHulu案件（`vodService: "Hulu"`）・広告素材・`work_provider` placementを登録・有効化したが、作品詳細ページには広告ではなく従来の「Huluで今すぐ見る→」が表示され続けた。
+
+**原因調査（読み取り専用の一時スクリプトで本番DBを確認、調査後に削除）：** 案件・素材・placementはすべて正常に保存・有効化されていた（`isActive: true`・`startsAt/endsAt: null`・`device: "all"`）。唯一の不一致は `affiliate_programs.vod_service` が `"Hulu"`（管理画面の自由入力欄にそのまま保存）である一方、`src/app/work/[workId]/page.tsx` は `normalizeProviderName(p.providerName)` の戻り値 `"hulu"` を`AffiliateSlot`へ渡しており、`resolveAffiliateSlot()`内の`eq(vodService, ...)`がPostgresの大文字小文字を区別する比較のため一致せず、案件0件→常にfallback、という経路だった。
+
+**修正（`src/app/api/admin/affiliates/route.ts`のPOST・`src/app/api/admin/affiliates/[id]/route.ts`のPUT）：** `vodService`をDBへ保存する直前に、公開ページ側と同じ`normalizeProviderName()`（`src/lib/vod-dedup.ts`、既存関数を再利用・新規関数は作らない）を適用するよう変更。「Hulu」→「hulu」、「Lemino」→「lemino」、「U-NEXT」→「unext」のように今後は自動的に正規化スラグで保存される。`resolveAffiliateSlot()`・`AffiliateSlot`・DBスキーマ・migrationは無変更。既存のHulu案件データ自体は自動更新せず、管理画面から手動で`Hulu`→`hulu`に修正する運用とした。
+
+**追加テスト：** `src/lib/__tests__/affiliate-programs-route.test.ts`（新規7件）— POST/PUTで"Hulu"→"hulu"、"Lemino"→"lemino"、"U-NEXT"→"unext"に正規化されること、前後空白のtrim+正規化の順序、vodService未指定時は既存値を維持すること、空文字は400になることを検証。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1407テスト全通過（既存1400 + 新規7）
+- `next build` 成功

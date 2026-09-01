@@ -6,6 +6,7 @@ import {
   type AffiliateProgramInput,
 } from '@/lib/affiliate-store';
 import { revalidateAffiliateVodService } from '@/lib/affiliate-revalidate';
+import { normalizeProviderName } from '@/lib/vod-dedup';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,8 @@ export async function PUT(
     }
 
     const input: AffiliateProgramInput = {
-      vodService: body.vodService?.trim() ?? existing.vodService,
+      // POST同様、保存時に normalizeProviderName() で正規化し表記ゆれによる不一致を防ぐ
+      vodService: body.vodService !== undefined ? normalizeProviderName(body.vodService.trim()) : existing.vodService,
       aspName: body.aspName?.trim() ?? existing.aspName,
       programName: body.programName?.trim() ?? existing.programName,
       status: body.status ?? existing.status,

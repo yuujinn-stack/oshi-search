@@ -5,6 +5,7 @@ import {
   type AffiliateProgramInput,
 } from '@/lib/affiliate-store';
 import { revalidateAffiliateVodService } from '@/lib/affiliate-revalidate';
+import { normalizeProviderName } from '@/lib/vod-dedup';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,10 @@ export async function POST(req: NextRequest) {
     }
 
     const input: AffiliateProgramInput = {
-      vodService: vodService.trim(),
+      // 公開ページ側は normalizeProviderName(p.providerName) で正規化した値を検索キーに使うため、
+      // 保存時にも同じ関数で正規化し、大文字小文字・表記ゆれによる不一致を防ぐ
+      // （例: "Hulu" と入力しても "hulu" として保存される）。
+      vodService: normalizeProviderName(vodService.trim()),
       aspName: aspName.trim(),
       programName: programName.trim(),
       status: body.status ?? 'active',
