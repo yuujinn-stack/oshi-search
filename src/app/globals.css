@@ -641,3 +641,29 @@ body {
   padding-left: 16px;
   padding-right: 16px;
 }
+
+/* ─── VODアフィリエイト work_provider 枠のCTAボタン化 ──────────────────────
+   ASP提供コード（href / 計測img / rel / referrerpolicy 等）は一切変更せず、
+   AffiliateSlot が付与する外側wrapper配下の a 要素だけを、既存VODボタン
+   （例: flatrateの bg-green-600 / rounded-xl / py-2.5 / text-sm font-bold）
+   と同等の見た目にCSSだけで揃える。他のslot（vod_hero/vod_mid/vod_bottom/
+   person_vod）には適用しない（.affiliate-slot--work-provider スコープのみ）。 */
+.affiliate-slot--work-provider a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  width: 100%;
+  padding: 0.625rem 1rem;
+  background-color: #16a34a;
+  color: #ffffff;
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.25rem;
+  border-radius: 0.75rem;
+  text-decoration: none;
+  transition: background-color 0.15s ease;
+}
+.affiliate-slot--work-provider a:hover {
+  background-color: #15803d;
+}

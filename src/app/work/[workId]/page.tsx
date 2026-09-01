@@ -443,6 +443,7 @@ export default async function WorkDetailPage({ params }: Props) {
                       <AffiliateSlot
                         vodService={normalizeProviderName(p.providerName)}
                         slotKey="work_provider"
+                        className="mt-3"
                         fallback={
                           link ? (
                             <VodTrackLink
