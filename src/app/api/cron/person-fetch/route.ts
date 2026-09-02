@@ -1,5 +1,15 @@
 // GET /api/cron/person-fetch
-// 人物データ取得ジョブキューを処理する Vercel Cron（日次実行）
+//
+// 以前は Vercel Cron から日次実行されていたが、人物登録のたびに商品AI判定・
+// 出演作品処理・作品AI判定・作品AI補完が自動実行されOpenAI費用が発生していたため、
+// vercel.json の Cron 定義から削除し、自動実行を停止した。
+// 同じ処理（processQueuedPersonJobs）は管理画面 /admin/people/import の
+// 「処理開始」ボタン（/api/admin/person-jobs/process-now、要管理者ログイン）から
+// 手動でのみ実行される。人物登録自体（/api/admin/people/import）はキューに積むだけで、
+// このルートを含めどの経路からも自動では処理されない。
+//
+// このルート自体はCRON_SECRET認証つきのまま残しており、削除はしていない
+// （Cronから外れているだけで、必要であれば運用上手動で叩くことも可能）。
 // 1回の実行でキューから最大 PERSON_JOB_BATCH_SIZE 件を順番に処理（デフォルト1件、最大3件）
 
 import { NextRequest, NextResponse } from 'next/server';

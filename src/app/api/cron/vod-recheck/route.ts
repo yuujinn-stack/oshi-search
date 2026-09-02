@@ -1,9 +1,20 @@
 // GET /api/cron/vod-recheck
-// Vercel Cron から毎日 05:00 UTC に自動実行
+// Vercel Cron から毎月1,4,7,10,13,16,19,22,25,28日 05:00 UTC（日本時間 同日14:00頃、
+// "0 5 1,4,7,10,13,16,19,22,25,28 * *"）に自動実行
+// （毎月必ず10回 × 1回30件 ≒ 月間約300件。5,000件超の未確認バックログを、
+//  1回のVercel Function実行時間内（maxDuration=300秒）に収まる件数へ安全に分割している。
+//  「月1回」という要件自体は、同一作品を短期間に繰り返し再検索しないという
+//  クールダウン設計（nextVodCheckAt等）で維持し、実行回数はあくまで
+//  バックログの分割処理のためだけに増やしている）
 // 重点確認人物: その人物の全作品（条件除外なし）
-// 通常対象: 配信情報未取得・180日以上未確認・作品単位優先フラグ（条件付き）
+// 通常対象: 配信情報未取得（ただしvod-refresh等の直近クールダウン中でない）・
+//           180日以上未確認（最後にAI確認された日時が古い順）・作品単位優先フラグ（条件付き）
 // 認証: Authorization: Bearer {CRON_SECRET}
-// 上限: 重点確認人物は全件 / 通常対象は VOD_RECHECK_LIMIT 件（デフォルト 20）
+// 上限: 重点確認人物は全件 / 通常対象は VOD_RECHECK_LIMIT 件（デフォルト 30）
+//
+// vod-refreshとの重複防止: nextVodCheckAt（work-processor.ts等が使う既存の30日
+// スロットリングと同じフィールド）を共有し、直近どちらかのCronがAI検索済みの
+// 作品を同日/近日中に二重検索しない（詳細は src/lib/vod-check-throttle.ts）。
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsMerged } from '@/lib/persons';
@@ -11,13 +22,19 @@ import { getAllWorks, updateWorkVod, updateWorkVodCheckStatus } from '@/lib/work
 import { supplementVodWithAI } from '@/lib/vod-supplement';
 import { getIntensivePersonNames } from '@/lib/person-vod-intensive';
 import { getRedis } from '@/lib/redis';
+import { isVodCheckThrottled, computeNextVodCheckAt, isStuckChecking } from '@/lib/vod-check-throttle';
 import type { VodProvider } from '@/types/vod';
 import type { WorkRecord } from '@/types/work';
 
 export const dynamic = 'force-dynamic';
+// AI Web検索そのものに時間がかかる（1件あたり最大30秒程度）ため、
+// Vercel Function timeoutで処理が途中停止し vodCheckStatus='checking' のまま
+// 固まらないよう猶予を確保する（根本対策は isStuckChecking による自己修復）。
+export const maxDuration = 300;
 
 const RECHECK_STALE_DAYS = 180;
-const DEFAULT_RECHECK_LIMIT = 20;
+// 3日に1回 × 30件 ≒ 月間約300件（バックログ分割処理のための調整。180日基準自体は変更していない）
+const DEFAULT_RECHECK_LIMIT = 30;
 const LOG_KEY = 'vod:recheck:logs';
 const LOG_MAX = 30;
 
@@ -26,6 +43,9 @@ interface RecheckTarget {
   work: WorkRecord;
   reason: string;
   priority: number;
+  // 最後にVOD確認された日時（lastVodCheckAt / vodAiCheckedAt の新しい方）。
+  // 同一priority内で「最も古い順」に処理するための並べ替えキー。
+  lastAiCheck: number;
 }
 
 // 通常の作品単位条件でターゲットを選定（重点確認人物は別処理）
@@ -40,22 +60,29 @@ function collectConditionTargets(
   for (const work of works) {
     if (work.status !== 'auto_published') continue;
     if (!work.tmdbId) continue;
-    if (work.vodCheckStatus === 'checking') continue;
+    // vodCheckStatus='checking' は通常は処理中を示すが、Vercel Function timeout等で
+    // 更新が完走しなかった場合に永久に固まることがあるため、一定時間以上放置されて
+    // いるものは「放棄された」とみなし再試行対象に戻す（isStuckChecking）。
+    if (work.vodCheckStatus === 'checking' && !isStuckChecking(work, now)) continue;
 
     const lastAiCheck = Math.max(work.lastVodCheckAt ?? 0, work.vodAiCheckedAt ?? 0);
     const hasVod = (work.vodProviders?.length ?? 0) > 0;
     const isStale = !lastAiCheck || now - lastAiCheck >= staleMs;
     const noVod = !hasVod;
     const isPriority = work.priorityRecheck === true;
+    // vod-refresh（またはこのCron自身の前回実行）が直近AI検索済みなら、
+    // 配信情報0件であっても今回は再検索しない（vod-refreshとの重複防止）。
+    const throttled = isVodCheckThrottled(work, now);
+    const eligibleAsNoVod = noVod && !throttled;
 
-    if (!isPriority && !noVod && !isStale) continue;
+    if (!isPriority && !eligibleAsNoVod && !isStale) continue;
 
     let reason = '';
     let priority = 0;
     if (isPriority) {
       reason = '優先再確認フラグ';
       priority = 100;
-    } else if (noVod) {
+    } else if (eligibleAsNoVod) {
       reason = '配信情報未取得';
       priority = 50;
     } else {
@@ -64,20 +91,22 @@ function collectConditionTargets(
       priority = 10;
     }
 
-    targets.push({ personName, work, reason, priority });
+    targets.push({ personName, work, reason, priority, lastAiCheck });
   }
   return targets;
 }
 
-// 重点確認人物のターゲット（条件なし・全作品）
-function collectIntensiveTargets(personName: string, works: WorkRecord[]): RecheckTarget[] {
+// 重点確認人物のターゲット（条件なし・全作品）。
+// checking固着からの復旧のみ collectConditionTargets と同様に適用する。
+function collectIntensiveTargets(personName: string, works: WorkRecord[], now: number): RecheckTarget[] {
   return works
-    .filter((w) => w.status === 'auto_published' && w.tmdbId && w.vodCheckStatus !== 'checking')
+    .filter((w) => w.status === 'auto_published' && w.tmdbId && !(w.vodCheckStatus === 'checking' && !isStuckChecking(w, now)))
     .map((w) => ({
       personName,
       work: w,
       reason: '重点確認人物（全件対象）',
       priority: 200,
+      lastAiCheck: Math.max(w.lastVodCheckAt ?? 0, w.vodAiCheckedAt ?? 0),
     }));
 }
 
@@ -98,10 +127,14 @@ async function runRecheck(target: RecheckTarget): Promise<{
     const hasLowOnly =
       recheckProviders.length > 0 && recheckProviders.every((p) => p.confidence === 'low');
     const newStatus = hasLowOnly ? 'needs_recheck' : 'checked';
+    // 配信情報が見つからなかった場合、vod-refresh側にもこのクールダウンを共有する
+    // （nextVodCheckAtはvod-refresh/vod-recheck両方が参照する共通フィールド）。
+    const nextVodCheckAt = computeNextVodCheckAt(recheckProviders.length > 0);
 
     await updateWorkVod(personName, work.id, recheckProviders, {
       replaceSources: ['openai_supplement', 'openai_web_search', 'ai_recheck'],
       vodAiCheckedAt: Date.now(),
+      nextVodCheckAt,
     });
     await updateWorkVodCheckStatus(personName, work.id, newStatus, {
       source: 'ai',
@@ -144,7 +177,7 @@ export async function GET(req: NextRequest) {
 
     if (intensiveSet.has(person.name)) {
       // 重点確認人物: 全作品（条件なし）
-      const targets = collectIntensiveTargets(person.name, works);
+      const targets = collectIntensiveTargets(person.name, works, now);
       for (const t of targets) {
         intensiveTargets.push(t);
         intensiveWorkKeys.add(`${t.personName}:${t.work.id}`);
@@ -158,7 +191,14 @@ export async function GET(req: NextRequest) {
     regularTargets.push(...conditionTargets);
   }
 
-  regularTargets.sort((a, b) => b.priority - a.priority);
+  // 優先度（priorityRecheck > noVod > 180日超過）を最優先に、
+  // 同一優先度内では lastAiCheck が古い順（＝最後にVOD確認された日時が古い作品から）に処理する。
+  // これにより「180日以上未確認」の5,000件超のグループも、実質固定順ではなく
+  // 最も長く放置されている作品から優先的に処理されるようになる。
+  regularTargets.sort((a, b) => {
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    return a.lastAiCheck - b.lastAiCheck;
+  });
   const regularSlice = regularTargets.slice(0, regularLimit);
 
   // 実行順: 重点確認を先に、通常を後

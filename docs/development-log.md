@@ -917,3 +917,62 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 - `npx tsc --noEmit` エラーなし
 - `npx vitest run` 1407テスト全通過（既存1400 + 新規7）
 - `next build` 成功
+
+---
+
+## Task 20 — VOD自動更新・人物自動処理の無駄削減（OpenAI Web Search削減）
+
+**目的：** 前回調査（Task内で口頭調査、ログ未記載）で判明した「vod-refreshとvod-recheckが配信情報0件の作品を短時間で二重にAI Web検索しうる」「vod-recheckが毎日全カタログの一部を巡回しコストが積み上がる」「vodCheckStatus='checking'のまま永久停止する作品がある」「person-fetch Cronが人物登録のたびにOpenAI費用を自動発生させる」という4つの無駄を、既存の配信情報鮮度・管理画面の手動操作を壊さずに削減する。
+
+**変更ファイル：**
+- `vercel.json` — `person-fetch`のCronエントリを削除。`vod-recheck`のスケジュールを`0 5 * * *`（毎日）→`0 5 1 * *`（毎月1日）に変更。`refresh`/`vod-refresh`は無変更（毎日のまま）。
+- `src/lib/vod-check-throttle.ts`（新規）— vod-refresh/vod-recheckが共有するクールダウン判定。既存の`WorkRecord.nextVodCheckAt`（`work-processor.ts`が既に使う30日スロットリングと同じフィールド）を再利用し、新規DBカラムは追加していない。`isVodCheckThrottled()`・`computeNextVodCheckAt()`（30日固定、`work-processor.ts`と統一）・`isStuckChecking()`（`vodCheckStatus='checking'`が2時間以上更新されていなければ放棄されたとみなす）を提供。
+- `src/app/api/cron/vod-refresh/route.ts` — AI補完実行前に`isVodCheckThrottled(work)`を追加条件にし、vod-recheckが直近チェック済みの作品を再検索しないようにした。AI実行後は`computeNextVodCheckAt()`で`nextVodCheckAt`を設定。`maxDuration=300`を追加（timeout対策）。TMDb 7日基準・AI 30日基準（`AI_STALE_DAYS`）はいずれも無変更。
+- `src/app/api/cron/vod-recheck/route.ts` — 「配信情報0件（noVod）なら180日基準を無条件にバイパスする」ロジックを修正し、`isVodCheckThrottled()`がfalseの場合のみ対象にするよう変更（`RECHECK_STALE_DAYS=180`自体は無変更、短縮していない）。`runRecheck()`のAI再確認後にも`computeNextVodCheckAt()`で`nextVodCheckAt`を設定し、vod-refresh側と同じクールダウンを共有。`collectConditionTargets`/`collectIntensiveTargets`双方で`isStuckChecking()`による「checking固着からの自己修復」を追加。`maxDuration=300`を追加。ヘッダーコメントを月次実行に更新。
+- `src/app/api/cron/person-fetch/route.ts` — ルート自体は削除せず（`CRON_SECRET`認証つきのまま残置）、Cronから外れて自動実行されなくなった経緯をコメントで明記。処理本体（`processQueuedPersonJobs`）は変更していない。
+- `src/lib/__tests__/vod-check-throttle.test.ts`（新規）— 10件、上記3関数の境界値を検証。
+- `scripts/reset-stuck-vod-checking.ts`（新規・恒久スクリプトとして残置）— `vodCheckStatus='checking'`のまま`STUCK_CHECKING_MS`（2時間）以上放置された作品を、既存の`updateWorkVodCheckStatus()`のみを使って`needs_recheck`へ戻す。生SQLの一括UPDATEは行わない。実行済み：本番DBで34件を検出・復旧（`npx dotenv -e .env.local -- npx tsx scripts/reset-stuck-vod-checking.ts`）。
+
+**調査で判明していた事実（今回のコード修正の根拠）：**
+- `openai_usage_logs`の`feature='vod_research'`（gpt-4o使用）が全OpenAI費用の約78%を占めていた。
+- vod-recheckの`noVod`分岐は`isStale`（180日）判定を素通りし、`vodAiCheckedAt`の新旧に関わらず毎回対象になっていた。vod-refreshは独自に30日クールダウンを持つが、vod-recheckはそれを参照しておらず、4:00 UTC(vod-refresh)→5:00 UTC(vod-recheck)の1時間差で同一作品が二重にAI Web検索されうる状態だった。
+- `WorkRecord.nextVodCheckAt`は`work-processor.ts`・`/api/admin/vod-fetch`では既に使われているスロットリング機構だが、vod-refresh/vod-recheckのどちらからも参照・設定されていなかった。
+- `vodCheckStatus='checking'`のまま止まっている作品は、選定条件`vodCheckStatus !== 'checking'`により永久に再確認対象から除外される。原因はいずれのCronルートにも`maxDuration`が未設定で、Vercel Function timeoutで`runRecheck()`が完走しない場合に発生していたと推定される。
+
+**実行頻度の変更：**
+
+| Cron | 変更前 | 変更後 |
+|---|---|---|
+| refresh | 毎日 3:00 UTC | 変更なし |
+| vod-refresh | 毎日 4:00 UTC | 変更なし |
+| vod-recheck | 毎日 5:00 UTC | **3日に1回 5:00 UTC**（`0 5 */3 * *`、日本時間 同日14:00頃。月10回程度） |
+| person-fetch | 毎日 9:00 UTC | Cron削除。`/api/admin/person-jobs/process-now`（既存の管理画面「処理開始」ボタン）から手動実行のみ |
+
+**確認した既存の手動経路（維持されていることを確認済み）：** `/api/admin/people/import`（人物登録・キュー追加のみ、自動処理なし）、`/api/admin/person-jobs/process-now`（管理画面の「処理開始」ボタン）、`/api/admin/people/fetch`（「データ取得」ボタン、単体人物の即時処理）、`/api/admin/ai-judge`・`/api/admin/vod-fetch`・`/api/admin/vod-recheck`・`/api/admin/vod-person-recheck`（各種手動AI判定・VOD調査ボタン）はすべて無変更。`refresh`Cron（`processAllPersons`）は`getAllPersonsMerged()`＝公開済み人物のみを対象としており、新規登録・未処理人物には影響しないことを確認済み。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1417テスト全通過（既存1407 + 新規10）
+- `next build` 成功、`/api/cron/*`4ルートとも正常にビルドされることを確認
+
+---
+
+## Task 20 追記 — vod-recheckの月次→3日毎への調整・優先順位のlastAiCheck昇順ソート追加
+
+**背景：** Task 20実装後、実際の本番DBを調査した結果、以下が判明した。
+1. `openai_usage_logs`の`duration_ms`実測から、`supplementVodWithAI()`1回あたり平均7.19秒（中央値5.64秒、P99 20.2秒、最大48.6秒）かかることが判明。vod-recheckは完全な直列処理（`for`ループ内`await`、並列化なし）のため、`VOD_RECHECK_LIMIT=300`を月1回のまま実行すると約36分かかり、`maxDuration=300`（5分）を大幅に超過してVercel Functionがタイムアウトすることが判明した。
+2. 180日以上未確認グループ（5,477件）が単一の優先度（priority=10）にまとめられ、グループ内の並び順が`Array.sort()`の安定ソートによる実質固定順（人物・作品の取得順）になっており、「長期間未確認の作品を優先」という意図を満たしていなかった。
+3. OpenAI公式のWeb Search Preview課金（$25/1,000 call）が、社内の`openai_usage_logs`（`calcCostUsd()`）には一切含まれておらず、トークン費用のみを計測していたことが判明（`product_ai`/`work_ai`は`chat.completions.create()`のみでtool未使用のため影響なし。影響は`vod_research`のみ）。
+
+**対応：** 「月1回」という要件は、同一作品を短期間に繰り返し検索しないというクールダウン設計（`nextVodCheckAt`等、Task 20本編で実装済み）で維持しつつ、バックログ5,000件超を安全に分割処理するため、実行頻度とロジックを以下のように調整した。
+
+- `vercel.json` — vod-recheckのスケジュールを`0 5 1 * *`（毎月1日）→`0 5 */3 * *`（3日に1回、月10回程度）に変更。
+- `src/app/api/cron/vod-recheck/route.ts` — `DEFAULT_RECHECK_LIMIT`を20→**30**に変更（3日毎×30件≒月間約300件）。`RecheckTarget`に`lastAiCheck`（`Math.max(lastVodCheckAt, vodAiCheckedAt)`）フィールドを追加し、`regularTargets.sort()`を「priority降順→同priority内はlastAiCheck昇順（最後に確認された日時が古い作品から）」の2キーソートに変更。180日基準（`RECHECK_STALE_DAYS`）・クールダウン機構（`isVodCheckThrottled`/`nextVodCheckAt`）・vod-refreshとの重複防止ロジックはいずれも無変更。
+- ヘッダーコメントを新しいスケジュール・優先順位に合わせて更新。
+
+**検証（本番DB、読み取り専用スクリプトで確認・調査後削除済み）：** 新しい選定ロジックを実際のデータで再現し、上位30件が「noVod（配信情報未取得、24件）→180日超過（lastAiCheck古い順）」の順に正しく並ぶことを確認した。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1417テスト全通過（既存テストから変更なし。新しいソートロジックは既存の`vod-check-throttle.test.ts`が検証する`isVodCheckThrottled`/`computeNextVodCheckAt`/`isStuckChecking`をそのまま利用しているため追加テストは不要と判断）
+- `next build` 成功

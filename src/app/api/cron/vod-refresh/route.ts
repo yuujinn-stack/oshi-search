@@ -8,6 +8,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, updateWorkVod } from '@/lib/work-store';
 import { getWatchProviders } from '@/lib/tmdb';
 import { supplementVodWithAI } from '@/lib/vod-supplement';
+import { isVodCheckThrottled, computeNextVodCheckAt } from '@/lib/vod-check-throttle';
 import type { VodProvider } from '@/types/vod';
 
 // 配信情報の更新間隔（日数）
@@ -16,6 +17,10 @@ const AI_STALE_DAYS = 30;
 
 // Cron 1回あたりの OpenAI 呼び出し上限（コスト制御）
 const AI_CALL_LIMIT_PER_CRON = 20;
+
+// AI Web検索そのものに時間がかかる（1件あたり最大30秒程度）ため、
+// Vercel Function timeoutで処理が途中停止しないよう猶予を確保する。
+export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -64,11 +69,15 @@ export async function GET(req: NextRequest) {
         const { providers: tmdbProviders } = await getWatchProviders(work.tmdbId!, work.type as 'movie' | 'tv');
         let finalProviders: VodProvider[] = tmdbProviders;
         let vodAiCheckedAt: number | undefined;
+        let nextVodCheckAt: number | undefined;
 
-        // providers=0（jpExists の有無に関わらず）かつ AI枠が残っている場合に補完
+        // providers=0（jpExists の有無に関わらず）かつ AI枠が残っている場合に補完。
+        // isVodCheckThrottled: vod-recheck側が直近この作品をAI検索済み（nextVodCheckAt未到来）
+        // であれば、ここでは再検索しない（vod-recheckとの重複防止・両Cronで共有）。
         if (
           tmdbProviders.length === 0 &&
-          aiCallCount < AI_CALL_LIMIT_PER_CRON
+          aiCallCount < AI_CALL_LIMIT_PER_CRON &&
+          !isVodCheckThrottled(work)
         ) {
           const lastAiCheck = work.vodAiCheckedAt ?? 0;
           const isAiStale = Date.now() - lastAiCheck >= AI_STALE_MS;
@@ -83,6 +92,7 @@ export async function GET(req: NextRequest) {
             personAi++;
             totalAi++;
             vodAiCheckedAt = Date.now();
+            nextVodCheckAt = computeNextVodCheckAt(aiProviders.length > 0);
           } else {
             const daysSince = Math.floor((Date.now() - lastAiCheck) / (1000 * 60 * 60 * 24));
             console.log(
@@ -91,7 +101,7 @@ export async function GET(req: NextRequest) {
           }
         }
 
-        await updateWorkVod(person.name, work.id, finalProviders, { vodAiCheckedAt });
+        await updateWorkVod(person.name, work.id, finalProviders, { vodAiCheckedAt, nextVodCheckAt });
         personUpdated++;
         totalTmdb++;
       } catch (err) {
