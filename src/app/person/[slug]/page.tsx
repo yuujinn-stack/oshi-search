@@ -18,8 +18,11 @@ import WorksSection from '@/components/WorksSection';
 import ProviderLogo from '@/components/ProviderLogo';
 import PageViewTracker from '@/components/site/PageViewTracker';
 import AffiliateSlot from '@/components/site/AffiliateSlot';
+import PersonHero from '@/components/site/PersonHero';
+import PersonQuickNav from '@/components/site/PersonQuickNav';
+import StreamingNowSection from '@/components/site/StreamingNowSection';
+import FeaturedProductsSection from '@/components/site/FeaturedProductsSection';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
-import type { ActivityStatus } from '@/types/person';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
 import { getAllDisplayOrders } from '@/lib/product-order-store';
@@ -32,38 +35,7 @@ import {
 import type { WorkRecord } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 import { buildHeroBadgeTitles, buildInfoGenreList, normalizeTag } from '@/lib/person-display-tags';
-
-// ─── 定数 ──────────────────────────────────────────────────────────────────────
-const ACTIVITY_LABEL: Record<ActivityStatus, string> = {
-  active: '現役',
-  graduated: '卒業',
-  withdrawn: '脱退',
-  hiatus: '活動休止',
-  retired: '引退',
-  unknown: '不明',
-};
-const ACTIVITY_BADGE_CLS: Record<ActivityStatus, string> = {
-  active:    'bg-green-100 text-green-700',
-  graduated: 'bg-blue-100 text-blue-700',
-  withdrawn: 'bg-red-100 text-red-600',
-  hiatus:    'bg-amber-100 text-amber-700',
-  retired:   'bg-gray-200 text-gray-500',
-  unknown:   'bg-gray-100 text-gray-400',
-};
-const GENRE_BADGE: Record<string, string> = {
-  '坂道':        'bg-pink-100 text-pink-700',
-  '芸人':        'bg-yellow-100 text-yellow-700',
-  'テレビ':      'bg-blue-100 text-blue-700',
-  'アーティスト': 'bg-purple-100 text-purple-700',
-  '俳優':        'bg-green-100 text-green-700',
-};
-const GENRE_GRADIENT: Record<string, string> = {
-  '坂道':        'from-pink-600 to-rose-700',
-  '芸人':        'from-amber-500 to-orange-600',
-  'テレビ':      'from-sky-600 to-blue-700',
-  'アーティスト': 'from-violet-600 to-purple-800',
-  '俳優':        'from-emerald-600 to-green-800',
-};
+import { ACTIVITY_LABEL } from '@/lib/person-badges';
 
 // ─── 商品ソート（既存ロジック・変更禁止） ─────────────────────────────────────
 // ─ 中古カテゴリ商品（'中古'カテゴリ）をティア＋スコア順にソート ──────────────
@@ -384,6 +356,83 @@ export default async function PersonPage({ params }: Props) {
   const hasWorks   = publishedWorks.length > 0;
   const hasVod     = streamingWorks.length > 0;
 
+  // groupPagePath はJSON-LD・プロフィール・パンくず等、複数箇所で使うため先に計算する
+  // （groupMeta・person.group のみに依存し、以降の値には依存しないため安全に前倒しできる）
+  const groupPagePath = person.group
+    ? (groupMeta ? groupHref(groupMeta) : `/groups/${encodeURIComponent(person.group)}`)
+    : null;
+
+  // ── プロフィール情報行（クイックナビでの表示要否を先に判定する必要があるため
+  //    レンダリング前に計算しておく。中身のロジック自体は変更していない） ──────
+  const profileInfoRows: { label: string; value: ReactNode }[] = [];
+  {
+    const groupLink = personMeta?.currentGroupName || person.group || null;
+    if (groupLink) {
+      const href = groupLink === person.group && groupPagePath
+        ? groupPagePath
+        : `/groups/${encodeURIComponent(groupLink)}`;
+      profileInfoRows.push({
+        label: '所属',
+        value: <Link href={href} className="theme-text-link">{groupLink}</Link>,
+      });
+    }
+
+    if (personMeta?.generation) {
+      profileInfoRows.push({ label: '期別', value: personMeta.generation });
+    }
+
+    if (personMeta?.activityStatus && personMeta.activityStatus !== 'unknown') {
+      profileInfoRows.push({ label: '活動状況', value: ACTIVITY_LABEL[personMeta.activityStatus] });
+    }
+
+    if (person.config.reading) {
+      profileInfoRows.push({ label: '読み', value: person.config.reading });
+    }
+
+    const genres = buildInfoGenreList({
+      genre: person.genre,
+      primaryGenre: personMeta?.primaryGenre,
+      genres: personMeta?.genres,
+    });
+    if (genres.length > 0) {
+      profileInfoRows.push({ label: 'ジャンル', value: genres.join(' / ') });
+    }
+
+    if (personMeta?.titles && personMeta.titles.length > 0) {
+      profileInfoRows.push({ label: '肩書き', value: personMeta.titles.join(' / ') });
+    }
+
+    if (personMeta?.publicRoles && personMeta.publicRoles.length > 0) {
+      profileInfoRows.push({ label: '役職', value: personMeta.publicRoles.join(' / ') });
+    }
+
+    if (personMeta?.joinedAt) {
+      profileInfoRows.push({ label: '加入日', value: personMeta.joinedAt.slice(0, 7) });
+    }
+
+    if (personMeta?.leftAt) {
+      const statusLabel = personMeta.activityStatus === 'withdrawn' ? '脱退日' : '卒業日';
+      profileInfoRows.push({ label: statusLabel, value: personMeta.leftAt.slice(0, 7) });
+    }
+
+    if (personMeta?.formerGroupNames && personMeta.formerGroupNames.length > 0) {
+      profileInfoRows.push({ label: '旧所属', value: personMeta.formerGroupNames.join(' / ') });
+    }
+
+    if (person.config.aliases && person.config.aliases.length > 0) {
+      profileInfoRows.push({ label: '別名・愛称', value: person.config.aliases.join(' / ') });
+    }
+
+    if (personMeta?.awards && personMeta.awards.length > 0) {
+      profileInfoRows.push({ label: '受賞歴', value: personMeta.awards.join(' / ') });
+    }
+
+    if (personMeta?.membershipNote) {
+      profileInfoRows.push({ label: '備考', value: personMeta.membershipNote });
+    }
+  }
+  const hasProfileInfo = profileInfoRows.length > 0;
+
   // ── FAQ ──
   const topProviders = providerGroups.slice(0, 3).map(([n]) => getVodProviderDisplayInfo(n).displayName);
   const faqItems = [
@@ -412,9 +461,6 @@ export default async function PersonPage({ params }: Props) {
   // ── JSON-LD ──
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
   const personUrl  = `${siteOrigin}/person/${encodeURIComponent(person.name)}`;
-  const groupPagePath = person.group
-    ? (groupMeta ? groupHref(groupMeta) : `/groups/${encodeURIComponent(person.group)}`)
-    : null;
   const personJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Person',
@@ -446,6 +492,22 @@ export default async function PersonPage({ params }: Props) {
   };
 
   const heroBackground = getGroupHeroGradient(person.group, person.genre);
+
+  // ── ファーストビューの数字サマリー（配信中を最優先に表示） ──────────────────
+  const heroStats = [
+    { label: '配信中',     value: streamingWorks.length,  unit: '件', href: '#streaming-now' },
+    { label: '出演作品',   value: publishedWorks.length,  unit: '件', href: '#works' },
+    { label: '関連商品',   value: totalProductCount,      unit: '件', href: '#products' },
+    { label: '配信サービス', value: providerWorkMap.size, unit: '社', href: '#vod' },
+  ];
+
+  // ── 数字付きクイックナビ（実際にそのセクションが表示される場合のみ掲載） ──────
+  const quickNavItems = [
+    hasVod && { label: '今すぐ見る', icon: '▶', count: streamingWorks.length, href: '#streaming-now' },
+    hasWorks && { label: '出演作品', icon: '🎬', count: publishedWorks.length, href: '#works' },
+    hasProducts && { label: '商品', icon: '🛍', count: totalProductCount, href: '#products' },
+    hasProfileInfo && { label: 'プロフィール', icon: '👤', count: null, href: '#profile' },
+  ].filter((v): v is { label: string; icon: string; count: number | null; href: string } => !!v);
 
   return (
     <>
@@ -479,289 +541,112 @@ export default async function PersonPage({ params }: Props) {
           </div>
         </nav>
 
-        {/* ─── Hero ─── */}
-        <div className="py-8 px-4" style={{ background: heroBackground }}>
-          <div className="max-w-4xl mx-auto">
+        {/* ─── ファーストビュー ─── */}
+        <PersonHero
+          person={person}
+          personMeta={personMeta}
+          groupMeta={groupMeta}
+          groupPagePath={groupPagePath}
+          heroBackground={heroBackground}
+          stats={heroStats}
+        />
 
-            {/* 人物情報 */}
-            <div className="flex items-start gap-4 mb-6">
-              {/* アバター */}
-              <div
-                className="w-20 h-20 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white text-4xl font-black flex-shrink-0 select-none border border-white/20"
-                aria-hidden="true"
-              >
-                {person.name[0]}
-              </div>
-
-              {/* テキスト情報 */}
-              <div className="min-w-0 flex-1">
-                <h1 className="text-2xl sm:text-3xl font-black text-white leading-tight">{person.name}</h1>
-
-                {/* メイン肩書き（primaryGenre優先）+ グループリンク */}
-                {(() => {
-                  const groupLink = personMeta?.currentGroupName || person.group || null;
-                  if (personMeta?.primaryGenre) {
-                    return (
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <span className="text-white/80 text-sm font-medium">{personMeta.primaryGenre}</span>
-                        {groupLink && (
-                          <Link
-                            href={groupLink === person.group && groupPagePath ? groupPagePath : `/groups/${encodeURIComponent(groupLink)}`}
-                            className="text-white/50 hover:text-white/80 text-xs transition-colors underline underline-offset-2 decoration-white/20"
-                          >
-                            {groupLink}
-                          </Link>
-                        )}
-                      </div>
-                    );
-                  }
-                  if (groupLink) {
-                    return (
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <Link
-                          href={groupLink === person.group && groupPagePath ? groupPagePath : `/groups/${encodeURIComponent(groupLink)}`}
-                          className="text-white/80 hover:text-white text-sm font-medium transition-colors underline underline-offset-2 decoration-white/40 hover:decoration-white"
-                        >
-                          {groupLink}
-                        </Link>
-                        {groupMeta?.activityStatus === 'renamed' && groupMeta.renamedTo && (
-                          <Link
-                            href={`/groups/${encodeURIComponent(groupMeta.renamedTo)}`}
-                            className="text-[11px] text-white/60 hover:text-white transition-colors"
-                          >
-                            （現: {groupMeta.renamedTo}）
-                          </Link>
-                        )}
-                      </div>
-                    );
-                  }
-                  return <p className="text-white/70 mt-1 text-sm">ソロ活動</p>;
-                })()}
-
-                {/* バッジ群 */}
-                <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                  {/* titles: primaryGenre・genre と重複する値を除外して正規化表示 */}
-                  {buildHeroBadgeTitles({
-                    genre: person.genre,
-                    primaryGenre: personMeta?.primaryGenre,
-                    titles: personMeta?.titles,
-                  }).map((t) => (
-                    <span key={t} className="text-[11px] px-2 py-0.5 rounded-full bg-white/25 text-white font-medium">
-                      {t}
-                    </span>
-                  ))}
-                  {/* genre バッジ（正規化して表示） */}
-                  {(() => {
-                    const displayGenre = normalizeTag(person.genre) ?? person.genre;
-                    return (
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${GENRE_BADGE[displayGenre] ?? GENRE_BADGE[person.genre] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {displayGenre}
-                      </span>
-                    );
-                  })()}
-                  {personMeta?.activityStatus && personMeta.activityStatus !== 'unknown' && (
-                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${ACTIVITY_BADGE_CLS[personMeta.activityStatus]}`}>
-                      {ACTIVITY_LABEL[personMeta.activityStatus]}
-                    </span>
-                  )}
-                  {personMeta?.generation && (
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">
-                      {personMeta.generation}
-                    </span>
-                  )}
-                  {personMeta?.joinedAt && (
-                    <span className="text-[11px] text-white/60">
-                      {personMeta.joinedAt.slice(0, 7)} 加入
-                    </span>
-                  )}
-                  {personMeta?.leftAt && (
-                    <span className="text-[11px] text-white/60">
-                      → {personMeta.leftAt.slice(0, 7)} 卒業
-                    </span>
-                  )}
-                </div>
-
-                {/* 旧グループ / 補足メモ */}
-                {((personMeta?.formerGroupNames?.length ?? 0) > 0 || personMeta?.membershipNote) && (
-                  <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                    {personMeta?.formerGroupNames?.map((g) => (
-                      <span key={g} className="text-[11px] text-white/60">元{g}</span>
-                    ))}
-                    {personMeta?.membershipNote && (
-                      <span className="text-[11px] text-white/60 italic">{personMeta.membershipNote}</span>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Stats バー */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {[
-                { label: '関連商品',   value: totalProductCount,      unit: '件', href: '#products' },
-                { label: '出演作品',   value: publishedWorks.length,  unit: '件', href: '#works' },
-                { label: '配信中',     value: streamingWorks.length,  unit: '件', href: '#vod' },
-                { label: '配信サービス', value: providerWorkMap.size, unit: '社', href: '#vod' },
-              ].map(({ label, value, unit, href }) => (
-                <a
-                  key={label}
-                  href={href}
-                  className="bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 text-center hover:bg-white/25 transition-colors block"
-                >
-                  <p className="text-white/70 text-[10px] font-medium">{label}</p>
-                  {value > 0 ? (
-                    <p className="text-white font-black text-xl mt-0.5 leading-none">
-                      {value.toLocaleString()}
-                      <span className="text-xs font-medium ml-0.5">{unit}</span>
-                    </p>
-                  ) : (
-                    <p className="text-white/40 text-sm mt-1">—</p>
-                  )}
-                </a>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* ─── CTA ─── */}
-        <div className="breadcrumb-bar shadow-sm">
-          <div className="max-w-4xl mx-auto px-4 py-3">
-            <div className="flex gap-2.5 overflow-x-auto scrollbar-none pb-0.5">
-              {hasProducts && (
-                <a
-                  href="#products"
-                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-xl transition-colors min-h-[44px]"
-                  style={{ background: 'var(--ds-cta)', color: 'var(--ds-cta-text)' }}
-                >
-                  🛍 関連商品を見る
-                  {totalProductCount > 0 && (
-                    <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.25)' }}>{totalProductCount}</span>
-                  )}
-                </a>
-              )}
-              {hasWorks && (
-                <a
-                  href="#works"
-                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-xl transition-colors min-h-[44px]"
-                  style={{ background: 'var(--ds-surface)', color: 'var(--ds-text)', border: '1px solid var(--ds-border)' }}
-                >
-                  🎬 出演作品を見る
-                  {publishedWorks.length > 0 && (
-                    <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-primary)' }}>{publishedWorks.length}</span>
-                  )}
-                </a>
-              )}
-              {hasVod && (
-                <a
-                  href="#vod"
-                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-xl transition-colors min-h-[44px] bg-green-600 hover:bg-green-700 text-white"
-                >
-                  ▶ 配信を見る
-                  <span className="text-xs bg-white/25 px-1.5 py-0.5 rounded-full">{streamingWorks.length}件</span>
-                </a>
-              )}
-            </div>
-          </div>
-        </div>
+        {/* ─── 数字付きクイックナビ ─── */}
+        {quickNavItems.length > 0 && <PersonQuickNav items={quickNavItems} />}
 
         {/* ─── メインコンテンツ ─── */}
         <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
 
-          {/* ━━━ 人物情報 ━━━ */}
-          {(() => {
-            const infoRows: { label: string; value: ReactNode }[] = [];
+          {/* ━━━ 今すぐ見られる作品 ━━━ */}
+          <StreamingNowSection works={streamingWorks} terminatedSlugs={inactiveSlugs} />
 
-            const groupLink = personMeta?.currentGroupName || person.group || null;
-            if (groupLink) {
-              const href = groupLink === person.group && groupPagePath
-                ? groupPagePath
-                : `/groups/${encodeURIComponent(groupLink)}`;
-              infoRows.push({
-                label: '所属',
-                value: <Link href={href} className="theme-text-link">{groupLink}</Link>,
-              });
-            }
+          {/* ━━━ VODサービス比較 ━━━ */}
+          {providerGroups.length > 0 && (
+            <section id="vod" aria-labelledby="vod-heading">
+              <div className="flex items-center gap-2 mb-4">
+                <h2 id="vod-heading" className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>▶ 配信中の出演作品</h2>
+                <span className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                  🟢 {streamingWorks.length}件
+                </span>
+              </div>
 
-            if (personMeta?.generation) {
-              infoRows.push({ label: '期別', value: personMeta.generation });
-            }
-
-            if (personMeta?.activityStatus && personMeta.activityStatus !== 'unknown') {
-              infoRows.push({ label: '活動状況', value: ACTIVITY_LABEL[personMeta.activityStatus] });
-            }
-
-            if (person.config.reading) {
-              infoRows.push({ label: '読み', value: person.config.reading });
-            }
-
-            const genres = buildInfoGenreList({
-              genre: person.genre,
-              primaryGenre: personMeta?.primaryGenre,
-              genres: personMeta?.genres,
-            });
-            if (genres.length > 0) {
-              infoRows.push({ label: 'ジャンル', value: genres.join(' / ') });
-            }
-
-            if (personMeta?.titles && personMeta.titles.length > 0) {
-              infoRows.push({ label: '肩書き', value: personMeta.titles.join(' / ') });
-            }
-
-            if (personMeta?.publicRoles && personMeta.publicRoles.length > 0) {
-              infoRows.push({ label: '役職', value: personMeta.publicRoles.join(' / ') });
-            }
-
-            if (personMeta?.joinedAt) {
-              infoRows.push({ label: '加入日', value: personMeta.joinedAt.slice(0, 7) });
-            }
-
-            if (personMeta?.leftAt) {
-              const statusLabel = personMeta.activityStatus === 'withdrawn' ? '脱退日' : '卒業日';
-              infoRows.push({ label: statusLabel, value: personMeta.leftAt.slice(0, 7) });
-            }
-
-            if (personMeta?.formerGroupNames && personMeta.formerGroupNames.length > 0) {
-              infoRows.push({ label: '旧所属', value: personMeta.formerGroupNames.join(' / ') });
-            }
-
-            if (person.config.aliases && person.config.aliases.length > 0) {
-              infoRows.push({ label: '別名・愛称', value: person.config.aliases.join(' / ') });
-            }
-
-            if (personMeta?.awards && personMeta.awards.length > 0) {
-              infoRows.push({ label: '受賞歴', value: personMeta.awards.join(' / ') });
-            }
-
-            if (personMeta?.membershipNote) {
-              infoRows.push({ label: '備考', value: personMeta.membershipNote });
-            }
-
-            if (infoRows.length === 0) return null;
-
-            return (
-              <section id="profile" aria-labelledby="profile-heading">
-                <h2 id="profile-heading" className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>人物情報</h2>
-                <div className="theme-card overflow-hidden">
-                  <dl className="divide-y" style={{ borderColor: 'var(--ds-border)' }}>
-                    {infoRows.map(({ label, value }) => (
-                      <div
-                        key={label}
-                        className="grid grid-cols-[7rem_1fr] sm:grid-cols-[9rem_1fr] gap-3 px-4 py-3"
-                        style={{ background: 'var(--ds-surface)' }}
-                      >
-                        <dt className="text-xs font-semibold self-start pt-0.5" style={{ color: 'var(--ds-muted)' }}>
-                          {label}
-                        </dt>
-                        <dd className="text-sm font-medium" style={{ color: 'var(--ds-text)' }}>
-                          {value}
-                        </dd>
+              <div className="space-y-2.5">
+                {providerGroups.map(([providerName, { logoPath, works: pWorks }]) => {
+                  const pInfo = getVodProviderDisplayInfo(providerName);
+                  return (
+                  <details
+                    key={providerName}
+                    className="theme-card overflow-hidden"
+                  >
+                    <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
+                      <ProviderLogo providerName={providerName} logoPath={logoPath} size="md" />
+                      <span className="font-semibold text-sm flex-1" style={{ color: 'var(--ds-text)' }}>
+                        {pInfo.displayName}
+                        {pInfo.badgeLabel && (
+                          <span className="ml-1.5 text-[10px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full align-middle">
+                            {pInfo.badgeLabel}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">
+                        {pWorks.length}件
+                      </span>
+                    </summary>
+                    <div className="px-4 py-3" style={{ borderTop: '1px solid var(--ds-border)' }}>
+                      {/* サービス比較後に外部VODへ進むCTA。既存のAffiliateSlotをそのまま再利用し、
+                          「今すぐ見られる作品」の各作品CTAと同じ work_provider スロットを参照する
+                          （このスロットに実際のアフィリエイト登録があるサービスのみ表示される。
+                          未登録サービスは何も表示されず、既存のfallbackも生成しない）。 */}
+                      <AffiliateSlot vodService={normalizeProviderName(providerName)} slotKey="work_provider" className="mb-3" />
+                      <div className="space-y-2">
+                        {pWorks.slice(0, 8).map((work) => (
+                          <Link
+                            key={work.id}
+                            href={getWorkPublicUrl({ workId: work.id, personName: work.personName }) ?? '#'}
+                            className="flex items-center gap-2 py-1 transition-colors group theme-text-link"
+                            style={{ color: 'var(--ds-text)', textDecoration: 'none' }}
+                          >
+                            {work.posterUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={work.posterUrl}
+                                alt={work.title}
+                                className="w-8 h-12 object-cover rounded flex-shrink-0"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <div className="w-8 h-12 rounded flex items-center justify-center text-sm flex-shrink-0" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-muted)' }}>
+                                🎬
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium line-clamp-2 leading-tight transition-colors" style={{ color: 'var(--ds-text)' }}>
+                                {work.title}
+                              </p>
+                              {work.releaseYear && (
+                                <p className="text-[10px] mt-0.5" style={{ color: 'var(--ds-muted)' }}>{work.releaseYear}年</p>
+                              )}
+                            </div>
+                          </Link>
+                        ))}
+                        {pWorks.length > 8 && (
+                          <p className="text-xs text-center pt-1" style={{ color: 'var(--ds-muted)' }}>他 {pWorks.length - 8}件</p>
+                        )}
                       </div>
-                    ))}
-                  </dl>
-                </div>
-              </section>
-            );
-          })()}
+                    </div>
+                  </details>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* ━━━ 関連商品ピックアップ（プレビュー） ━━━ */}
+          <FeaturedProductsSection
+            sectionResults={sectionResults}
+            personSlug={name}
+            totalProductCount={totalProductCount}
+          />
 
           {/* ━━━ 関連商品 ━━━ */}
           <section id="products" aria-labelledby="products-heading">
@@ -825,79 +710,27 @@ export default async function PersonPage({ params }: Props) {
             </section>
           ) : null}
 
-          {/* ━━━ VOD配信情報 ━━━ */}
-          {providerGroups.length > 0 && (
-            <section id="vod" aria-labelledby="vod-heading">
-              <div className="flex items-center gap-2 mb-4">
-                <h2 id="vod-heading" className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>▶ 配信中の出演作品</h2>
-                <span className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
-                  🟢 {streamingWorks.length}件
-                </span>
-              </div>
-
-              <div className="space-y-2.5">
-                {providerGroups.map(([providerName, { logoPath, works: pWorks }]) => {
-                  const pInfo = getVodProviderDisplayInfo(providerName);
-                  return (
-                  <details
-                    key={providerName}
-                    className="theme-card overflow-hidden"
-                  >
-                    <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
-                      <ProviderLogo providerName={providerName} logoPath={logoPath} size="md" />
-                      <span className="font-semibold text-sm flex-1" style={{ color: 'var(--ds-text)' }}>
-                        {pInfo.displayName}
-                        {pInfo.badgeLabel && (
-                          <span className="ml-1.5 text-[10px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full align-middle">
-                            {pInfo.badgeLabel}
-                          </span>
-                        )}
-                      </span>
-                      <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">
-                        {pWorks.length}件
-                      </span>
-                    </summary>
-                    <div className="px-4 py-3" style={{ borderTop: '1px solid var(--ds-border)' }}>
-                      <AffiliateSlot vodService={normalizeProviderName(providerName)} slotKey="person_vod" className="mb-3" />
-                      <div className="space-y-2">
-                        {pWorks.slice(0, 8).map((work) => (
-                          <Link
-                            key={work.id}
-                            href={getWorkPublicUrl({ workId: work.id, personName: work.personName }) ?? '#'}
-                            className="flex items-center gap-2 py-1 transition-colors group theme-text-link"
-                            style={{ color: 'var(--ds-text)', textDecoration: 'none' }}
-                          >
-                            {work.posterUrl ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={work.posterUrl}
-                                alt={work.title}
-                                className="w-8 h-12 object-cover rounded flex-shrink-0"
-                                loading="lazy"
-                              />
-                            ) : (
-                              <div className="w-8 h-12 rounded flex items-center justify-center text-sm flex-shrink-0" style={{ background: 'var(--ds-primary-soft)', color: 'var(--ds-muted)' }}>
-                                🎬
-                              </div>
-                            )}
-                            <div className="min-w-0">
-                              <p className="text-xs font-medium line-clamp-2 leading-tight transition-colors" style={{ color: 'var(--ds-text)' }}>
-                                {work.title}
-                              </p>
-                              {work.releaseYear && (
-                                <p className="text-[10px] mt-0.5" style={{ color: 'var(--ds-muted)' }}>{work.releaseYear}年</p>
-                              )}
-                            </div>
-                          </Link>
-                        ))}
-                        {pWorks.length > 8 && (
-                          <p className="text-xs text-center pt-1" style={{ color: 'var(--ds-muted)' }}>他 {pWorks.length - 8}件</p>
-                        )}
-                      </div>
+          {/* ━━━ プロフィール ━━━ */}
+          {hasProfileInfo && (
+            <section id="profile" aria-labelledby="profile-heading">
+              <h2 id="profile-heading" className="text-base font-bold mb-4" style={{ color: 'var(--ds-text)' }}>プロフィール</h2>
+              <div className="theme-card overflow-hidden">
+                <dl className="divide-y" style={{ borderColor: 'var(--ds-border)' }}>
+                  {profileInfoRows.map(({ label, value }) => (
+                    <div
+                      key={label}
+                      className="grid grid-cols-[7rem_1fr] sm:grid-cols-[9rem_1fr] gap-3 px-4 py-3"
+                      style={{ background: 'var(--ds-surface)' }}
+                    >
+                      <dt className="text-xs font-semibold self-start pt-0.5" style={{ color: 'var(--ds-muted)' }}>
+                        {label}
+                      </dt>
+                      <dd className="text-sm font-medium" style={{ color: 'var(--ds-text)' }}>
+                        {value}
+                      </dd>
                     </div>
-                  </details>
-                  );
-                })}
+                  ))}
+                </dl>
               </div>
             </section>
           )}

@@ -8,6 +8,7 @@
 //   （呼び出し側は null のとき必ず既存リンク・既存UIへフォールバックする）。
 // ・クリック数・表示回数などの計測は一切行わない（ASP側の管理画面で確認する方針）。
 
+import { cache } from 'react';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '@/db/client';
 import {
@@ -328,7 +329,11 @@ export interface AffiliateSlotResolution {
 
 const EMPTY_RESOLUTION: AffiliateSlotResolution = { mobile: null, desktop: null };
 
-export async function resolveAffiliateSlot(vodService: string, slotKey: string): Promise<AffiliateSlotResolution> {
+// react の cache() でリクエスト内の重複DB問い合わせを防ぐ。人物ページ等、同じ
+// (vodService, slotKey) の組み合わせで AffiliateSlot が複数回呼ばれる場面
+// （例: 同じVODサービスに複数の出演作品が配信されている場合）で、
+// 同一リクエスト内なら1回のDB問い合わせ結果を使い回す（Section 17の既存方針に合わせる）。
+export const resolveAffiliateSlot = cache(async (vodService: string, slotKey: string): Promise<AffiliateSlotResolution> => {
   try {
     const programs = await db
       .select({ id: affiliateProgramsTable.id })
@@ -391,7 +396,7 @@ export async function resolveAffiliateSlot(vodService: string, slotKey: string):
     console.error('[affiliate-store] resolveAffiliateSlot failed:', String(err));
     return EMPTY_RESOLUTION;
   }
-}
+});
 
 // ── デバッグ・管理画面用: 案件単体取得 ──────────────────────────────────────
 export async function getAffiliateProgramById(id: number): Promise<AffiliateProgram | null> {

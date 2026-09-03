@@ -667,3 +667,14 @@ body {
 .affiliate-slot--work-provider a:hover {
   background-color: #15803d;
 }
+
+/* ─── 人物ページ 数字付きクイックナビ ──────────────────────────────────────
+   共通ヘッダー(.site-header)はposition:sticky; top:0; z-index:50。
+   実測ヘッダー高さは375〜1280px幅いずれも69px（Playwrightで実測確認済み）。
+   その直下に重ならない位置でstickyさせる。ヘッダーより低いz-indexにし、
+   万一のスクロール挙動の差でもヘッダーが常に手前に表示されるようにする。 */
+.person-quick-nav {
+  position: sticky;
+  top: 70px;
+  z-index: 30;
+}
