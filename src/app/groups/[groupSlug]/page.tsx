@@ -580,9 +580,7 @@ export default async function GroupsPage({ params }: Props) {
         <div className="py-10 px-4" style={{ background: heroBackground }}>
           <div className="max-w-4xl mx-auto">
             <div className="flex items-center gap-4">
-              <div aria-hidden="true" className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center text-white text-3xl font-black flex-shrink-0 select-none">
-                {groupName[0]}
-              </div>
+              <div aria-hidden="true" data-initial={groupName[0]} className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center text-white text-3xl font-black flex-shrink-0 select-none" />
               <div>
                 <h1 className="text-3xl font-black text-white">{groupName}</h1>
                 <span className={`inline-block mt-1.5 text-xs px-3 py-1 rounded-full font-bold ${badge}`}>

@@ -495,9 +495,7 @@ export default async function WorkDetailPage({ params }: Props) {
                       href={`/person/${encodeURIComponent(wp.personName)}`}
                       className="flex items-center gap-3 py-2 px-3 rounded-xl hover:bg-indigo-50 transition-colors group"
                     >
-                      <div aria-hidden="true" className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-sm flex-shrink-0">
-                        {wp.personName[0]}
-                      </div>
+                      <div aria-hidden="true" data-initial={wp.personName[0]} className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-sm flex-shrink-0" />
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold text-slate-800 group-hover:text-indigo-700 transition-colors">
                           {wp.personName}

@@ -54,10 +54,9 @@ export default function GroupMemberCard({ member }: { member: GroupMemberCardDat
         <div className="relative w-14 h-14 mx-auto mb-3">
           <div
             aria-hidden="true"
+            data-initial={initial}
             className={`w-14 h-14 rounded-full bg-gradient-to-br ${gradient} flex items-center justify-center text-white text-2xl font-bold select-none`}
-          >
-            {initial}
-          </div>
+          />
           {activityStatus && activityStatus !== 'active' && ACTIVITY_LABEL[activityStatus] && (
             <span
               className={`absolute -top-1 -right-1 text-[9px] px-1.5 py-0.5 rounded-full font-semibold leading-none ${ACTIVITY_BADGE_CLS[activityStatus] ?? 'bg-gray-100 text-gray-400'}`}

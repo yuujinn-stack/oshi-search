@@ -64,9 +64,8 @@ export default function HomePersonCard({ person }: { person: PersonCardData & Pe
           userSelect: 'none',
         }}
         aria-hidden="true"
-      >
-        {person.name[0]}
-      </div>
+        data-initial={person.name[0]}
+      />
 
       {/* 名前 */}
       <p style={{

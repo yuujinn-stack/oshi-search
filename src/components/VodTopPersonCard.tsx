@@ -21,11 +21,10 @@ export default function VodTopPersonCard({
       >
         <div
           aria-hidden="true"
+          data-initial={initial}
           className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-2 text-white text-lg font-bold select-none"
           style={{ background: 'var(--ds-primary)' }}
-        >
-          {initial}
-        </div>
+        />
         <p className="font-bold text-sm leading-snug truncate" style={{ color: 'var(--ds-text)' }}>{name}</p>
         {group && (
           <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--ds-muted)' }}>{group}</p>

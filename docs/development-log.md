@@ -1083,3 +1083,22 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 - Playwrightで人物ページ・work詳細ページ・グループページ・検索結果ページを375px/1280pxで確認。横スクロール・コンソールエラーなし。VOD比較セクションの`h3`化前後で見た目の差分なし。グループページ・検索結果からプレースホルダー文言が消えたことを確認。
 - `/robots.txt`・`/sitemap.xml`の実際の出力をcurlで確認（Googlebot/Bingbot/OAI-SearchBot/PerplexityBotの個別ルール、work/groupエントリの`lastmod`実在確認）
 - `/admin`が引き続き`noindex, nofollow, noarchive`でありログイン導線も正常動作することを確認
+
+---
+
+## Task 22 追記 — 頭文字アバターをDOMテキストノードから完全除外（AI検索bot対策）
+
+**背景：** Task 22で追加した`aria-hidden="true"`はスクリーンリーダー対策としては有効だが、本番公開後に外部AIクローラー相当のテキスト取得を確認したところ、トップページ等で依然として「賀賀喜遥香」「井井上和」「目目黒蓮」のように、頭文字アバターのテキストノードと氏名テキストが連結されて取得される事象が確認された。`aria-hidden`はアクセシビリティツリーからの除外のみで、生HTMLのテキストノード自体は残るため、単純なHTML→テキスト抽出（多くのAI検索bot・簡易クローラーが採用する方式）には効果がなかった。
+
+**対応：** 頭文字を`data-initial`属性にのみ保持し、CSS生成コンテンツ（`::before { content: attr(data-initial) }`）で視覚表示のみ行う方式に変更した。生成コンテンツはDOMのテキストノードではないため、`textContent`ベースの抽出やHTMLタグ除去による単純なテキスト化では一切出力されない（Googleのガイドラインでも、CSSの`content`プロパティによるテキストは通常のコンテンツとして扱われない）。
+
+- `src/app/globals.css`：`[data-initial]::before { content: attr(data-initial); }`を追加。color/font-size/font-weight等は各要素からそのまま継承されるため、見た目は完全に同一。
+- 頭文字を表示する全10箇所（`src/components/PersonCard.tsx`、`VodTopPersonCard.tsx`、`site/GroupMemberCard.tsx`、`site/HomePersonCard.tsx`、`site/PersonHero.tsx`、`site/RankingPersonCard.tsx`、`src/app/search/SearchResults.tsx`の人物カード・グループカード2箇所、`src/app/groups/[groupSlug]/page.tsx`のグループヒーロー、`src/app/work/[workId]/page.tsx`の出演者一覧）で、`{initial}`のようなテキストノード出力を廃止し、`data-initial={initial}`属性を持つ自己閉じ要素に変更した。
+- 事前に全コードベースを再調査（`name[0]`パターンの網羅grep）し、Task 22で`aria-hidden`を付与した箇所に加え、既に`aria-hidden`を持っていた`PersonHero`・`RankingPersonCard`・`HomePersonCard`の3箇所も同じ問題を抱えていたため、あわせて修正した。人物・グループとも写真データを持つ機能が存在しないため、全箇所が常に頭文字表示のみであることを確認済み（画像がある人物への影響はそもそも発生しない）。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1417テスト全通過
+- `next build` 成功
+- Playwrightで`document.body.textContent`（DOMテキストノードのみ、非レンダリング型クローラーの抽出方式に相当）を人物ページ・グループページ・検索結果・作品詳細・トップページ（今人気の人物／急上昇／注目の人物を含む）で取得し、頭文字と氏名の重複パターンが一件も存在しないことを確認。
+- 同じページ群のスクリーンショットで、修正前と見た目が完全に一致していることを目視確認（頭文字の文字・色・配置に変化なし）。

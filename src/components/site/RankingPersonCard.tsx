@@ -71,9 +71,8 @@ export default function RankingPersonCard({ person, rank }: { person: RankedPers
           marginBottom: '10px',
         }}
         aria-hidden="true"
-      >
-        {person.name[0]}
-      </div>
+        data-initial={person.name[0]}
+      />
 
       {/* 名前 */}
       <p style={{

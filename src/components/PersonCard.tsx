@@ -42,10 +42,9 @@ export default function PersonCard({ person }: { person: PersonCardData & Person
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 hover:shadow-md hover:-translate-y-1 transition-all duration-200">
         <div
           aria-hidden="true"
+          data-initial={initial}
           className={`w-14 h-14 rounded-full bg-gradient-to-br ${gradient} flex items-center justify-center mx-auto mb-3 text-white text-2xl font-bold select-none`}
-        >
-          {initial}
-        </div>
+        />
         <p className="text-center font-bold text-slate-800 text-sm leading-snug">{person.name}</p>
         {subtitle && (
           <p className="text-center text-gray-500 text-xs mt-1 truncate">{subtitle}</p>

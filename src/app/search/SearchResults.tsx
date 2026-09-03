@@ -111,10 +111,9 @@ function SearchPersonCard({
         {/* アバター */}
         <div
           aria-hidden="true"
+          data-initial={initial}
           className={`aspect-[4/3] bg-gradient-to-br ${gradient} flex items-center justify-center text-white text-3xl font-black select-none`}
-        >
-          {initial}
-        </div>
+        />
 
         {/* テキスト情報 */}
         <div className="p-3 flex flex-col gap-1.5 flex-1">
@@ -208,13 +207,12 @@ function SearchGroupCard({
           {/* アイコン */}
           <div
             aria-hidden="true"
+            data-initial={group.groupName[0]}
             className="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center font-black text-xl text-white"
             style={{
               background: 'linear-gradient(135deg, var(--ds-hero-from), var(--ds-hero-to))',
             }}
-          >
-            {group.groupName[0]}
-          </div>
+          />
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">

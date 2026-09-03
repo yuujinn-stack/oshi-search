@@ -38,9 +38,8 @@ export default function PersonHero({ person, personMeta, groupMeta, groupPagePat
           <div
             className="w-20 h-20 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white text-4xl font-black flex-shrink-0 select-none border border-white/20"
             aria-hidden="true"
-          >
-            {person.name[0]}
-          </div>
+            data-initial={person.name[0]}
+          />
 
           {/* テキスト情報 */}
           <div className="min-w-0 flex-1">
