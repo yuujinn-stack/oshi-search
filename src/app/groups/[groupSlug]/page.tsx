@@ -10,6 +10,7 @@ import { getWorkPublicUrl } from '@/lib/work-url';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getAllPersonMetas } from '@/lib/person-meta';
 import { getAllGroupMetasOrThrow, getAllGroupMetas } from '@/lib/group-meta';
+import { getPublicGroupNote } from '@/lib/group-note';
 import { groupHref, groupHrefByName, resolveGroupFromSlug, resolveGroupName, canonicalGroupSlug, SLUG_TO_GROUP_NAME } from '@/lib/group-slug';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import PersonCard from '@/components/PersonCard';
@@ -579,7 +580,7 @@ export default async function GroupsPage({ params }: Props) {
         <div className="py-10 px-4" style={{ background: heroBackground }}>
           <div className="max-w-4xl mx-auto">
             <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center text-white text-3xl font-black flex-shrink-0 select-none">
+              <div aria-hidden="true" className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center text-white text-3xl font-black flex-shrink-0 select-none">
                 {groupName[0]}
               </div>
               <div>
@@ -587,9 +588,9 @@ export default async function GroupsPage({ params }: Props) {
                 <span className={`inline-block mt-1.5 text-xs px-3 py-1 rounded-full font-bold ${badge}`}>
                   {genre}
                 </span>
-                {groupMeta?.note && (
+                {getPublicGroupNote(groupMeta?.note) && (
                   <p className="text-white/70 text-sm mt-2 leading-relaxed max-w-sm">
-                    {groupMeta.note}
+                    {getPublicGroupNote(groupMeta?.note)}
                   </p>
                 )}
               </div>
@@ -652,8 +653,8 @@ export default async function GroupsPage({ params }: Props) {
                 このグループは解散しました
                 {groupMeta.endedAt && ` （${groupMeta.endedAt}）`}
               </span>
-              {groupMeta.note && (
-                <span className="text-gray-400 text-xs ml-2">{groupMeta.note}</span>
+              {getPublicGroupNote(groupMeta.note) && (
+                <span className="text-gray-400 text-xs ml-2">{getPublicGroupNote(groupMeta.note)}</span>
               )}
             </div>
           )}

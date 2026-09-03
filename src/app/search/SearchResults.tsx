@@ -6,6 +6,7 @@ import type { PersonWithConfig, ActivityStatus } from '@/types/person';
 import type { PersonMeta } from '@/lib/person-meta';
 import type { GroupMeta } from '@/types/group';
 import { groupHref } from '@/lib/group-slug';
+import { getPublicGroupNote } from '@/lib/group-note';
 import { normalizeTag, buildInfoGenreList } from '@/lib/person-display-tags';
 
 // ─── 型定義 ──────────────────────────────────────────────────────────────────
@@ -109,6 +110,7 @@ function SearchPersonCard({
       >
         {/* アバター */}
         <div
+          aria-hidden="true"
           className={`aspect-[4/3] bg-gradient-to-br ${gradient} flex items-center justify-center text-white text-3xl font-black select-none`}
         >
           {initial}
@@ -205,6 +207,7 @@ function SearchGroupCard({
         <div className="flex items-start gap-3">
           {/* アイコン */}
           <div
+            aria-hidden="true"
             className="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center font-black text-xl text-white"
             style={{
               background: 'linear-gradient(135deg, var(--ds-hero-from), var(--ds-hero-to))',
@@ -234,9 +237,9 @@ function SearchGroupCard({
               </p>
             )}
 
-            {group.note && (
+            {getPublicGroupNote(group.note) && (
               <p className="text-[11px] mt-1.5 line-clamp-2 leading-relaxed" style={{ color: 'var(--ds-muted)' }}>
-                {group.note}
+                {getPublicGroupNote(group.note)}
               </p>
             )}
           </div>

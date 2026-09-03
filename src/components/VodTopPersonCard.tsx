@@ -20,6 +20,7 @@ export default function VodTopPersonCard({
         style={{ background: 'var(--ds-surface)', border: '1px solid var(--ds-border)', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}
       >
         <div
+          aria-hidden="true"
           className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-2 text-white text-lg font-bold select-none"
           style={{ background: 'var(--ds-primary)' }}
         >

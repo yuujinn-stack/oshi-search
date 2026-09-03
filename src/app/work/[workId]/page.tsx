@@ -195,7 +195,7 @@ export default async function WorkDetailPage({ params }: Props) {
     ? `https://www.themoviedb.org/${work.type}/${work.tmdbId}`
     : undefined;
 
-  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.vercel.app';
+  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
   const workUrl = `${siteOrigin}/work/${encodeURIComponent(workId)}`;
 
   // ─── JSON-LD: Movie / TVSeries ──
@@ -495,7 +495,7 @@ export default async function WorkDetailPage({ params }: Props) {
                       href={`/person/${encodeURIComponent(wp.personName)}`}
                       className="flex items-center gap-3 py-2 px-3 rounded-xl hover:bg-indigo-50 transition-colors group"
                     >
-                      <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-sm flex-shrink-0">
+                      <div aria-hidden="true" className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-sm flex-shrink-0">
                         {wp.personName[0]}
                       </div>
                       <div className="min-w-0 flex-1">

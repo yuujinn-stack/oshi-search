@@ -41,6 +41,7 @@ export default function PersonCard({ person }: { person: PersonCardData & Person
     <Link href={`/person/${encodeURIComponent(person.name)}`} className="block">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 hover:shadow-md hover:-translate-y-1 transition-all duration-200">
         <div
+          aria-hidden="true"
           className={`w-14 h-14 rounded-full bg-gradient-to-br ${gradient} flex items-center justify-center mx-auto mb-3 text-white text-2xl font-bold select-none`}
         >
           {initial}

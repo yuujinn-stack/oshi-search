@@ -2,21 +2,23 @@ import type { MetadataRoute } from 'next';
 import { getAllPersonsMerged, getAllGroupsMerged, getAllGenresMerged } from '@/lib/persons';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
-import { getAllPublishedWorkPersonMap } from '@/lib/work-store';
+import { getAllPublishedWorkPersonMap, getAllPublishedWorkLastModified } from '@/lib/work-store';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import { VOD_PAGE_PROVIDERS, getVodProviderWorkCounts } from '@/lib/vod-page';
 
 const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const [persons, groups, genres, groupMetas, workPersonMap, vodProviderWorkCounts] = await Promise.all([
+  const [persons, groups, genres, groupMetas, workPersonMap, vodProviderWorkCounts, workLastModified] = await Promise.all([
     getAllPersonsMerged(),
     getAllGroupsMerged(),
     getAllGenresMerged(),
     getAllGroupMetas(),
     getAllPublishedWorkPersonMap(),
     getVodProviderWorkCounts(),
+    getAllPublishedWorkLastModified(),
   ]);
+  const groupMetaByName = new Map(groupMetas.map((g) => [g.groupName, g]));
 
   // 作品0件のVODサービスはsitemapへ含めない（トップページのカード表示条件と揃える）
   const sitemappedVodProviders = VOD_PAGE_PROVIDERS.filter(
@@ -64,11 +66,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'daily' as const,
       priority: 0.7,
     })),
-    ...groups.map((group) => ({
-      url: `${BASE_URL}${groupHrefByName(group, groupMetas)}`,
-      changeFrequency: 'weekly' as const,
-      priority: 0.9,
-    })),
+    ...groups.map((group) => {
+      const updatedAt = groupMetaByName.get(group)?.updatedAt;
+      return {
+        url: `${BASE_URL}${groupHrefByName(group, groupMetas)}`,
+        ...(updatedAt ? { lastModified: new Date(updatedAt) } : {}),
+        changeFrequency: 'weekly' as const,
+        priority: 0.9,
+      };
+    }),
     ...genres.map((genre) => ({
       url: `${BASE_URL}/genre/${encodeURIComponent(genre)}`,
       changeFrequency: 'weekly' as const,
@@ -82,7 +88,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ...[...workPersonMap.keys()].flatMap((workId) => {
       const url = getWorkPublicUrl({ workId });
       if (!url) return [];
-      return [{ url: `${BASE_URL}${url}`, changeFrequency: 'weekly' as const, priority: 0.7 }];
+      const updatedAt = workLastModified.get(workId);
+      return [{
+        url: `${BASE_URL}${url}`,
+        ...(updatedAt ? { lastModified: new Date(updatedAt) } : {}),
+        changeFrequency: 'weekly' as const,
+        priority: 0.7,
+      }];
     }),
   ];
 }

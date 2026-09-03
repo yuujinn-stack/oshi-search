@@ -48,6 +48,11 @@ export async function getAllGroupMetasOrThrow(): Promise<GroupMeta[]> {
   return await getAllGroupMetasRaw();
 }
 
+// getPublicGroupNote は 'use client' コンポーネント（検索結果カード等）からも
+// import されるため、db（サーバー専用）を読み込むこのファイルには置かず、
+// 依存のない src/lib/group-note.ts に切り出している。
+export { getPublicGroupNote } from '@/lib/group-note';
+
 export async function getGroupMeta(groupName: string): Promise<GroupMeta | null> {
   try {
     const rows = await db.select().from(groupMetaTable).where(eq(groupMetaTable.groupName, groupName));

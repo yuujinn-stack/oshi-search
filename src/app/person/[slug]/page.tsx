@@ -461,11 +461,26 @@ export default async function PersonPage({ params }: Props) {
   // ── JSON-LD ──
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
   const personUrl  = `${siteOrigin}/person/${encodeURIComponent(person.name)}`;
+  // JSON-LD description は、プロフィール欄（profileInfoRows）と同じ実データ（役職・
+  // ジャンル・所属）だけから機械的に組み立てる。存在しない情報は生成しない。
+  const jsonLdGenres = buildInfoGenreList({
+    genre: person.genre,
+    primaryGenre: personMeta?.primaryGenre,
+    genres: personMeta?.genres,
+  });
+  const personDescriptionParts = [
+    personMeta?.publicRoles?.length ? personMeta.publicRoles.join('・') : null,
+    jsonLdGenres.length > 0 ? jsonLdGenres.join('・') : null,
+    person.group ? `${person.group}所属` : null,
+  ].filter((v): v is string => !!v);
   const personJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Person',
     name: person.name,
     url: personUrl,
+    ...(personDescriptionParts.length > 0 && { description: personDescriptionParts.join(' / ') }),
+    ...(personMeta?.publicRoles?.length && { jobTitle: personMeta.publicRoles.join(' / ') }),
+    ...(personMeta?.awards?.length && { award: personMeta.awards }),
     ...(person.group && groupPagePath
       ? { memberOf: { '@type': 'Organization', name: person.group, url: `${siteOrigin}${groupPagePath}` } }
       : {}),
@@ -580,14 +595,14 @@ export default async function PersonPage({ params }: Props) {
                   >
                     <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors [list-style:none] [&::-webkit-details-marker]:hidden" style={{ background: 'var(--ds-surface)' }}>
                       <ProviderLogo providerName={providerName} logoPath={logoPath} size="md" />
-                      <span className="font-semibold text-sm flex-1" style={{ color: 'var(--ds-text)' }}>
+                      <h3 className="m-0 font-semibold text-sm flex-1" style={{ color: 'var(--ds-text)' }}>
                         {pInfo.displayName}
                         {pInfo.badgeLabel && (
                           <span className="ml-1.5 text-[10px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full align-middle">
                             {pInfo.badgeLabel}
                           </span>
                         )}
-                      </span>
+                      </h3>
                       <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">
                         {pWorks.length}件
                       </span>

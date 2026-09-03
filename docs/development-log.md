@@ -1024,3 +1024,62 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 - `npx vitest run` 1417テスト全通過
 - `next build` 成功
 - Playwrightで375/390/430/1280pxを再確認（目黒蓮ページ・Prime Video/TELASA共演作品ページ）。横スクロール・コンソールエラーなし。ABEMAは黒＋白のみになったこと、Huluはより実ロゴに近い黄緑がかった鮮やかな緑になったこと、TELASAは鮮やかなオレンジに、Prime Videoは濃紺→ブルーのグラデーション＋アイコン表示になったことを目視確認。
+
+---
+
+## Task 22 — UI/UX・収益導線を壊さないSEO/AI検索/アクセシビリティ改善（安全項目のみ）
+
+**目的：** 人物ページのUI改善（Task 21まで）と並行して、「見た目を変えず改善できる」SEO/AI検索クローラー対応・アクセシビリティ・内部データ漏洩の修正のみを実施した。見た目に影響する項目（統計下の説明文追加、Person/MovieのOG画像追加、Organization.sameAs等）は今回意図的に見送っている。
+
+**変更したファイルと内容：**
+
+1. **人物名の重複読み上げ対策**（`aria-hidden="true"`未設定だった7箇所に追加。見た目は完全不変）
+   - `src/components/PersonCard.tsx` / `src/components/VodTopPersonCard.tsx` / `src/components/site/GroupMemberCard.tsx`（頭文字アバターdiv）
+   - `src/app/search/SearchResults.tsx`（人物カードアバター・グループカードアイコンの2箇所）
+   - `src/app/groups/[groupSlug]/page.tsx`（グループヒーローの頭文字アイコン）
+   - `src/app/work/[workId]/page.tsx`（出演者一覧の頭文字アバター）
+   - `PersonHero.tsx`・`RankingPersonCard.tsx`・`HomePersonCard.tsx`は既に対応済みだったため変更なし。
+
+2. **内部プレースホルダー文言「人物登録時に自動作成」の公開ページ漏洩を修正**
+   - `src/lib/group-note.ts`（新規）：db依存を持たない純粋関数`getPublicGroupNote(note)`を追加。既知の内部プレースホルダー文字列のみをundefinedにし、それ以外の管理者記入noteはそのまま返す。`'use client'`の`SearchResults.tsx`からもimportされるため、db importを持つ`group-meta.ts`とは別ファイルに分離した（クライアント/サーバー境界を壊さないため）。
+   - `src/lib/group-meta.ts`：同名関数を`group-note.ts`からre-exportするのみに変更（既存の呼び出し元との互換性維持）。
+   - `src/app/groups/[groupSlug]/page.tsx`（ヒーロー直下・解散バナー内の2箇所）、`src/app/search/SearchResults.tsx`（グループカード）で`group.note`を直接表示せず`getPublicGroupNote()`を経由するよう変更。
+   - 本番相当のDB（`.env.local`接続）で確認したところ、note登録済み46グループ**全件**がこの内部プレースホルダーそのものであり、修正前は46グループのページ・検索結果カードすべてに管理用文言が公開表示されていたことを確認した。DBの値自体は変更していない。
+
+3. **robots.txtにAI検索・主要検索エンジンボット向けの明示ルールを追加**
+   - `src/app/robots.ts`：`Googlebot`・`Bingbot`・`OAI-SearchBot`・`PerplexityBot`向けに、既存の`*`ルールと同一のAllow/Disallow（`/admin/`・`/api/`・`/search?`は引き続き禁止）を個別追加。`GPTBot`・`Google-Extended`は指示により現状維持（`*`の総合ルールに任せる）で、専用ブロックは追加していない。
+
+4. **sitemap.xmlの`lastModified`欠落を実データで補完**
+   - `src/lib/work-store.ts`：新規`getAllPublishedWorkLastModified()`を追加（workId→DB実`updatedAt`のMap）。既存の`getAllPublishedWorkPersonMap()`は変更せず、別関数として追加したため既存呼び出し元への影響なし。
+   - `src/app/sitemap.ts`：work・groupエントリに実データの`lastModified`を追加（groupは`groupMeta.updatedAt`）。person・genre・vod-providerエントリは信頼できる個別更新日時がDBに存在しないため、架空の日付を入れず従来通り`lastModified`なしのままとした（虚偽のlastmodはGoogleの評価を下げるリスクがあるため）。
+
+5. **work詳細ページのcanonicalフォールバックURL不整合を修正**
+   - `src/app/work/[workId]/page.tsx`：本番ドメイン未設定時のフォールバックが他ページと異なり`oshi-search.vercel.app`になっていたバグを`oshi-search.jp`に統一。
+
+6. **JSON-LD `Person`の拡充（実データのみ・表示内容と一致させる）**
+   - `src/app/person/[slug]/page.tsx`：`personMeta.publicRoles`から`jobTitle`、`personMeta.awards`から`award`、プロフィール欄と同じ実フィールド（役職・ジャンル・所属）から`description`を追加。値が存在しない場合は各プロパティ自体を出力しない。画像データが存在しないため`image`は追加していない（作品ポスターの代用は方針により禁止）。
+
+7. **サイト全体の`WebSite`+`Organization` JSON-LDをトップページに新規追加**
+   - `src/app/page.tsx`：どのページにも存在しなかった`WebSite`（既存の`/search?q=`を使った`SearchAction`付き）と`Organization`のJSON-LDを追加。新規ページ・新規事実の主張ではなくサイト識別情報のみのため、表示内容との不一致は生じない。
+
+8. **VOD比較セクションの見出し階層を`h3`化**
+   - `src/app/person/[slug]/page.tsx`：`#vod`セクション内で配信サービス名を保持していた`<span>`を`<h3>`に変更（`m-0`クラス追加、他のクラス・文言は無変更）。Tailwindのpreflightでh1〜h6のfont-size/font-weight/marginは既定でリセットされるため、Playwright実機確認でも見た目の差分はゼロだった。h1→h2(#vod-heading)→h3(サービス名)という正しい文書アウトラインになった。
+
+**見送った項目（今回は実装せず）：**
+- 人物ページ統計表示直下の短い説明文追加（視覚要素が増えるため保留）
+- Person/MovieのOG画像追加（人物の実写真データが無いため。作品ポスターを人物画像として代用することは明示的に禁止されている）
+- グループOrganization JSON-LDへの`sameAs`（`officialSite`）追加（現状ページ上に表示されていないフィールドのため、JSON-LDと表示内容を一致させる原則により見送り。可視化する場合は別途UI検討が必要）
+- FAQ拡充・セクション順序変更・aggregateRating/offers等の評価/価格スキーマ（データが存在しない、または既存機能で回答できないため）
+
+**設計上の判断：**
+- 「安全な変更」の基準を「DOM構造・アクセシビリティ属性・メタデータ・レスポンスヘッダーは変更するが、ユーザーに見える文字・色・レイアウトは一切変えない」に限定した。視覚要素が1つでも増える提案（説明文・OG画像）は、たとえ軽微でもこのタスクの対象から外している。
+- JSON-LDに追加する情報は、既に画面上の同じセクション（プロフィール欄）に表示されている実データのみを機械的に転記する方式を徹底し、要約や推測による文章生成は行っていない。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1417テスト全通過（既存テストから変更なし）
+- `next build` 成功
+- ローカルDB接続で全46件の`group.note`を確認し、修正が実データに対して正しく機能することを検証（上記2番）
+- Playwrightで人物ページ・work詳細ページ・グループページ・検索結果ページを375px/1280pxで確認。横スクロール・コンソールエラーなし。VOD比較セクションの`h3`化前後で見た目の差分なし。グループページ・検索結果からプレースホルダー文言が消えたことを確認。
+- `/robots.txt`・`/sitemap.xml`の実際の出力をcurlで確認（Googlebot/Bingbot/OAI-SearchBot/PerplexityBotの個別ルール、work/groupエントリの`lastmod`実在確認）
+- `/admin`が引き続き`noindex, nofollow, noarchive`でありログイン導線も正常動作することを確認

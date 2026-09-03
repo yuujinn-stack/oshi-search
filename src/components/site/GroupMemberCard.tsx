@@ -53,6 +53,7 @@ export default function GroupMemberCard({ member }: { member: GroupMemberCardDat
         {/* アバター + 状態バッジ */}
         <div className="relative w-14 h-14 mx-auto mb-3">
           <div
+            aria-hidden="true"
             className={`w-14 h-14 rounded-full bg-gradient-to-br ${gradient} flex items-center justify-center text-white text-2xl font-bold select-none`}
           >
             {initial}

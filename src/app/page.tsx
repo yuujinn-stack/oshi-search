@@ -181,8 +181,32 @@ export default async function HomePage() {
     )
     .filter((cat) => cat.genres.length > 0);
 
+  const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
+  // サイト全体のWebSite/Organization JSON-LD。個別ページ（Person/Movie等）とは異なり
+  // 特定コンテンツの主張ではなくサイト自体の識別情報のため、既存の検索機能（/search?q=）
+  // のみを使い、実在しない機能・情報は追加しない。
+  const websiteJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: '推しサーチ',
+    url: siteOrigin,
+    potentialAction: {
+      '@type': 'SearchAction',
+      target: `${siteOrigin}/search?q={search_term_string}`,
+      'query-input': 'required name=search_term_string',
+    },
+  };
+  const organizationJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: '推しサーチ',
+    url: siteOrigin,
+  };
+
   return (
     <div>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }} />
       {/* ━━━ Hero ━━━ */}
       <section
         style={{

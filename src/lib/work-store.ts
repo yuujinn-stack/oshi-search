@@ -569,6 +569,30 @@ export async function getAllPublishedWorkPersonMap(): Promise<Map<string, string
   }
 }
 
+// sitemap.ts の lastModified 用: 全公開作品の workId → 最終更新日時（ms）マップ。
+// 同一idが複数人物行を持つ場合は最も新しいupdatedAtを採用する。
+export async function getAllPublishedWorkLastModified(): Promise<Map<string, number>> {
+  try {
+    const rows = await db.select({
+      id: worksTable.id,
+      updatedAt: worksTable.updatedAt,
+    }).from(worksTable).where(and(
+      eq(worksTable.status, 'auto_published'),
+      eq(worksTable.deleted, false),
+    ));
+    const map = new Map<string, number>();
+    for (const r of rows) {
+      const ts = r.updatedAt.getTime();
+      const existing = map.get(r.id);
+      if (existing === undefined || ts > existing) map.set(r.id, ts);
+    }
+    return map;
+  } catch (err) {
+    console.error('[db] getAllPublishedWorkLastModified failed:', String(err));
+    return new Map();
+  }
+}
+
 // source別に一括削除（AI補完作品を再実行する際に使用）
 export async function deleteWorksBySource(
   personName: string,
