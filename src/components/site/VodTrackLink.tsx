@@ -1,11 +1,13 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 interface Props {
   href: string;
   service: string;
   className?: string;
+  /** サービス別CTA配色（vod-cta.ts の getVodServiceStyle）をそのまま渡すためのstyle */
+  style?: CSSProperties;
   children: ReactNode;
   /**
    * リンク先がアフィリエイトリンクの場合に true を渡すと rel に "sponsored" を付与する。
@@ -16,7 +18,7 @@ interface Props {
   sponsored?: boolean;
 }
 
-export default function VodTrackLink({ href, service, className, children, sponsored = false }: Props) {
+export default function VodTrackLink({ href, service, className, style, children, sponsored = false }: Props) {
   const handleClick = () => {
     fetch('/api/track', {
       method: 'POST',
@@ -31,6 +33,7 @@ export default function VodTrackLink({ href, service, className, children, spons
       target="_blank"
       rel={sponsored ? 'sponsored noopener noreferrer' : 'noopener noreferrer'}
       className={className}
+      style={style}
       onClick={handleClick}
     >
       {children}

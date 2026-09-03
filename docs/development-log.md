@@ -975,4 +975,52 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 **動作確認：**
 - `npx tsc --noEmit` エラーなし
 - `npx vitest run` 1417テスト全通過（既存テストから変更なし。新しいソートロジックは既存の`vod-check-throttle.test.ts`が検証する`isVodCheckThrottled`/`computeNextVodCheckAt`/`isStuckChecking`をそのまま利用しているため追加テストは不要と判断）
+
+---
+
+## Task 21 — VOD CTAボタンの配信サービス別デザイン化（availabilityType色分けの廃止）
+
+**目的：** 人物詳細ページ・作品詳細ページのVOD CTAボタンが、これまでavailabilityType（見放題/無料/レンタル/購入）で色分け（緑/黄/橙/青）されており、どのサービスへ遷移するボタンなのか一目で分からなかった。これを配信サービスのブランドカラー・ロゴに基づく配色に変更し、クリック時に「どこへ飛ぶか」を一瞬で認識できるようにした。DB・API・アフィリエイトリンクロジック・作品選定ロジック・ページ構造は変更していない（見た目のみの変更）。
+
+**変更したファイル：**
+- `src/lib/vod-cta.ts` — `VOD_TYPE_CONFIG`からCTA配色用フィールド（`icon`/`btn`）を削除し、常にニュートラルなグレー系（`border-gray-200`/`bg-gray-50`/`text-gray-600`）のみを持つ、availabilityTypeの補助チップ専用の設定に変更。新たに`VOD_SERVICE_STYLE`（`normalizeProviderName()`のスラグ→background/color等）と`getVodServiceStyle()`を追加し、CTA本体の配色を配信サービス単位で決定するようにした。
+- `src/app/globals.css` — `.affiliate-slot--work-provider a`（AffiliateSlot経由の実ASP広告向け）に配信サービスごとの配色を`[data-vod-service="xxx"]`属性セレクタで追加（`VOD_SERVICE_STYLE`と値を同期）。新規`.vod-cta-btn`共通クラスで、JS側フォールバックCTA・実ASP広告CTA双方に共通のhover（`filter: brightness(0.92)`）・focus-visibleアウトライン・box-shadowを統一。YouTube（ホバー時のみ薄い赤背景）・ABEMA（黄色アクセントドット）・YouTube（赤い再生アイコン）は個別に上書き。
+- `src/components/site/AffiliateSlot.tsx` — `AdWrapper`/`renderBranch`に`vodService`を渡すよう変更し、`work_provider`スロットのラッパーdivに`data-vod-service`属性を追加（ASP提供コード自体は無変更）。
+- `src/components/site/VodTrackLink.tsx` — `style`プロパティを追加（サービス別配色をinline styleで渡すため）。
+- `src/components/site/StreamingNowSection.tsx` / `src/app/work/[workId]/page.tsx` — フォールバックCTAのclassNameから`cfg.btn`（色分け）を除去し、`getVodServiceStyle()`のinline styleを適用。availabilityTypeチップから色付き絵文字（🟢🟡🟠🔵）を削除しラベルのみ表示。StreamingNowSectionのCTAには`ProviderLogo`をインラインで追加（作品詳細ページ側はカードヘッダーに既存の大きいロゴがあるため追加せず）。
+
+**配色一覧（`VOD_SERVICE_STYLE`）：** Hulu=`#22C55E`/濃緑文字、U-NEXT=`#0D0D0D`/白、Lemino=`linear-gradient(#BE185D→#C2410C)`/白、Netflix=`#111111`/白、Prime Video=`#0B2545`/白、DMM TV=`#FFDD00`/黒、TELASA=`#C2410C`/白、FOD=`#E4002B`/白、ABEMA=`#0B0B0B`/白+黄色アクセントドット、TVer=`linear-gradient(#7DD3FC→#2563EB→#1E3A8A)`/白、Disney+=`linear-gradient(#0B1F3A→#0E6B7A)`/白、YouTube=白/黒文字+薄灰枠+赤三角アクセント（ホバー時のみ薄赤背景`#FEF2F2`）、NHKオンデマンド=`#C2540A`/白、未対応サービス=`#374151`（グレー）/白。いずれもWCAG AA相当（4.5:1以上）のコントラスト比を確認済み。
+
+**設計上の判断：**
+- TVer・Lemino・Disney+はグラデーション端の一部が単色では白文字コントラスト不足になるため、ブランドイメージを保ちつつ端の色調を少し暗め・中央を安全な濃さに寄せて調整した（例: TVerは3色ストップで左端のみ薄い水色を残し、中心〜右は青系に寄せている）。
+- ASP提供の生HTML広告（`dangerouslySetInnerHTML`）内の`<a>`はReactのinline styleを直接付与できないため、CSS属性セレクタ（`!important`付き）で配色を上書きする方式を採用（Hulu用に既にあった仕組みを全サービスに拡張）。
+- 構造（高さ・padding・角丸・フォント・hover/focus/shadow）はTailwindユーティリティの上書き順序（`@tailwind utilities`より後にカスタムCSSが来ると同一詳細度のクラスが常に勝ってしまう）を考慮し、`.vod-cta-btn`は配色以外の共通挙動のみを持たせ、width/padding/font-size等は既存どおり各呼び出し側のTailwindクラスに委ねている。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1417テスト全通過（既存テストから変更なし）
 - `next build` 成功
+- Playwright（目黒蓮ページ）で375/390/430/1280pxを確認。横スクロール・コンソールエラーなし。Netflix+U-NEXT+FOD+TVer+Hulu+DMM TV+Disney+等が同一ページに共存する状態でも、色数を絞った落ち着いた印象になっていることを目視確認。作品詳細ページ（DMM TV/FOD収録作品）でも配色・構造の統一を確認。ABEMA/YouTube/Leminoは対象人物のデータに存在しなかったため、同一CSSを使った検証用マークアップで個別に見た目を確認した。
+
+---
+
+## Task 21 追記 — フィードバックに基づく4点の微調整・CTA内ロゴ追加
+
+**背景：** Task 21実装後のレビューで、次の微調整依頼を受けた。
+1. ABEMAの黄色アクセントドットが不要（黒＋白の印象で十分）。
+2. Huluの`#22C55E`は一般的なTailwind greenに見えるため、既存アセット（ProviderLogo経由で実際に表示されているHuluロゴ画像）の実際の色に近づける。
+3. TELASAの`#C2410C`はやや茶色寄りなので、既存ロゴの鮮やかなオレンジに近づける（白文字コントラストが必要なら明度のみ調整）。
+4. Prime Videoの単色`#0B2545`を、Disney+・TVerと区別できる濃紺→ブルーのグラデーションに変更。
+5. （追加要望）VOD CTAにサービスロゴが表示されていない箇所には、既存アセットのみを使って左側に小さくロゴを追加する。
+
+**対応：**
+- 新しい画像・ブランドアセットは一切取得せず、既にサイト上でProviderLogoが表示しているHulu・TELASAの実画像をPlaywrightのcanvasでピクセルサンプリングし、実際に使われている色を抽出した。Hulu＝`rgb(64,224,48)`＝`#40E030`（画像の85%を占める支配色）、TELASA＝`rgb(240,88,8)`＝`#F05808`をそれぞれ採用。TELASAは白文字とのコントラストが不足する（推定コントラスト比約3.4:1）ため、色相・彩度を保ったまま明度を約80%に落とした`#C04606`（コントラスト比約5.1:1）を最終値とした。Huluは新しい色でも明度が高くコントラスト比が向上（濃緑文字との比で約8.4:1）したため文字色`#052e16`は変更していない。
+- `src/lib/vod-cta.ts`の`VOD_SERVICE_STYLE`：`hulu.background`を`#40E030`、`telasa.background`を`#C04606`に変更。`primevideo`/`amazonprimevideo`を単色から`linear-gradient(90deg, #0B2545 0%, #14508C 100%)`（濃紺→ブルー、ティールを含まず色相を青のみに絞ることでDisney+・TVerと区別）に変更。`abema`/`abemat`から`accentColor`フィールドを削除。
+- `src/app/globals.css`：`.affiliate-slot--work-provider[data-vod-service="hulu"|"telasa"|"primevideo"|"amazonprimevideo"]`の背景値を上記に同期。ABEMAの黄色アクセントドット用CSS（`.vod-cta-btn--abema::before`等）を削除。YouTubeの赤い再生アイコンアクセントは対象外のため無変更。
+- `src/components/site/StreamingNowSection.tsx` / `src/app/work/[workId]/page.tsx`：ABEMA用の`accentClass`分岐を削除（YouTubeのみ残存）。作品詳細ページのCTAボタン内側にロゴが無かったため、`StreamingNowSection`と同じ`ProviderLogo`（`size="xs"`、既存アセットのみ使用）をCTAテキストの左側に追加し、ロゴサイズ・位置を全サービス共通にした（カードヘッダーの既存の大きいロゴは変更なしで維持）。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1417テスト全通過
+- `next build` 成功
+- Playwrightで375/390/430/1280pxを再確認（目黒蓮ページ・Prime Video/TELASA共演作品ページ）。横スクロール・コンソールエラーなし。ABEMAは黒＋白のみになったこと、Huluはより実ロゴに近い黄緑がかった鮮やかな緑になったこと、TELASAは鮮やかなオレンジに、Prime Videoは濃紺→ブルーのグラデーション＋アイコン表示になったことを目視確認。

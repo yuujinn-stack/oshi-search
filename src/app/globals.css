@@ -642,12 +642,34 @@ body {
   padding-right: 16px;
 }
 
-/* ─── VODアフィリエイト work_provider 枠のCTAボタン化 ──────────────────────
-   ASP提供コード（href / 計測img / rel / referrerpolicy 等）は一切変更せず、
-   AffiliateSlot が付与する外側wrapper配下の a 要素だけを、既存VODボタン
-   （例: flatrateの bg-green-600 / rounded-xl / py-2.5 / text-sm font-bold）
-   と同等の見た目にCSSだけで揃える。他のslot（vod_hero/vod_mid/vod_bottom/
-   person_vod）には適用しない（.affiliate-slot--work-provider スコープのみ）。 */
+/* ─── VOD CTA 共通デザイン（サービス別配色） ────────────────────────────────
+   availabilityType（見放題/無料/レンタル/購入）による色分けは廃止し、CTAの色は
+   配信サービス単位で決定する（src/lib/vod-cta.ts の VOD_SERVICE_STYLE と値を
+   同期させること）。構造（高さ・padding・角丸・フォント・hover/focus/shadow）は
+   全サービス共通で、変えてよいのは background・color・アクセントのみ。
+
+   .vod-cta-btn         : フォールバックCTA（React側でinline styleにより配色）用の
+                           共通クラス。StreamingNowSection・work詳細ページで使用。
+                           width/padding/font-size/角丸は各呼び出し側のTailwindクラス
+                           （@tailwind utilitiesより後に読み込まれるここに書くと
+                           Tailwindユーティリティを上書きしてしまうため）に任せ、
+                           ここでは配色以外の共通挙動（レイアウト・hover/focus/shadow）
+                           のみを定義する。
+   .affiliate-slot--work-provider a : AffiliateSlot経由で描画される実際のASP広告
+                           （dangerouslySetInnerHTMLのraw_html等、ASP提供コード自体は
+                           一切変更しない）向け。data-vod-service属性で配信サービスを
+                           判別し、他のslot（vod_hero/vod_mid/vod_bottom）には適用しない
+                           （.affiliate-slot--work-providerスコープのみ）。ASP側は
+                           Tailwindクラスを持たないため、こちらは構造も含めて全て定義する。 */
+.vod-cta-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  transition: filter 0.15s ease, box-shadow 0.15s ease;
+}
 .affiliate-slot--work-provider a {
   display: flex;
   align-items: center;
@@ -655,17 +677,76 @@ body {
   gap: 0.375rem;
   width: 100%;
   padding: 0.625rem 1rem;
-  background-color: #16a34a;
-  color: #ffffff;
   font-size: 0.875rem;
   font-weight: 700;
   line-height: 1.25rem;
   border-radius: 0.75rem;
   text-decoration: none;
-  transition: background-color 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  transition: filter 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  background: #374151;
+  color: #ffffff;
 }
+.vod-cta-btn:hover,
 .affiliate-slot--work-provider a:hover {
-  background-color: #15803d;
+  filter: brightness(0.92);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16);
+}
+.vod-cta-btn:focus-visible,
+.affiliate-slot--work-provider a:focus-visible {
+  outline: 2px solid var(--ds-primary, #2563eb);
+  outline-offset: 2px;
+}
+
+/* サービス別配色（src/lib/vod-cta.ts VOD_SERVICE_STYLE と同期）
+   ASPのraw_htmlが独自にbackground/colorを指定しているケースに備え !important で上書きする。 */
+.affiliate-slot--work-provider[data-vod-service="hulu"] a { background: #40E030 !important; color: #052e16 !important; }
+.affiliate-slot--work-provider[data-vod-service="unext"] a { background: #0D0D0D !important; color: #ffffff !important; }
+.affiliate-slot--work-provider[data-vod-service="lemino"] a { background: linear-gradient(90deg, #BE185D 0%, #C2410C 100%) !important; color: #ffffff !important; }
+.affiliate-slot--work-provider[data-vod-service="netflix"] a { background: #111111 !important; color: #ffffff !important; }
+.affiliate-slot--work-provider[data-vod-service="primevideo"] a,
+.affiliate-slot--work-provider[data-vod-service="amazonprimevideo"] a { background: linear-gradient(90deg, #0B2545 0%, #14508C 100%) !important; color: #ffffff !important; }
+.affiliate-slot--work-provider[data-vod-service="dmmtv"] a { background: #FFDD00 !important; color: #111111 !important; }
+.affiliate-slot--work-provider[data-vod-service="telasa"] a { background: #C04606 !important; color: #ffffff !important; }
+.affiliate-slot--work-provider[data-vod-service="fod"] a,
+.affiliate-slot--work-provider[data-vod-service="fodpremium"] a { background: #E4002B !important; color: #ffffff !important; }
+.affiliate-slot--work-provider[data-vod-service="abema"] a,
+.affiliate-slot--work-provider[data-vod-service="abemat"] a { background: #0B0B0B !important; color: #ffffff !important; }
+.affiliate-slot--work-provider[data-vod-service="tver"] a { background: linear-gradient(90deg, #7DD3FC 0%, #2563EB 45%, #1E3A8A 100%) !important; color: #ffffff !important; }
+.affiliate-slot--work-provider[data-vod-service="disneyplus"] a { background: linear-gradient(90deg, #0B1F3A 0%, #0E6B7A 100%) !important; color: #ffffff !important; }
+.affiliate-slot--work-provider[data-vod-service="nhkondemand"] a { background: #C2540A !important; color: #ffffff !important; }
+.affiliate-slot--work-provider[data-vod-service="youtube"] a,
+.affiliate-slot--work-provider[data-vod-service="youtubepremium"] a {
+  background: #ffffff !important;
+  color: #111111 !important;
+  border: 1px solid #E5E7EB;
+  box-shadow: none;
+}
+.affiliate-slot--work-provider[data-vod-service="youtube"] a:hover,
+.affiliate-slot--work-provider[data-vod-service="youtubepremium"] a:hover {
+  filter: none;
+  background: #FEF2F2 !important;
+  box-shadow: none;
+}
+
+/* YouTube: 赤い再生アイコンを小さなアクセントとして表示 */
+.vod-cta-btn--youtube::before,
+.affiliate-slot--work-provider[data-vod-service="youtube"] a::before,
+.affiliate-slot--work-provider[data-vod-service="youtubepremium"] a::before {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 5px 0 5px 8px;
+  border-color: transparent transparent transparent #FF0000;
+  flex-shrink: 0;
+}
+
+/* JS側フォールバックCTA（.vod-cta-btn）にサービス別のhover（YouTubeの薄い赤背景）を反映 */
+.vod-cta-btn--youtube:hover {
+  filter: none !important;
+  background: #FEF2F2 !important;
 }
 
 /* ─── 人物ページ 数字付きクイックナビ ──────────────────────────────────────

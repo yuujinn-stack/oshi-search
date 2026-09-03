@@ -10,9 +10,10 @@ import type { WorkRecord } from '@/types/work';
 import { deduplicateProviders, isConfirmedVodAvailability, getVodProviderDisplayInfo, normalizeProviderName } from '@/lib/vod-dedup';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
-import { VOD_TYPE_CONFIG, getVodLink } from '@/lib/vod-cta';
+import { VOD_TYPE_CONFIG, getVodLink, getVodServiceStyle } from '@/lib/vod-cta';
 import AffiliateSlot from '@/components/site/AffiliateSlot';
 import VodTrackLink from '@/components/site/VodTrackLink';
+import ProviderLogo from '@/components/ProviderLogo';
 
 const STREAMING_TYPES = ['flatrate', 'free', 'ads'];
 const MAX_WORKS = 6;
@@ -98,14 +99,19 @@ export default function StreamingNowSection({ works, terminatedSlugs }: Props) {
                     const cfg = VOD_TYPE_CONFIG[p.type] ?? VOD_TYPE_CONFIG.unknown;
                     const info = getVodProviderDisplayInfo(p.providerName);
                     const link = getVodLink(p);
+                    const style = getVodServiceStyle(p.providerName);
+                    const serviceKey = normalizeProviderName(p.providerName);
                     const ctaText = `${info.displayName}で${cfg.btnLabel}`;
+                    const accentClass = serviceKey === 'youtube' || serviceKey === 'youtubepremium'
+                      ? 'vod-cta-btn--youtube'
+                      : '';
                     return (
                       <div key={`${p.providerId}-${p.type}-${i}`} className="flex items-center gap-2">
                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${cfg.labelColor} ${cfg.bg}`}>
-                          {cfg.icon} {cfg.label}
+                          {cfg.label}
                         </span>
                         <AffiliateSlot
-                          vodService={normalizeProviderName(p.providerName)}
+                          vodService={serviceKey}
                           slotKey="work_provider"
                           className="flex-1 min-w-0"
                           fallback={
@@ -113,9 +119,11 @@ export default function StreamingNowSection({ works, terminatedSlugs }: Props) {
                               <VodTrackLink
                                 href={link}
                                 service={p.providerName}
-                                className={`flex items-center justify-center gap-1 w-full text-xs font-bold text-white py-1.5 px-2 rounded-lg transition-colors ${cfg.btn}`}
+                                className={`vod-cta-btn ${accentClass} gap-1.5 w-full text-xs px-2 py-1.5 rounded-lg`}
+                                style={{ background: style.background, color: style.color, border: style.border }}
                               >
-                                {ctaText}
+                                <ProviderLogo providerName={p.providerName} logoPath={p.logoPath} size="xs" />
+                                <span className="truncate">{ctaText}</span>
                               </VodTrackLink>
                             ) : (
                               <span className="text-[11px]" style={{ color: 'var(--ds-muted)' }}>

@@ -19,7 +19,7 @@ import { shouldNoindexWork, safeTitleFallback } from '@/lib/seo-quality';
 import ProviderLogo from '@/components/ProviderLogo';
 import VodTrackLink from '@/components/site/VodTrackLink';
 import AffiliateSlot from '@/components/site/AffiliateSlot';
-import { VOD_TYPE_CONFIG, VOD_TYPE_ORDER, getVodLink } from '@/lib/vod-cta';
+import { VOD_TYPE_CONFIG, VOD_TYPE_ORDER, getVodLink, getVodServiceStyle } from '@/lib/vod-cta';
 
 interface Props {
   params: Promise<{ workId: string }>;
@@ -356,6 +356,11 @@ export default async function WorkDetailPage({ params }: Props) {
                   const link = getVodLink(p);
                   const isAi = p.source === 'openai_supplement' || p.source === 'openai_web_search';
                   const info = getVodProviderDisplayInfo(p.providerName);
+                  const style = getVodServiceStyle(p.providerName);
+                  const serviceKey = normalizeProviderName(p.providerName);
+                  const accentClass = serviceKey === 'youtube' || serviceKey === 'youtubepremium'
+                    ? 'vod-cta-btn--youtube'
+                    : '';
                   const ctaText = info.isPrimeVideoChannel
                     ? `Prime Video内${info.shortName}で見る`
                     : `${info.displayName}で${cfg.btnLabel}`;
@@ -377,7 +382,7 @@ export default async function WorkDetailPage({ params }: Props) {
                               </span>
                             )}
                             <p className={`text-xs font-semibold ${cfg.labelColor}`}>
-                              {cfg.icon} {cfg.label}
+                              {cfg.label}
                             </p>
                           </div>
                           {info.noticeText && (
@@ -391,7 +396,7 @@ export default async function WorkDetailPage({ params }: Props) {
                         )}
                       </div>
                       <AffiliateSlot
-                        vodService={normalizeProviderName(p.providerName)}
+                        vodService={serviceKey}
                         slotKey="work_provider"
                         className="mt-3"
                         fallback={
@@ -399,9 +404,11 @@ export default async function WorkDetailPage({ params }: Props) {
                             <VodTrackLink
                               href={link}
                               service={p.providerName}
-                              className={`mt-3 flex items-center justify-center gap-1.5 w-full text-sm font-bold text-white py-2.5 rounded-xl transition-colors ${cfg.btn}`}
+                              className={`vod-cta-btn ${accentClass} mt-3 gap-1.5 w-full text-sm py-2.5 rounded-xl`}
+                              style={{ background: style.background, color: style.color, border: style.border }}
                             >
-                              {ctaText} →
+                              <ProviderLogo providerName={p.providerName} logoPath={p.logoPath} size="xs" />
+                              <span>{ctaText} →</span>
                             </VodTrackLink>
                           ) : (
                             <p className="mt-3 text-xs text-center text-gray-400 py-1.5 bg-white/60 rounded-lg">
