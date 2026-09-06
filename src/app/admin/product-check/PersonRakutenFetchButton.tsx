@@ -42,6 +42,19 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ personName, forceRejudge: false }),
       });
+
+      // Vercel Functionのタイムアウト等でサーバーがJSON以外（プラットフォームの
+      // エラーページ等）を返すことがある。res.json()をそのまま呼ぶとSyntaxErrorに
+      // なるため、まずcontent-typeを確認し、JSONでなければtextとして読んで
+      // HTTPステータス付きのエラーを表示する。
+      const contentType = res.headers.get('content-type') ?? '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text().catch(() => '');
+        setErrorMsg(`サーバーエラー (HTTP ${res.status}): ${text.slice(0, 100) || '応答が空です'}`);
+        setStatus('error');
+        return;
+      }
+
       const data = await res.json();
 
       if (!res.ok || !data.ok) {

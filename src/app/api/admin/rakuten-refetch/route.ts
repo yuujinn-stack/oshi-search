@@ -5,6 +5,11 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getRedis } from '@/lib/redis';
 import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
 
+// processPerson()は最大150件のAI判定を行いうる設計（batch-processor.tsのMAX_AI_PER_PERSON
+// コメント参照、300sタイムアウト前提）。他の同種の重い処理ルート
+// （person-jobs/process-now, cron/vod-recheck 等）と同じ300秒を明示する。
+export const maxDuration = 300;
+
 // POST /api/admin/rakuten-refetch
 // body: { personName: "..." , forceRejudge?: boolean }
 // 1人分の楽天商品取得 + AI判定を実行するエンドポイント（「楽天再取得」ボタン専用）。

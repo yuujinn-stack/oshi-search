@@ -798,6 +798,10 @@ export async function getProductsByCategory(
     if (err instanceof RakutenApiError) {
       return { status: 'upstream_error', httpStatus: err.httpStatus };
     }
+    // RakutenApiError以外（ネットワーク断・タイムアウト等、fetch自体が失敗したケース）は
+    // これまで内容が一切ログに残らず、Vercel Logsから原因確認ができなかった。
+    // 戻り値（{status:'error'}）は変更せず、ログ出力のみ追加する。
+    console.error(`[rakuten] getProductsByCategory failed (non-HTTP error): category=${category} name=${name} error=${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
     return { status: 'error' };
   }
 }

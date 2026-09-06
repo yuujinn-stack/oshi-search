@@ -1102,3 +1102,29 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 - `next build` 成功
 - Playwrightで`document.body.textContent`（DOMテキストノードのみ、非レンダリング型クローラーの抽出方式に相当）を人物ページ・グループページ・検索結果・作品詳細・トップページ（今人気の人物／急上昇／注目の人物を含む）で取得し、頭文字と氏名の重複パターンが一件も存在しないことを確認。
 - 同じページ群のスクリーンショットで、修正前と見た目が完全に一致していることを目視確認（頭文字の文字・色・配置に変化なし）。
+
+---
+
+## Task 23 — 「楽天再取得」ボタンのエラー修正（/admin/product-check）
+
+**目的：** 本番で`/admin/product-check`の「楽天再取得」ボタンを押すと`SyntaxError: Unexpected token 'A', "An error o"... is not valid JSON`や`TypeError: Failed to fetch`が発生する不具合を調査・修正した。
+
+**原因：**
+1. `src/app/api/admin/rakuten-refetch/route.ts`に`maxDuration`が未設定だった。`processPerson()`（`src/lib/batch-processor.ts`）は`MAX_AI_PER_PERSON = 150`（コメントに「Vercelの300sタイムアウト対策」と明記）という300秒枠前提の設計だが、同種の重い処理を行う他ルート（`person-jobs/process-now`・`cron/vod-recheck`等）が全て`maxDuration = 300`を明示しているのに対し、本ルートのみ未設定でVercelの既定タイムアウトのまま動作していた。商品数の多い人物では実行時間が既定値を超過し、Vercelがプロセスを強制終了 → プラットフォームが返す非JSONのエラーページ（`SyntaxError`の原因）や接続切断（`Failed to fetch`の原因）につながっていた。
+2. `src/lib/rakuten.ts`の`getProductsByCategory`のcatchブロックが、`RakutenApiError`以外の例外（ネットワーク断・fetch自体の失敗等）を一切ログに残さず`{status:'error'}`を返すのみだったため、実際に何が起きたのかVercel Logsから確認できなかった。
+3. `src/app/admin/product-check/PersonRakutenFetchButton.tsx`が`res.json()`をres.ok/content-type確認なしに無条件実行しており、非JSONレスポンス時にSyntaxErrorが発生していた（try/catch自体はあり画面クラッシュはしないが、原因不明の生エラー文字列がそのまま表示されていた）。
+
+**変更したファイルと内容：**
+- `src/app/api/admin/rakuten-refetch/route.ts`：`export const maxDuration = 300;`を追加（他の重い処理ルートと同値）。
+- `src/lib/rakuten.ts`：`getProductsByCategory`のcatchブロックに、`RakutenApiError`以外の例外の種別・メッセージ・category・personNameを`console.error`で出力する行を追加。戻り値（`{status:'error'}`）・楽天API検索条件・商品取得ロジックは無変更。
+- `src/app/admin/product-check/PersonRakutenFetchButton.tsx`：`res.json()`を呼ぶ前にレスポンスのcontent-typeを確認し、JSON以外の場合は`res.text()`で読み取ってHTTPステータス付きのエラーメッセージを表示するよう変更。JSONレスポンス時の既存の成功/エラー分岐ロジックは無変更。
+
+**設計上の判断：**
+- 楽天APIの検索条件・DB保存仕様・AI判定処理・既存商品の扱いには一切触れておらず、`ProductCheckPersonSection.tsx`の1箇所でのみ使用される本コンポーネント以外の管理画面機能への影響もない。
+- `maxDuration`追加はインフラ設定のみの変更で、正常に完了していたリクエストの挙動は変わらない（実行可能時間の上限が伸びるのみ）。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1417テスト全通過（既存テストから変更なし）
+- `next build` 成功
+- commit/push/deployは未実施（指示待ち）。
