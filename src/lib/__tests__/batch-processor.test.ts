@@ -21,6 +21,9 @@ vi.mock('@/lib/product-store', () => ({
     skippedBecauseError: false,
   }),
   saveBatchMeta: vi.fn().mockResolvedValue(undefined),
+  // 中古カテゴリの重複抑制チェックが読む「他5カテゴリの保存済み商品」。
+  // 既定は空（=重複なし）。テストごとに必要な場合のみ上書きする。
+  getAllStoredProducts: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock('@/lib/judgment-store', () => ({
@@ -48,7 +51,7 @@ import { processPerson } from '@/lib/batch-processor';
 import { getAllPersonsWithConfig } from '@/lib/persons';
 import { getProductsByCategory } from '@/lib/rakuten';
 import { getAllVerdicts, saveVerdict } from '@/lib/judgment-store';
-import { storeProducts } from '@/lib/product-store';
+import { storeProducts, getAllStoredProducts } from '@/lib/product-store';
 import { judgeProducts, shouldAutoApprove } from '@/lib/ai-judge';
 
 // ── テストデータ ──────────────────────────────────────────────────────────────
@@ -166,6 +169,12 @@ describe('processPerson()', () => {
         'item-1': { source: 'ai', verdict: 'related', score: 80, promptVersion: 'v1', timestamp: Date.now() },
       });
       vi.mocked(judgeProducts).mockResolvedValue([]);
+      // 中古カテゴリの重複抑制チェックはDBの保存済み商品（他5カテゴリ分）を読み直す実装のため、
+      // 同じタイトルが既に写真集として保存済みである状態を再現する
+      // （実運用では中古より前の5カテゴリのstoreProducts()が実際に永続化するため、この状態と一致する）。
+      vi.mocked(getAllStoredProducts).mockResolvedValue({
+        '写真集': { products: [item], fetchedAt: Date.now() },
+      });
     });
 
     it('aiQueued=0 (全件スキップ)', async () => {
@@ -321,6 +330,40 @@ describe('processPerson()', () => {
 
     it('processPerson は throw せずに error を返す（安全な失敗）', async () => {
       await expect(processPerson('テスト人物')).resolves.not.toThrow();
+    });
+  });
+
+  // ── テスト10b: 中古カテゴリ自身のDB保存失敗時もusedSuppressedを含む ──────────────
+  // processPersonCategory()への切り出しで発見された回帰の再発防止テスト。
+  // 旧processPerson()は中古の重複抑制カウントをstoreProducts()呼び出しより前に
+  // 共有変数へ加算していたため、その後storeProducts()が失敗してもusedSuppressedには
+  // 含まれていた。この挙動を維持できているか確認する。
+  describe('テスト10b: 中古のDB保存失敗時もusedSuppressedに含まれる', () => {
+    beforeEach(() => {
+      const item = makeItem('item-dup');
+      vi.mocked(getProductsByCategory).mockResolvedValue({ status: 'ok', products: [item] });
+      vi.mocked(getAllVerdicts).mockResolvedValue({});
+      vi.mocked(judgeProducts).mockResolvedValue([]);
+      // 写真集に既に保存済み → 中古の同一タイトルは重複抑制される
+      vi.mocked(getAllStoredProducts).mockResolvedValue({
+        '写真集': { products: [item], fetchedAt: Date.now() },
+      });
+      // 中古カテゴリのstoreProducts()だけが失敗する
+      vi.mocked(storeProducts).mockImplementation((_name, cat) =>
+        cat === '中古'
+          ? Promise.reject(new Error('DB接続タイムアウト'))
+          : Promise.resolve({
+              fetchedCount: 1, retainedExistingCount: 0, addedCount: 1,
+              mergedCount: 0, preservedManualCount: 0, preservedVerdictedCount: 0,
+              skippedBecauseError: false,
+            }),
+      );
+    });
+
+    it('usedSuppressed=1（中古自身の抑制分を含む）・errorは中古のDB保存失敗', async () => {
+      const r = await processPerson('テスト人物');
+      expect(r.usedSuppressed).toBe(1);
+      expect(r.error).toBe('DB保存失敗: 中古');
     });
   });
 
@@ -784,7 +827,7 @@ describe('UIコード品質チェック', () => {
       path.resolve(process.cwd(), 'src/app/api/admin/ai-judge/route.ts'),
       'utf-8',
     );
-    const RAKUTEN_MSG = '楽天APIが一時的な利用制限中です。しばらく待ってから楽天再取得を実行してください。';
+    const RAKUTEN_MSG = '楽天APIが一時的な利用制限中です（';
     const OPENAI_MSG = 'OpenAI APIが一時的な利用制限中です。しばらく待ってから再実行してください';
     const QUOTA_MSG = 'OpenAI APIの残高または利用上限を確認してください';
 

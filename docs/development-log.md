@@ -1128,3 +1128,33 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 - `npx vitest run` 1417テスト全通過（既存テストから変更なし）
 - `next build` 成功
 - commit/push/deployは未実施（指示待ち）。
+
+---
+
+## Task 24 — 「楽天再取得」のカテゴリ単位分割によるタイムアウト根本対策
+
+**背景：** Task 23で`maxDuration=300`を追加した後も、本番で佐藤勝利の「楽天再取得」がHTTP 504 `FUNCTION_INVOCATION_TIMEOUT`になる事象を確認。写真集カテゴリだけで最大50回程度の楽天APIリクエスト（別名・グループ名・keyword補完の組み合わせ）＋最大150件の逐次AI判定という処理量が、商品数の多い人物では300秒の壁すら超えうることが根本原因と判明したため、単純なmaxDuration延長ではなく処理を分割する設計に変更した。
+
+**採用した設計：**
+- 楽天取得を6カテゴリ（写真集・本・雑誌・Blu-ray・DVD・グッズ・CD・中古）に分割し、1カテゴリ=1 HTTPリクエストとしてフロントから順番に呼ぶ。
+- AI判定は新規実装せず、既存の`/api/admin/ai-judge`（`judgeStoredProducts`、10件ずつ）をフロントから「全件AI判定」と同じ継続呼び出しパターンで繰り返し呼ぶことで代替する。
+- ユーザー操作は従来通り「楽天再取得」ボタン1回のみ。
+
+**変更したファイルと内容：**
+- `src/lib/batch-processor.ts`：`processPerson()`のカテゴリループ本体（楽天API取得→DB保存→ルールベース判定）を新規`processPersonCategory()`として抽出した（ロジック・ログ・判定順序は一切変更せず、コードを移動しただけ）。`processPerson()`は抽出後の関数を6回ループで呼ぶだけになり、シグネチャ・戻り値・AI判定（`judgeProducts`呼び出し）を含む外部から見た挙動は完全に無変更。中古カテゴリの重複抑制（同一タイトルの新品が既に取得済みなら除外）のみ、実行内メモリでの蓄積からDB（`getAllStoredProducts`で他5カテゴリの保存済みタイトルを読み直す）に変更した——中古は元々CATEGORIES配列内で最後に処理されるため、カテゴリ単位のHTTPリクエストに分割しても同じ判定結果になる（ルール・しきい値・上限件数は無変更）。
+- `src/app/api/admin/rakuten-refetch/route.ts`：1リクエスト=1カテゴリの契約に変更。`category`パラメータを追加し、`processPersonCategory()`を呼ぶ。人物単位の排他ロック（後述）を追加。AI判定関連のフィールドは返さない（フロントが別途`/api/admin/ai-judge`を呼ぶため）。
+- `src/lib/batch-lock.ts`：`personRakutenFetchLockKey()`を追加（既存の`personAiJudgeLockKey`と同じ仕組み・同じロックテーブルを再利用し、名前空間だけ別にした別名。AI判定ロックとは独立しており互いに干渉しない）。
+- `src/app/admin/product-check/PersonRakutenFetchButton.tsx`：内部で6カテゴリを順番に呼ぶループ→完了後`/api/admin/ai-judge`を未判定が無くなるまで繰り返し呼ぶループ、の2フェーズに変更。進捗表示（「楽天取得中 N/6：カテゴリ名」「AI判定中：N件完了」）、カテゴリ単位のエラー表示（どのカテゴリで失敗したか）、失敗後の再クリックで成功済みカテゴリをスキップして再開する仕組み（`completedCategoriesRef`）を実装。Task 23で入れたcontent-type確認（非JSON応答時にSyntaxErrorにしない）は両フェーズの通信に維持。
+
+**設計上の判断・安全性：**
+- **重複登録防止**：`storeProducts()`の既存マージロジック（商品IDベース）は無変更のため、同じカテゴリを再実行しても重複保存にはならない。
+- **AI判定の二重実行防止**：`/api/admin/ai-judge`側の既存ロック（`personAiJudgeLockKey`）は無変更のまま機能する。
+- **楽天取得側の二重実行防止**：新規に`personRakutenFetchLockKey`による排他ロックを追加。カテゴリ呼び出し1回ごとに取得・解放するため、フロントの6カテゴリ順次呼び出し自体は妨げない。
+- **途中失敗時の再開**：各カテゴリ・各AI判定バッチは冪等（べき等）なため、失敗した単位だけを再実行すれば安全（成功済みカテゴリの再取得は不要）。
+- **既存呼び出し元への影響ゼロ**：`processPerson()`を呼ぶ`processAllPersons()`（cron）・`api/admin/batch/route.ts`・`api/admin/people/fetch/route.ts`・`person-job-processor.ts`は、`processPerson()`のシグネチャ・戻り値が完全に無変更のため無影響。`/api/admin/ai-judge`・`PersonAiJudgeButton.tsx`（AI判定10件・全件AI判定）はコード自体に触れていないため無影響。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1426テスト全通過（既存1417件のうち、契約変更に合わせて`rakuten-refetch-route.test.ts`を新しいカテゴリ単位の契約用に書き直し、`batch-processor.test.ts`の中古dedupテストのモックを更新。それ以外の既存テストは無変更で全通過）
+- `next build` 成功
+- 実際の本番データに対するライブ実行（実際の楽天API・OpenAI呼び出し・DB書き込みを伴う）は、実データを変更してしまうため今回は実施していない。commit/push/deployは未実施（指示待ち）。

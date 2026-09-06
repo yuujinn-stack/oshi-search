@@ -1,25 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath, revalidateTag } from 'next/cache';
-import { processPerson } from '@/lib/batch-processor';
+import { processPersonCategory } from '@/lib/batch-processor';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getRedis } from '@/lib/redis';
 import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
+import { CATEGORIES } from '@/lib/product-store';
+import type { ProductCategory } from '@/types/person';
+import { acquireBatchLock, releaseBatchLock, personRakutenFetchLockKey } from '@/lib/batch-lock';
 
-// processPerson()は最大150件のAI判定を行いうる設計（batch-processor.tsのMAX_AI_PER_PERSON
-// コメント参照、300sタイムアウト前提）。他の同種の重い処理ルート
-// （person-jobs/process-now, cron/vod-recheck 等）と同じ300秒を明示する。
+// 1カテゴリの想定最大処理時間は写真集（最重量カテゴリ）でも数十秒〜長くて数分程度
+// （429多発時含む）で収まる想定だが、他ルートと足並みを揃えて300秒を明示する。
 export const maxDuration = 300;
 
 // POST /api/admin/rakuten-refetch
-// body: { personName: "..." , forceRejudge?: boolean }
-// 1人分の楽天商品取得 + AI判定を実行するエンドポイント（「楽天再取得」ボタン専用）。
+// body: { personName: "..." , category: "写真集"|"本・雑誌"|"Blu-ray・DVD"|"グッズ"|"CD"|"中古" , forceRejudge?: boolean }
+// 1人・1カテゴリ分の楽天商品取得のみを行うエンドポイント（「楽天再取得」ボタン専用）。
 //
-// 以前はこの処理を /api/admin/ai-judge が兼用していたが、「AI判定」ボタンは楽天APIを
-// 一切呼ばずDB保存済み商品だけを対象にするよう分離したため（/api/admin/ai-judge/route.ts
-// 参照）、楽天再取得を伴う経路はこちらへ移設した。processPerson() 自体の挙動は無変更。
+// 以前はこのエンドポイントが1回の呼び出しで6カテゴリ全件の取得+AI判定まで行っていたが、
+// 商品数の多い人物（例: 別名の多いアイドル）ではVercelの実行時間上限（300秒）を超え、
+// FUNCTION_INVOCATION_TIMEOUT（504）になる事象が確認されたため、カテゴリ単位に分割した。
+// フロント（PersonRakutenFetchButton.tsx）が6カテゴリを順番に呼び、全カテゴリ完了後は
+// 既存の /api/admin/ai-judge を繰り返し呼んでAI判定を行う（AI判定ロジック自体は無変更）。
 //
-// processAllPersons() と同様に getAllPersonsMerged() から configOverride を取得し、
-// JSON ファイル管理・CSV インポート（Redis 管理）どちらの人物でも正しく動作する
+// 検索条件・ページング・DB保存仕様・判定ルールは processPersonCategory() 側で
+// 元のprocessPerson()と全く同じロジックを使用しており、本ファイルでは変更していない。
 export async function POST(req: NextRequest) {
   const startMs = Date.now();
 
@@ -31,11 +35,22 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const body = await req.json().catch(() => ({})) as { personName?: string; forceRejudge?: boolean };
+  const body = await req.json().catch(() => ({})) as {
+    personName?: string;
+    category?: string;
+    forceRejudge?: boolean;
+  };
 
   if (!body.personName) {
     return NextResponse.json({ ok: false, status: 'bad_request', error: 'personName が必要です' }, { status: 400 });
   }
+  if (!body.category || !CATEGORIES.includes(body.category as ProductCategory)) {
+    return NextResponse.json(
+      { ok: false, status: 'bad_request', error: `category が不正です（有効値: ${CATEGORIES.join(', ')}）` },
+      { status: 400 },
+    );
+  }
+  const category = body.category as ProductCategory;
 
   // getAllPersonsMerged() で検索することで CSVインポート人物も configOverride で渡せる
   const persons = await getAllPersonsMerged();
@@ -47,127 +62,115 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let result;
+  // ── 人物単位の二重実行防止（同じ人物のカテゴリ取得を同時に複数走らせない） ──────
+  // AI判定用ロック（personAiJudgeLockKey）とは別の名前空間のため、互いに干渉しない。
+  // カテゴリ呼び出し1回ごとに取得・解放するため、フロントの6カテゴリ順次呼び出し自体は
+  // 妨げない（前のカテゴリのロックは既に解放済みの状態で次のカテゴリが呼ばれる）。
+  const lockKey = personRakutenFetchLockKey(body.personName);
+  const ownerId = `rakuten-refetch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const acquired = await acquireBatchLock(ownerId, lockKey);
+  if (!acquired) {
+    return NextResponse.json(
+      { ok: false, status: 'locked', error: 'この人物の楽天再取得はすでに実行中です' },
+      { status: 409 },
+    );
+  }
+
   try {
-    result = await processPerson(body.personName, body.forceRejudge ?? false, personConfig);
-  } catch (err) {
+    let result;
+    try {
+      result = await processPersonCategory(body.personName, category, body.forceRejudge ?? false, personConfig);
+    } catch (err) {
+      const durationMs = Date.now() - startMs;
+      console.error(`[rakuten-refetch] operation:rakuten_refetch_category personName:${body.personName} category:${category} status:server_error durationMs:${durationMs} error:${String(err)}`);
+      return NextResponse.json(
+        { ok: false, status: 'server_error', error: '処理中にエラーが発生しました', category },
+        { status: 500 },
+      );
+    }
+
     const durationMs = Date.now() - startMs;
-    console.error(`[rakuten-refetch] operation:rakuten_refetch personName:${body.personName} status:server_error durationMs:${durationMs} error:${String(err)}`);
-    return NextResponse.json(
-      { ok: false, status: 'server_error', error: '処理中にエラーが発生しました' },
-      { status: 500 },
-    );
-  }
 
-  const durationMs = Date.now() - startMs;
+    // ── RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEY 未設定 ────────────────────────────
+    if (result.rakutenConfigMissing) {
+      console.log(`[rakuten-refetch] operation:rakuten_refetch_category personName:${body.personName} category:${category} status:config_missing durationMs:${durationMs} envVarsMissing:RAKUTEN_APP_ID,RAKUTEN_ACCESS_KEY`);
+      return NextResponse.json(
+        { ok: false, status: 'config_missing', error: '楽天APIの設定が不足しています（RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEY）', category },
+        { status: 503 },
+      );
+    }
 
-  // ── RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEY 未設定 ────────────────────────────
-  if (result.rakutenConfigMissing) {
-    console.log(`[rakuten-refetch] operation:rakuten_refetch personName:${body.personName} status:config_missing durationMs:${durationMs} envVarsMissing:RAKUTEN_APP_ID,RAKUTEN_ACCESS_KEY`);
-    return NextResponse.json(
-      { ok: false, status: 'config_missing', error: '楽天APIの設定が不足しています（RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEY）' },
-      { status: 503 },
-    );
-  }
+    // ── DB保存失敗 ────────────────────────────────────────────────────────────
+    if (result.dbError) {
+      console.error(`[rakuten-refetch] operation:rakuten_refetch_category personName:${body.personName} category:${category} status:db_error durationMs:${durationMs} error:${result.dbError}`);
+      return NextResponse.json(
+        { ok: false, status: 'db_error', error: 'データベースへの保存に失敗しました', category },
+        { status: 500 },
+      );
+    }
 
-  // ── 楽天API 429 レート制限（全カテゴリ取得0件） ──────────────────────────
-  if (result.fetchFailed > 0 && result.stored === 0 && result.upstreamHttpStatus === 429) {
-    console.log(`[rakuten-refetch] operation:rakuten_refetch personName:${body.personName} status:rate_limited fetchFailed:${result.fetchFailed} durationMs:${durationMs}`);
-    return NextResponse.json(
-      {
-        ok: false,
-        status: 'rate_limited',
-        error: '楽天APIが一時的な利用制限中です。しばらく待ってから楽天再取得を実行してください。',
-        httpStatus: 429,
-        failedCategories: result.failedCategories,
+    // ── 楽天APIエラー（このカテゴリは0件） ────────────────────────────────────
+    if (result.fetchFailed) {
+      if (result.upstreamHttpStatus === 429) {
+        console.log(`[rakuten-refetch] operation:rakuten_refetch_category personName:${body.personName} category:${category} status:rate_limited durationMs:${durationMs}`);
+        return NextResponse.json(
+          { ok: false, status: 'rate_limited', error: `楽天APIが一時的な利用制限中です（${category}）。しばらく待ってからこのカテゴリを再実行してください。`, httpStatus: 429, category },
+          { status: 429 },
+        );
+      }
+      if (result.upstreamHttpStatus !== undefined) {
+        console.log(`[rakuten-refetch] operation:rakuten_refetch_category personName:${body.personName} category:${category} status:upstream_error upstreamHttpStatus:${result.upstreamHttpStatus} durationMs:${durationMs}`);
+        return NextResponse.json(
+          { ok: false, status: 'upstream_error', error: `楽天APIが ${result.upstreamHttpStatus} を返しました（${category}）`, httpStatus: result.upstreamHttpStatus, category },
+          { status: 502 },
+        );
+      }
+      console.log(`[rakuten-refetch] operation:rakuten_refetch_category personName:${body.personName} category:${category} status:network_error durationMs:${durationMs}`);
+      return NextResponse.json(
+        { ok: false, status: 'network_error', error: `楽天APIへの接続に失敗しました（タイムアウトまたはネットワーク障害、${category}）`, category },
+        { status: 500 },
+      );
+    }
+
+    revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
+    // 楽天再取得は既存商品の画像URLも更新しうるため、実際に商品が保存された場合のみ
+    // 「人気商品」のホーム表示キャッシュを再検証する（取得0件の場合は呼ばない）
+    if (result.stored > 0) {
+      revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
+    }
+
+    console.log([
+      `[rakuten-refetch] operation:rakuten_refetch_category`,
+      `personName:${body.personName}`,
+      `category:${category}`,
+      `status:success`,
+      `fetched:${result.stored}`,
+      `skipped:${result.skipped}`,
+      `excluded:${result.excluded}`,
+      `autoApproved:${result.autoApproved}`,
+      `usedSuppressed:${result.usedSuppressed}`,
+      `membershipFiltered:${result.membershipFiltered}`,
+      `pendingAiJudge:${result.toJudge.length}`,
+      `durationMs:${durationMs}`,
+    ].join(' '));
+
+    return NextResponse.json({
+      ok: true,
+      status: 'success',
+      category,
+      person: {
+        category,
+        stored: result.stored,
+        autoApproved: result.autoApproved,
+        skipped: result.skipped,
+        excluded: result.excluded,
+        usedSuppressed: result.usedSuppressed,
+        membershipFiltered: result.membershipFiltered,
+        pendingAiJudge: result.toJudge.length,
       },
-      { status: 429 },
-    );
+    });
+  } finally {
+    // 正常終了・異常終了問わず必ず解放する（TTL 10分もあるため異常終了時も永久ロックしない）
+    await releaseBatchLock(ownerId, 'completed', lockKey);
   }
-
-  // ── 楽天API upstream エラー（全カテゴリ取得0件） ─────────────────────────
-  if (result.fetchFailed > 0 && result.stored === 0 && result.upstreamHttpStatus !== undefined) {
-    const httpStatus = result.upstreamHttpStatus;
-    console.log(`[rakuten-refetch] operation:rakuten_refetch personName:${body.personName} status:upstream_error upstreamHttpStatus:${httpStatus} fetchFailed:${result.fetchFailed} durationMs:${durationMs}`);
-    return NextResponse.json(
-      { ok: false, status: 'upstream_error', error: `楽天APIが ${httpStatus} を返しました`, httpStatus, failedCategories: result.failedCategories },
-      { status: 502 },
-    );
-  }
-
-  // ── ネットワーク障害 / タイムアウト（全カテゴリ取得0件） ──────────────────
-  if (result.fetchFailed > 0 && result.stored === 0 && result.upstreamHttpStatus === undefined) {
-    console.log(`[rakuten-refetch] operation:rakuten_refetch personName:${body.personName} status:network_error fetchFailed:${result.fetchFailed} durationMs:${durationMs}`);
-    return NextResponse.json(
-      { ok: false, status: 'network_error', error: '楽天APIへの接続に失敗しました（タイムアウトまたはネットワーク障害）', failedCategories: result.failedCategories },
-      { status: 500 },
-    );
-  }
-
-  // ── DB保存失敗 ────────────────────────────────────────────────────────────
-  if (result.error?.startsWith('DB保存失敗')) {
-    console.error(`[rakuten-refetch] operation:rakuten_refetch personName:${body.personName} status:db_error durationMs:${durationMs} error:${result.error}`);
-    return NextResponse.json(
-      { ok: false, status: 'db_error', error: 'データベースへの保存に失敗しました' },
-      { status: 500 },
-    );
-  }
-
-  revalidatePath(`/person/${encodeURIComponent(body.personName)}`);
-  // 楽天再取得は既存商品の画像URLも更新しうるため、実際に商品が保存された場合のみ
-  // 「人気商品」のホーム表示キャッシュを再検証する（取得0件・スキップのみの場合は呼ばない）
-  if (result.stored > 0) {
-    revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
-  }
-
-  // ── 正常系ステータス判定 ──────────────────────────────────────────────────
-  // partial_success: 一部カテゴリ取得成功 + 一部失敗（fetchFailed > 0 && stored > 0）
-  const apiStatus: 'success' | 'partial_success' | 'no_targets' =
-    result.fetchFailed > 0 && result.stored > 0
-      ? 'partial_success'
-      : result.stored === 0 && result.skipped === 0 && result.fetchFailed === 0
-        ? 'no_targets'
-        : 'success';
-
-  // ── 正常系メッセージ生成 ──────────────────────────────────────────────────
-  let message = '';
-  if (result.error) {
-    message = result.error;
-  } else if (apiStatus === 'partial_success') {
-    message = `取得${result.stored}件 / 検索失敗${result.fetchFailed}カテゴリ (${result.failedCategories.join(', ')})`;
-  } else if (result.aiKeyMissing) {
-    message = 'OPENAI_API_KEY 未設定: AI判定をスキップしました';
-  } else if (result.aiFailed > 0) {
-    message = `AI判定 ${result.aiQueued}件中 ${result.aiFailed}件がエラーになりました`;
-  } else if (apiStatus === 'no_targets') {
-    message = '楽天API正常・該当商品0件';
-  } else if (result.aiQueued === 0 && result.autoApproved === 0 && result.stored > 0) {
-    message = `取得${result.stored}件（全件判定済みのためAI判定スキップ）`;
-  } else if (result.autoApproved > 0 && result.aiQueued === 0) {
-    message = `取得${result.stored}件 自動承認${result.autoApproved}件`;
-  } else {
-    message = `取得${result.stored}件 自動承認${result.autoApproved}件 AI判定${result.aiJudged}/${result.aiQueued}件`;
-  }
-
-  console.log([
-    `[rakuten-refetch] operation:rakuten_refetch`,
-    `personName:${body.personName}`,
-    `status:${apiStatus}`,
-    `fetched:${result.stored}`,
-    `skipped:${result.skipped}`,
-    `excluded:${result.excluded}`,
-    `autoApproved:${result.autoApproved}`,
-    `fetchFailed:${result.fetchFailed}`,
-    `failedCategories:${result.failedCategories.join(',') || '-'}`,
-    `upstreamHttpStatus:${result.upstreamHttpStatus ?? '-'}`,
-    `targeted:${result.aiQueued}`,
-    `succeeded:${result.aiJudged}`,
-    `failed:${result.aiFailed}`,
-    `related:${result.relatedCount}`,
-    `unrelated:${result.unrelatedCount}`,
-    `uncertain:${result.uncertainCount}`,
-    `durationMs:${durationMs}`,
-  ].join(' '));
-
-  return NextResponse.json({ ok: true, status: apiStatus, person: { ...result, message } });
 }

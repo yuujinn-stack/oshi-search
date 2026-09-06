@@ -13,7 +13,7 @@ import { getPersonMeta } from './person-meta';
 import { computePersonProductStats } from './product-check-stats';
 import { AI_JUDGE_BATCH_SIZE, MAX_EXCLUDE_PRODUCT_IDS } from './ai-judge-constants';
 import type { RakutenItem } from '@/types/rakuten';
-import type { PersonWithConfig } from '@/types/person';
+import type { PersonWithConfig, ProductCategory } from '@/types/person';
 
 // クライアント/サーバー共通定数を再エクスポート（既存呼び出し元との後方互換性のため）
 export { AI_JUDGE_BATCH_SIZE };
@@ -79,6 +79,261 @@ export interface BatchSummary {
   totalAiCalls: number;
 }
 
+// 人物1人・カテゴリ1件分の「楽天API取得 → Redis保存 → ルールベース判定」処理。
+// processPerson()のカテゴリループ本体と、/api/admin/rakuten-refetch （カテゴリ単位の
+// HTTPリクエスト、タイムアウト対策として1カテゴリずつ呼ぶ）の両方から使う共通処理として
+// 切り出した（元々processPerson()にインライン実装されていたロジック・ログを移動しただけで、
+// 検索条件・保存仕様・判定ルール自体は一切変更していない）。
+// AI判定（OpenAI呼び出し）は含まない。未判定として残った商品はtoJudgeとして返し、
+// 呼び出し元（processPerson()）が従来通り自身でjudgeProducts()を呼ぶ。
+export interface CategoryProcessResult {
+  category: ProductCategory;
+  stored: number;
+  autoApproved: number;
+  skipped: number;
+  excluded: number;
+  usedSuppressed: number;
+  membershipFiltered: number;
+  toJudge: RakutenItem[];
+  fetchFailed: boolean;
+  upstreamHttpStatus?: number;
+  rakutenConfigMissing: boolean;
+  dbError?: string;
+}
+
+export async function processPersonCategory(
+  personName: string,
+  category: ProductCategory,
+  forceRejudge: boolean,
+  configOverride?: PersonWithConfig,
+): Promise<CategoryProcessResult> {
+  const all = getAllPersonsWithConfig();
+  const person = configOverride ?? all.find((p) => p.name === personName);
+  if (!person) {
+    return {
+      category, stored: 0, autoApproved: 0, skipped: 0, excluded: 0, usedSuppressed: 0,
+      membershipFiltered: 0, toJudge: [], fetchFailed: false, rakutenConfigMissing: false,
+      dbError: '人物が見つかりません',
+    };
+  }
+
+  const excludeKeywords = person.config.excludeKeywords ?? [];
+  const existingVerdicts = await getAllVerdicts(person.name);
+  const personMeta = await getPersonMeta(person.name);
+  const existingVerdictIds = new Set(Object.keys(existingVerdicts));
+
+  const result = await getProductsByCategory(
+    person.name, person.group, category, person.config, 'no-store'
+  );
+
+  if (result.status === 'config_missing') {
+    console.log(`[batch] 楽天API設定不足: RAKUTEN_APP_ID または RAKUTEN_ACCESS_KEY が未設定 (${personName}, cat=${category})`);
+    return {
+      category, stored: 0, autoApproved: 0, skipped: 0, excluded: 0, usedSuppressed: 0,
+      membershipFiltered: 0, toJudge: [], fetchFailed: false, rakutenConfigMissing: true,
+    };
+  }
+
+  let fetchFailed = false;
+  let upstreamHttpStatus: number | undefined;
+  if (result.status === 'upstream_error') {
+    fetchFailed = true;
+    upstreamHttpStatus = result.httpStatus;
+    console.log(`[batch] ${category}: 楽天API upstreamエラー HTTP ${result.httpStatus}`);
+  } else if (result.status === 'error') {
+    fetchFailed = true;
+    console.log(`[batch] ${category}: 楽天APIネットワークエラー`);
+  }
+
+  let products = result.status === 'ok' ? result.products : [];
+
+  // 中古カテゴリ: 同一タイトルの新品が既に取得済みなら除外し、保存件数を上限内に制限。
+  // 他5カテゴリは中古より先に処理される前提（CATEGORIES配列の順序）のため、その時点で
+  // 既にDBへ保存済みのタイトルをここで読み直す。カテゴリ単位のリクエストに分割する前は
+  // メモリ上に蓄積していたが、同じ判定ルール・しきい値・上限件数のままDB参照に置き換えた。
+  let usedSuppressed = 0;
+  if (category === '中古' && products.length > 0) {
+    const storedData = await getAllStoredProducts(person.name);
+    const newTitleSet = new Set<string>();
+    for (const cat of CATEGORIES) {
+      if (cat === '中古') continue;
+      const data = storedData[cat];
+      if (!data) continue;
+      for (const p of data.products) newTitleSet.add(normalizeForUsedDedup(p.title));
+    }
+    const beforeDedup = products.length;
+    products = products.filter((p) => !newTitleSet.has(normalizeForUsedDedup(p.title)));
+    usedSuppressed = beforeDedup - products.length;
+    if (usedSuppressed > 0) {
+      console.log(`[batch] 中古dedup: 新品と重複する${usedSuppressed}件を除外 (残=${products.length}件)`);
+    }
+    if (products.length > MAX_USED_ITEMS_STORED) {
+      console.log(`[batch] 中古上限: ${products.length}件 → ${MAX_USED_ITEMS_STORED}件に制限`);
+      products = products.slice(0, MAX_USED_ITEMS_STORED);
+    }
+  }
+
+  console.log(`[batch] ${category}: ${products.length}件取得 (API status=${result.status})`);
+
+  // 追跡対象商品がAPI取得されたかログ（ステップ1・2）
+  for (const p of products) {
+    if (isTracked(p.title)) {
+      trackLog(`✅ ステップ1: 楽天API取得 | cat=${category}`);
+      trackLog(`   title="${p.title}"`);
+      trackLog(`   id=${p.id} | url=${p.itemUrl}`);
+      trackLog(`   → ステップ2: Redis(storeProducts)へ保存開始`);
+    }
+  }
+
+  try {
+    await storeProducts(person.name, category, products, existingVerdictIds);
+  } catch (err) {
+    console.error(`[batch] DB保存失敗 cat=${category} personName=${personName}: ${String(err)}`);
+    return {
+      category, stored: 0, autoApproved: 0, skipped: 0, excluded: 0, usedSuppressed,
+      membershipFiltered: 0, toJudge: [], fetchFailed, upstreamHttpStatus, rakutenConfigMissing: false,
+      dbError: `DB保存失敗: ${category}`,
+    };
+  }
+
+  // storeProducts 完了後ログ（ステップ2）
+  for (const p of products) {
+    if (isTracked(p.title)) {
+      trackLog(`✅ ステップ2: Redis保存完了 | cat=${category} | id=${p.id}`);
+    }
+  }
+
+  let autoApproved = 0, skipped = 0, excluded = 0, membershipFiltered = 0;
+  let catExcluded = 0, catSkipped = 0, catNew = 0;
+  const toJudge: RakutenItem[] = [];
+
+  for (const p of products) {
+    const tracked = isTracked(p.title);
+
+    // 除外キーワード一致 → 即 unrelated（AI 不要な明確なケース）
+    if (excludeKeywords.some((kw) => p.title.includes(kw))) {
+      console.log(`[batch]   除外KW一致: id=${p.id} | "${p.title.slice(0, 60)}"`);
+      if (tracked) {
+        trackLog(`❌ ステップ3: 除外KWにより unrelated 保存`);
+        trackLog(`   title="${p.title}"`);
+        trackLog(`   id=${p.id} | 公開表示: ❌ 表示対象外（除外KW）`);
+      }
+      await saveVerdict(person.name, p.id, 'unrelated', 0, 'auto', '除外キーワード一致');
+      excluded++;
+      catExcluded++;
+      continue;
+    }
+
+    // ━━━ 最優先: deleted (管理者が手動削除) は何があってもスキップ ━━━
+    if (existingVerdicts[p.id]?.verdict === 'deleted') {
+      skipped++;
+      catSkipped++;
+      continue;
+    }
+
+    // ━━━ 優先度1: 自動承認チェック（スキップ判定より前に実行）━━━
+    // 既存の ai 判定が unrelated でも、条件を満たす商品は即 related で上書きする
+    // 例: 人物名+写真集がタイトルに含まれる、グループCDのアーティスト名が一致する
+    if (shouldAutoApprove(p, person)) {
+      if (tracked) {
+        trackLog(`✅ ステップ3: 自動承認（スキップより優先）`);
+        trackLog(`   title="${p.title}"`);
+        trackLog(`   id=${p.id} | → related/95 で保存`);
+        trackLog(`   公開表示: ✅ 表示対象（related & score=95）`);
+      }
+      console.log(`[batch]   自動承認: id=${p.id} | "${p.title.slice(0, 60)}"`);
+      await saveVerdict(person.name, p.id, 'related', 95, 'ai', '自動承認（人物名+写真集 or グループCD）', PROMPT_VERSION);
+      autoApproved++;
+      catNew++;
+      console.log(`[PUBLIC_FILTER] itemTitle:"${p.title.slice(0, 60)}" category:${category} label:related score:95 isPublic:true`);
+      continue;
+    }
+
+    const existing = existingVerdicts[p.id];
+
+    // ━━━ 優先度2: manual 判定は常に保持 ━━━
+    if (existing?.source === 'manual') {
+      if (tracked) {
+        const displayable = existing.verdict === 'related' && existing.score >= 70;
+        trackLog(`⏭ ステップ3: manual判定済みのためスキップ`);
+        trackLog(`   title="${p.title}"`);
+        trackLog(`   id=${p.id} | verdict=${existing.verdict} | score=${existing.score}`);
+        trackLog(`   公開表示: ${displayable ? '✅ 表示対象' : `❌ 非表示（verdict=${existing.verdict}, score=${existing.score}）`}`);
+      }
+      const displayable = existing.verdict === 'related' && existing.score >= 70;
+      console.log(`[PUBLIC_FILTER] itemTitle:"${p.title.slice(0, 60)}" category:${category} label:${existing.verdict} score:${existing.score} manualStatus:manual isPublic:${displayable}`);
+      skipped++;
+      catSkipped++;
+      continue;
+    }
+
+    // ━━━ 優先度3: ai 判定済みはスキップ（forceRejudge=true またはプロンプト変更時は再判定） ━━━
+    if (existing?.source === 'ai') {
+      const promptOutdated = existing.promptVersion !== PROMPT_VERSION;
+      if (!forceRejudge && !promptOutdated) {
+        if (tracked) {
+          const displayable = existing.verdict === 'related' && existing.score >= 70;
+          trackLog(`⏭ ステップ3: ai判定済みのためスキップ（promptVersion=${existing.promptVersion ?? '旧'}）`);
+          trackLog(`   title="${p.title}"`);
+          trackLog(`   id=${p.id} | verdict=${existing.verdict} | score=${existing.score}`);
+          trackLog(`   公開表示: ${displayable ? '✅ 表示対象' : `❌ 非表示（verdict=${existing.verdict}, score=${existing.score}）`}`);
+          if (existing.reason) trackLog(`   AI理由: "${existing.reason}"`);
+        }
+        const displayable = existing.verdict === 'related' && existing.score >= 70;
+        console.log(`[PUBLIC_FILTER] itemTitle:"${p.title.slice(0, 60)}" category:${category} label:${existing.verdict} score:${existing.score} isPublic:${displayable}`);
+        skipped++;
+        catSkipped++;
+        continue;
+      }
+      // promptVersion が違うか forceRejudge → 再判定へ
+      if (promptOutdated) {
+        console.log(`[batch]   プロンプト更新再判定: ${existing.promptVersion ?? '旧'} → ${PROMPT_VERSION} | "${p.title.slice(0, 50)}"`);
+      }
+    }
+
+    // ━━━ 優先度3.5: 卒業後グループ商品候補チェック ━━━
+    // manual・shouldAutoApprove 済は上でスキップ済みのため非影響
+    // ai 判定済み（スキップ対象外のもの = outdated or forceRejudge）も対象にする
+    if (personMeta) {
+      const guardResult = checkPostMembershipGroupContent(
+        p.title,
+        person.name,
+        person.config.aliases ?? [],
+        personMeta,
+      );
+      if (guardResult.shouldReview) {
+        if (tracked) {
+          trackLog(`🎓 ステップ3.5: 卒業後グループ商品候補 → uncertain 保存`);
+          trackLog(`   title="${p.title}"`);
+          trackLog(`   id=${p.id} | reason="${guardResult.reason}"`);
+        }
+        console.log(`[batch]   卒業後グループ商品候補: id=${p.id} | "${p.title.slice(0, 60)}"`);
+        await saveVerdict(person.name, p.id, 'uncertain', 0, 'auto', guardResult.reason);
+        membershipFiltered++;
+        catNew++;
+        continue;
+      }
+    }
+
+    // ━━━ 優先度4: 未判定 / auto 判定 / 再判定対象 → AI キューへ ━━━
+    if (tracked) {
+      trackLog(`🎯 ステップ3→4: AI判定キューへ追加`);
+      trackLog(`   title="${p.title}"`);
+      trackLog(`   id=${p.id} | 既存verdict=${existing?.source ?? 'なし'}${forceRejudge ? ' (forceRejudge)' : ''}`);
+    }
+    console.log(`[batch]   AI対象: id=${p.id} existing=${existing?.source ?? 'なし'} | "${p.title.slice(0, 60)}"`);
+    toJudge.push(p);
+    catNew++;
+  }
+
+  console.log(`[batch] ${category} 集計: 新規=${catNew} スキップ(判定済)=${catSkipped} 除外KW=${catExcluded}`);
+
+  return {
+    category, stored: products.length, autoApproved, skipped, excluded, usedSuppressed,
+    membershipFiltered, toJudge, fetchFailed, upstreamHttpStatus, rakutenConfigMissing: false,
+  };
+}
+
 // 人物1人分のバッチ処理
 // forceRejudge=true の場合: ai判定済み商品も再判定（manual は常に保持）
 // configOverride: persons_master.json にない人物（CSVインポート組）を処理するときに使う
@@ -101,10 +356,6 @@ export async function processPerson(
     };
   }
 
-  const excludeKeywords = person.config.excludeKeywords ?? [];
-  const existingVerdicts = await getAllVerdicts(person.name);
-  const personMeta = await getPersonMeta(person.name);
-
   let stored = 0;
   let aiJudged = 0;
   let aiQueued = 0;
@@ -126,214 +377,48 @@ export async function processPerson(
     ? `設定あり(${process.env.OPENAI_API_KEY.length}文字)`
     : '★未設定★';
   console.log(`[batch] ===== 開始: ${personName} (OPENAI_API_KEY=${apiKeyStatus}) =====`);
-  console.log(`[batch] 既存verdicts: ${Object.keys(existingVerdicts).length}件 (ai=${Object.values(existingVerdicts).filter(v=>v.source==='ai').length}, manual=${Object.values(existingVerdicts).filter(v=>v.source==='manual').length}, auto=${Object.values(existingVerdicts).filter(v=>v.source==='auto').length})`);
+  const existingVerdictsForLog = await getAllVerdicts(person.name);
+  console.log(`[batch] 既存verdicts: ${Object.keys(existingVerdictsForLog).length}件 (ai=${Object.values(existingVerdictsForLog).filter(v=>v.source==='ai').length}, manual=${Object.values(existingVerdictsForLog).filter(v=>v.source==='manual').length}, auto=${Object.values(existingVerdictsForLog).filter(v=>v.source==='auto').length})`);
 
-  // 新品商品タイトルセット（中古カテゴリでの重複抑制に使用）
-  const newTitleSet = new Set<string>();
-
-  // verdict 済み商品 ID セット（storeProducts で保持対象を特定するために使用）
-  const existingVerdictIds = new Set(Object.keys(existingVerdicts));
-
-  // カテゴリ毎に楽天API取得 → Redis保存 → 判定分類
+  // カテゴリ毎に楽天API取得 → Redis保存 → 判定分類（実体は processPersonCategory に集約。
+  // /api/admin/rakuten-refetch のカテゴリ単位リクエストと完全に同じ処理を通る）
   for (const cat of CATEGORIES) {
-    const result = await getProductsByCategory(
-      person.name, person.group, cat, person.config, 'no-store'
-    );
-    if (result.status === 'config_missing') {
-      // 全カテゴリ同じ結果になるため早期脱出（変数名のみログ出力・値は出さない）
+    const catResult = await processPersonCategory(personName, cat, forceRejudge, person);
+
+    if (catResult.rakutenConfigMissing) {
+      // 全カテゴリ同じ結果になるため早期脱出
       rakutenConfigMissing = true;
-      console.log(`[batch] 楽天API設定不足: RAKUTEN_APP_ID または RAKUTEN_ACCESS_KEY が未設定 (${personName})`);
       break;
     }
-    if (result.status === 'upstream_error') {
-      fetchFailed++;
-      failedCategories.push(cat);
-      if (upstreamHttpStatus === undefined) upstreamHttpStatus = result.httpStatus;
-      console.log(`[batch] ${cat}: 楽天API upstreamエラー HTTP ${result.httpStatus} (fetchFailed=${fetchFailed})`);
-    } else if (result.status === 'error') {
-      fetchFailed++;
-      failedCategories.push(cat);
-      console.log(`[batch] ${cat}: 楽天APIネットワークエラー (fetchFailed=${fetchFailed})`);
-    }
-    let products = result.status === 'ok' ? result.products : [];
 
-    // 中古カテゴリ: 同一タイトルの新品が既に取得済みなら除外し、保存件数を上限内に制限
-    if (cat === '中古' && products.length > 0) {
-      const beforeDedup = products.length;
-      products = products.filter((p) => !newTitleSet.has(normalizeForUsedDedup(p.title)));
-      const suppressed = beforeDedup - products.length;
-      usedSuppressed += suppressed;
-      if (suppressed > 0) {
-        console.log(`[batch] 中古dedup: 新品と重複する${suppressed}件を除外 (残=${products.length}件)`);
-      }
-      if (products.length > MAX_USED_ITEMS_STORED) {
-        console.log(`[batch] 中古上限: ${products.length}件 → ${MAX_USED_ITEMS_STORED}件に制限`);
-        products = products.slice(0, MAX_USED_ITEMS_STORED);
-      }
-    }
-
-    console.log(`[batch] ${cat}: ${products.length}件取得 (API status=${result.status})`);
-
-    // 追跡対象商品がAPI取得されたかログ（ステップ1・2）
-    for (const p of products) {
-      if (isTracked(p.title)) {
-        trackLog(`✅ ステップ1: 楽天API取得 | cat=${cat}`);
-        trackLog(`   title="${p.title}"`);
-        trackLog(`   id=${p.id} | url=${p.itemUrl}`);
-        trackLog(`   → ステップ2: Redis(storeProducts)へ保存開始`);
-      }
-    }
-
-    try {
-      await storeProducts(person.name, cat, products, existingVerdictIds);
-    } catch (err) {
-      console.error(`[batch] DB保存失敗 cat=${cat} personName=${personName}: ${String(err)}`);
+    if (catResult.dbError) {
+      // 旧実装では中古カテゴリの重複抑制カウント(usedSuppressed)がstoreProducts()呼び出しより
+      // 前に共有変数へ加算されていたため、その後storeProducts()が失敗してもこの値には含まれて
+      // いた。processPersonCategory()への切り出しでカテゴリローカルな値になったため、ここで
+      // 加算してから返し、旧実装と同じ集計結果になるようにする（他のフィールド・ロジックは無変更）。
       return {
         personName, stored, aiJudged: 0, aiQueued: 0, autoApproved, skipped, excluded,
-        usedSuppressed, membershipFiltered,
+        usedSuppressed: usedSuppressed + catResult.usedSuppressed, membershipFiltered,
         fetchFailed, failedCategories, aiFailed: 0, aiKeyMissing: false,
         relatedCount: 0, unrelatedCount: 0, uncertainCount: 0,
         rakutenConfigMissing: false, upstreamHttpStatus, aiFailures: [],
-        error: `DB保存失敗: ${cat}`,
+        error: catResult.dbError,
       };
     }
-    stored += products.length;
 
-    // storeProducts 完了後ログ（ステップ2）
-    for (const p of products) {
-      if (isTracked(p.title)) {
-        trackLog(`✅ ステップ2: Redis保存完了 | cat=${cat} | id=${p.id}`);
-      }
+    if (catResult.fetchFailed) {
+      fetchFailed++;
+      failedCategories.push(cat);
+      if (upstreamHttpStatus === undefined) upstreamHttpStatus = catResult.upstreamHttpStatus;
     }
 
-    let catExcluded = 0, catSkipped = 0, catNew = 0;
-    for (const p of products) {
-      const tracked = isTracked(p.title);
-
-      // 除外キーワード一致 → 即 unrelated（AI 不要な明確なケース）
-      if (excludeKeywords.some((kw) => p.title.includes(kw))) {
-        console.log(`[batch]   除外KW一致: id=${p.id} | "${p.title.slice(0, 60)}"`);
-        if (tracked) {
-          trackLog(`❌ ステップ3: 除外KWにより unrelated 保存`);
-          trackLog(`   title="${p.title}"`);
-          trackLog(`   id=${p.id} | 公開表示: ❌ 表示対象外（除外KW）`);
-        }
-        await saveVerdict(person.name, p.id, 'unrelated', 0, 'auto', '除外キーワード一致');
-        excluded++;
-        catExcluded++;
-        continue;
-      }
-
-      // ━━━ 最優先: deleted (管理者が手動削除) は何があってもスキップ ━━━
-      if (existingVerdicts[p.id]?.verdict === 'deleted') {
-        skipped++;
-        catSkipped++;
-        continue;
-      }
-
-      // ━━━ 優先度1: 自動承認チェック（スキップ判定より前に実行）━━━
-      // 既存の ai 判定が unrelated でも、条件を満たす商品は即 related で上書きする
-      // 例: 人物名+写真集がタイトルに含まれる、グループCDのアーティスト名が一致する
-      if (shouldAutoApprove(p, person)) {
-        if (tracked) {
-          trackLog(`✅ ステップ3: 自動承認（スキップより優先）`);
-          trackLog(`   title="${p.title}"`);
-          trackLog(`   id=${p.id} | → related/95 で保存`);
-          trackLog(`   公開表示: ✅ 表示対象（related & score=95）`);
-        }
-        console.log(`[batch]   自動承認: id=${p.id} | "${p.title.slice(0, 60)}"`);
-        await saveVerdict(person.name, p.id, 'related', 95, 'ai', '自動承認（人物名+写真集 or グループCD）', PROMPT_VERSION);
-        autoApproved++;
-        catNew++;
-        console.log(`[PUBLIC_FILTER] itemTitle:"${p.title.slice(0, 60)}" category:${cat} label:related score:95 isPublic:true`);
-        continue;
-      }
-
-      const existing = existingVerdicts[p.id];
-
-      // ━━━ 優先度2: manual 判定は常に保持 ━━━
-      if (existing?.source === 'manual') {
-        if (tracked) {
-          const displayable = existing.verdict === 'related' && existing.score >= 70;
-          trackLog(`⏭ ステップ3: manual判定済みのためスキップ`);
-          trackLog(`   title="${p.title}"`);
-          trackLog(`   id=${p.id} | verdict=${existing.verdict} | score=${existing.score}`);
-          trackLog(`   公開表示: ${displayable ? '✅ 表示対象' : `❌ 非表示（verdict=${existing.verdict}, score=${existing.score}）`}`);
-        }
-        const displayable = existing.verdict === 'related' && existing.score >= 70;
-        console.log(`[PUBLIC_FILTER] itemTitle:"${p.title.slice(0, 60)}" category:${cat} label:${existing.verdict} score:${existing.score} manualStatus:manual isPublic:${displayable}`);
-        skipped++;
-        catSkipped++;
-        continue;
-      }
-
-      // ━━━ 優先度3: ai 判定済みはスキップ（forceRejudge=true またはプロンプト変更時は再判定） ━━━
-      if (existing?.source === 'ai') {
-        const promptOutdated = existing.promptVersion !== PROMPT_VERSION;
-        if (!forceRejudge && !promptOutdated) {
-          if (tracked) {
-            const displayable = existing.verdict === 'related' && existing.score >= 70;
-            trackLog(`⏭ ステップ3: ai判定済みのためスキップ（promptVersion=${existing.promptVersion ?? '旧'}）`);
-            trackLog(`   title="${p.title}"`);
-            trackLog(`   id=${p.id} | verdict=${existing.verdict} | score=${existing.score}`);
-            trackLog(`   公開表示: ${displayable ? '✅ 表示対象' : `❌ 非表示（verdict=${existing.verdict}, score=${existing.score}）`}`);
-            if (existing.reason) trackLog(`   AI理由: "${existing.reason}"`);
-          }
-          const displayable = existing.verdict === 'related' && existing.score >= 70;
-          console.log(`[PUBLIC_FILTER] itemTitle:"${p.title.slice(0, 60)}" category:${cat} label:${existing.verdict} score:${existing.score} isPublic:${displayable}`);
-          skipped++;
-          catSkipped++;
-          continue;
-        }
-        // promptVersion が違うか forceRejudge → 再判定へ
-        if (promptOutdated) {
-          console.log(`[batch]   プロンプト更新再判定: ${existing.promptVersion ?? '旧'} → ${PROMPT_VERSION} | "${p.title.slice(0, 50)}"`);
-        }
-      }
-
-      // ━━━ 優先度3.5: 卒業後グループ商品候補チェック ━━━
-      // manual・shouldAutoApprove 済は上でスキップ済みのため非影響
-      // ai 判定済み（スキップ対象外のもの = outdated or forceRejudge）も対象にする
-      if (personMeta) {
-        const guardResult = checkPostMembershipGroupContent(
-          p.title,
-          person.name,
-          person.config.aliases ?? [],
-          personMeta,
-        );
-        if (guardResult.shouldReview) {
-          if (tracked) {
-            trackLog(`🎓 ステップ3.5: 卒業後グループ商品候補 → uncertain 保存`);
-            trackLog(`   title="${p.title}"`);
-            trackLog(`   id=${p.id} | reason="${guardResult.reason}"`);
-          }
-          console.log(`[batch]   卒業後グループ商品候補: id=${p.id} | "${p.title.slice(0, 60)}"`);
-          await saveVerdict(person.name, p.id, 'uncertain', 0, 'auto', guardResult.reason);
-          membershipFiltered++;
-          catNew++;
-          continue;
-        }
-      }
-
-      // ━━━ 優先度4: 未判定 / auto 判定 / 再判定対象 → AI キューへ ━━━
-      if (tracked) {
-        trackLog(`🎯 ステップ3→4: AI判定キューへ追加`);
-        trackLog(`   title="${p.title}"`);
-        trackLog(`   id=${p.id} | 既存verdict=${existing?.source ?? 'なし'}${forceRejudge ? ' (forceRejudge)' : ''}`);
-      }
-      console.log(`[batch]   AI対象: id=${p.id} existing=${existing?.source ?? 'なし'} | "${p.title.slice(0, 60)}"`);
-      toJudge.push(p);
-      catNew++;
-    }
-
-    console.log(`[batch] ${cat} 集計: 新規=${catNew} スキップ(判定済)=${catSkipped} 除外KW=${catExcluded}`);
-
-    // 新品カテゴリのタイトルを収集（後続の中古dedup用: 中古カテゴリ自体は対象外）
-    if (cat !== '中古') {
-      for (const p of products) {
-        newTitleSet.add(p.title.replace(/\s+/g, ' ').trim().toLowerCase());
-      }
-    }
+    stored += catResult.stored;
+    autoApproved += catResult.autoApproved;
+    skipped += catResult.skipped;
+    excluded += catResult.excluded;
+    usedSuppressed += catResult.usedSuppressed;
+    membershipFiltered += catResult.membershipFiltered;
+    toJudge.push(...catResult.toJudge);
   }
 
   console.log(`[batch] --- 全カテゴリ集計: 取得=${stored} 新規(AI対象)=${toJudge.length} スキップ=${skipped} 除外=${excluded} ---`);

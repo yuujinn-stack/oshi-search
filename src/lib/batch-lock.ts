@@ -17,6 +17,12 @@ export function personAiJudgeLockKey(personName: string): string {
   return `product-ai-judge:${personName.trim()}`;
 }
 
+// 人物単位の楽天再取得ロックキー（カテゴリ単位のリクエストごとに取得・解放する。
+// AI判定ロックとは別の名前空間のため、互いのロックには影響しない）
+export function personRakutenFetchLockKey(personName: string): string {
+  return `product-rakuten-refetch:${personName.trim()}`;
+}
+
 // ロックの有効期間: 10分（通常の全件バッチは1〜2分で完了）
 const LOCK_TTL_MS = 10 * 60 * 1000;
 
