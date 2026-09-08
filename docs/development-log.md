@@ -1270,3 +1270,68 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 **変更なし（今回維持）：** robots.txt、AIクローラー設定、llms.txt、sitemap.xml構造、URL構造、DBスキーマ・マイグレーション、noindex（新規追加なし）、大量ページ生成なし。
 
 **注記：** このタスクはユーザー指示により、この時点でcommit/pushを行っていない（次回のセッションでレビュー後にcommit予定）。
+
+---
+
+## Task 27 — SEO改善 第3段階：薄いページ整理判断＋作品ページクロール/インデックス改善調査（未commit）
+
+**目的：** Search Console「検出 - インデックス未登録」約3,512件（大部分が/work/作品ページ）の原因調査と、既存データのみを使った安全な作品ページ改善。ページ削除・noindex追加・URL変更・sitemap構造変更は一切行っていない（今回は提案のみ）。
+
+**調査方法：** 一時的な読み取り専用スクリプト（`scripts/work-page-seo-audit.ts`、確認後削除・commit対象外）で本番相当データを集計。DB書き込みは一切なし。
+
+**主な確認事実：**
+- 総公開作品数（distinct workId）: 13,225件（personName×workId行数は22,181行、1作品平均1.68人の出演者）
+- 人物ページと紐づく作品数: 13,225件（100%）／紐づかない作品数: 0件（`getAllPersonsForWork`が返すpersonNameは常に有効な公開人物と一致することを確認。「孤立作品ページ」は人物リンク不備が原因ではないことが判明）
+- VODあり: 7,333件（55.5%）／VODなし: 5,892件（44.5%）
+- workId接頭辞別・あらすじ(overview)保有率: csv-tv 9,221件中0件（0%）、csv-movie 757件中0件（0%）、tmdb-tv 1,790件中1,399件（78%）、tmdb-movie 1,452件中1,014件（70%）— **Search Consoleが薄いページとして検出しているcsv-tv/csv-movie系（全体の69.7%）は、あらすじが構造的に0%であることを確認**。これがSTEP5の主要な確認済み原因。
+- 品質分類（あらすじ・VOD・公開年の3項目のうち何項目該当するかで判定。人物リンク・役名はほぼ全作品にあり判別力が無いため除外）: A（3項目すべて該当）2,112件／B（1〜2項目）11,084件／C（0項目、タイトル＋人物・役名のみ）29件／D（タイトルplaceholder等の問題候補）0件
+- `work_aliases`（統合済み重複）409件のうち19件は、統合元workIdが依然としてauto_published公開作品としても存在しており、sitemapに308リダイレクト対象URLが混入している状態を確認（管理画面の重複統合フローで解消できる候補、削除・redirect追加は今回未実施）
+- `normalizedTitle`が同一で`work_aliases`未登録の重複候補: 307組・632workId（例: 「ポケットモンスター」がcsv-tv-ポケットモンスターとtmdb-tv-60572の両方に存在）— 既存の重複統合レビュー機能（work-dedup）の対象候補として報告のみ
+- 内部リンク到達性: ホーム→グループ/ジャンル（1クリック、全件リンクあり）→人物（2クリック）→作品（3クリック）。ホーム→VODページ（1クリック）→作品（2クリック、VODありの55.5%のみ）。ホームの「注目の人物」枠は12人限定だが、グループ・ジャンル経由では全人物に到達可能なため、真に孤立した（どこからも到達不能な）作品ページは無いことを確認。
+
+**あらすじフォールバック文の実装 → 実データ検証の結果、不採用として差し戻し：**
+- 当初、`src/app/work/[workId]/page.tsx`にあらすじ（`work.overview`）未登録作品向けの要約文フォールバック（既存データのみから「{タイトル}は{種別}（{年}）。{出演者}が出演。{VOD}で配信中。」という文を組み立てて表示）を実装したが、ユーザー指示によりcsv-tv 3件・csv-movie 2件の実データで検証したところ、5件とも文法構造が完全に同一で名詞部分のみが入れ替わる、高度にテンプレート化された文章であることが判明（例：「パクパクasmiちゃんはドラマ（2025年）。asmiが出演。TVerで配信中。」「サムライフは映画（2015年）。松岡茉優が出演。U-NEXTで配信中。」）。この文は同ページ内に既に表示済みの構造化データ（タイトル・種別バッジ・公開年・出演者一覧・配信情報セクション）を単に文章として再構成したものに過ぎず、新しい情報量を追加しない。ユーザーの明示的な基準（「9,000ページ以上でほぼ同型になるだけのテンプレート文章であれば採用しない」）に該当すると判断し、**実装を差し戻した**（`git diff`で当該ファイルの差分が完全に消えていることを確認済み）。
+- 差し戻しにより、今回のセッションでの`src/app/work/[workId]/page.tsx`への変更は最終的に無し。
+
+**work_aliases 19件の詳細確認結果：** 全19件がいずれも単純な1段リダイレクト（旧workId→canonical workIdの1対1）で、redirect先はすべて現在auto_published公開作品として200を返し、chainやloopは無く、redirect先URLはすべて既にsitemapに含まれていることを確認。この整合性の高さから、「sitemap生成時にwork_aliasesのaliasWorkIdのみをworkPersonMapから除外する」という安全な対応が技術的に成立する見込み（DBレコード削除・status変更は不要）。ただしユーザー指示により今回は実装せず、調査結果の報告のみに留めた。
+
+**今回実装しなかったもの（理由）：**
+- あらすじフォールバック文（上記の通り、実データ検証の結果テンプレート化が確認されたため不採用）
+- 内部リンク追加（STEP6）：第1・第2段階で既に人物→作品・作品→人物・作品→VOD・グループ→人物の主要導線が実装済みであり、優先順位リストに沿った新たな欠落は確認できなかったため、今回の追加実装はなし。
+- sitemapからのwork_aliases除外：技術的に安全に実装可能と判断したが、ユーザー指示により今回は調査・提案のみで実装は見送り。
+- noindex追加・ページ削除・redirect追加・sitemap除外（STEP9の③④）・normalizedTitle重複307組の統合：ユーザー指示により提案のみに留め、実装はしていない（既存のwork-dedupレビュー機能での人手確認を維持）。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1427テスト全通過（既存テストから変更なし）
+- `next build` 成功
+- `git status`／`git diff`で、第3段階に関するコード変更が最終的に0件（開発ログ追記のみ）であることを確認
+
+**変更なし（今回維持）：** robots.txt、AIクローラー設定、llms.txt、sitemap.xml構造、URL構造、DBスキーマ・マイグレーション、noindex（変更・追加なし）、既存人物/作品/グループURL、第1・第2段階のmetadata/BreadcrumbList実装、`src/app/work/[workId]/page.tsx`（差し戻し後、無変更）。
+
+**注記：** 第3段階の前半（あらすじフォールバックの実装・差し戻し）はコード変更なしで終了。sitemapのwork_aliases除外は、続くTask 28として実装した。
+
+---
+
+## Task 28 — SEO改善 第3段階（続き）：sitemapからwork_aliases統合元URLを除外
+
+**目的：** Task 27で確認した「work_aliasesに統合元として登録済みだが依然auto_published公開作品としても存在する19件」について、DBレコードのstatus変更・削除・redirectロジック変更を一切行わずに、sitemap生成時のみこれらのURLを除外する。
+
+**実装前の内部リンク監査（コード変更前に実施）：** 全ての`/work/{workId}`href生成は`src/lib/work-url.ts`の`getWorkPublicUrl()`という単一の共通関数を経由していることをgrepで確認（WorkCard.tsx、StreamingNowSection.tsx、person/work/groups各ページ、vod-page.ts、ranking.tsなど全呼び出し元で例外なし）。この関数は`canonicalWorkId`引数を受け取れる設計になっているが、**実際にはどの呼び出し元もこの引数を渡しておらず、alias→canonical変換は現状どこでも行われていない**ことを確認。実データ検証として、`csv-tv-教場ⅱ`（work_aliasesの統合元workId）が目黒蓮の人物ページの「出演作品」一覧に実際に`href="/work/csv-tv-%E6%95%99%E5%A0%B4%E2%85%B1"`として出力されていることをdevサーバー上のHTMLで直接確認した。つまり、sitemap除外だけでは内部リンク経由のクロールは止められない（今回はsitemapのみの対応とし、内部リンクのalias解決は別タスクとする）。
+
+**変更したファイルと内容：**
+- `src/lib/work-store.ts`：`getAllWorkAliasSourceIds()`を新規追加。`work_aliases`テーブルの`alias_work_id`列のみを取得しSetで返す読み取り専用関数（DB書き込みなし）。
+- `src/app/sitemap.ts`：`getAllWorkAliasSourceIds()`を追加取得し、作品URL生成のループ直前で`workPersonMap.keys()`から`aliasSourceIds`に含まれるworkIdを`.filter()`で除外。`getAllPublishedWorkPersonMap()`自体（`src/lib/ranking.ts`でも使用中）は無変更のため、他の呼び出し元への影響なし。
+
+**設計上の判断：**
+- DBのstatus変更・レコード削除は一切行わず、sitemap生成という「読み取り側」でのみフィルタすることで、既存のredirectロジック（`lookupWorkAlias`→`permanentRedirect`）や公開判定条件に一切触れずに実現した。
+- 追加DBクエリは`SELECT alias_work_id FROM work_aliases`（主キーのみ、409行）の1本のみ。sitemapが既に行っている22,000行超の作品集計・VOD集計と比べて無視できる負荷。
+
+**動作確認（実データ）：**
+- sitemap総URL数：変更前13,656件 → 変更後13,637件（**差分19件、Task 27で確認した対象件数と完全一致**）
+- 確認済み19件全て：`/work/{aliasWorkId}`がsitemapから消え、対応するcanonical workIdのURLはsitemapに残っていることを個別に確認（例：`csv-tv-venue101`は消滅、`tmdb-tv-202091`は残存）
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1427テスト全通過（既存テストから変更なし）
+- `next build` 成功
+
+**変更なし（今回維持）：** robots.txt、AIクローラー設定、llms.txt、sitemap.xml全体の構造（URLリスト生成ロジック以外）、URL構造、DBスキーマ・マイグレーション、DBレコードのstatus/deleted、work_aliasesテーブルの内容、redirectロジック、noindex。

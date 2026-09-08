@@ -2,7 +2,7 @@
 
 import { cache } from 'react';
 import { db } from '@/db/client';
-import { works as worksTable } from '@/db/schema';
+import { works as worksTable, workAliases } from '@/db/schema';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { upsertWork } from '@/db/write';
 import { normalizeProviderName, deduplicateProviders } from '@/lib/vod-dedup';
@@ -570,6 +570,20 @@ export async function getAllPublishedWorkPersonMap(): Promise<Map<string, string
   } catch (err) {
     console.error('[db] getAllPublishedWorkPersonMap failed:', String(err));
     return new Map();
+  }
+}
+
+// sitemap.ts 専用: work_aliases に統合元として登録済みのworkId一覧（Set）。
+// 統合元workIdの行がstatus変更・削除される前でも、sitemapには統合先（canonical）の
+// URLだけを載せるためのフィルタ用。DBの書き込みは行わず、既存のstatus/redirect
+// ロジックにも一切影響しない（読み取り専用・sitemap生成時のみ使用）。
+export async function getAllWorkAliasSourceIds(): Promise<Set<string>> {
+  try {
+    const rows = await db.select({ aliasWorkId: workAliases.aliasWorkId }).from(workAliases);
+    return new Set(rows.map((r) => r.aliasWorkId));
+  } catch (err) {
+    console.error('[db] getAllWorkAliasSourceIds failed:', String(err));
+    return new Set();
   }
 }
 

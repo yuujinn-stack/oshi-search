@@ -2,14 +2,14 @@ import type { MetadataRoute } from 'next';
 import { getAllPersonsMerged, getAllGroupsMerged, getAllGenresMerged } from '@/lib/persons';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
-import { getAllPublishedWorkPersonMap, getAllPublishedWorkLastModified } from '@/lib/work-store';
+import { getAllPublishedWorkPersonMap, getAllPublishedWorkLastModified, getAllWorkAliasSourceIds } from '@/lib/work-store';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import { VOD_PAGE_PROVIDERS, getVodProviderWorkCounts } from '@/lib/vod-page';
 
 const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const [persons, groups, genres, groupMetas, workPersonMap, vodProviderWorkCounts, workLastModified] = await Promise.all([
+  const [persons, groups, genres, groupMetas, workPersonMap, vodProviderWorkCounts, workLastModified, aliasSourceIds] = await Promise.all([
     getAllPersonsMerged(),
     getAllGroupsMerged(),
     getAllGenresMerged(),
@@ -17,6 +17,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     getAllPublishedWorkPersonMap(),
     getVodProviderWorkCounts(),
     getAllPublishedWorkLastModified(),
+    getAllWorkAliasSourceIds(),
   ]);
   const groupMetaByName = new Map(groupMetas.map((g) => [g.groupName, g]));
 
@@ -85,7 +86,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'weekly' as const,
       priority: 0.8,
     })),
-    ...[...workPersonMap.keys()].flatMap((workId) => {
+    // work_aliases に統合元として登録済みのworkId（正規URLへ308される旧URL）は
+    // sitemapから除外する。canonical側のworkIdはworkPersonMapに含まれる限りそのまま残る。
+    ...[...workPersonMap.keys()].filter((workId) => !aliasSourceIds.has(workId)).flatMap((workId) => {
       const url = getWorkPublicUrl({ workId });
       if (!url) return [];
       const updatedAt = workLastModified.get(workId);
