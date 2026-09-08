@@ -27,6 +27,9 @@ export type { VodProvider, VodProviderType, VodSource } from './vod';
 
 export interface WorkRecord {
   id: string;
+  // work_aliases に統合元として登録されている場合の統合先workId。
+  // 内部リンク生成時のみ使用する（idそのものは元のDB行の識別子として変更しない）。
+  canonicalWorkId?: string;
   personName: string;
   title: string;
   originalTitle?: string;      // 原題（英語等）

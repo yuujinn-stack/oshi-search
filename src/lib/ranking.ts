@@ -1,7 +1,7 @@
 import { getRedis } from '@/lib/redis';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllGroupMetas } from '@/lib/group-meta';
-import { getPublishedWorks, getAllPublishedWorkPersonMap, getPublicWorkById } from '@/lib/work-store';
+import { getPublishedWorks, getAllPublishedWorkPersonMap, getPublicWorkById, getWorkAliasCanonicalMap } from '@/lib/work-store';
 import { getAllStoredProducts, getStoredProductImageUrl } from '@/lib/product-store';
 import { isConfirmedVodAvailability } from '@/lib/vod-dedup';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
@@ -145,13 +145,14 @@ export async function getRankingData(): Promise<RankingData> {
   // ── 1. 人物閲覧数 + 検索ランキング + SCAN キー + DB全公開作品マップ を並列取得 ──
   const pipe = redis.pipeline();
   for (const p of allPersons) pipe.hgetall(`person:view:${p.name}`);
-  const [pipeResults, searchHash, workKeys, productKeys, workPersonMap, groupMetas] = await Promise.all([
+  const [pipeResults, searchHash, workKeys, productKeys, workPersonMap, groupMetas, workAliasMap] = await Promise.all([
     pipe.exec() as Promise<unknown[]>,
     redis.hgetall('search:ranking') as Promise<Record<string, string> | null>,
     scanKeys(redis, 'work:click:*'),
     scanKeys(redis, 'product:click:*'),
     getAllPublishedWorkPersonMap(),
     getAllGroupMetas(),
+    getWorkAliasCanonicalMap(),
   ]);
 
   // 閲覧数でソートして TOP8 を選定
@@ -240,7 +241,8 @@ export async function getRankingData(): Promise<RankingData> {
           return null;
         }
         const meta = metas[i] as Record<string, string> | null;
-        const detailUrl = getWorkPublicUrl({ workId, personName: dbPersonName });
+        const canonicalWorkId = workAliasMap.get(workId);
+        const detailUrl = getWorkPublicUrl({ workId, canonicalWorkId, personName: dbPersonName });
         if (!detailUrl) return null;
         return {
           workId,

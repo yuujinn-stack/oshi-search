@@ -102,7 +102,7 @@ function getPublicProviders(work: WorkRecord, terminatedSlugs: Set<string>): Vod
 
 // ─── 作品コンパクトリンク ──────────────────────────────────────────────────────
 function CompactWorkLink({ work }: { work: WorkRecord }) {
-  const href = getWorkPublicUrl({ workId: work.id, personName: work.personName }) ?? '#';
+  const href = getWorkPublicUrl({ workId: work.id, canonicalWorkId: work.canonicalWorkId, personName: work.personName }) ?? '#';
   return (
     <Link href={href} className="flex items-center gap-2 p-2 rounded-lg hover:bg-indigo-50 transition-colors group">
       {work.posterUrl ? (

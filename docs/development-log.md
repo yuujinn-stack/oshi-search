@@ -1335,3 +1335,40 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 - `next build` 成功
 
 **変更なし（今回維持）：** robots.txt、AIクローラー設定、llms.txt、sitemap.xml全体の構造（URLリスト生成ロジック以外）、URL構造、DBスキーマ・マイグレーション、DBレコードのstatus/deleted、work_aliasesテーブルの内容、redirectロジック、noindex。
+
+---
+
+## Task 29 — SEO改善 第3段階（続き）：内部リンクのwork_aliases旧URL出力を解消（canonical直接リンク化）
+
+**目的：** Task28で判明した「内部リンク生成が`getWorkPublicUrl()`経由でwork_aliasesの統合元workId（旧URL）をそのまま出力してしまう」問題を解消する。旧URLへの308リダイレクト機能自体は維持したまま、サイト内部からは最初からcanonical URLへ直接リンクするようにする。
+
+**STEP1 設計調査結果：**
+- `/work/{workId}`のhref生成は全て`src/lib/work-url.ts`の`getWorkPublicUrl()`という単一の共通関数を経由（grepで全呼び出し元確認済み・例外なし）。
+- `getWorkPublicUrl()`は元々`canonicalWorkId`引数を受け取れる設計だったが、どの呼び出し元も渡していなかったため、alias解決が機能していなかった。
+- 実際にhrefを生成している箇所は6ファイル：`src/components/WorkCard.tsx`（Client Component）、`src/components/site/StreamingNowSection.tsx`（Server Component）、`src/app/person/[slug]/page.tsx`（Server Component、配信サービス別グループのリンク）、`src/app/work/[workId]/page.tsx`（Server Component、関連作品セクション）、`src/app/groups/[groupSlug]/page.tsx`内の`CompactWorkLink`（Server Component）、`src/lib/ranking.ts`（人気作品のdetailUrl構築）、`src/lib/vod-page.ts`（`/vod/[provider]`一覧のdetailUrl構築）。
+- これらのうち`WorkCard.tsx`と`StreamingNowSection.tsx`はいずれも`WorkRecord`をpropsとして受け取るだけで、自らDBアクセスは行わない（`WorkCard`は`'use client'`）。そのため、canonicalWorkIdをこれらのコンポーネントで新たに解決するのではなく、**データ取得元（サーバー側）で`WorkRecord`にcanonicalWorkIdを付与してから渡す**設計を採用した。
+
+**採用した解決方法：**
+- `src/types/work.ts`：`WorkRecord`に`canonicalWorkId?: string`を追加（オプショナルフィールド。既存の`id`フィールドは一切変更しない＝DB行の識別子としての`id`の意味は保持）。
+- `src/lib/work-store.ts`：`getWorkAliasCanonicalMap()`を新規追加（`work_aliases`から`aliasWorkId→canonicalWorkId`のMapを構築、reactの`cache()`でリクエスト内重複取得を防止）。`getPublishedWorks()`・`getPublishedWorksOrThrow()`の両方で、このMapを使い返却前のWorkRecord[]に`canonicalWorkId`を付与する`withCanonicalWorkId()`ヘルパーを適用。
+- `src/lib/ranking.ts`：人気作品構築時に同じ`getWorkAliasCanonicalMap()`を追加取得し、`detailUrl`生成時に`canonicalWorkId`を渡すよう変更。
+- `src/lib/vod-page.ts`：`getWorksForVodProvider()`内で同じMapを取得し、`mapRawRowToVodPageWork()`の`detailUrl`生成時に使用。
+- `src/components/WorkCard.tsx`・`src/components/site/StreamingNowSection.tsx`・`src/app/groups/[groupSlug]/page.tsx`（CompactWorkLink）・`src/app/work/[workId]/page.tsx`（関連作品）・`src/app/person/[slug]/page.tsx`（配信サービス別リンク）：各`getWorkPublicUrl()`呼び出しに`canonicalWorkId: work.canonicalWorkId`（該当フィールド名は箇所により`work`/`w`）を追加しただけ。**`getWorkPublicUrl()`自体のAPI・挙動は一切変更していない**（既存の`canonicalWorkId?.trim() || workId?.trim()`というfallbackロジックがそのまま機能する）。
+
+**N+1対策：** 新規クエリは`getWorkAliasCanonicalMap()`（`work_aliases`の全件、409行、主キーのみ）1本のみ。react `cache()`でラップしているため、1リクエスト内で複数回呼ばれても（例: グループページでメンバーごとに`getPublishedWorks()`を並列呼び出しする場合）実際のDBクエリは1回に集約される。作品カード1件ごとのクエリは一切追加していない。
+
+**動作確認（実データ・devサーバーで確認）：**
+- 目黒蓮／森本慎太郎／阿部亮平／金村美玖／冨里奈央の5人物ページで、対応するalias workId（csv-tv-教場ⅱ／csv-movie-燃えよ剣／csv-movie-君のクイズ／csv-tv-hinabingo／csv-tv-venue101）のhrefが消え、canonical workIdのhrefに変わっていることを確認。
+- 公開alias19件・関連する30人の人物ページ全44組み合わせを機械的に確認し、alias hrefの残存は0件。
+- `/groups/hinatazaka46`グループページ、`/vod/hulu`（csv-tv-hinabingo→tmdb-tv-100357）でも同様にcanonical直接リンクを確認。
+- 旧URL（例: `/work/csv-tv-hinabingo`）への直接アクセスは引き続き308でcanonical URLへリダイレクトされ、リダイレクト先は200を返すことを確認（redirectロジックは無変更）。
+- sitemap除外ロジック（Task28）は今回変更しておらず、sitemap側の挙動に影響なし。
+
+**動作確認（テスト）：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1428テスト全通過（`ranking.test.ts`にwork_aliases解決の新規回帰テストを1件追加、既存テストは無変更のまま全通過）
+- `next build` 成功
+
+**変更なし（今回維持）：** robots.txt、AIクローラー設定、noindex、URL構造、DBスキーマ・マイグレーション、DBレコード（work_aliasesの内容・works.status等）、redirectロジック（`lookupWorkAlias`→`permanentRedirect`は無変更）、sitemapのwork_aliases除外ロジック（Task28）。
+
+**注記：** ユーザー指示により、この時点でcommit/pushを行っていない（レビュー後に指示を待つ）。

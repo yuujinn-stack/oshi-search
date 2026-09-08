@@ -549,7 +549,7 @@ export default async function WorkDetailPage({ params }: Props) {
                   return (
                   <Link
                     key={w.id}
-                    href={getWorkPublicUrl({ workId: w.id }) ?? `/work/${encodeURIComponent(w.id)}`}
+                    href={getWorkPublicUrl({ workId: w.id, canonicalWorkId: w.canonicalWorkId }) ?? `/work/${encodeURIComponent(w.id)}`}
                     className="group"
                   >
                     <div className="aspect-[2/3] rounded-lg overflow-hidden bg-gray-100 mb-1">

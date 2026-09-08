@@ -57,7 +57,7 @@ export default function StreamingNowSection({ works, terminatedSlugs }: Props) {
           const providers = getStreamingProviders(work, terminatedSlugs).slice(0, MAX_PROVIDERS_PER_WORK);
           if (providers.length === 0) return null;
           const posterUrl = getRenderableWorkImageUrl(getWorkDisplayImage(work));
-          const workDetailUrl = getWorkPublicUrl({ workId: work.id, personName: work.personName }) ?? '#';
+          const workDetailUrl = getWorkPublicUrl({ workId: work.id, canonicalWorkId: work.canonicalWorkId, personName: work.personName }) ?? '#';
           const checkedDate = formatCheckedDate(work.vodUpdatedAt);
 
           return (

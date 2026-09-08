@@ -701,7 +701,7 @@ export default async function PersonPage({ params }: Props) {
                         {pWorks.slice(0, 8).map((work) => (
                           <Link
                             key={work.id}
-                            href={getWorkPublicUrl({ workId: work.id, personName: work.personName }) ?? '#'}
+                            href={getWorkPublicUrl({ workId: work.id, canonicalWorkId: work.canonicalWorkId, personName: work.personName }) ?? '#'}
                             className="flex items-center gap-2 py-1 transition-colors group theme-text-link"
                             style={{ color: 'var(--ds-text)', textDecoration: 'none' }}
                           >

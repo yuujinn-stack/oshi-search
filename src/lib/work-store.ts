@@ -82,17 +82,49 @@ export async function getAllWorks(personName: string): Promise<WorkRecord[]> {
   }
 }
 
+// 内部リンク生成用: work_aliases の 統合元workId → 統合先(canonical)workId マップ。
+// react の cache() でリクエスト内の重複DB呼び出しを防ぐ（1リクエスト内で複数の
+// getPublishedWorks* 呼び出しがあっても実クエリは1回のみ。乃木坂46のような
+// 大人数グループページでメンバーごとにgetPublishedWorksを並列呼び出しても、
+// このマップ取得自体はcache()により1回にまとまるためN+1にはならない）。
+// 409件程度の主キー列のみの読み取りで、DB書き込みは行わない。
+export const getWorkAliasCanonicalMap = cache(async (): Promise<Map<string, string>> => {
+  try {
+    const rows = await db.select({
+      aliasWorkId: workAliases.aliasWorkId,
+      canonicalWorkId: workAliases.canonicalWorkId,
+    }).from(workAliases);
+    return new Map(rows.map((r) => [r.aliasWorkId, r.canonicalWorkId]));
+  } catch (err) {
+    console.error('[db] getWorkAliasCanonicalMap failed:', String(err));
+    return new Map();
+  }
+});
+
+// WorkRecord[] に canonicalWorkId を付与する（該当するものだけ）。idそのものは変更しない。
+function withCanonicalWorkId(records: WorkRecord[], aliasMap: Map<string, string>): WorkRecord[] {
+  if (aliasMap.size === 0) return records;
+  return records.map((r) => {
+    const canonicalWorkId = aliasMap.get(r.id);
+    return canonicalWorkId ? { ...r, canonicalWorkId } : r;
+  });
+}
+
 // 公開中（auto_published）の作品のみ取得（人物ページ表示用）
 // status/deleted を SQL 側でフィルタし、不要な行・列の転送を避ける
 export async function getPublishedWorks(personName: string): Promise<WorkRecord[]> {
   try {
-    const rows = await db.select().from(worksTable).where(and(
-      eq(worksTable.personName, personName),
-      eq(worksTable.status, 'auto_published'),
-      eq(worksTable.deleted, false),
-    ));
-    return rows.map(dbRowToWorkRecord)
+    const [rows, aliasMap] = await Promise.all([
+      db.select().from(worksTable).where(and(
+        eq(worksTable.personName, personName),
+        eq(worksTable.status, 'auto_published'),
+        eq(worksTable.deleted, false),
+      )),
+      getWorkAliasCanonicalMap(),
+    ]);
+    const records = rows.map(dbRowToWorkRecord)
       .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0));
+    return withCanonicalWorkId(records, aliasMap);
   } catch (err) {
     console.error('[db] getPublishedWorks failed:', String(err));
     return [];
@@ -104,14 +136,18 @@ export async function getPublishedWorks(personName: string): Promise<WorkRecord[
 // 同じ人物のデータを取得しても実際のクエリは1回のみ。cross-request キャッシュではないため
 // 更新は次のリクエストから即座に反映される）。
 export const getPublishedWorksOrThrow = cache(async (personName: string): Promise<WorkRecord[]> => {
-  const rows = await db.select().from(worksTable)
-    .where(and(
-      eq(worksTable.personName, personName),
-      eq(worksTable.status, 'auto_published'),
-      eq(worksTable.deleted, false),
-    ));
-  return rows.map(dbRowToWorkRecord)
+  const [rows, aliasMap] = await Promise.all([
+    db.select().from(worksTable)
+      .where(and(
+        eq(worksTable.personName, personName),
+        eq(worksTable.status, 'auto_published'),
+        eq(worksTable.deleted, false),
+      )),
+    getWorkAliasCanonicalMap(),
+  ]);
+  const records = rows.map(dbRowToWorkRecord)
     .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0));
+  return withCanonicalWorkId(records, aliasMap);
 });
 
 // 作品を保存（新規・更新どちらも）

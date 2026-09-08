@@ -17,6 +17,7 @@ import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL, DISPLAY_WORK_TYPE_ICON } from '@/lib/work-display-type';
 import { getWorkPublicUrl } from '@/lib/work-url';
+import { getWorkAliasCanonicalMap } from '@/lib/work-store';
 import type { VodProviderType } from '@/types/vod';
 import type { WorkRecord } from '@/types/work';
 
@@ -152,7 +153,7 @@ interface RawWorksRow {
   availability_type: string;
 }
 
-function mapRawRowToVodPageWork(row: RawWorksRow, castByWorkId: Map<string, string[]>): VodPageWork {
+function mapRawRowToVodPageWork(row: RawWorksRow, castByWorkId: Map<string, string[]>, aliasMap: Map<string, string>): VodPageWork {
   const aiData = row.ai_data ?? {};
   const workLike: WorkRecord = {
     id: row.id,
@@ -172,7 +173,8 @@ function mapRawRowToVodPageWork(row: RawWorksRow, castByWorkId: Map<string, stri
     updatedAt: 0,
   };
   const displayType = getDisplayWorkType(workLike);
-  const detailUrl = getWorkPublicUrl({ workId: row.id }) ?? `/work/${encodeURIComponent(row.id)}`;
+  const canonicalWorkId = aliasMap.get(row.id);
+  const detailUrl = getWorkPublicUrl({ workId: row.id, canonicalWorkId }) ?? `/work/${encodeURIComponent(row.id)}`;
   const cast = castByWorkId.get(row.id) ?? [];
 
   return {
@@ -252,14 +254,18 @@ export async function getWorksForVodProvider(
   // 維持したまま返す（呼び出し側の isVodPageOutOfRange() が正しく判定できるようにするため）。
   if (rows.length === 0) return { works: [], totalCount, page, pageSize, totalPages };
 
-  // 主な出演人物をまとめて1クエリで取得（N+1防止）
+  // 主な出演人物をまとめて1クエリで取得（N+1防止）。work_aliasesのcanonical解決マップも
+  // 同時に取得する（1ページ分の作品件数に関わらず、常に1回のみ・cache()で重複排除）。
   const workIds = rows.map((r) => r.id);
-  const castResult = await db.execute(sql`
-    SELECT id, person_name
-    FROM works
-    WHERE id = ANY(${textArraySql(workIds)}) AND status = 'auto_published' AND deleted = false
-    ORDER BY person_name
-  `);
+  const [castResult, aliasMap] = await Promise.all([
+    db.execute(sql`
+      SELECT id, person_name
+      FROM works
+      WHERE id = ANY(${textArraySql(workIds)}) AND status = 'auto_published' AND deleted = false
+      ORDER BY person_name
+    `),
+    getWorkAliasCanonicalMap(),
+  ]);
   const castByWorkId = new Map<string, string[]>();
   for (const r of castResult.rows as Array<{ id: string; person_name: string }>) {
     const list = castByWorkId.get(r.id) ?? [];
@@ -268,7 +274,7 @@ export async function getWorksForVodProvider(
   }
 
   return {
-    works: rows.map((r) => mapRawRowToVodPageWork(r, castByWorkId)),
+    works: rows.map((r) => mapRawRowToVodPageWork(r, castByWorkId, aliasMap)),
     totalCount,
     page,
     pageSize,

@@ -58,7 +58,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
   const displayType = getDisplayWorkType(work);
   const displayLabel = DISPLAY_WORK_TYPE_LABEL[displayType];
   const displayIcon  = DISPLAY_WORK_TYPE_ICON[displayType];
-  const workDetailUrl = getWorkPublicUrl({ workId: work.id, personName: work.personName }) ?? `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
+  const workDetailUrl = getWorkPublicUrl({ workId: work.id, canonicalWorkId: work.canonicalWorkId, personName: work.personName }) ?? `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
   // 画像優先順位: 手動画像 > TMDb/posterUrl > 自動取得OG画像 > プレースホルダー
   const displayPosterUrl = getRenderableWorkImageUrl(getWorkDisplayImage(work));
   // 初期表示・SSR時のフォールバック分類（並べ替えで使っている getWorkImageAspectGroup と

@@ -10,6 +10,7 @@ const mockGetAllPersonsMerged = vi.hoisted(() => vi.fn());
 const mockGetRedis = vi.hoisted(() => vi.fn());
 const mockGetPublishedWorks = vi.hoisted(() => vi.fn());
 const mockGetAllPublishedWorkPersonMap = vi.hoisted(() => vi.fn());
+const mockGetWorkAliasCanonicalMap = vi.hoisted(() => vi.fn());
 const mockGetPublicWorkById = vi.hoisted(() => vi.fn());
 const mockGetAllStoredProducts = vi.hoisted(() => vi.fn());
 const mockGetStoredProductImageUrl = vi.hoisted(() => vi.fn());
@@ -21,6 +22,7 @@ vi.mock('@/lib/redis', () => ({ getRedis: mockGetRedis }));
 vi.mock('@/lib/work-store', () => ({
   getPublishedWorks: mockGetPublishedWorks,
   getAllPublishedWorkPersonMap: mockGetAllPublishedWorkPersonMap,
+  getWorkAliasCanonicalMap: mockGetWorkAliasCanonicalMap,
   getPublicWorkById: mockGetPublicWorkById,
 }));
 vi.mock('@/lib/product-store', () => ({
@@ -121,6 +123,7 @@ beforeEach(() => {
   mockGetAllStoredProducts.mockResolvedValue({});
   mockGetInactiveProviderSlugs.mockResolvedValue(new Set());
   mockGetAllPublishedWorkPersonMap.mockResolvedValue(new Map([[WORK_ID, PERSON_NAME]]));
+  mockGetWorkAliasCanonicalMap.mockResolvedValue(new Map());
   mockGetAllGroupMetas.mockResolvedValue([]);
 });
 
@@ -209,6 +212,21 @@ describe('getRankingData() / popularWorks — 画像URLの取得元（回帰テ�
     expect(result.popularPersons).toEqual([]);
     expect(result.risingPersons).toEqual([]);
     expect(mockGetStoredProductImageUrl).not.toHaveBeenCalled();
+  });
+
+  it('work_aliasesに統合元として登録済みのworkIdは、detailUrlが最初からcanonical側のURLになる', async () => {
+    const CANONICAL_ID = 'tmdb-tv-999999';
+    const redis = new FakeRedis();
+    seedWorkClickSnapshot(redis);
+    mockGetRedis.mockReturnValue(redis);
+    mockGetPublicWorkById.mockResolvedValue(makeWorkRecord({}));
+    mockGetWorkAliasCanonicalMap.mockResolvedValue(new Map([[WORK_ID, CANONICAL_ID]]));
+
+    const result = await getRankingData();
+
+    expect(result.popularWorks).toHaveLength(1);
+    expect(result.popularWorks[0].detailUrl).toContain(encodeURIComponent(CANONICAL_ID));
+    expect(result.popularWorks[0].detailUrl).not.toContain(WORK_ID);
   });
 });
 
