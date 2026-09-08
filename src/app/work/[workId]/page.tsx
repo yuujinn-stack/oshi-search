@@ -20,6 +20,7 @@ import ProviderLogo from '@/components/ProviderLogo';
 import VodTrackLink from '@/components/site/VodTrackLink';
 import AffiliateSlot from '@/components/site/AffiliateSlot';
 import { VOD_TYPE_CONFIG, VOD_TYPE_ORDER, getVodLink, getVodServiceStyle } from '@/lib/vod-cta';
+import { VOD_PAGE_PROVIDERS } from '@/lib/vod-page';
 
 interface Props {
   params: Promise<{ workId: string }>;
@@ -366,6 +367,9 @@ export default async function WorkDetailPage({ params }: Props) {
                   const ctaText = info.isPrimeVideoChannel
                     ? `Prime Video内${info.shortName}で見る`
                     : `${info.displayName}で${cfg.btnLabel}`;
+                  // /vod/[provider] は対象13サービスのみ実在するため、一致するものが
+                  // ある場合のみ内部リンクを追加する（存在しないURLへはリンクしない）。
+                  const vodPageConfig = VOD_PAGE_PROVIDERS.find((v) => v.normalizedSlug === serviceKey);
                   return (
                     <div key={`${p.providerId}-${p.type}-${i}`} className={`rounded-xl border ${cfg.border} ${cfg.bg} p-3`}>
                       <div className="flex items-center gap-3">
@@ -389,6 +393,14 @@ export default async function WorkDetailPage({ params }: Props) {
                           </div>
                           {info.noticeText && (
                             <p className="text-[11px] text-amber-600 mt-1 leading-snug">{info.noticeText}</p>
+                          )}
+                          {vodPageConfig && (
+                            <Link
+                              href={`/vod/${vodPageConfig.urlSlug}`}
+                              className="text-[11px] text-gray-400 hover:text-gray-600 hover:underline mt-1 inline-block"
+                            >
+                              {vodPageConfig.displayName}の配信作品一覧を見る →
+                            </Link>
                           )}
                         </div>
                         {isAi && (

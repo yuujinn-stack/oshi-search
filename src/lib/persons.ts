@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import type { Person, PersonConfig, PersonWithConfig, Genre } from '@/types/person';
 import personsRaw from '../../data/persons_master.json';
 import personsConfigRaw from '../../data/persons_config.json';
@@ -121,7 +122,9 @@ export async function getAllGenresMerged(): Promise<string[]> {
 }
 
 // ジャンルで絞り込み（genre + primaryGenre + genres を検索対象）＋ alias・正規化一致も含む
-export async function getPersonsByGenreExtended(genre: string): Promise<PersonCardData[]> {
+// react の cache() でリクエスト内の重複呼び出しを防ぐ（generateMetadata + ページ本体で
+// 同じジャンルのデータを取得しても実際の集計は1回のみ。cross-request キャッシュではない）。
+export const getPersonsByGenreExtended = cache(async (genre: string): Promise<PersonCardData[]> => {
   const canonical = normalizeTag(genre) ?? genre;
   // 一致対象: リクエスト値 + canonical + その alias すべて
   const allForms = new Set([genre, canonical, ...getGenreAliases(canonical)]);
@@ -154,7 +157,7 @@ export async function getPersonsByGenreExtended(genre: string): Promise<PersonCa
         generation: meta?.generation,
       };
     });
-}
+});
 
 // 全人物 + メタをまとめて取得（ホームページ用: persons と genres を1回の Redis 呼び出しで返す）
 export async function getAllPersonsEnrichedWithGenres(): Promise<{
