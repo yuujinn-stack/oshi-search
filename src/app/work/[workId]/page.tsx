@@ -217,13 +217,15 @@ export default async function WorkDetailPage({ params }: Props) {
   };
 
   // ─── JSON-LD: BreadcrumbList ──
+  // 画面上の可視パンくず（ホーム › 作品タイトル）と一致させる。以前は中間階層に
+  // 実在しない/work（一覧ページ無し）を参照していたため、実在するURLのみの2階層にした。
+  // 作品には複数出演者がいるため、特定の人物ページを親階層にはしない。
   const breadcrumbJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'ホーム', item: siteOrigin },
-      { '@type': 'ListItem', position: 2, name: '作品', item: `${siteOrigin}/work` },
-      { '@type': 'ListItem', position: 3, name: work.title, item: workUrl },
+      { '@type': 'ListItem', position: 2, name: work.title, item: workUrl },
     ],
   };
 

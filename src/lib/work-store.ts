@@ -1,5 +1,6 @@
 // 出演作品データの永続ストレージ（Neon DB）
 
+import { cache } from 'react';
 import { db } from '@/db/client';
 import { works as worksTable } from '@/db/schema';
 import { eq, and, inArray, sql } from 'drizzle-orm';
@@ -99,7 +100,10 @@ export async function getPublishedWorks(personName: string): Promise<WorkRecord[
 }
 
 // DBエラー時に throw する版（人物ページで error/empty を区別するために使う）
-export async function getPublishedWorksOrThrow(personName: string): Promise<WorkRecord[]> {
+// react の cache() でリクエスト内の重複DB呼び出しを防ぐ（generateMetadata + ページ本体で
+// 同じ人物のデータを取得しても実際のクエリは1回のみ。cross-request キャッシュではないため
+// 更新は次のリクエストから即座に反映される）。
+export const getPublishedWorksOrThrow = cache(async (personName: string): Promise<WorkRecord[]> => {
   const rows = await db.select().from(worksTable)
     .where(and(
       eq(worksTable.personName, personName),
@@ -108,7 +112,7 @@ export async function getPublishedWorksOrThrow(personName: string): Promise<Work
     ));
   return rows.map(dbRowToWorkRecord)
     .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0));
-}
+});
 
 // 作品を保存（新規・更新どちらも）
 export async function saveWork(work: WorkRecord): Promise<void> {

@@ -1,6 +1,7 @@
 // AI判定結果・手動判定結果の永続ストレージ（Neon DB）
 // 同じ人物×商品の組み合わせではAIを再実行しない
 
+import { cache } from 'react';
 import { db } from '@/db/client';
 import { verdicts as verdictsTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
@@ -41,7 +42,9 @@ export async function getAllVerdicts(personName: string): Promise<Record<string,
 
 // DBエラー時に throw する版（公開人物ページの商品フィルタで error/empty を区別するために使う）
 // getAllVerdicts が {} を返すと承認済み商品が全件非表示になるため、OrThrow で区別する
-export async function getAllVerdictsOrThrow(personName: string): Promise<Record<string, JudgmentRecord>> {
+// react の cache() でリクエスト内の重複DB呼び出しを防ぐ（generateMetadata + ページ本体で
+// 同じ人物のデータを取得しても実際のクエリは1回のみ。cross-request キャッシュではない）。
+export const getAllVerdictsOrThrow = cache(async (personName: string): Promise<Record<string, JudgmentRecord>> => {
   const rows = await db.select().from(verdictsTable).where(eq(verdictsTable.personName, personName));
   const result: Record<string, JudgmentRecord> = {};
   for (const r of rows) {
@@ -55,7 +58,7 @@ export async function getAllVerdictsOrThrow(personName: string): Promise<Record<
     };
   }
   return result;
-}
+});
 
 // 単一商品の判定結果を保存
 export async function saveVerdict(

@@ -1158,3 +1158,65 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 - `npx vitest run` 1426テスト全通過（既存1417件のうち、契約変更に合わせて`rakuten-refetch-route.test.ts`を新しいカテゴリ単位の契約用に書き直し、`batch-processor.test.ts`の中古dedupテストのモックを更新。それ以外の既存テストは無変更で全通過）
 - `next build` 成功
 - 実際の本番データに対するライブ実行（実際の楽天API・OpenAI呼び出し・DB書き込みを伴う）は、実データを変更してしまうため今回は実施していない。commit/push/deployは未実施（指示待ち）。
+
+---
+
+## Task 25 — SEO改善 STEP2着手：人物ページtitle/description条件分岐・作品ページBreadcrumbList修正
+
+**目的：** Search Console調査（クリック少・平均掲載順位54.5位・作品ページの多くが「検出-インデックス未登録」）を踏まえたSEO改善プロジェクトの最初の安全な実装。既存URL・DB・robots.txt・sitemap・AIクローラー設定・デザインには一切触れず、metadata/JSON-LDの精度向上のみを行った。
+
+**変更したファイルと内容：**
+- `src/app/person/[slug]/page.tsx`：`generateMetadata()`のtitle/descriptionを、実際にDBへ登録されている出演作品（`getPublishedWorksOrThrow`）から動的に条件分岐するよう変更。`getDisplayWorkType(w)`が`'movie'`/`'drama'`かどうかで「出演ドラマ・映画」「出演ドラマ」「出演映画」「出演作品」（作品はあるが映画・ドラマ以外のみの場合）を出し分け、`isConfirmedVodAvailability`で確認済みVOD提供元が1件もない人物には「配信情報」を書かない。架空データは一切生成せず、既存DBの値のみを参照する。
+- `src/app/work/[workId]/page.tsx`：JSON-LDの`BreadcrumbList`を、画面上の可視パンくず（ホーム›作品タイトル）と一致する2階層に修正。従来は中間階層が実在しない`/work`（一覧ページ無し）を参照していたため、実在するURLのみの構成にした。作品には複数出演者がいるため、特定人物ページを親階層にはしていない（ユーザー指示通り）。
+- `src/lib/work-store.ts`：`getPublishedWorksOrThrow()`をReactの`cache()`でラップ。`generateMetadata()`とページ本体の両方が同じ人物の作品データを必要とするため、cache()によりリクエスト内で実際のDBクエリは1回のみに抑えた（クロスリクエストのキャッシュではないため、管理画面での更新は次のリクエストから即座に反映される。既存の他の呼び出し元（ページ本体・`admin/data-loss-audit`）への影響なし、戻り値・シグネチャは無変更）。
+
+**設計上の判断：**
+- title/descriptionの基本文型（「○○（グループ）の写真集・グッズ・出演作品・配信情報まとめ」に類する自然な日本語）は維持し、パイプ区切りのキーワード列挙のような不自然な形式へは変更していない（過度なキーワード詰め込み回避）。
+- 「写真集・グッズ」は商品検索が全登録人物でほぼ共通のため条件分岐対象外とし、明示的に指示のあった「映画」「ドラマ」「配信情報」のみを実データで分岐した。
+- VOD判定は`isConfirmedVodAvailability`のみを使用し、`terminatedSlugs`（サービス終了判定）は含めていない（メタデータの有無判定のみのため、既存の完全な公開フィルタと厳密に一致させる必要はないと判断）。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし（lintスクリプトは本プロジェクトに未設定のため実行対象なし）
+- `npx vitest run` 1427テスト全通過（既存テストから変更なし）
+- `next build` 成功
+- 実データで確認：目黒蓮（映画・ドラマ・VODあり）→「出演ドラマ・映画・配信情報」、遠藤光莉・鶴崎仁香（作品はあるが映画・ドラマ非該当、VODあり）→「出演作品・配信情報」と正しく出し分けられることを確認。作品ページのBreadcrumbList JSON-LDが画面表示と一致（ホーム›作品タイトルの2階層）することを確認。
+
+---
+
+## Task 25 追記 — 人物ページtitle/descriptionの「写真集・グッズ」も実データで条件分岐
+
+**背景：** Task 25で対応した映画・ドラマ・配信情報の条件分岐に続き、「写真集・グッズ・CD・Blu-ray」がほぼ全人物に固定文言で入っている点も実データと一致させるようフィードバックを受けた。既存の商品データ取得処理（`getAllStoredProductsOrThrow`・`getAllVerdictsOrThrow`、どちらも人物ページ本体が既に呼んでいる）を調査し、SEO目的の新しい重いクエリ・楽天API呼び出しを一切追加せずに対応した。
+
+**変更したファイルと内容：**
+- `src/lib/product-store.ts` / `src/lib/judgment-store.ts`：`getAllStoredProductsOrThrow` / `getAllVerdictsOrThrow`をそれぞれReactの`cache()`でラップ（`getPublishedWorksOrThrow`と同じ既存パターン）。`generateMetadata()`とページ本体の両方が同じ人物のデータを必要とするため、実DBクエリを1回のみに保つための対応（戻り値・シグネチャは無変更、他の呼び出し元にも影響なし）。
+- `src/app/person/[slug]/page.tsx`：
+  - `generateMetadata()`で上記2関数を追加取得し、人物ページの商品分類ロジック（`DISPLAY_SECTIONS`）と同じカテゴリ対応で「写真集」（DBカテゴリ'写真集'+'本・雑誌'のいずれかに、明示的にunrelated/deleted判定されていない商品が1件以上）と「グッズ」（'CD'/'Blu-ray・DVD'/'グッズ'/'中古'のいずれか）の有無を判定する`hasUsableProducts()`を追加。CD/Blu-rayを個別の語として名指しすることはせず、存在確認できるカテゴリ群をまとめて「グッズ」1語で扱うことで、確認できないものを無条件に列挙しない方針にした。
+  - title優先順位を「人物名→所属グループ→出演作品・配信先→写真集・グッズ」に組み替え、各要素を実データで条件分岐（例：`目黒蓮（Snow Man）の出演ドラマ・映画・配信先｜写真集・グッズ`）。何も情報が無い極端なケースでは人物名（＋グループ）のみのtitleにフォールバックする。
+  - description も同じ実データで組み立て、1文目には必ず人物名を含める（商品データが無く出演作品文だけになる場合に、人物名の無い文で始まらないようにする追加対応）。
+- URL・canonical・robots.txt・sitemap・AIクローラー設定・noindexには一切触れていない。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1427テスト全通過（既存テストから変更なし）
+- `next build` 成功
+- 実データで写真集のみ（山里亮太）・グッズのみ（稲熊ひな）・双方あり（目黒蓮等6名）・双方なし（齊藤京子）の4パターンすべてを確認し、それぞれ正しく条件分岐されていることを確認。齊藤京子（商品データなし）のdescriptionが人物名を含まない文になっていたバグを発見・その場で修正し、再確認済み。
+
+---
+
+## Task 25 再追記 — 「写真集」表記をDBカテゴリ'写真集'単独に厳密化、それ以外は「関連商品」に統一
+
+**背景：** Task 25追記で「写真集」を判定する際、DBの'写真集'カテゴリと'本・雑誌'カテゴリをまとめて1語で扱っていたため、実際には'本・雑誌'カテゴリの商品しか無い人物（例: 音嶋莉沙、成田凌）のtitleにも「写真集」と表示される不整合が見つかり、修正した。
+
+**変更したファイルと内容：**
+- `src/app/person/[slug]/page.tsx`：
+  - `hasPhotobook`をDBカテゴリ'写真集'のみで判定するよう厳密化（'本・雑誌'は含めない）。
+  - 新たに`hasMagazine`（'本・雑誌'）・`hasCdOrBd`（'CD'+'Blu-ray・DVD'）・`hasGoods`（'グッズ'）・`hasUsedOnly`（'中古'）を個別に判定。
+  - title：「写真集」以外の商品カテゴリはすべて「関連商品」1語にまとめる（写真集のみ→「写真集」、それ以外のみ→「関連商品」、両方→「写真集・関連商品」、いずれも無し→商品節自体を省略）。
+  - description：カテゴリを正確に判定できるものだけ具体的な語（写真集／本・雑誌／CD・Blu-ray／グッズ）を列挙し、単独の判定が難しい「中古」のみの場合に限り「関連商品」にフォールバックする。
+- 新しい楽天API呼び出し・追加DBクエリは発生していない（既存の`getAllStoredProductsOrThrow`/`getAllVerdictsOrThrow`の戻り値を、より細かい単位で参照するようにしただけ）。URL・canonical・robots・sitemap・AIクローラー設定・noindexは無変更。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npx vitest run` 1427テスト全通過（既存テストから変更なし）
+- `next build` 成功
+- 実データ確認：目黒蓮（写真集+複数商品あり）→「写真集・関連商品」、音嶋莉沙・成田凌（本・雑誌のみ、写真集カテゴリ自体は0件）→「関連商品」のみ（誤って「写真集」と書かれないことを確認）、山里亮太（写真集のみ）→「写真集」のみ、稲熊ひな（CD/Blu-rayのみ）→title「関連商品」・description「CD・Blu-ray」、齊藤京子（商品データなし）→商品節なし。

@@ -1,6 +1,7 @@
 // 楽天APIから取得した商品データを永続保存するモジュール（Neon DB）
 // バッチ処理でのみ書き込み、人物ページと管理画面から読み取る
 
+import { cache } from 'react';
 import { db } from '@/db/client';
 import { products as productsTable, batchMeta as batchMetaTable } from '@/db/schema';
 import { eq, sql } from 'drizzle-orm';
@@ -291,9 +292,11 @@ export async function getAllStoredProducts(
 }
 
 // DBエラー時に throw する版（人物ページで error/empty を区別するために使う）
-export async function getAllStoredProductsOrThrow(
+// react の cache() でリクエスト内の重複DB呼び出しを防ぐ（generateMetadata + ページ本体で
+// 同じ人物のデータを取得しても実際のクエリは1回のみ。cross-request キャッシュではない）。
+export const getAllStoredProductsOrThrow = cache(async (
   personName: string,
-): Promise<Partial<Record<ProductCategory, StoredCategoryData>>> {
+): Promise<Partial<Record<ProductCategory, StoredCategoryData>>> => {
   const rows = await db.select().from(productsTable).where(eq(productsTable.personName, personName));
   const result: Partial<Record<ProductCategory, StoredCategoryData>> = {};
   for (const r of rows) {
@@ -305,7 +308,7 @@ export async function getAllStoredProductsOrThrow(
     }
   }
   return result;
-}
+});
 
 // バッチの最終実行情報を保存（Neon DB: batch_meta）
 export async function saveBatchMeta(meta: {

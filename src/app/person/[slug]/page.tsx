@@ -6,6 +6,7 @@ import { getPersonWithConfigMerged, getPersonsByGroupMerged } from '@/lib/person
 import { getAllStoredProductsOrThrow, type StoredCategoryData } from '@/lib/product-store';
 import { getAllVerdictsOrThrow } from '@/lib/judgment-store';
 import { getPublishedWorksOrThrow } from '@/lib/work-store';
+import { getDisplayWorkType } from '@/lib/work-display-type';
 import { getPersonMeta } from '@/lib/person-meta';
 import { getGroupMeta } from '@/lib/group-meta';
 import { groupHref } from '@/lib/group-slug';
@@ -177,15 +178,98 @@ interface Props { params: Promise<{ slug: string }> }
 
 export const dynamic = 'force-dynamic';
 
+// カテゴリ群のいずれかに「明示的にunrelated/deleted判定されていない」商品が
+// 1件でもあれば true（未判定・自動承認・related等は候補として扱う）。
+// AI判定の詳細スコアリングは複製せず、既に明確に却下された商品だけを除外する
+// 簡易版（generateMetadataでの存在有無チェック専用）。
+function hasUsableProducts(
+  categories: ProductCategory[],
+  storedData: Partial<Record<ProductCategory, StoredCategoryData>>,
+  verdicts: Record<string, { verdict: string }>,
+): boolean {
+  for (const cat of categories) {
+    for (const p of storedData[cat]?.products ?? []) {
+      const v = verdicts[p.id]?.verdict;
+      if (v === 'unrelated' || v === 'deleted') continue;
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const name = decodeURIComponent(slug);
   const person = await getPersonWithConfigMerged(name);
   if (!person) return {};
   const groupText = person.group ? `（${person.group}）` : '';
-  const title = `${person.name}${groupText}の写真集・グッズ・出演作品・配信情報まとめ`;
-  const description = `${person.name}の写真集・CD・Blu-ray・グッズを楽天で検索。出演ドラマ・映画・配信サービスもまとめて確認。`;
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
+
+  // title/descriptionは実際に存在するデータだけから条件分岐で組み立てる。
+  // いずれもcache()済みの既存取得関数のため、ページ本体側の同一呼び出しと実クエリは
+  // 共有され、metadata生成のためだけに新しいDBクエリ・楽天API呼び出しは発生しない。
+  const [works, storedData, verdicts] = await Promise.all([
+    getPublishedWorksOrThrow(person.name).catch(() => []),
+    getAllStoredProductsOrThrow(person.name).catch(() => ({})),
+    getAllVerdictsOrThrow(person.name).catch(() => ({})),
+  ]);
+  const hasMovie = works.some((w) => getDisplayWorkType(w) === 'movie');
+  const hasDrama = works.some((w) => getDisplayWorkType(w) === 'drama');
+  const hasVod = works.some((w) => (w.vodProviders ?? []).some((p) => isConfirmedVodAvailability(p)));
+  // カテゴリ単位で実在確認する（DBカテゴリ名とmetadata上の語句を一致させるため、
+  // '写真集'カテゴリと'本・雑誌'カテゴリをまとめて「写真集」と呼ばないようにする）。
+  const hasPhotobook = hasUsableProducts(['写真集'], storedData, verdicts);
+  const hasMagazine = hasUsableProducts(['本・雑誌'], storedData, verdicts);
+  const hasCdOrBd = hasUsableProducts(['CD', 'Blu-ray・DVD'], storedData, verdicts);
+  const hasGoods = hasUsableProducts(['グッズ'], storedData, verdicts);
+  const hasUsedOnly = hasUsableProducts(['中古'], storedData, verdicts);
+  // titleでは「写真集」以外の商品カテゴリ（本・雑誌/CD/Blu-ray/グッズ/中古）をまとめて
+  // 「関連商品」と表現する（カテゴリごとに個別の語を並べてキーワード詰め込みにしない）。
+  const hasOtherProducts = hasMagazine || hasCdOrBd || hasGoods || hasUsedOnly;
+
+  const workTopic =
+    hasMovie && hasDrama ? '出演ドラマ・映画'
+    : hasDrama ? '出演ドラマ'
+    : hasMovie ? '出演映画'
+    : works.length > 0 ? '出演作品'
+    : null;
+
+  // タイトルの優先順位: 人物名 → 所属グループ → 出演作品・配信先 → 写真集・関連商品
+  // （実データに応じて各clauseを条件分岐し、存在しない情報は書かない）
+  const workAndVodClause = [workTopic, hasVod ? '配信先' : null].filter((v): v is string => !!v).join('・');
+  const productClause = [hasPhotobook ? '写真集' : null, hasOtherProducts ? '関連商品' : null]
+    .filter((v): v is string => !!v).join('・');
+  const titleClauses = [workAndVodClause, productClause].filter((c) => c.length > 0);
+  const title = titleClauses.length > 0
+    ? `${person.name}${groupText}の${titleClauses.join('｜')}`
+    : `${person.name}${groupText}`;
+
+  // descriptionは種別を正確に判定できるものだけ具体的な語（写真集/本・雑誌/CD・Blu-ray/グッズ）を
+  // 使い、単独では種別を断定しにくい中古のみの場合だけ「関連商品」にフォールバックする。
+  const descProductWords: string[] = [];
+  if (hasPhotobook) descProductWords.push('写真集');
+  if (hasMagazine) descProductWords.push('本・雑誌');
+  if (hasCdOrBd) descProductWords.push('CD・Blu-ray');
+  if (hasGoods) descProductWords.push('グッズ');
+  if (hasUsedOnly && descProductWords.length === 0) descProductWords.push('関連商品');
+  const descProductClause = descProductWords.join('・');
+
+  // 2文目以降は「も」で前文とつなげるが、1文目には必ず人物名を含める
+  // （商品データが無く出演作品文だけになる場合に、人物名の無い文で始まらないようにする）。
+  const descSentences: string[] = [];
+  if (descProductClause) {
+    descSentences.push(`${person.name}の${descProductClause}を楽天で検索。`);
+  }
+  if (workAndVodClause) {
+    descSentences.push(
+      descSentences.length > 0
+        ? `${workAndVodClause}もまとめて確認。`
+        : `${person.name}の${workAndVodClause}をまとめて確認。`,
+    );
+  }
+  const description = descSentences.length > 0
+    ? descSentences.join('')
+    : `${person.name}${groupText}の情報をまとめて紹介。`;
 
   return {
     title,
