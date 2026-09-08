@@ -3,7 +3,7 @@
 import { cache } from 'react';
 import { db } from '@/db/client';
 import { works as worksTable, workAliases } from '@/db/schema';
-import { eq, and, inArray, sql } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { upsertWork } from '@/db/write';
 import { normalizeProviderName, deduplicateProviders } from '@/lib/vod-dedup';
 import {
@@ -525,34 +525,62 @@ export async function getWorksForImport(
   return map;
 }
 
+// ─── 代表行選択（作品metadata品質基準） ──────────────────────────────────────
+// 同一workIdに複数人物（複数行）が紐づく場合、title/overview/tmdbId/posterUrl/
+// releaseYear等の「作品そのものの情報」は本来共通のはずだが、行ごとに独立して
+// 保存されているため、CSVインポート由来の行（overview/tmdbIdなし）とTMDb由来の
+// 行（overview/tmdbIdあり）が混在することがある。以前は「VOD最終確認日時が
+// 新しい順」で代表行を選んでいたが、VOD確認頻度と作品metadataの充実度は無関係な
+// ため、TMDb由来の充実した行より情報の薄いCSV由来の行がたまたま代表に選ばれて
+// しまうケースが確認された（公開済み複数行作品3,113件中147件で実際に発生）。
+// ここでは人物固有情報（personName/roleName等）・VOD情報（vodUpdatedAt/
+// vodProviders等）を一切含めない「作品metadataの充実度」のみのスコアで代表行を
+// 選ぶ。VOD provider自体は下記の通り全行から別途合算するため、この選択が
+// VOD情報に影響することはない。
+export function computeWorkMetadataQualityScore(record: WorkRecord): number {
+  let score = 0;
+  if (record.tmdbId != null) score += 2;
+  if (record.overview && record.overview.trim().length > 0) score += 2;
+  if (record.posterUrl || record.ogImageUrl || record.manualImageUrl) score += 1;
+  if (record.releaseYear != null) score += 1;
+  return score;
+}
+
+// 同一workIdの複数行（WorkRecord化済み）から代表行を1件選ぶ。
+// 品質スコア降順 → 同点の場合のみvodUpdatedAt降順（品質判定の主基準にはしない、
+// 既存動作をできるだけ変えないための最終手段） → それでも同点ならpersonName昇順、
+// という完全に決定的な順序で常に同じ行を返す。
+export function selectRepresentativeWorkRecord(records: WorkRecord[]): WorkRecord {
+  return [...records].sort((a, b) => {
+    const scoreDiff = computeWorkMetadataQualityScore(b) - computeWorkMetadataQualityScore(a);
+    if (scoreDiff !== 0) return scoreDiff;
+    const vodDiff = (b.vodUpdatedAt ?? -1) - (a.vodUpdatedAt ?? -1);
+    if (vodDiff !== 0) return vodDiff;
+    return a.personName.localeCompare(b.personName);
+  })[0];
+}
+
 // workIdのみで公開作品を1件取得（新正規作品ページ用。personNameなし）
-// 同一workIdに複数人物がある場合は最初の行を代表として返す。
+// 同一workIdに複数人物がある場合は selectRepresentativeWorkRecord() で代表行を選ぶ。
 export async function getPublicWorkById(workId: string): Promise<WorkRecord | null> {
   try {
-    // 同一workIdに複数人物（複数行）が紐づく場合、各行のvod_dataは人物ごとに
-    // 独立して調査・更新される。ある人物の行だけ最近「unknown（確認できず）」で
-    // 再チェックされ、別の人物の行には以前AI Web検索で見つかった確認済み
-    // provider（例: Disney+）が残っている、というケースが実際に存在する
-    // （tmdb-tv-228620「アクトレス」で確認）。
-    // 単純に1行だけ選ぶ（先頭行 or 最新更新行）と、たまたま選ばれなかった行に
-    // ある確認済みproviderが作品詳細から消えてしまう。
-    // vod-page.ts（/vod/[provider]一覧）は「いずれかの行にそのproviderの確認済み
-    // 情報があれば対象に含める」という条件のため、作品詳細もこれに揃えるべく、
-    // 全行のvodProvidersを合算し、既存のdeduplicateProviders()で1本化する。
     const rows = await db.select().from(worksTable)
       .where(and(
         eq(worksTable.id, workId),
         eq(worksTable.status, 'auto_published'),
         eq(worksTable.deleted, false),
-      ))
-      .orderBy(sql`(${worksTable.vodData}->>'vodUpdatedAt')::bigint DESC NULLS LAST`);
+      ));
     if (rows.length === 0) return null;
 
-    const base = dbRowToWorkRecord(rows[0]);
-    if (rows.length === 1) return base;
+    const records = rows.map(dbRowToWorkRecord);
+    const base = selectRepresentativeWorkRecord(records);
+    if (records.length === 1) return base;
 
+    // VOD providerは代表行選択とは独立に、全行から合算する（人物ごとに個別に
+    // 確認・更新されるため、選ばれなかった行にしかない確認済みproviderが
+    // 作品詳細から消えないようにする。tmdb-tv-228620「アクトレス」で確認済みの挙動）。
     const mergedProviders = deduplicateProviders(
-      rows.flatMap((r) => dbRowToWorkRecord(r).vodProviders ?? []),
+      records.flatMap((r) => r.vodProviders ?? []),
     );
     return { ...base, vodProviders: mergedProviders };
   } catch (err) {
