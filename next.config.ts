@@ -18,6 +18,23 @@ const nextConfig: NextConfig = {
         destination: 'https://oshi-search.jp/:path*',
         permanent: true,
       },
+      // SNSプロフィール用の短縮URL（Instagram/Threads/TikTok）。
+      // 見た目を短くしつつ、アクセス時にUTM付きURLへ一時リダイレクトする。
+      {
+        source: '/ig',
+        destination: '/?utm_source=instagram&utm_medium=social&utm_campaign=profile',
+        permanent: false,
+      },
+      {
+        source: '/threads',
+        destination: '/?utm_source=threads&utm_medium=social&utm_campaign=profile',
+        permanent: false,
+      },
+      {
+        source: '/tiktok',
+        destination: '/?utm_source=tiktok&utm_medium=social&utm_campaign=profile',
+        permanent: false,
+      },
     ];
   },
   // Preview デプロイが本番インデックスに混入しないよう全ルートにnoindexを付ける。
