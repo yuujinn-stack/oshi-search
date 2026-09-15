@@ -19,6 +19,7 @@ import WorksSection from '@/components/WorksSection';
 import ProviderLogo from '@/components/ProviderLogo';
 import PageViewTracker from '@/components/site/PageViewTracker';
 import AffiliateSlot from '@/components/site/AffiliateSlot';
+import OshiAdBanner from '@/components/affiliate/OshiAdBanner';
 import PersonHero from '@/components/site/PersonHero';
 import PersonQuickNav from '@/components/site/PersonQuickNav';
 import StreamingNowSection from '@/components/site/StreamingNowSection';
@@ -658,6 +659,9 @@ export default async function PersonPage({ params }: Props) {
 
           {/* ━━━ 今すぐ見られる作品 ━━━ */}
           <StreamingNowSection works={streamingWorks} terminatedSlugs={inactiveSlugs} />
+
+          {/* ━━━ #推しアド（AccessTrade） ━━━ */}
+          <OshiAdBanner personName={person.name} />
 
           {/* ━━━ VODサービス比較 ━━━ */}
           {providerGroups.length > 0 && (

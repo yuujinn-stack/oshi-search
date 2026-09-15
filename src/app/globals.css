@@ -761,6 +761,22 @@ body {
   background: #FEF2F2 !important;
 }
 
+/* #推しアド（OshiAdBanner）: AccessTradeの300×250公式バナーをそのまま埋め込むため、
+   img自体にはwidth/height属性(300x250)が付いているが、スマホ幅がそれより狭い端末で
+   はみ出さないよう max-width:100%; height:auto; でレスポンシブ対応する。
+   img要素自体・リンクコードのHTML文字列は改変しない（表示側のCSSのみ）。 */
+.oshi-ad-banner__creative {
+  max-width: 300px;
+  width: 100%;
+}
+.oshi-ad-banner__creative img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  border-radius: 0.5rem;
+}
+
 /* ─── 人物ページ 数字付きクイックナビ ──────────────────────────────────────
    共通ヘッダー(.site-header)はposition:sticky; top:0; z-index:50。
    実測ヘッダー高さは375〜1280px幅いずれも69px（Playwrightで実測確認済み）。
