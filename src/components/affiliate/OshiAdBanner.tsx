@@ -44,28 +44,60 @@ export default function OshiAdBanner({ personName }: Props) {
   };
 
   return (
-    <div className="theme-card px-4 py-6 flex justify-center">
-      {/* 内側コンテナ（最大幅320px）: PR・説明文・バナーを1つの広告ブロックとして
-          まとめて見せるための枠。PRバッジ・バナーはこの中でさらに300px幅の箱に
-          揃えているため、両者の左端が一致する（バナーの実サイズ・拡大縮小には
-          関与しない。CSS側の表示のみの調整）。 */}
-      <div className="flex flex-col items-center w-full max-w-[320px]">
-        <div className="w-full max-w-[300px] text-left mb-4">
-          <span
-            className="inline-block text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full"
-            style={{ background: 'var(--ds-bg)', color: 'var(--ds-muted)', border: '1px solid var(--ds-border)' }}
+    <div
+      className="theme-card relative overflow-hidden px-4 py-6 flex justify-center"
+      style={{
+        // 「お祝い」感の淡いグラデーション（白→薄ピンク→薄アプリコット）。
+        // color-mix() で各テーマの--ds-surfaceに対して20〜28%だけ色味を混ぜているため、
+        // trust/oshiテーマでは目視で分かる淡いピンク〜アプリコットのグラデーションに、
+        // darkテーマでは紺の--ds-surfaceにほんのり暖色が混ざる程度になり、
+        // どのテーマでも文字の可読性を損なわない。
+        background:
+          'linear-gradient(to bottom, var(--ds-surface) 0%, color-mix(in srgb, var(--ds-surface) 78%, #f9a8d4 22%) 50%, color-mix(in srgb, var(--ds-surface) 72%, #fdba74 28%) 100%)',
+      }}
+    >
+      {/* 推し活・お祝い感の控えめな装飾（3個・カード隅のみ）。
+          pointer-events-none・aria-hidden で操作性・アクセシビリティに影響を与えず、
+          文字・バナーの領域（内側コンテナ）には入らないよう
+          カード自体のpadding帯（px-4=16px）の内側にとどめている。 */}
+      <span aria-hidden="true" className="absolute top-1 left-1.5 text-sm opacity-60 pointer-events-none select-none" style={{ transform: 'rotate(-10deg)' }}>✨</span>
+      <span aria-hidden="true" className="absolute top-1 right-1.5 text-sm opacity-60 pointer-events-none select-none" style={{ transform: 'rotate(8deg)' }}>🎊</span>
+      <span aria-hidden="true" className="absolute bottom-1 right-1.5 text-sm opacity-50 pointer-events-none select-none" style={{ transform: 'rotate(14deg)' }}>✨</span>
+
+      {/* 内側コンテナ: モバイルは最大幅320pxの縦積み、768px以上は左（PR・コピー）+
+          右（バナー）の2カラム構成に切り替える（md:flex-row）。PRバッジ・バナーは
+          モバイルではどちらも300px幅の箱に揃えているため左端が一致し、
+          デスクトップでは左カラム内で左揃えに統一する（バナーの実サイズ・
+          拡大縮小には一切関与しない。CSS側の表示のみの調整）。 */}
+      <div className="flex flex-col items-center md:flex-row md:items-center w-full max-w-[320px] md:max-w-[640px] md:gap-8 relative">
+        <div className="flex flex-col items-center md:items-start w-full md:w-auto md:flex-1">
+          <div className="w-full max-w-[300px] md:max-w-none text-left mb-4">
+            <span
+              className="inline-block text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full"
+              style={{
+                background: 'color-mix(in srgb, var(--ds-surface) 78%, #f472b6 22%)',
+                color: 'color-mix(in srgb, var(--ds-text) 55%, #9d174d 45%)',
+                border: '1px solid color-mix(in srgb, var(--ds-border) 55%, #f472b6 45%)',
+              }}
+            >
+              PR　推し活におすすめ
+            </span>
+          </div>
+          <p className="text-base font-bold leading-snug text-center md:text-left mb-[10px]" style={{ color: 'var(--ds-text)' }}>
+            推しの特別な日を、
+            <br />
+            応援広告でもっと特別にしませんか？
+          </p>
+          <p
+            className="text-xs leading-relaxed text-center md:text-left mb-4 md:mb-0"
+            style={{ color: 'color-mix(in srgb, var(--ds-text) 40%, var(--ds-muted) 60%)' }}
           >
-            PR　推し活におすすめ
-          </span>
+            個人でも、ファン同士でも利用できる応援広告サービスです。
+          </p>
         </div>
-        <p className="text-sm leading-relaxed text-center mb-5" style={{ color: 'var(--ds-text)' }}>
-          🎉 推しの誕生日や記念日に、
-          <br />
-          応援広告でお祝いしてみませんか？
-        </p>
         {/* eslint-disable-next-line react/no-danger -- AccessTrade提供のリンクコードを改変せずそのまま利用する仕様 */}
         <div
-          className="oshi-ad-banner__creative"
+          className="oshi-ad-banner__creative md:flex-shrink-0"
           onClick={handleClick}
           dangerouslySetInnerHTML={{ __html: ACCESSTRADE_BANNER_HTML }}
         />
