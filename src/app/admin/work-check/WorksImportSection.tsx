@@ -47,6 +47,7 @@ interface WorkImportCommitResult {
   vodSavedCount: number;
   vodSkippedCount: number;
   failedCount: number;
+  displayTypeUpdatedCount?: number;
   errors: string[];
 }
 
@@ -146,6 +147,14 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
     setWorkImportCommitResult(null);
     if (workImportFileRef.current) workImportFileRef.current.value = '';
   }
+
+  // 既存作品のworkDisplayTypeだけを変更する行の件数（新規追加・VOD追加とは別枠で集計）。
+  // これが1件以上あれば、新規作品・VODが0件でも実行ボタンを表示する必要がある。
+  const displayTypeChangeCount = workImportPreview
+    ? workImportPreview.previewRows.filter(
+        (r) => r.displayTypeAction === 'set' || r.displayTypeAction === 'update',
+      ).length
+    : 0;
 
   return (
     <div className="border border-gray-200 rounded-xl p-4 bg-white space-y-3">
@@ -257,6 +266,9 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
             {(workImportCommitResult.vodSavedCount ?? 0) > 0 && (
               <span className="ml-2">/ VOD {workImportCommitResult.vodSavedCount}件追加</span>
             )}
+            {(workImportCommitResult.displayTypeUpdatedCount ?? 0) > 0 && (
+              <span className="ml-2">/ カテゴリ更新: {workImportCommitResult.displayTypeUpdatedCount}件</span>
+            )}
           </p>
           <p className="text-gray-500">
             {(workImportCommitResult.skipCount ?? 0) > 0 && `作品スキップ: ${workImportCommitResult.skipCount}件`}
@@ -287,6 +299,11 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
             {(workImportPreview.existingCount ?? 0) > 0 && (
               <span className="bg-sky-100 text-sky-700 px-2 py-1 rounded-lg font-medium">
                 既存作品に紐付け {workImportPreview.existingCount}件
+              </span>
+            )}
+            {displayTypeChangeCount > 0 && (
+              <span className="bg-amber-100 text-amber-700 px-2 py-1 rounded-lg font-medium">
+                カテゴリ更新 {displayTypeChangeCount}件
               </span>
             )}
             {workImportPreview.vodAddCount > 0 && (
@@ -359,6 +376,8 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
                             row.displayTypeAction === 'update' ? 'bg-amber-100 text-amber-700' :
                                                                   'bg-gray-100 text-gray-500'
                           }`}>
+                            {row.displayTypeAction === 'set' && '未設定 → '}
+                            {row.displayTypeAction === 'update' && '変更前 → '}
                             {row.displayTypeLabel ?? row.resolvedDisplayType}
                           </span>
                         ) : (
@@ -399,7 +418,7 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
 
           {/* 実行ボタン */}
           <div className="flex items-center gap-3">
-            {(workImportPreview.addCount > 0 || workImportPreview.vodAddCount > 0) ? (
+            {(workImportPreview.addCount > 0 || workImportPreview.vodAddCount > 0 || displayTypeChangeCount > 0) ? (
               <button
                 onClick={handleWorkImportCommit}
                 disabled={workImporting}
@@ -410,6 +429,7 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
                   : [
                       workImportPreview.addCount > 0 ? `作品${workImportPreview.addCount}件追加` : '',
                       workImportPreview.vodAddCount > 0 ? `VOD${workImportPreview.vodAddCount}件追加` : '',
+                      displayTypeChangeCount > 0 ? `カテゴリ${displayTypeChangeCount}件更新` : '',
                     ].filter(Boolean).join(' + ') + ' 実行'
                 }
               </button>
