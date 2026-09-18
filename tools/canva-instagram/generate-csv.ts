@@ -1,5 +1,5 @@
 /**
- * Canva一括作成用CSV生成ツール
+ * Canva一括作成用CSV/XLSX生成ツール
  *
  * 使い方:
  *   人物1人: npx dotenv -e .env.local -- npx tsx tools/canva-instagram/generate-csv.ts "人物名"
@@ -7,12 +7,21 @@
  *
  * 既存サイトのDB読み取り専用関数のみを再利用する（INSERT/UPDATE/DELETEは一切行わない）。
  * 出力先:
- *   人物1人: tools/canva-instagram/output/{人物名}_{YYYYMMDD_HHmm}.csv
- *   複数人物: tools/canva-instagram/output/canva_batch_{YYYYMMDD_HHmm}.csv（入力順の行、ヘッダー1行）
+ *   人物1人: tools/canva-instagram/output/{人物名}_{YYYYMMDD_HHmm}.csv / .xlsx
+ *   複数人物: tools/canva-instagram/output/canva_batch_{YYYYMMDD_HHmm}.csv / .xlsx（入力順の行、ヘッダー1行）
+ * CSVとXLSXは同じ選定結果・同じ内容から生成される（作品選定・並び順・画像利用可否
+ * チェックはCSV/XLSXで完全に共通）。XLSXはCanva Bulk Createの「画像フィールド」に
+ * work1Image/work2Image/work3Imageを画像として認識させるため、Canva Bulk Createの
+ * URLをそのまま貼っても画像として認識されない仕様（URLは単なるテキストとして扱われる）
+ * への対応として、画像バイナリをセル内に直接埋め込んだ形で出力する。
+ * XLSXは生成後、自動的に ~/Downloads/ にもコピーされる。
  */
 import 'dotenv/config';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
+import ExcelJS from 'exceljs';
+import { chromium } from 'playwright';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getPersonWithConfigMerged } from '@/lib/persons';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
@@ -240,21 +249,262 @@ function buildCsvRow(personName: string, selected: SelectedWork[]): string[] {
   return row;
 }
 
-// ─── ファイル名生成 ─────────────────────────────────────────────────────────────
-// 人物1人: 人物名_YYYYMMDD_HHmm.csv（既存の命名規則、変更なし）
-function buildOutputFileName(personName: string): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
-  return `${personName}_${stamp}.csv`;
+// ─── XLSX組み立て（Canva Bulk Create用: 画像をセル内に直接埋め込む） ───────────────
+// CanvaのBulk Createは画像URLをそのまま貼ってもテキストとして扱われるため、
+// CSVとは別にXLSXを生成し、work1Image/work2Image/work3Image列だけ画像バイナリを
+// 取得してセル内に埋め込む。行・列・作品内容（テキスト）はCSVの行データ（string[][]）
+// をそのまま再利用するため、作品選定ロジック・画像利用可否チェックには一切影響しない。
+const IMAGE_COLUMN_LABELS = new Set(['work1Image', 'work2Image', 'work3Image']);
+const XLSX_IMAGE_COLUMN_WIDTH = 20;
+const XLSX_IMAGE_ROW_HEIGHT = 100;
+
+async function fetchImageBuffer(url: string): Promise<Buffer | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
 }
 
-// 複数人物（一括生成）: canva_batch_YYYYMMDD_HHmm.csv
-function buildBatchOutputFileName(): string {
+function inferImageExtension(url: string): 'jpeg' | 'png' | 'gif' {
+  const lower = url.toLowerCase();
+  if (lower.includes('.png')) return 'png';
+  if (lower.includes('.gif')) return 'gif';
+  return 'jpeg';
+}
+
+// XLSXだけに追加する列（CSVの列構成・出力内容は一切変更しない）
+const XLSX_EXTRA_COLUMNS = ['personPageImage'];
+const XLSX_HEADER = [...CSV_HEADER, ...XLSX_EXTRA_COLUMNS];
+const COVER_IMAGE_COL_INDEX = CSV_HEADER.indexOf('coverImage'); // 既存列を人物写真用に正式採用
+const PERSON_PAGE_IMAGE_COL_INDEX = XLSX_HEADER.indexOf('personPageImage');
+
+// ─── XLSX表示専用: 長いタイトルの改行調整 ──────────────────────────────────────────
+// CSVの列内容・splitTitleForCanva（title1/title2への分割）は一切変更しない。
+// ここではXLSXのセルに書き込む「表示用の値」だけを対象に、既に分割済みの
+// title1/title2それぞれについて、1セグメントが長すぎる場合はセル内改行（\n）を
+// 追加して複数行に折り返す。文字情報の省略・削除は行わない（文字は1つも減らさない）。
+const TITLE_COLUMN_LABELS = new Set([
+  'work1Title1', 'work1Title2', 'work2Title1', 'work2Title2', 'work3Title1', 'work3Title2',
+]);
+const XLSX_LINE_WRAP_THRESHOLD = 10; // 1行あたりの目安文字数
+const XLSX_LINE_DELIMITERS = /[ 　・:：\-－~〜／\/]/g;
+// この記号「だけ」で構成される行は作らない（区切り記号は前の行の末尾へ結合する）
+const PUNCTUATION_ONLY_LINE = /^[ 　・:：\-－~〜／\/]+$/;
+
+function insertLineBreaksForXlsx(text: string): string {
+  if (!text || text.length <= XLSX_LINE_WRAP_THRESHOLD) return text;
+
+  const rawLines: string[] = [];
+  let remaining = text;
+  while (remaining.length > XLSX_LINE_WRAP_THRESHOLD) {
+    const window = remaining.slice(0, XLSX_LINE_WRAP_THRESHOLD + 4);
+    const delimPositions = [...window.matchAll(new RegExp(XLSX_LINE_DELIMITERS))].map((m) => m.index!);
+    let breakAt: number;
+    if (delimPositions.length > 0) {
+      // 目安文字数に一番近い区切り文字の直後で折り返す（自然な位置を優先）
+      breakAt = delimPositions.reduce((best, p) =>
+        Math.abs(p - XLSX_LINE_WRAP_THRESHOLD) < Math.abs(best - XLSX_LINE_WRAP_THRESHOLD) ? p : best,
+      ) + 1;
+    } else {
+      breakAt = XLSX_LINE_WRAP_THRESHOLD; // 区切り文字がなければ文字数で機械的に折り返す
+    }
+    const segment = remaining.slice(0, breakAt).trim();
+    if (segment.length === 0) break; // 無限ループ防止
+    rawLines.push(segment);
+    remaining = remaining.slice(breakAt).trim();
+  }
+  if (remaining) rawLines.push(remaining);
+
+  // 区切り記号だけの行を作らない: 記号のみの行は「前の行の末尾」に結合する
+  // （行頭に記号だけが浮くより、直前の単語の末尾に付く方が自然に見えるため）。
+  // 先頭行が記号だけになった場合のみ、直後の行の先頭に結合する。
+  const lines: string[] = [];
+  for (const line of rawLines) {
+    if (PUNCTUATION_ONLY_LINE.test(line) && lines.length > 0) {
+      lines[lines.length - 1] = `${lines[lines.length - 1]} ${line}`;
+    } else {
+      lines.push(line);
+    }
+  }
+  if (lines.length > 1 && PUNCTUATION_ONLY_LINE.test(lines[0])) {
+    lines[1] = `${lines[0]} ${lines[1]}`;
+    lines.shift();
+  }
+
+  return lines.join('\n'); // 文字は1文字も削除・省略しない。改行を挿入するのみ
+}
+
+function anchorImageToCell(sheet: ExcelJS.Worksheet, imageId: number, colIdx: number, rowNum: number): void {
+  // Canva Bulk Createの要件「単一セルの中に収まっていること」を満たすため、
+  // twoCellAnchor + editAs:'oneCell' でセル範囲ぴったりにアンカーする（検証済みの方式）。
+  sheet.addImage(imageId, {
+    tl: { col: colIdx, row: rowNum - 1 } as ExcelJS.Anchor,
+    br: { col: colIdx + 1, row: rowNum } as ExcelJS.Anchor,
+    editAs: 'oneCell',
+  });
+}
+
+// rows: CSV_HEADERに対応する行データ（buildCsvRowの戻り値をそのまま渡す。内容は不変）
+// personNames: rowsと同じ順番の人物名配列（coverImage/personPageImageの取得に使う）
+async function buildXlsxWorkbook(rows: string[][], personNames: string[]): Promise<ExcelJS.Workbook> {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Sheet1');
+  const personImageMap = loadPersonImageMap();
+
+  XLSX_HEADER.forEach((label, i) => {
+    sheet.getRow(1).getCell(i + 1).value = label;
+  });
+
+  const workImageColIndexes = CSV_HEADER
+    .map((label, i) => (IMAGE_COLUMN_LABELS.has(label) ? i : -1))
+    .filter((i) => i >= 0);
+  const titleColIndexes = CSV_HEADER
+    .map((label, i) => (TITLE_COLUMN_LABELS.has(label) ? i : -1))
+    .filter((i) => i >= 0);
+  for (const idx of [...workImageColIndexes, COVER_IMAGE_COL_INDEX, PERSON_PAGE_IMAGE_COL_INDEX]) {
+    sheet.getColumn(idx + 1).width = XLSX_IMAGE_COLUMN_WIDTH;
+  }
+
+  for (let r = 0; r < rows.length; r++) {
+    const rowNum = r + 2; // ヘッダーが1行目のため
+    const row = rows[r];
+    const personName = personNames[r];
+    const excelRow = sheet.getRow(rowNum);
+    excelRow.height = XLSX_IMAGE_ROW_HEIGHT;
+
+    // 既存14列（CSVと完全に同じ内容）。work1Image等の画像列はセル値を空にする。
+    // タイトル列（work*Title1/2）だけは、CSVの値はそのまま保ちつつXLSX表示用に
+    // 改行だけを追加する（文字の省略はしない）。
+    for (let c = 0; c < row.length; c++) {
+      if (workImageColIndexes.includes(c)) {
+        excelRow.getCell(c + 1).value = '';
+      } else if (titleColIndexes.includes(c)) {
+        const cell = excelRow.getCell(c + 1);
+        cell.value = insertLineBreaksForXlsx(row[c]);
+        cell.alignment = { wrapText: true, vertical: 'top' };
+      } else {
+        excelRow.getCell(c + 1).value = row[c];
+      }
+    }
+    // personPageImage列（XLSXのみの追加列）。値は常に空にしておき、画像は別途埋め込む。
+    excelRow.getCell(PERSON_PAGE_IMAGE_COL_INDEX + 1).value = '';
+
+    // work1Image / work2Image / work3Image の埋め込み（既存処理、変更なし）
+    for (const colIdx of workImageColIndexes) {
+      const url = row[colIdx];
+      if (!url) continue;
+      const buffer = await fetchImageBuffer(url);
+      if (!buffer) {
+        console.log(`  [警告] 画像取得に失敗したためXLSXへの埋め込みをスキップしました: ${url}`);
+        continue;
+      }
+      const imageId = workbook.addImage({ buffer: buffer as unknown as ExcelJS.Buffer, extension: inferImageExtension(url) });
+      anchorImageToCell(sheet, imageId, colIdx, rowNum);
+    }
+
+    // coverImage（人物写真）: person-images.jsonに登録があれば埋め込み、なければ空欄のまま
+    const coverImageEntry = personImageMap[personName];
+    const coverImageBuffer = await resolvePersonImageBuffer(coverImageEntry);
+    if (coverImageBuffer) {
+      const ext = /^https?:\/\//i.test(coverImageEntry ?? '') ? inferImageExtension(coverImageEntry!) : 'jpeg';
+      const imageId = workbook.addImage({ buffer: coverImageBuffer as unknown as ExcelJS.Buffer, extension: ext });
+      anchorImageToCell(sheet, imageId, COVER_IMAGE_COL_INDEX, rowNum);
+    }
+
+    // personPageImage（人物ページのスクリーンショット）: 毎回Playwrightで撮影
+    console.log(`  ${personName}の人物ページをスクリーンショット中...`);
+    const screenshotBuffer = await capturePersonPageScreenshot(personName);
+    if (screenshotBuffer) {
+      const imageId = workbook.addImage({ buffer: screenshotBuffer as unknown as ExcelJS.Buffer, extension: 'png' });
+      anchorImageToCell(sheet, imageId, PERSON_PAGE_IMAGE_COL_INDEX, rowNum);
+    }
+  }
+
+  return workbook;
+}
+
+// ─── coverImage（人物写真）: person-images.json による手動管理 ────────────────────
+// 既存DB・公開サイトには人物写真データが一切存在しないため、Canva専用の対応表
+// ファイルで管理する。ここに未登録の人物は必ず空欄にする（別画像の代用はしない）。
+const PERSON_IMAGES_FILE = path.join(__dirname, 'person-images.json');
+
+function loadPersonImageMap(): Record<string, string> {
+  try {
+    const raw = fs.readFileSync(PERSON_IMAGES_FILE, 'utf-8');
+    return JSON.parse(raw) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+async function resolvePersonImageBuffer(entry: string | undefined): Promise<Buffer | null> {
+  if (!entry || entry.trim().length === 0) return null;
+  const value = entry.trim();
+  if (/^https?:\/\//i.test(value)) {
+    return fetchImageBuffer(value);
+  }
+  // ローカルパス（tools/canva-instagram/ からの相対パスまたは絶対パス）
+  const resolvedPath = path.isAbsolute(value) ? value : path.join(__dirname, value);
+  try {
+    return fs.readFileSync(resolvedPath);
+  } catch {
+    console.log(`  [警告] person-images.jsonのパスが読み込めませんでした: ${value}`);
+    return null;
+  }
+}
+
+// ─── personPageImage（人物ページのスクリーンショット） ────────────────────────────
+// 本番サイトの実際の人物ページをPlaywrightで開き、ビューポート内（スクロールなし
+// で見える範囲）だけを撮影する。DB・公開サイト側のコードには一切触れない。
+const PERSON_PAGE_ORIGIN = 'https://oshi-search.jp';
+const SCREENSHOT_VIEWPORT = { width: 1200, height: 1600 };
+
+async function capturePersonPageScreenshot(personName: string): Promise<Buffer | null> {
+  const url = `${PERSON_PAGE_ORIGIN}/person/${encodeURIComponent(personName)}`;
+  const tmpPath = path.join(os.tmpdir(), `canva-person-screenshot-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
+  try {
+    browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: SCREENSHOT_VIEWPORT });
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.waitForTimeout(500); // フォント・画像の描画安定待ち
+    await page.screenshot({ path: tmpPath }); // fullPage指定なし = ビューポート内のみ
+    return fs.readFileSync(tmpPath);
+  } catch (err) {
+    console.log(`  [警告] ${personName}の人物ページスクリーンショットに失敗しました: ${String(err)}`);
+    return null;
+  } finally {
+    if (browser) await browser.close();
+    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); // 一時ファイルは必ず削除
+  }
+}
+
+function copyToDownloads(sourcePath: string): string {
+  const downloadsDir = path.join(os.homedir(), 'Downloads');
+  const destPath = path.join(downloadsDir, path.basename(sourcePath));
+  fs.copyFileSync(sourcePath, destPath);
+  return destPath;
+}
+
+// ─── ファイル名生成 ─────────────────────────────────────────────────────────────
+// CSV/XLSXで同じタイムスタンプを使い、ファイル名がペアで対応するようにする。
+function buildTimestamp(): string {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
-  return `canva_batch_${stamp}.csv`;
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
+// 人物1人: 人物名_YYYYMMDD_HHmm.csv / .xlsx（既存の命名規則、変更なし）
+function buildOutputFileName(personName: string, stamp: string, ext: 'csv' | 'xlsx'): string {
+  return `${personName}_${stamp}.${ext}`;
+}
+
+// 複数人物（一括生成）: canva_batch_YYYYMMDD_HHmm.csv / .xlsx
+function buildBatchOutputFileName(stamp: string, ext: 'csv' | 'xlsx'): string {
+  return `canva_batch_${stamp}.${ext}`;
 }
 
 function writeCsvFile(fileName: string, csvContent: string): string {
@@ -262,6 +512,14 @@ function writeCsvFile(fileName: string, csvContent: string): string {
   fs.mkdirSync(outputDir, { recursive: true });
   const outputPath = path.join(outputDir, fileName);
   fs.writeFileSync(outputPath, csvContent, 'utf-8');
+  return outputPath;
+}
+
+async function writeXlsxFile(fileName: string, workbook: ExcelJS.Workbook): Promise<string> {
+  const outputDir = path.join(__dirname, 'output');
+  fs.mkdirSync(outputDir, { recursive: true });
+  const outputPath = path.join(outputDir, fileName);
+  await workbook.xlsx.writeFile(outputPath);
   return outputPath;
 }
 
@@ -300,13 +558,22 @@ async function runSinglePerson(personName: string): Promise<void> {
   const row = buildCsvRow(personName, selected);
   const csvContent = [CSV_HEADER, row].map((r) => r.map(csvEscape).join(',')).join('\n') + '\n';
 
-  const fileName = buildOutputFileName(personName);
-  const outputPath = writeCsvFile(fileName, csvContent);
+  const stamp = buildTimestamp();
+  const csvFileName = buildOutputFileName(personName, stamp, 'csv');
+  const csvOutputPath = writeCsvFile(csvFileName, csvContent);
 
-  console.log(`CSV生成完了: ${outputPath}\n`);
+  console.log(`CSV生成完了: ${csvOutputPath}\n`);
   logSelectedWorks(selected, excludedTop, imageRejected);
   console.log('\n=== CSVの中身 ===');
   console.log(csvContent);
+
+  console.log('\nXLSX生成中（画像埋め込み・人物ページ撮影のため時間がかかる場合があります）...');
+  const workbook = await buildXlsxWorkbook([row], [personName]);
+  const xlsxFileName = buildOutputFileName(personName, stamp, 'xlsx');
+  const xlsxOutputPath = await writeXlsxFile(xlsxFileName, workbook);
+  const downloadsPath = copyToDownloads(xlsxOutputPath);
+  console.log(`XLSX生成完了: ${xlsxOutputPath}`);
+  console.log(`Downloadsへコピー完了: ${downloadsPath}`);
 }
 
 // ─── 複数人物モード（一括生成） ──────────────────────────────────────────────────
@@ -355,12 +622,27 @@ async function runBatch(personNames: string[]): Promise<void> {
   }
 
   const csvContent = [CSV_HEADER, ...rows].map((r) => r.map(csvEscape).join(',')).join('\n') + '\n';
-  const fileName = buildBatchOutputFileName();
-  const outputPath = writeCsvFile(fileName, csvContent);
+  const stamp = buildTimestamp();
+  const csvFileName = buildBatchOutputFileName(stamp, 'csv');
+  const csvOutputPath = writeCsvFile(csvFileName, csvContent);
 
-  console.log(`\nCSV生成完了（${personNames.length}人分）: ${outputPath}\n`);
+  console.log(`\nCSV生成完了（${personNames.length}人分）: ${csvOutputPath}\n`);
   console.log('=== CSVの中身 ===');
   console.log(csvContent);
+
+  // Canva Bulk Createが複数行XLSXの画像を行ごとに正しく読み分けられない制約が
+  // 判明したため、複数人物モードのXLSXだけは「人物ごとに1行だけのXLSX」を
+  // 1ファイルずつ生成する（CSVは従来通り1ファイルにまとめたまま、内容も不変）。
+  console.log('\nXLSX生成中（人物ごとに1ファイル・画像埋め込み・人物ページ撮影のため時間がかかる場合があります）...');
+  for (let i = 0; i < personNames.length; i++) {
+    const name = personNames[i];
+    const workbook = await buildXlsxWorkbook([rows[i]], [name]);
+    const xlsxFileName = buildOutputFileName(name, stamp, 'xlsx');
+    const xlsxOutputPath = await writeXlsxFile(xlsxFileName, workbook);
+    const downloadsPath = copyToDownloads(xlsxOutputPath);
+    console.log(`XLSX生成完了（${name}）: ${xlsxOutputPath}`);
+    console.log(`Downloadsへコピー完了: ${downloadsPath}`);
+  }
 }
 
 async function main() {
