@@ -337,6 +337,31 @@ function insertLineBreaksForXlsx(text: string): string {
   return lines.join('\n'); // 文字は1文字も削除・省略しない。改行を挿入するのみ
 }
 
+// ─── XLSX表示専用: 個別タイトルの短縮表示（ユーザー指定の例外のみ） ────────────────
+// CSVの内容・作品選定ロジック・splitTitleForCanvaには一切影響しない。
+// ここに登録されたTitle1の値だけをXLSX表示用に短縮し、対応するTitle2は空欄にする。
+const XLSX_TITLE_DISPLAY_OVERRIDES: Record<string, string> = {
+  '旅するSnow Man - Traveling': '旅するSnow Man',
+};
+const TITLE1_COL_INDEXES = CSV_HEADER
+  .map((label, i) => (label.endsWith('Title1') ? i : -1))
+  .filter((i) => i >= 0);
+
+function applyXlsxTitleOverrides(row: string[]): { row: string[]; overriddenIndexes: Set<number> } {
+  const result = [...row];
+  const overriddenIndexes = new Set<number>();
+  for (const idx of TITLE1_COL_INDEXES) {
+    const override = XLSX_TITLE_DISPLAY_OVERRIDES[result[idx]];
+    if (override !== undefined) {
+      result[idx] = override;
+      result[idx + 1] = ''; // 対応するTitle2も空欄にする
+      overriddenIndexes.add(idx);
+      overriddenIndexes.add(idx + 1);
+    }
+  }
+  return { row: result, overriddenIndexes };
+}
+
 function anchorImageToCell(sheet: ExcelJS.Worksheet, imageId: number, colIdx: number, rowNum: number): void {
   // Canva Bulk Createの要件「単一セルの中に収まっていること」を満たすため、
   // twoCellAnchor + editAs:'oneCell' でセル範囲ぴったりにアンカーする（検証済みの方式）。
@@ -377,13 +402,15 @@ async function buildXlsxWorkbook(rows: string[][], personNames: string[]): Promi
 
     // 既存14列（CSVと完全に同じ内容）。work1Image等の画像列はセル値を空にする。
     // タイトル列（work*Title1/2）だけは、CSVの値はそのまま保ちつつXLSX表示用に
-    // 改行だけを追加する（文字の省略はしない）。
+    // 改行・個別短縮表示（例外指定分のみ）を適用する（CSV自体・文字の省略はしない）。
+    // 短縮表示に置き換えた列は、既に短くなっているため追加の改行は行わない。
+    const { row: displayRow, overriddenIndexes } = applyXlsxTitleOverrides(row);
     for (let c = 0; c < row.length; c++) {
       if (workImageColIndexes.includes(c)) {
         excelRow.getCell(c + 1).value = '';
       } else if (titleColIndexes.includes(c)) {
         const cell = excelRow.getCell(c + 1);
-        cell.value = insertLineBreaksForXlsx(row[c]);
+        cell.value = overriddenIndexes.has(c) ? displayRow[c] : insertLineBreaksForXlsx(displayRow[c]);
         cell.alignment = { wrapText: true, vertical: 'top' };
       } else {
         excelRow.getCell(c + 1).value = row[c];
