@@ -276,10 +276,12 @@ function inferImageExtension(url: string): 'jpeg' | 'png' | 'gif' {
 }
 
 // XLSXだけに追加する列（CSVの列構成・出力内容は一切変更しない）
-const XLSX_EXTRA_COLUMNS = ['personPageImage'];
+const TITLE_FULL_COLUMNS = ['work1TitleFull', 'work2TitleFull', 'work3TitleFull'];
+const XLSX_EXTRA_COLUMNS = ['personPageImage', ...TITLE_FULL_COLUMNS];
 const XLSX_HEADER = [...CSV_HEADER, ...XLSX_EXTRA_COLUMNS];
 const COVER_IMAGE_COL_INDEX = CSV_HEADER.indexOf('coverImage'); // 既存列を人物写真用に正式採用
 const PERSON_PAGE_IMAGE_COL_INDEX = XLSX_HEADER.indexOf('personPageImage');
+const TITLE_FULL_COL_INDEXES = TITLE_FULL_COLUMNS.map((label) => XLSX_HEADER.indexOf(label));
 
 // ─── XLSX表示専用: 長いタイトルの改行調整 ──────────────────────────────────────────
 // CSVの列内容・splitTitleForCanva（title1/title2への分割）は一切変更しない。
@@ -340,6 +342,11 @@ function insertLineBreaksForXlsx(text: string): string {
 // ─── XLSX表示専用: 個別タイトルの短縮表示（ユーザー指定の例外のみ） ────────────────
 // CSVの内容・作品選定ロジック・splitTitleForCanvaには一切影響しない。
 // ここに登録されたTitle1の値だけをXLSX表示用に短縮し、対応するTitle2は空欄にする。
+// 注: Title1/Title2の2ボックス方式は、Canva Bulk Createが空欄セルをテンプレートの
+// 初期文字列で埋めてしまう問題があり、ノーブレークスペース(U+00A0)・ゼロ幅スペース
+// (U+200B)のどちらでも回避できなかった。そのため下記のwork*TitleFull列（1セルに
+// タイトル全体をまとめる方式）を正式な表示手段とし、Title1/Title2列は互換性維持の
+// ためだけに残す（Canvaは今後この2列を参照しない想定）。
 const XLSX_TITLE_DISPLAY_OVERRIDES: Record<string, string> = {
   '旅するSnow Man - Traveling': '旅するSnow Man',
 };
@@ -354,12 +361,23 @@ function applyXlsxTitleOverrides(row: string[]): { row: string[]; overriddenInde
     const override = XLSX_TITLE_DISPLAY_OVERRIDES[result[idx]];
     if (override !== undefined) {
       result[idx] = override;
-      result[idx + 1] = ''; // 対応するTitle2も空欄にする
+      result[idx + 1] = ''; // 対応するTitle2は空欄（この列はCanvaから参照されなくなる想定）
       overriddenIndexes.add(idx);
       overriddenIndexes.add(idx + 1);
     }
   }
   return { row: result, overriddenIndexes };
+}
+
+// ─── XLSX専用: work*TitleFull列（1セルにタイトル全体をまとめる方式） ───────────────
+// Title1/Title2の2ボックス方式をやめ、1つのテキストボックスに常に実データを
+// 入れることで「空欄セルにテンプレートの初期文字列が残る」問題を構造的に回避する。
+// 既存のTitle1/Title2列・CSV・splitTitleForCanvaには一切影響しない。
+function buildTitleFullValue(title1: string, title2: string): string {
+  const override = XLSX_TITLE_DISPLAY_OVERRIDES[title1];
+  if (override !== undefined) return override; // 短縮表示ケースは追加の改行をしない
+  const combined = title2 ? `${title1} ${title2}` : title1;
+  return insertLineBreaksForXlsx(combined);
 }
 
 function anchorImageToCell(sheet: ExcelJS.Worksheet, imageId: number, colIdx: number, rowNum: number): void {
@@ -418,6 +436,16 @@ async function buildXlsxWorkbook(rows: string[][], personNames: string[]): Promi
     }
     // personPageImage列（XLSXのみの追加列）。値は常に空にしておき、画像は別途埋め込む。
     excelRow.getCell(PERSON_PAGE_IMAGE_COL_INDEX + 1).value = '';
+
+    // work*TitleFull列（XLSXのみの追加列）。Title1/Title2の元の値（row、上書き前）から
+    // タイトル全体を1セルにまとめて書き込む。作品が存在しない枠は空文字になる。
+    TITLE1_COL_INDEXES.forEach((title1Idx, i) => {
+      const fullColIdx = TITLE_FULL_COL_INDEXES[i];
+      const fullValue = buildTitleFullValue(row[title1Idx], row[title1Idx + 1]);
+      const cell = excelRow.getCell(fullColIdx + 1);
+      cell.value = fullValue;
+      cell.alignment = { wrapText: true, vertical: 'top' };
+    });
 
     // work1Image / work2Image / work3Image の埋め込み（既存処理、変更なし）
     for (const colIdx of workImageColIndexes) {
