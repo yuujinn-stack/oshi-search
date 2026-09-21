@@ -44,6 +44,13 @@ const CARDS: InstagramHubCard[] = [
     cta: '人物写真を登録',
     note: '現在は「Instagram投稿を作成」画面内（人物選択後）から登録します。専用ページは今後追加予定です。',
   },
+  {
+    icon: '🗂️',
+    title: '一括予約',
+    description: '複数人物を選んで、1日3投稿ずつまとめて予約します。',
+    href: '/admin/instagram-schedule?mode=bulk',
+    cta: '一括予約へ進む',
+  },
 ];
 
 export default function InstagramHubPage() {
@@ -61,7 +68,7 @@ export default function InstagramHubPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {CARDS.map((card) => (
           <a
             key={card.title}

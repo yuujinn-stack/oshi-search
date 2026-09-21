@@ -1647,3 +1647,41 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 - 既存の`InstagramPostClient`・`InstagramScheduleClient`の機能（生成・予約・一覧等）には一切手を加えていない
 
 **変更なし（今回維持）：** Instagram投稿・予約投稿の生成ロジック・API・DB。Instagramへの実投稿は行っていない。
+
+---
+
+## Task 38 — Instagram予約投稿：複数人物一括予約機能を追加（ローカル検証まで）
+
+**目的：** `/admin/instagram-schedule`に、複数人物を選択して1日3枠（09:00/15:00/20:00 JST）へ自動配置し、まとめて予約できる「一括予約」モードを追加する。既存の1件ずつの予約（通常予約）・Cron・Atomic Claim・`INSTAGRAM_AUTOPUBLISH_ENABLED`ガードには一切手を加えない。作業開始前に、既存予約（id=27, 松村北斗, 2026-09-22 09:00, scheduled）の存在を確認済み。
+
+**新規追加：**
+- `src/app/admin/instagram-schedule/PersonMultiSelect.tsx`：検索欄＋チェックボックスによる複数選択＋選択済み人物の並び替え（↑↓ボタン）。投稿済み人物には「投稿済み」バッジを表示するが選択自体は禁止しない。
+- `src/app/admin/instagram-schedule/BulkScheduleClient.tsx`：一括予約UI本体（人物複数選択→開始日・テンプレート選択→自動配置プレビュー→一括生成→プレビュー確認（除外/再生成）→確認モーダル→一括予約）。
+- `src/app/api/admin/instagram-schedule/occupied-slots/route.ts`（GET）：今後N日分の「埋まっている」予定日時一覧（cancelled以外）を返す。
+- `src/app/api/admin/instagram-schedule/posted-persons/route.ts`（GET）：Instagramへ投稿済みの人物名一覧。
+- `src/app/api/admin/instagram-schedule/bulk/route.ts`（POST）：一括予約の確定登録専用エンドポイント（画像生成・Instagram APIアクセスは一切行わない）。
+
+**変更（いずれも既存関数は無変更、追記のみ）：**
+- `src/lib/jst-time.ts`：`allocateBulkSlots()`（純粋関数、DBアクセスなし）を追加。開始日から1日3枠を古い順に走査し、渡された`occupiedIsoSet`に含まれる枠をスキップして人物を順番に割り当てる。クライアントのライブプレビューとサーバー側の空き枠取得の両方から同じロジックを使う。
+- `src/server/instagram-schedule/schedule-store.ts`：`listOccupiedSlotIsos()`・`createSchedulesBatch()`・`SlotConflictError`を追加。`claimDueSchedule`・`dueCondition`・`listDueScheduleIds`・`markPublished`・`markFailed`・`markNeedsReview`・`cancelSchedule`・`retrySchedule`は1文字も変更していない（import文への`gte`/`ne`追加のみが既存コード領域への変更）。
+- `src/lib/instagram-post-store.ts`：`listPostedPersonNames()`を追加。既存の`recordInstagramPost`等は無変更。
+- `src/app/admin/instagram-schedule/InstagramScheduleClient.tsx`：「通常予約 / 一括予約」タブを追加し、既存の単発予約UI（人物選択〜生成〜プレビュー〜予約）はそのまま`mode==='single'`の分岐内に温存。`?mode=bulk`をURLで指定すると一括予約タブを直接開く。予約一覧（`ScheduleList`）は両モード共通で表示。
+- `src/app/admin/instagram/page.tsx`：ハブページに「一括予約」カードを追加（リンク先`/admin/instagram-schedule?mode=bulk`）。カード数が4枚になったためグリッドを`sm:grid-cols-2 lg:grid-cols-4`に調整。
+
+**空き枠割当の安全性：** 一括予約の確定登録（`createSchedulesBatch`）は、(1)渡されたリスト内の日時重複チェック、(2)DB上で該当日時が非cancelled状態で既に埋まっていないかの直前再確認、を行い、1件でも問題があればDBへ一切書き込まずに`SlotConflictError`を返す。全件クリアな場合のみ、1回の複数行INSERT文でまとめて挿入する（drizzle-orm/neon-httpがトランザクション非対応のため、単一INSERT文自体の原子性を利用。一部だけ挿入されて残りが失敗する状態にはならない）。
+
+**動作確認（すべてローカル、Instagram Graph APIへの実リクエストなし）：**
+- `npx tsc --noEmit` エラーなし／`npm run build` 成功。新規ルート（`bulk`・`occupied-slots`・`posted-persons`）がビルド成果物に含まれることを確認
+- `allocateBulkSlots`を実際の`listOccupiedSlotIsos`結果に対して実行し、既存予約（松村北斗 2026-09-22 09:00）を正しくスキップして15:00から配置されることを確認。cancelled状態の予約（森本慎太郎、同一日時）は空き枠として扱われることも確認
+- 既存予約（id=27, 松村北斗）が今回の作業を通じて一切変更されていない（`updatedAt`が変化していない）ことをDBで直接確認
+- 一括登録の重複防止：既存予約と衝突する項目を含むリクエストが409で拒否され、衝突していない項目も含めDBへ一切書き込まれない（全件ロールバック相当）ことを確認。バッチ内の同一日時重複も409で拒否されることを確認
+- 3件の一括予約が1回のリクエストで正しく作成されることを確認（`createSchedulesBatch`の正常系）
+- 人物写真未登録（京本大我）の`prepare`呼び出しが422＋明確なエラーメッセージを返すことを確認（一括生成時にその人物だけエラー表示され、他の人物の生成は継続する設計の裏付け）
+- 既存の単発予約フロー（一覧取得・キャンセル）が引き続き正常動作することを確認
+- 既存の`/admin/instagram-post`（手動投稿）が引き続き200で表示されることを確認
+- 既存のCronエンドポイント（`INSTAGRAM_AUTOPUBLISH_ENABLED`ガード・`dryRun`）が今回の変更後も同一の応答を返すことを確認（無変更であることの動作面での裏付け）
+- テスト用に作成した一括予約行（id 28〜30）はすべて削除済み。DBには元の2件（id 26, 27）のみが残る
+
+**残っている作業：** commit / push / Production deploy（ユーザー承認待ち）。写真不要テンプレート、1日1枠/2枠切り替え、投稿時刻自体の変更UI、曜日別スケジュールは今回のスコープ外。
+
+**変更なし（今回維持）：** `/api/cron/instagram-publish`・`src/server/instagram-schedule/publish-schedule.ts`・`src/server/instagram-post/config.ts`（`isAutopublishEnabled`含む）・`vercel.json`・既存の単発予約ロジック（`claimDueSchedule`等）。Instagramへの実投稿・commit・push・Production deployは行っていない。

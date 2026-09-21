@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import PersonCombobox, { type PersonOption } from '@/components/admin/PersonCombobox';
 import { safeFetchJson } from './safe-fetch-json';
 import ScheduleList from './ScheduleList';
+import BulkScheduleClient from './BulkScheduleClient';
 import { INSTAGRAM_TEMPLATES, DEFAULT_INSTAGRAM_TEMPLATE_ID, getInstagramTemplateMeta } from '@/lib/instagram-templates';
 import { jstWallClockToUtcDate, nowJstParts } from '@/lib/jst-time';
 
@@ -38,6 +39,15 @@ interface Props {
 const RECOMMENDED_TIMES = ['09:00', '15:00', '20:00'] as const;
 
 export default function InstagramScheduleClient({ persons }: Props) {
+  const [mode, setMode] = useState<'single' | 'bulk'>('single');
+
+  // ?mode=bulk が付いていれば一括予約タブを直接開く（Instagram管理ハブからの導線用）
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('mode') === 'bulk') setMode('bulk');
+  }, []);
+
   const [personName, setPersonName] = useState('');
   const [templateId, setTemplateId] = useState(DEFAULT_INSTAGRAM_TEMPLATE_ID);
 
@@ -136,6 +146,34 @@ export default function InstagramScheduleClient({ persons }: Props) {
 
   return (
     <div className="space-y-6">
+      {/* モード切替: 通常予約 / 一括予約 */}
+      <div className="flex gap-1.5 bg-gray-100 rounded-lg p-1 w-fit">
+        <button
+          type="button"
+          onClick={() => setMode('single')}
+          className={`text-xs font-semibold px-4 py-1.5 rounded-md transition-colors ${
+            mode === 'single' ? 'bg-white text-slate-800 shadow-sm' : 'text-gray-500 hover:text-slate-700'
+          }`}
+        >
+          通常予約
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('bulk')}
+          className={`text-xs font-semibold px-4 py-1.5 rounded-md transition-colors ${
+            mode === 'bulk' ? 'bg-white text-slate-800 shadow-sm' : 'text-gray-500 hover:text-slate-700'
+          }`}
+        >
+          一括予約
+        </button>
+      </div>
+
+      {mode === 'bulk' && (
+        <BulkScheduleClient persons={persons} onBulkCreated={() => setReloadToken((v) => v + 1)} />
+      )}
+
+      {mode === 'single' && (
+      <>
       {/* 1. 人物・テンプレート選択 */}
       <section className="bg-white border border-gray-200 rounded-xl p-5">
         <h2 className="text-sm font-bold text-slate-700 mb-3">1. 人物・テンプレートを選択</h2>
@@ -310,8 +348,10 @@ export default function InstagramScheduleClient({ persons }: Props) {
           ✅ 予約を登録しました。下の一覧に反映されています。
         </div>
       )}
+      </>
+      )}
 
-      {/* 4. 予約一覧 */}
+      {/* 4. 予約一覧（通常予約・一括予約どちらのモードでも表示） */}
       <section className="bg-white border border-gray-200 rounded-xl p-5">
         <h2 className="text-sm font-bold text-slate-700 mb-3">予約一覧</h2>
         <ScheduleList reloadToken={reloadToken} />

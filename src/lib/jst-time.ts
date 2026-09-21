@@ -46,3 +46,64 @@ export function formatJst(value: Date | string): string {
     hour: '2-digit', minute: '2-digit',
   }).format(d);
 }
+
+/** 一括予約のデフォルト1日3枠（JST）。将来「1日1枠/2枠」等に変える場合はここか呼び出し側で差し替える */
+export const DEFAULT_DAILY_SLOTS = ['09:00', '15:00', '20:00'] as const;
+
+/** JSTの"YYYY-MM-DD"文字列に日数を加算する（月またぎ・年またぎも正しく処理する） */
+export function addDaysJst(dateJst: string, days: number): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateJst)) {
+    throw new Error(`日付の形式が不正です: ${dateJst}`);
+  }
+  const [y, m, d] = dateJst.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+export interface BulkSlotAssignment {
+  /** 割り当て順（＝渡した人物リストの並び順に対応するインデックス） */
+  index: number;
+  dateJst: string;
+  timeJst: string;
+  scheduledAtIso: string;
+}
+
+/**
+ * 開始日から1日3枠（デフォルト09:00/15:00/20:00 JST）を古い順に走査し、
+ * occupiedIsoSet に含まれる（＝既に予約済みの）枠は飛ばして、
+ * count 件ぶんの空き枠を順番に割り当てる。
+ *
+ * 人物側の並び順（呼び出し側で決めた配列の順）と、この関数が返す配列のindex（0始まり）が
+ * そのまま対応する＝「1番目の人物→最初の空き枠」という単純な写像になる。
+ *
+ * 純粋関数（DBアクセスなし）。occupiedIsoSetは呼び出し側が
+ * listOccupiedSlotIsos()等で事前に取得したものを渡す。クライアント側のライブプレビューと
+ * サーバー側の最終検証の両方から同じロジックを使うために共有している。
+ */
+export function allocateBulkSlots(
+  startDateJst: string,
+  count: number,
+  occupiedIsoSet: ReadonlySet<string>,
+  dailySlots: readonly string[] = DEFAULT_DAILY_SLOTS,
+): BulkSlotAssignment[] {
+  const assignments: BulkSlotAssignment[] = [];
+  let dateCursor = startDateJst;
+  let daysScanned = 0;
+  const MAX_DAYS_TO_SCAN = 3650; // 約10年分。無限ループ防止のガード
+
+  while (assignments.length < count) {
+    if (daysScanned > MAX_DAYS_TO_SCAN) {
+      throw new Error('空き枠が見つからないまま探索上限（約10年分）に達しました');
+    }
+    for (const timeJst of dailySlots) {
+      if (assignments.length >= count) break;
+      const scheduledAtIso = jstWallClockToUtcDate(dateCursor, timeJst).toISOString();
+      if (occupiedIsoSet.has(scheduledAtIso)) continue;
+      assignments.push({ index: assignments.length, dateJst: dateCursor, timeJst, scheduledAtIso });
+    }
+    dateCursor = addDaysJst(dateCursor, 1);
+    daysScanned++;
+  }
+  return assignments;
+}

@@ -1,7 +1,7 @@
 import 'server-only';
 import { db } from '@/db/client';
 import { instagramPostSchedules } from '@/db/schema';
-import { and, asc, eq, isNull, lt, lte, or } from 'drizzle-orm';
+import { and, asc, eq, gte, isNull, lt, lte, ne, or } from 'drizzle-orm';
 
 /**
  * needs_review: media_publish呼び出し自体が失敗し、Instagram側で実際には公開が
@@ -209,4 +209,72 @@ export async function retrySchedule(id: number): Promise<ScheduleRecord> {
     .where(eq(instagramPostSchedules.id, id))
     .returning();
   return toRecord(row);
+}
+
+// ─── 一括予約（bulk）専用 ──────────────────────────────────────────────────────
+// 既存のcreateSchedule / claimDueSchedule / dueCondition 等には一切手を加えていない。
+// 一括予約はこれらとは独立した「複数件をまとめてINSERTする」経路として追加した。
+
+/**
+ * 指定期間内で、キャンセル以外の状態（draft/scheduled/processing/published/failed/needs_review）
+ * を持つ予約の予定日時（ISO文字列）集合を返す。一括予約の空き枠計算（allocateBulkSlots）に渡す
+ * occupiedIsoSetとして使う。cancelledの予約はその枠を「空き」として扱ってよいため除外する。
+ */
+export async function listOccupiedSlotIsos(from: Date, to: Date): Promise<Set<string>> {
+  const rows = await db.select({ scheduledAt: instagramPostSchedules.scheduledAt })
+    .from(instagramPostSchedules)
+    .where(and(
+      gte(instagramPostSchedules.scheduledAt, from),
+      lte(instagramPostSchedules.scheduledAt, to),
+      ne(instagramPostSchedules.status, 'cancelled'),
+    ));
+  return new Set(rows.map((r) => r.scheduledAt.toISOString()));
+}
+
+export class SlotConflictError extends Error {
+  constructor(message: string, public readonly conflicts: string[]) {
+    super(message);
+  }
+}
+
+/**
+ * 一括予約の確定登録。
+ *
+ * 安全性: (1) 渡されたリスト内で予定日時が重複していないか、(2) DB上で既に
+ * その日時が（cancelled以外の状態で）埋まっていないかを直前に再確認し、
+ * 1件でも問題があればDBへは一切書き込まずSlotConflictErrorを投げる。
+ * 全件クリアであれば、1回の複数行INSERT文でまとめて挿入する
+ * （drizzle-orm/neon-httpはdb.transaction()に非対応のため、単一SQL文自体の原子性を利用する。
+ * Postgresでは複数行INSERTは1つの文として実行されるため、一部の行だけ挿入されて
+ * 残りが失敗する、という中途半端な状態にはならない＝全件成功か全件失敗のいずれかになる）。
+ */
+export async function createSchedulesBatch(inputs: CreateScheduleInput[]): Promise<ScheduleRecord[]> {
+  if (inputs.length === 0) return [];
+
+  const isos = inputs.map((i) => i.scheduledAt.toISOString());
+  const uniqueIsos = new Set(isos);
+  if (uniqueIsos.size !== isos.length) {
+    throw new SlotConflictError('一括予約リスト内に同一日時が重複しています', []);
+  }
+
+  const times = inputs.map((i) => i.scheduledAt.getTime());
+  const occupied = await listOccupiedSlotIsos(new Date(Math.min(...times)), new Date(Math.max(...times)));
+  const conflicts = isos.filter((iso) => occupied.has(iso));
+  if (conflicts.length > 0) {
+    throw new SlotConflictError(`既に予約済みの日時が含まれています: ${conflicts.join(', ')}`, conflicts);
+  }
+
+  const rows = await db.insert(instagramPostSchedules).values(
+    inputs.map((input) => ({
+      personId: input.personId,
+      personName: input.personName,
+      templateId: input.templateId,
+      scheduledAt: input.scheduledAt,
+      status: 'scheduled' as const,
+      caption: input.caption,
+      hashtags: input.hashtags,
+      imageUrls: input.imageUrls,
+    })),
+  ).returning();
+  return rows.map(toRecord);
 }

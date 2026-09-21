@@ -48,3 +48,9 @@ export async function hasBeenPostedToInstagram(personName: string): Promise<bool
   const history = await getInstagramPostHistory(personName);
   return history.length > 0;
 }
+
+/** Instagramへ投稿済みの人物名一覧（重複除去）。一括予約画面の「投稿済み」表示用 */
+export async function listPostedPersonNames(): Promise<string[]> {
+  const rows = await db.selectDistinct({ personName: instagramPosts.personName }).from(instagramPosts);
+  return rows.map((r) => r.personName);
+}
