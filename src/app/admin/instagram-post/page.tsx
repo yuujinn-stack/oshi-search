@@ -29,6 +29,9 @@ export default async function InstagramPostPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
+      <a href="/admin/instagram" className="inline-block text-xs text-gray-500 hover:text-violet-600 mb-3">
+        ← Instagram管理へ戻る
+      </a>
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-2xl font-black text-slate-800">📸 Instagram投稿</h1>

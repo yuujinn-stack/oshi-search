@@ -1,0 +1,83 @@
+import type { Metadata } from 'next';
+import { LogoutButton } from '@/components/admin/LogoutButton';
+
+export const metadata: Metadata = {
+  robots: { index: false, follow: false, noarchive: true },
+};
+
+/**
+ * Instagram関連機能への入口カード一覧。
+ *
+ * 【将来カードを追加・変更する場合】ここに1件追加するだけでよい。
+ * 例: 人物写真専用ページ（/admin/instagram-photos 等）ができたら、
+ * personPhoto カードの href をそちらへ差し替える。
+ */
+interface InstagramHubCard {
+  icon: string;
+  title: string;
+  description: string;
+  href: string;
+  cta: string;
+  note?: string;
+}
+
+const CARDS: InstagramHubCard[] = [
+  {
+    icon: '📸',
+    title: 'Instagram投稿を作成',
+    description: '人物を選んで投稿画像3枚を作成し、内容を確認してInstagramへ投稿します。',
+    href: '/admin/instagram-post',
+    cta: '投稿を作成する',
+  },
+  {
+    icon: '📅',
+    title: 'Instagram予約投稿',
+    description: '投稿内容を事前に作成し、09:00 / 15:00 / 20:00などの時間に予約します。',
+    href: '/admin/instagram-schedule',
+    cta: '予約投稿へ進む',
+  },
+  {
+    icon: '🖼️',
+    title: '人物写真を登録・確認',
+    description: '投稿画像の生成に使う人物写真を登録・差し替えできます。',
+    href: '/admin/instagram-post',
+    cta: '人物写真を登録',
+    note: '現在は「Instagram投稿を作成」画面内（人物選択後）から登録します。専用ページは今後追加予定です。',
+  },
+];
+
+export default function InstagramHubPage() {
+  return (
+    <div className="max-w-5xl mx-auto px-4 py-8">
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-black text-slate-800">Instagram管理</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            投稿の作成・予約・人物写真の登録など、Instagram関連機能の入口です。
+          </p>
+        </div>
+        <div className="flex items-center gap-3 mt-1 flex-wrap text-xs">
+          <LogoutButton className="text-gray-400 hover:text-red-500" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {CARDS.map((card) => (
+          <a
+            key={card.title}
+            href={card.href}
+            className="flex flex-col bg-white border border-gray-200 rounded-xl p-5 hover:border-violet-300 hover:shadow-md transition-all"
+          >
+            <div className="text-3xl mb-2">{card.icon}</div>
+            <h2 className="text-sm font-bold text-slate-800 mb-1.5">{card.title}</h2>
+            <p className="text-xs text-gray-500 leading-relaxed flex-1">{card.description}</p>
+            {card.note && (
+              <p className="text-[11px] text-amber-600 mt-2 leading-relaxed">{card.note}</p>
+            )}
+            <span className="mt-4 text-xs font-semibold text-violet-600">{card.cta} →</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}

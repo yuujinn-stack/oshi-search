@@ -1626,3 +1626,24 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 **残っている作業：** `vercel.json`へのcrons反映（ユーザー承認待ち）、写真不要テンプレートの実装、「毎日3枠」一括予約UI。
 
 **変更なし（今回維持）：** `/admin/instagram-post`（手動投稿機能）・`src/server/instagram-post/publish.ts`（無変更、手動投稿専用として維持）・生成ロジック・DBの既存データ。Productionへのデプロイ・commit/push・Instagramへの実投稿は一切行っていない。
+
+---
+
+## Task 37 — 管理画面にInstagram管理ハブページを追加（ナビ導線の整理）
+
+**目的：** `/admin/instagram-post`・`/admin/instagram-schedule`をURL直接入力なしで、管理画面ナビからクリックだけで辿れるようにする。
+
+**新規追加：** `src/app/admin/instagram/page.tsx`（Instagram管理ハブ）。「Instagram投稿を作成」「Instagram予約投稿」「人物写真を登録・確認」の3枚のカードを配置。カード定義は配列（`CARDS`）で管理しており、将来人物写真専用ページ（例: `/admin/instagram-photos`）を追加する際はhrefを差し替えるだけで済む構造にした。レイアウトは既存の管理画面と同じTailwindクラス（`bg-white border border-gray-200 rounded-xl`等）を踏襲し、`grid-cols-1 sm:grid-cols-3`でスマホ幅では縦積みになる。
+
+**変更：**
+- `src/app/admin/AdminLayoutClient.tsx`：ナビの個別リンク「📸 Instagram投稿」「📅 Instagram予約」を削除し、「写真集管理」の直後に単一の「📸 Instagram管理」（`/admin/instagram`）を追加。目的（ナビ→ハブ→各機能という一本の動線に揃える）に沿って意図的に統合した。
+- `src/app/admin/instagram-post/page.tsx`・`src/app/admin/instagram-schedule/page.tsx`：ページ先頭に「← Instagram管理へ戻る」リンク（`/admin/instagram`）を追加。クライアントコンポーネント本体（`InstagramPostClient`・`InstagramScheduleClient`）には触れていない。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし／`npm run build` 成功。`/admin/instagram`が静的ページとしてビルドされることを確認
+- ローカルでログイン後、ナビに「Instagram管理」が1件だけ表示され、旧来の個別2リンクが消えていることを確認
+- `/admin/instagram`が200で表示され、3枚のカードがそれぞれ`/admin/instagram-post`・`/admin/instagram-schedule`・（人物写真は当面`/admin/instagram-post`）へのリンクを持つことを確認
+- `/admin/instagram-post`・`/admin/instagram-schedule`双方に「Instagram管理へ戻る」リンクが表示されることを確認
+- 既存の`InstagramPostClient`・`InstagramScheduleClient`の機能（生成・予約・一覧等）には一切手を加えていない
+
+**変更なし（今回維持）：** Instagram投稿・予約投稿の生成ロジック・API・DB。Instagramへの実投稿は行っていない。

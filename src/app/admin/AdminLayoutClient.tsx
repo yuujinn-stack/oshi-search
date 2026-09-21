@@ -10,6 +10,7 @@ export const NAV_ITEMS = [
   { href: '/admin/work-dedup',                 label: '作品重複' },
   { href: '/admin/product-check',              label: '商品管理' },
   { href: '/admin/photobooks',                 label: '📷 写真集管理' },
+  { href: '/admin/instagram',                  label: '📸 Instagram管理' },
   { href: '/admin/rakuten-search',             label: '楽天検索' },
   { href: '/admin/groups',                     label: 'グループ管理' },
   { href: '/admin/providers',                  label: '配信サービス' },
@@ -23,8 +24,6 @@ export const NAV_ITEMS = [
   { href: '/admin/analytics',                  label: '📊 アナリティクス' },
   { href: '/admin/redis-backup',               label: '💾 バックアップ' },
   { href: '/admin/db-init',                    label: '🗄️ DBスキーマ初期化' },
-  { href: '/admin/instagram-post',             label: '📸 Instagram投稿' },
-  { href: '/admin/instagram-schedule',         label: '📅 Instagram予約' },
 ] as const;
 
 export function isNavItemActive(pathname: string, href: string): boolean {
