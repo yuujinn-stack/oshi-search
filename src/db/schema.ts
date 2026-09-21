@@ -452,3 +452,18 @@ export const affiliatePlacements = pgTable('affiliate_placements', {
   index('apl_creative_id_idx').on(t.creativeId),
   index('apl_slot_key_idx').on(t.slotKey),
 ]);
+
+// ── Instagram投稿履歴（instagram_posts）────────────────────────────────────────
+// 管理画面 /admin/instagram-post から実行した投稿の成功履歴のみを記録する
+// （下書き・プレビュー段階のデータはDBに保存しない）。重複投稿の警告表示にも使う。
+export const instagramPosts = pgTable('instagram_posts', {
+  id:          serial('id').primaryKey(),
+  personName:  text('person_name').notNull(),
+  mediaId:     text('media_id').notNull(),
+  imageUrls:   jsonb('image_urls').notNull().default([]),
+  caption:     text('caption').notNull().default(''),
+  publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('ip_person_name_idx').on(t.personName),
+  index('ip_published_at_idx').on(t.publishedAt),
+]);

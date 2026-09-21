@@ -54,3 +54,28 @@ docs/development-log.md
 ```bash
 npx tsc --noEmit
 ```
+
+
+
+## Canva / Instagram automation
+
+Canva・Instagram投稿量産関連の新規コードは、
+原則 `tools/canva-instagram/` 配下に配置する。
+
+生成したCSVや一時出力ファイルは、
+`tools/canva-instagram/output/` に保存する。
+
+Canva・Instagram関連の作業では、
+既存の `src/`、`drizzle/`、`scripts/` などは
+調査・参照してよいが、
+ユーザーから明示的な指示がない限り変更しない。
+
+既存の公開サイト、管理画面、DB schema、既存データに
+影響する変更は、ユーザーの明示的な許可なしに行わない。
+
+既存の人物・作品・VOD・画像データを利用できる場合は、
+新しく重複したデータ管理を作らず、既存データを参照する。
+
+Canva一括作成用のCSV生成処理や、
+Instagram投稿用データの加工処理は、
+可能な限り `tools/canva-instagram/` 内で完結させる。

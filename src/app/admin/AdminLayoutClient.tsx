@@ -23,6 +23,7 @@ export const NAV_ITEMS = [
   { href: '/admin/analytics',                  label: '📊 アナリティクス' },
   { href: '/admin/redis-backup',               label: '💾 バックアップ' },
   { href: '/admin/db-init',                    label: '🗄️ DBスキーマ初期化' },
+  { href: '/admin/instagram-post',             label: '📸 Instagram投稿' },
 ] as const;
 
 export function isNavItemActive(pathname: string, href: string): boolean {

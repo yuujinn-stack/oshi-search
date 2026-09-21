@@ -218,6 +218,16 @@ const CREATE_STATEMENTS = [
   )`,
   sql`CREATE INDEX IF NOT EXISTS apl_creative_id_idx ON affiliate_placements (creative_id)`,
   sql`CREATE INDEX IF NOT EXISTS apl_slot_key_idx ON affiliate_placements (slot_key)`,
+  sql`CREATE TABLE IF NOT EXISTS instagram_posts (
+    id             SERIAL PRIMARY KEY,
+    person_name    TEXT NOT NULL,
+    media_id       TEXT NOT NULL,
+    image_urls     JSONB NOT NULL DEFAULT '[]',
+    caption        TEXT NOT NULL DEFAULT '',
+    published_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  sql`CREATE INDEX IF NOT EXISTS ip_person_name_idx ON instagram_posts (person_name)`,
+  sql`CREATE INDEX IF NOT EXISTS ip_published_at_idx ON instagram_posts (published_at)`,
 ];
 
 // ── ALTER TABLE ADD COLUMN IF NOT EXISTS ─────────────────────────────────────
@@ -308,7 +318,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE verdicts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
 ];
 
-const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements'];
+const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements', 'instagram_posts'];
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。

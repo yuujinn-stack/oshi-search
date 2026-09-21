@@ -1372,3 +1372,164 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 **変更なし（今回維持）：** robots.txt、AIクローラー設定、noindex、URL構造、DBスキーマ・マイグレーション、DBレコード（work_aliasesの内容・works.status等）、redirectロジック（`lookupWorkAlias`→`permanentRedirect`は無変更）、sitemapのwork_aliases除外ロジック（Task28）。
 
 **注記：** ユーザー指示により、この時点でcommit/pushを行っていない（レビュー後に指示を待つ）。
+
+---
+
+## Task 30 — Instagram自動投稿ツール向け：人物データの読み取り専用エクスポートスクリプト追加
+
+**目的：** 完全に独立したサブプロジェクト`tools/instagram-post-generator/`（Instagram自動投稿ツール）が、「人物名を指定するだけ」で本体の実データ（作品・VOD・画像URL）を取得できるようにする。新しい選定ロジックを重複して作らず、Canva一括作成ツール（`tools/canva-instagram/generate-csv.ts`）が既に持つ`selectTopWorks()`（movie/drama判定・VOD優先・新しい順・画像利用可否チェック済みの3件選定）をそのまま再利用する。
+
+**変更したファイル：**
+- `tools/canva-instagram/generate-csv.ts`：`selectTopWorks`・`buildVodDisplayString`・関連する型（`SelectionResult`・`SelectedWork`）に`export`を追加しただけ（ロジック・挙動は一切変更なし）。あわせて、末尾のCLI起動処理（`main().catch(...)`）を`if (require.main === module)`で囲み、他ファイルからのimport時にCSV/XLSX生成やDownloadsへのコピーが誤って走らないようにした（直接実行時の挙動は変更なし、動作確認済み）。
+- `tools/canva-instagram/export-person-for-ig.ts`（新規）：人物名を受け取り、`getPersonWithConfigMerged`（`@/lib/persons`）・`selectTopWorks`・`getWorkDisplayImage`/`getRenderableWorkImageUrl`（`@/lib/work-image`）のみを使って`{ personName, works: [{title, vod, image}] }`をJSONとして標準出力に書き出す、読み取り専用スクリプト（INSERT/UPDATE/DELETEなし）。`src/lib`側の既存`console.log`診断出力（`persons.ts`の`getPublishedExtra`）が標準出力のJSON契約を汚染しないよう、このファイル内でのみ`console.log`をstderrへリダイレクトしている（`persons.ts`自体は変更していない）。
+
+**呼び出し元：** `tools/instagram-post-generator/scripts/fetch-person-data.ts`（独立サブプロジェクト側、詳細は同ツールのREADME参照）が、`npx dotenv -e .env.local -- npx tsx tools/canva-instagram/export-person-for-ig.ts "人物名"`を子プロセスとして呼び出し、標準出力のJSONのみを受け取る。本体の`src/lib`を独立サブプロジェクトから直接importすることはしていない（既存の「本体から完全に独立したサブプロジェクト」という設計方針を維持）。
+
+**動作確認：**
+- `npx tsc --noEmit`（本体） エラーなし
+- 実データで動作確認：`npx dotenv -e .env.local -- npx tsx tools/canva-instagram/export-person-for-ig.ts "森本慎太郎"` → 標準出力に純粋なJSON（作品3件・VOD・TMDb画像URL）のみが出力されることを確認
+- `generate-csv.ts`を直接実行するそれまでの既存フローに影響がないことを確認（`npx tsx tools/canva-instagram/generate-csv.ts "森本慎太郎"`を再実行し、従来どおりCSV/XLSX生成・Downloadsコピーまで動作、検証用に生成したファイルは削除済み）
+
+**変更なし（今回維持）：** DBスキーマ・マイグレーション、既存の管理画面・公開サイトの挙動、`generate-csv.ts`の作品選定ロジック・CSV/XLSX出力内容。
+
+---
+
+## Task 31 — Instagram投稿 管理画面（/admin/instagram-post）新規実装
+
+**目的：** `tools/instagram-post-generator`（CLI版）で動作確認済みのInstagram自動投稿の仕組みを、Cursor/ターミナルを使わずに管理画面だけで完結できるようにする。人物選択→投稿画像3枚生成→プレビュー→キャプション確認→最終確認→Instagram投稿までを`/admin/instagram-post`で提供する。
+
+**設計方針：** CLI版（`tools/instagram-post-generator/`）は独立したサブプロジェクトのため、コードをそのまま`src/`からimportすることはできない（別tsconfig・別node_modules）。CLI版をshell実行するだけの実装は避け、同じロジックを`src/server/instagram-post/`にNext.js向けとして移植し、すべてメモリ上（Buffer）で完結させる設計にした（ローカルディスクへ一切書き込まない。将来Vercelのサーバーレス環境でも動作しやすい構造）。
+
+**新規追加ファイル：**
+- `tools/canva-instagram/work-selection.ts`：`generate-csv.ts`から作品選定ロジック（`selectTopWorks`・`buildVodDisplayString`・画像利用可否チェック）のみを副作用なしで切り出した共有モジュール（ロジック変更なし、export化のみ）。`generate-csv.ts`・`export-person-for-ig.ts`の両方がこれを参照するよう更新（重複ロジックを解消）。
+- `src/server/instagram-post/`（新規ディレクトリ、すべて`server-only`でクライアントバンドルへの混入を防止）：`config.ts`（環境変数読み込み）、`graph-client.ts`（Instagram API with Instagram Loginクライアント）、`caption.ts`（キャプション・ハッシュタグ生成）、`blob.ts`（Vercel Blobアップロード・人物写真の検索）、`image-prep.ts`（JPEG変換・MIME判定）、`render.ts`（Playwrightで3ページをメモリ上でPNG化。テンプレートは`tools/instagram-post-generator/templates/`をそのまま参照）、`person-data.ts`（`work-selection.ts`経由での実データ取得）、`build-post.ts`（「投稿を作成」の処理本体、Instagram APIは呼ばない）、`publish.ts`（コンテナ作成〜media_publishを1回で実行し成功時にDB記録）。
+- `src/lib/instagram-post-store.ts`：投稿成功履歴の読み書き（新設テーブル`instagram_posts`）。
+- `src/db/schema.ts`・`src/app/api/admin/db-init/route.ts`・`drizzle/0010_instagram_posts.sql`：`instagram_posts`テーブル新設（既存テーブルへの変更なし、追加のみ）。実際にdb-init経由（今回はスクリプトで直接実行）で本番DBに作成済み。
+- `src/app/api/admin/instagram-post/{photo,generate,duplicate-check,publish}/route.ts`：4本の新規APIルート。認証は既存の`src/proxy.ts`のマッチャーにより自動的に効くため追加コードなし。
+- `src/app/admin/instagram-post/{page.tsx,InstagramPostClient.tsx,PublishConfirmModal.tsx}`：新規管理画面。人物選択は既存の`PersonCombobox`をそのまま再利用（新しい検索APIは作らず、`getAllPersonsMerged`+`getAllPersonMetasOrThrow`をpage.tsx側でサーバー取得して渡す既存パターンに準拠）。確認モーダルは`VodIntensiveModal.tsx`と同じ見た目・Phase状態管理パターンを踏襲。
+- `src/app/admin/AdminLayoutClient.tsx`：ナビに「📸 Instagram投稿」を末尾追加（既存の順序アサーションテストに抵触しないことを確認済み）。
+
+**機能：**
+- 人物写真はVercel Blob（`person-photos/{人物名}`、`allowOverwrite:true`で差し替え可能）で管理。ブラウザから直接アップロードでき、CLI版のようにローカルファイルを事前配置する必要がない。
+- 「投稿を作成」は画像生成・JPEG変換・Blobアップロード・キャプション生成までを行い、Instagram APIは一切呼ばない。生成後にプレビュー（3枚の画像・順番・使用作品/配信先・キャプション・ハッシュタグ）を表示し、「画像を再生成」で何度でも作り直せる。
+- 「Instagramに投稿」は確認モーダルを必ず経由し、モーダル内「投稿する」を押した場合のみコンテナ作成〜`media_publish`を実行する。
+- 重複投稿チェックは`instagram_posts`テーブルを参照し、投稿済みでも警告表示のみでブロックはしない（人物切り替え時に自動チェック）。
+- エラー（人物写真なし・作品不足・画像URL取得失敗・Blob/Instagram APIエラー）はそれぞれ画面上に日本語で表示し、途中失敗時に自動でInstagram投稿へ進むことはない。
+
+**セキュリティ：** `IG_ACCESS_TOKEN`・`BLOB_READ_WRITE_TOKEN`・`DATABASE_URL`はすべて`server-only`ファイル内でのみ読み込み、APIレスポンス・画面・ログに一切出力していない。Instagram/Blob/DBへの処理はすべてサーバー側（Route Handler）で実行し、ブラウザには結果（画像URL・キャプション・media_id等）のみを返す。
+
+**動作確認（実データ・実インフラで確認、`media_publish`は未実行）：**
+- `npx tsc --noEmit` エラーなし
+- `npm run build` 成功（`/admin/instagram-post`・新規APIルート4本を含め全ルートビルド成功）
+- `npx vitest run src/app/admin/__tests__/AdminLayoutClient.test.ts` 8件全通過（ナビ追加による既存アサーション破壊なし）
+- ローカルであらためて`ADMIN_SESSION_SECRET`が未設定だったことが判明（管理画面ログイン自体が以前から不可能な状態だった、既存の別問題）。動作確認のためランダム値を生成し`.env.local`に追記（既存の値は一切変更していない）。
+- 実際にログイン→`/admin/instagram-post`が200で表示されることを確認
+- 森本慎太郎で実際に人物写真をアップロード（Blobへ保存・公開URL取得を確認）→重複チェック（未投稿と正しく判定）→「投稿を作成」相当のAPIを実行し、実データ（アイシー～瞬間記憶捜査・柊班～/FOD、良いこと悪いこと/Hulu、正体/Netflix・U-NEXT）を使って3枚の投稿画像を生成・Blobへアップロード・キャプション生成まで成功、3枚とも公開URLで取得可能なことを確認、目視でも1〜3枚目のデザイン（人物写真・作品一覧・プロフィールページスクリーンショット）が正しいことを確認
+- `media_publish`の実行・投稿確認モーダルの「投稿する」操作は今回一切行っていない
+
+**変更なし（今回維持）：** 既存の管理画面・公開サイトの挙動、既存DBスキーマ・データ、`tools/instagram-post-generator`（CLI版）のコード・動作。commit/push/deployは未実施。
+
+---
+
+## Task 32 — Instagram投稿管理画面：本番デプロイ前レビュー（テンプレート参照方式の修正、ブラウザ動作確認）
+
+**目的：** Task31実装後、本番（Vercel）デプロイ前の最終確認として、ブラウザでの一連の動作確認と、Vercelサーバーレス実行時の既知リスク（`src/server/instagram-post/render.ts`が`tools/instagram-post-generator/templates/`をfs経由で参照していた点）の解消を行う。
+
+**修正内容：**
+- `src/server/instagram-post/templates/{page1,page2,page3,styles}.ts`（新規）：CLI版のHTML/CSSをそのままTS文字列定数としてコピー（内容は完全一致、生成はNode一回限りのスクリプトで機械的にコピー）。
+- `render.ts`：`fs.readFileSync(TEMPLATES_DIR, ...)`による実行時ファイル読み込みを廃止し、上記の定数を通常の`import`で参照する方式に変更。これによりテンプレートは通常のJS/TSモジュールとしてバンドルされ、`outputFileTracingIncludes`等のNext.jsのファイルトレース設定に依存せずVercelのサーバーレス関数に確実に含まれるようになった。
+- CLI版（`tools/instagram-post-generator/scripts/render.ts`）は無変更（今後も自身の`templates/*.html`をfs経由で読む従来方式のまま）。テンプレートの見た目を変更する場合、今後はCLI版のHTML/CSSを更新した上でこの新しいTSファイル群にも反映する必要がある（自動同期の仕組みはまだ無い旨をコード内コメントに明記）。
+
+**ブラウザでの動作確認（実際にPlaywrightで操作、`media_publish`は未実行）：**
+1. `/admin/login`にアクセスし、実際のログインフォームからログイン成功を確認
+2. `/admin/instagram-post`が正しく表示されることを確認
+3. 人物検索で「森本慎太郎」を選択（写真・重複チェックが正常に走ることを確認）
+4. 「投稿を作成」を実行し、実データで3枚の画像・作品名・配信サービス・キャプション・ハッシュタグが正しく表示されることを確認
+5. 「画像を再生成」を実行し、正常に再生成されることを確認
+6. 「Instagramに投稿」→確認モーダルが表示されることを確認
+7. モーダルの「投稿する」は押さず、「キャンセル」で終了
+
+**秘密情報の非漏洩確認：** ログイン後に取得した`/admin/instagram-post`のHTML全文と、そのページが読み込む全19本のクライアントJSバンドルに対し、`IG_ACCESS_TOKEN`・`BLOB_READ_WRITE_TOKEN`・`DATABASE_URL`・`ADMIN_SESSION_SECRET`の実際の値（`.env.local`から直接読み取り、ターミナル出力には一切表示せず）がそれぞれ含まれていないことを機械的に検証。4件とも非該当（漏洩なし）。
+
+**Vercel本番環境で問題になりうる点として新たに判明（未修正・要フォローアップ）：** `render.ts`が使うPlaywrightの標準`playwright`パッケージは、フルサイズのChromiumバイナリ（280MB超）を同梱するため、Vercelサーバーレス関数の圧縮後50MBというサイズ上限を超える可能性が高い（一般的な既知の制約。`@sparticuz/chromium`+`playwright-core`等の軽量版チェコンポーネントへの置き換えが標準的な対応）。今回は実デプロイ・実機検証ができない（本タスクではデプロイ禁止）ため、コードの置き換えは行っていない。デプロイ前に別途対応が必要。
+
+**動作確認（テスト）：**
+- `npx tsc --noEmit` エラーなし
+- `npm run build` 成功
+- ローカルで`.next`キャッシュに起因する無関係な型エラー（`.next/types/`内の重複識別子エラー）が一時的に出たが、`.next`削除で解消（コード起因ではないことを確認）
+
+**変更なし（今回維持）：** `tools/instagram-post-generator`（CLI版）のコード・テンプレートファイル本体。commit/push/deployは未実施。
+
+---
+
+## Task 33 — Instagram投稿管理画面：「Unexpected token '<'」バグ修正とVercel実機デバッグ
+
+**目的：** Preview環境で発生した「Unexpected token '<', "<!DOCTYPE "... is not valid JSON」エラーの原因特定・修正。あわせてVercel実機（Preview）で`/api/admin/instagram-post/generate`を実際に動かし、本番デプロイ可否を判断する。
+
+**原因（実際にVercel Function Logsを取得して特定。推測ではない）：** `sharp`（0.35.4）のネイティブバイナリ読み込みが`ERR_DLOPEN_FAILED: libvips-cpp.so.8.18.6: cannot open shared object file`で失敗し、`/api/admin/instagram-post/photo`がモジュール読み込み時にクラッシュしてNext.jsのエラーページ（HTML）を返していた。クライアント側が`response.json()`を無条件に呼んでいたため「Unexpected token '<'」として画面に表面化していた。`sharp 0.35.x`がlibvipsを別パッケージに分離した際、Next.jsのファイルトレース（`@vercel/nft`）が`dlopen()`経由の参照を検出できないという既知の不具合（`vercel/next.js` issue、`lovell/sharp` issue多数で報告済み）。
+
+**修正内容：**
+1. `src/server/instagram-post/mime-detect.ts`（新規）：`detectImageMimeType`をsharpに依存しない形で分離。`/api/admin/instagram-post/photo`のGETハンドラ（写真確認のみ、本来sharpを一切使わない）が巻き添えでsharpを読み込まないようにした。
+2. `package.json`：`sharp`を`^0.35.4`→`^0.34.5`へダウングレード（既知の不具合を回避する、公式に確認されている最も確実な対処）。
+3. `next.config.ts`：`serverExternalPackages`に`sharp`を追加（念のための対策。実際の直接原因は上記1・2）。
+4. `src/app/admin/instagram-post/safe-fetch-json.ts`（新規）：Content-Type確認後にJSONを読む共通fetchヘルパー。`InstagramPostClient.tsx`・`PublishConfirmModal.tsx`の全fetch呼び出しをこれに置き換え、サーバー側が万一クラッシュしてHTMLを返した場合でも分かりやすい日本語エラーになるようにした（クライアント側の防御的実装、要件4）。
+5. API側のエラーは元々JSON＋適切なステータスで返す設計になっていたことを確認（`try/catch`で`NextResponse.json({error,...}, {status})`、要件5は元々満たしていた）。人物写真未登録も元々エラー扱いせず`{photoUrl: null}`を200で返す設計だったことを確認（要件6）。
+
+**Vercel実機での追加検証（Preview環境、`vercel deploy`でpreviewデプロイ→`vercel curl`でDeployment Protectionを回避しつつ実際にAPIを叩いて確認。media_publishは一切呼んでいない）：**
+- 修正後、`/api/admin/instagram-post/photo`が正しくJSONを返すことを確認（500クラッシュ解消）。
+- `/api/admin/instagram-post/generate`を実行したところ、**新たに2つの問題を発見**：
+  a) `playwright-core/lib/coreBundle.js`が参照する`playwright-core/browsers.json`をNext.jsのファイルトレースが検出できず「Cannot find module」で失敗 → `next.config.ts`に`outputFileTracingIncludes`で明示的に追加し解消（Next.js公式ドキュメントが「ネイティブ/ランタイム資産の一般的な含め方」として明記している方式）。
+  b) `capturePersonPageScreenshot`と`renderPostImages`がそれぞれ個別に`launchBrowser()`していたため、コールドスタート時に`@sparticuz/chromium-min`のChromiumパック取得（GitHub Releasesからのダウンロード・展開、約64MB）が2回走り、300秒の`maxDuration`を超えてタイムアウトしていた → `build-post.ts`でブラウザを1回だけ起動し、`render.ts`の両関数に共有する設計に変更（`renderPostImages`/`capturePersonPageScreenshot`のシグネチャを`(browser, ...)`に変更）。この修正により、実際にChromiumが起動するところまで到達することを確認（`<launching> /tmp/chromium ...`のログを実機で確認）。
+- `maxDuration`を120→300秒に引き上げ（コールドスタート時のChromiumパック取得を考慮）。
+- `vercel.json`にfunctions設定を追加し、`/api/admin/instagram-post/generate`のメモリを引き上げようとしたが、**このプロジェクトがVercel Hobbyプラン（個人アカウント）であり、メモリは2048MBが上限**であることが判明（3009MB指定でデプロイ拒否）。2048MBに修正して再デプロイ。
+
+**現時点で未解決（本番デプロイ前に対応が必要）：** 上記の対策後も、`/api/admin/instagram-post/generate`をVercel実機で実行すると、次のいずれかで失敗することを確認：
+- Chromium起動直後に`Target page, context or browser has been closed`（ブラウザプロセスがクラッシュしている可能性）
+- 別の実行では300秒でタイムアウト（`FUNCTION_INVOCATION_TIMEOUT`）
+これは`@sparticuz/chromium-min` + `playwright-core` + Vercel Hobbyプランの制約下での深い互換性問題であり、原因を継続調査中（メモリ上限2048MBでは実行中のChromium+Node.jsに対して依然として不足している可能性、`chromium-min`バージョンとplaywright-coreのプロトコル不整合の可能性、本番サイトへのスクリーンショット取得時のネットワーク到達性の可能性など、複数の仮説が残っている）。今回はここで一旦区切り、ユーザーに状況を報告して次の対応方針を確認する。
+
+**動作確認：**
+- `npx tsc --noEmit` エラーなし
+- `npm run build` 成功
+- ローカルでの生成フロー（`/api/admin/instagram-post/generate`）は全修正後も引き続き正常動作を確認（sharp・単一ブラウザ化のいずれの変更後も、3枚生成・作品3件を確認）
+- `media_publish`は一切実行していない。Productionへのデプロイは行っていない。commit/pushは行っていない。
+
+**変更なし（今回維持）：** `tools/instagram-post-generator`（CLI版）、Instagram API処理・Vercel Blob処理のロジック、投稿画像のデザイン・内容、DBの既存データ。
+
+---
+
+## Task 34 — Instagram投稿管理画面：Playwright/Chromium依存を完全撤去（next/og方式へ全面移行）
+
+**目的：** Task33で発覚したVercel Hobby環境でのPlaywright/Chromiumの不安定さ（コールドスタート・メモリ・タイムアウト）を根本的に解消するため、`/admin/instagram-post`の画像生成からPlaywright/Chromiumへの依存を完全に排除する。
+
+**採用した方式：** `next/og`の`ImageResponse`（内部でSatori+Resvgを使用、Vercel公式のOG画像生成の仕組み）。ヘッドレスブラウザを一切起動せず、JSXツリーから直接PNGを生成する。Sharp単体・SVG手書き・Satoriを比較し、Satori/ImageResponseがflexbox・box-shadow・border-radius・filter:blur・gradient・line-clampまで幅広くサポートしており、既存デザインをほぼそのまま再現できると判断して採用した。
+
+**新規追加ファイル：**
+- `src/server/instagram-post/og-elements.tsx`：3枚それぞれのJSX要素定義（Decorations共通コンポーネント含む）。
+- `src/server/instagram-post/og-render.tsx`：`ImageResponse`でJSX→PNG Bufferへ変換する処理。
+- `src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf`（約17MB）・`fonts/font-loader.ts`：Satoriに渡す日本語フォント。当初`@fontsource/noto-sans-jp`の日本語サブセット（約1.4MB、Base64埋め込み）を使ったが、実データで「アイシー～瞬間記憶捜査・柊班～」をレンダリングしたところ波ダッシュ（～）のグリフが欠落する不具合を実際に発見したため、記号・句読点を含め網羅的にカバーするフルセットのNoto Sans CJK JPに切り替えた。
+
+**3枚の生成方法（変更点）：**
+- 1枚目（人物写真）・2枚目（作品・配信サービス）：見た目はHTML/CSS版とほぼ同一のまま、JSXで再構築。
+- 3枚目：**実際のWebページのスクリーンショットをやめ、専用テンプレートに変更**。人物名（タイトルに含める）・「推しサーチ」ワードマーク（ブランドラベル＋写真上のオーバーレイ帯の2箇所）・人物写真・CTAボタン（`cta-button3`と同一デザイン「プロフィールから『推しサーチ』へ」）で構成。Playwrightでの本番サイトアクセスは一切行わない。
+
+**削除したファイル・依存：**
+- `src/server/instagram-post/render.ts`（Playwrightでのレンダリング）・`browser.ts`（Chromium起動切り替え）・`templates/*.ts`（HTML/CSSのBase64埋め込み）：いずれも削除。
+- `package.json`から`playwright-core`・`@sparticuz/chromium-min`を削除。`playwright`本体は`tools/canva-instagram/generate-csv.ts`（本タスクとは無関係な既存のCanva一括作成ツール、ルートのnode_modulesを共有）が引き続き使用しているため再インストールして維持した（Instagram投稿のVercel Functionからは一切参照されないことをファイルトレースで確認済み）。
+- `next.config.ts`：Playwright/Chromium関連の`serverExternalPackages`・`outputFileTracingIncludes`を削除し、日本語フォントファイル用の`outputFileTracingIncludes`に置き換え。
+- `vercel.json`：Chromium対策で追加していたメモリ・maxDuration上書き設定を削除（デフォルトに戻した）。
+- `generate/route.ts`の`maxDuration`：300秒→60秒に縮小。
+
+**実装中に発見・修正したSatoriの不具合：** `top: undefined`のようにキー自体は存在するが値がundefinedのCSSプロパティをstyleオブジェクトに含めると、Satori内部で「Cannot read properties of undefined (reading 'trim')」というエラーになることを実機デバッグで特定した（`@vercel/og`の圧縮バンドルコードをスタックトレースで直接追い、`tsx`で最小再現コードを作って原因を切り分けた）。装飾用の背景円・ドットの位置指定（top/bottom/left/right）で、値が未指定の軸も含めて全プロパティを書き込んでいたことが原因。`pickDefined()`ヘルパーで値がundefinedのキー自体を除去することで解決した。
+
+**動作確認（ローカル・Vercel Preview実機の両方、`media_publish`は一切実行していない）：**
+- `npx tsc --noEmit` エラーなし
+- `npm run build` 成功。`generate`ルートの成果物にPlaywright/Chromium関連ファイルが1件も含まれないことをファイルトレース（`.nft.json`）で確認（トレース済み合計サイズ約37.7MB、Vercel上限50MB以内）
+- ローカルで森本慎太郎の3枚生成 → 約5.4秒で完了（Playwright版は約15秒、Vercel実機でのChromium版は数分〜タイムアウトだったため大幅改善）。1〜3枚目とも目視でデザイン確認済み（3枚目は新デザイン、人物名・ブランドラベル・CTA全て表示）
+- Vercel Preview環境（`vercel deploy`でpreviewデプロイ、`vercel curl`でDeployment Protectionを回避しつつ実行）で同じ人物の3枚生成を実行 → **約12秒で成功**（コールドスタートを含む）。3枚ともVercel Blobへのアップロード・公開URL取得・JSON応答（画像URL・作品一覧・キャプション・ハッシュタグ）まで正常に確認。生成された画像をダウンロードし、ローカル生成分と同じ見た目であることを目視確認
+- `npx tsc --noEmit`（Canva一括作成ツールを含む全体）でも`playwright`再インストール後にエラーがないことを確認
+- 確認モーダル（`PublishConfirmModal`）はクライアント側のみで動作し、追加のAPI呼び出しは発生しないため、`generate`の成功のみで表示可能なことをコードレベルで確認（実際に「投稿する」を押す操作はテストしていない）
+
+**残る留意点：** ファイルトレース合計サイズが約37.7MB（上限50MBの約75%）と、以前（Playwright版が正しく動く前提だった頃の約23MB）より増えている。主要因は日本語フォント（約17MB）。今後sharpや他の依存が増えた場合は上限に近づく可能性があるため、必要であれば日本語フォントをJIS第一水準相当などへサブセット化してサイズを抑える余地がある（今回は実施していない）。
+
+**変更なし（今回維持）：** `tools/instagram-post-generator`（CLI版、独立したサブプロジェクトのため無関係）、Instagram API処理・Vercel Blob処理のロジック、DBの既存データ。Productionへのデプロイ・commit/pushは行っていない。

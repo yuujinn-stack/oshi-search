@@ -19,6 +19,7 @@
     "@neondatabase/serverless": "^1.1.0",
     "@next/third-parties": "^16.3.2",
     "@upstash/redis": "^1.38.0",
+    "@vercel/blob": "^2.8.0",
     "drizzle-orm": "^0.45.2",
     "eslint-config-next": "^16.2.7",
     "exceljs": "^4.4.0",
@@ -27,7 +28,8 @@
     "playwright": "^1.63.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "server-only": "^0.0.1"
+    "server-only": "^0.0.1",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/node": "^22",

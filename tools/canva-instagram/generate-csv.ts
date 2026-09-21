@@ -22,24 +22,17 @@ import * as path from 'path';
 import * as os from 'os';
 import ExcelJS from 'exceljs';
 import { chromium } from 'playwright';
-import { getPublishedWorks } from '@/lib/work-store';
+import sharp from 'sharp';
 import { getPersonWithConfigMerged } from '@/lib/persons';
-import { getInactiveProviderSlugs } from '@/lib/provider-store';
-import { filterPublicVodProviders, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
-import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
-import { getDisplayWorkTypeTrace } from '@/lib/work-display-type';
-import { VOD_TYPE_ORDER } from '@/lib/vod-cta';
-import type { WorkRecord } from '@/types/work';
-import type { VodProvider } from '@/types/vod';
+import { getRenderableWorkImageUrl, getWorkDisplayImage } from '@/lib/work-image';
+import {
+  selectTopWorks,
+  buildVodDisplayString,
+  MAX_WORKS,
+  type SelectedWork,
+  type SelectionResult,
+} from './work-selection';
 
-// 「今見たい作品3選」の対象ジャンル。既存サイトの構造化分類（getDisplayWorkType）を
-// タイトル文字列判定より優先して使う。ライブ・音楽番組・バラエティ・配信番組(Web)・
-// アイドル番組・舞台・ドキュメンタリー・アニメ声優等（グループ主体のコンテンツを含む）は
-// 意図的に対象外とする。
-const ELIGIBLE_DISPLAY_TYPES = new Set(['movie', 'drama']);
-
-const MAX_WORKS = 3;
-const MAX_VOD_SERVICES_PER_WORK = 2;
 // タイトルをCanva上で2行に分けるかどうかの閾値（この文字数以下なら分割しない）。
 // 実データ例に基づく判断: 「夜明けのすべて」(7文字)は分割なし、
 // 「西園寺さんは家事をしない」(12文字)は分割、という既存の例から決定。
@@ -82,138 +75,6 @@ export function splitTitleForCanva(title: string): [string, string] {
 
   const splitAt = Math.round(trimmed.length / 2);
   return [trimmed.slice(0, splitAt), trimmed.slice(splitAt)];
-}
-
-// ─── VOD表示文字列（サービス名のみ、最大2件を " / " で連結） ─────────────────────
-function buildVodDisplayString(providers: VodProvider[]): string {
-  const sorted = [...providers].sort(
-    (a, b) => (VOD_TYPE_ORDER[a.type] ?? 9) - (VOD_TYPE_ORDER[b.type] ?? 9),
-  );
-  const names: string[] = [];
-  const seen = new Set<string>();
-  for (const p of sorted) {
-    const displayName = getVodProviderDisplayInfo(p.providerName).displayName;
-    if (seen.has(displayName)) continue;
-    seen.add(displayName);
-    names.push(displayName);
-    if (names.length >= MAX_VOD_SERVICES_PER_WORK) break;
-  }
-  return names.join(' / ');
-}
-
-// ─── Canva用画像URLの利用可否チェック ────────────────────────────────────────────
-// 作品のランキング・選定順位（movie/drama判定・VOD優先・新しい順）には一切影響しない、
-// 「選ばれた候補の画像が実際にCanvaで使えるか」だけを見る独立したチェック。
-// ここで不適合と判定された作品は selected に入れず、次点の候補へ繰り上げる。
-
-// 既知の「作品固有ではない汎用OGP画像」の完全一致デノリスト。
-// 「監察医 朝顔2025新春スペシャル」調査で判明: FODサイト共通のロゴ画像で、
-// 作品ごとに変わらず内容と無関係なため常に不採用とする。
-const GENERIC_OGP_URL_DENYLIST = new Set<string>([
-  'https://i.fod.fujitv.co.jp/img/ogp_img/ogp.jpg',
-]);
-
-function isUsableCanvaImageUrl(url: string | null | undefined): boolean {
-  if (!url) return false;
-  const trimmed = url.trim();
-  if (trimmed.length === 0) return false;
-
-  let hostname = '';
-  try {
-    hostname = new URL(trimmed).hostname.toLowerCase();
-  } catch {
-    return false; // URLとして解釈できない値は不採用
-  }
-
-  // Google画像検索のサムネイルプロキシ（例: encrypted-tbn0.gstatic.com）
-  if (hostname === 'gstatic.com' || hostname.endsWith('.gstatic.com')) return false;
-
-  // ホストに関わらず、Google画像検索サムネイル特有のURLパターン（tbn:/tbm=等）を含むものは不採用
-  if (/[?&](q=tbn:|tbm=)/i.test(trimmed)) return false;
-
-  // 既知の「作品固有ではない汎用OGP画像」を除外
-  if (GENERIC_OGP_URL_DENYLIST.has(trimmed)) return false;
-
-  return true;
-}
-
-// ─── 3作品の選定 ────────────────────────────────────────────────────────────────
-// 優先順位: 0) 映画・ドラマ（配信ドラマ含む）のみを対象とし、それ以外
-//              （ライブ・音楽番組・バラエティ・配信番組/Web・アイドル番組・舞台・
-//              ドキュメンタリー・アニメ声優等）は除外する
-//              （既存の getDisplayWorkType/getDisplayWorkTypeTrace による構造化分類を
-//              タイトル文字列の独自判定より優先して利用する）
-//           1) 現在有効なVOD配信先が確認できる作品を優先
-//           2) releaseYearが新しい順
-//           3) 同一タイトル（トリム後の完全一致）は重複除外し、先に選ばれた方を残す
-interface SelectedWork {
-  work: WorkRecord;
-  confirmedProviders: VodProvider[];
-  displayType: string;
-  displayTypeRule: string;
-}
-
-interface SelectionResult {
-  selected: SelectedWork[];
-  /** 除外された作品のうち、releaseYearが新しい上位N件（レポート・デバッグ用） */
-  excludedTop: SelectedWork[];
-  /** movie/drama候補ではあったが、画像がCanvaで使えないため飛ばされた作品（ログ表示用） */
-  imageRejected: SelectedWork[];
-}
-
-async function selectTopWorks(personName: string): Promise<SelectionResult> {
-  const [works, terminatedSlugs] = await Promise.all([
-    getPublishedWorks(personName),
-    getInactiveProviderSlugs(),
-  ]);
-
-  const withVodInfo = works.map((work) => {
-    const trace = getDisplayWorkTypeTrace(work);
-    return {
-      work,
-      confirmedProviders: filterPublicVodProviders(work.vodProviders ?? [], terminatedSlugs),
-      displayType: trace.result,
-      displayTypeRule: trace.rule,
-    };
-  });
-
-  const eligible = withVodInfo.filter((item) => ELIGIBLE_DISPLAY_TYPES.has(item.displayType));
-  const excluded = withVodInfo.filter((item) => !ELIGIBLE_DISPLAY_TYPES.has(item.displayType));
-
-  const sortByVodThenYear = (a: SelectedWork, b: SelectedWork) => {
-    const aHasVod = a.confirmedProviders.length > 0;
-    const bHasVod = b.confirmedProviders.length > 0;
-    if (aHasVod !== bHasVod) return aHasVod ? -1 : 1;
-    const aYear = a.work.releaseYear ?? -1;
-    const bYear = b.work.releaseYear ?? -1;
-    return bYear - aYear;
-  };
-
-  eligible.sort(sortByVodThenYear);
-  excluded.sort(sortByVodThenYear);
-
-  // 順位付け（movie/drama判定・VOD優先・新しい順）は eligible の並び順としてすでに
-  // 確定済み。ここでは並び順を変えず、先頭から順に見ていき、画像が使えない候補だけ
-  // 読み飛ばして次点を繰り上げる（重複タイトル除外は既存のまま維持）。
-  const seenTitles = new Set<string>();
-  const selected: SelectedWork[] = [];
-  const imageRejected: SelectedWork[] = [];
-  for (const item of eligible) {
-    const key = item.work.title.trim();
-    if (seenTitles.has(key)) continue;
-    seenTitles.add(key);
-
-    const imageUrl = getRenderableWorkImageUrl(getWorkDisplayImage(item.work));
-    if (!isUsableCanvaImageUrl(imageUrl)) {
-      imageRejected.push(item);
-      continue;
-    }
-
-    selected.push(item);
-    if (selected.length >= MAX_WORKS) break;
-  }
-
-  return { selected, excludedTop: excluded.slice(0, 5), imageRejected };
 }
 
 // ─── CSV組み立て ────────────────────────────────────────────────────────────────
@@ -390,6 +251,35 @@ function anchorImageToCell(sheet: ExcelJS.Worksheet, imageId: number, colIdx: nu
   });
 }
 
+// work1Image〜work3Image・coverImageで共通利用する唯一の画像埋め込み関数。
+// coverImageだけ別の埋め込み方法にしない（画像追加→セルへのアンカーという
+// 手順を完全に統一する）。
+function embedImageBufferInCell(
+  workbook: ExcelJS.Workbook,
+  sheet: ExcelJS.Worksheet,
+  buffer: Buffer,
+  extension: 'jpeg' | 'png' | 'gif',
+  colIdx: number,
+  rowNum: number,
+): void {
+  const imageId = workbook.addImage({ buffer: buffer as unknown as ExcelJS.Buffer, extension });
+  anchorImageToCell(sheet, imageId, colIdx, rowNum);
+}
+
+// CanvaでcoverImage（人物写真）だけサムネイル非表示・ファイル名表示になる事象が
+// 確認されたため、埋め込み直前に常に標準的なsRGB・透過なしのJPEGへ変換する。
+// PNG構造を調査した結果、人物写真ファイルには非標準の独自チャンク（caBX等）が
+// 含まれており、正常動作しているPlaywright撮影PNG（IHDR+IDAT+IENDのみの単純な
+// 構造）とは異なっていた。再エンコードによりこの種の非標準メタデータを除去する。
+// person-images.json側の元ファイル自体は変更しない（一時的な変換のみ）。
+async function convertToStandardJpeg(buffer: Buffer): Promise<Buffer> {
+  return sharp(buffer)
+    .flatten({ background: '#ffffff' }) // 透過を白背景で合成し、透過なしのRGBにする
+    .toColorspace('srgb')
+    .jpeg({ quality: 92 })
+    .toBuffer();
+}
+
 // rows: CSV_HEADERに対応する行データ（buildCsvRowの戻り値をそのまま渡す。内容は不変）
 // personNames: rowsと同じ順番の人物名配列（coverImage/personPageImageの取得に使う）
 async function buildXlsxWorkbook(rows: string[][], personNames: string[]): Promise<ExcelJS.Workbook> {
@@ -456,17 +346,20 @@ async function buildXlsxWorkbook(rows: string[][], personNames: string[]): Promi
         console.log(`  [警告] 画像取得に失敗したためXLSXへの埋め込みをスキップしました: ${url}`);
         continue;
       }
-      const imageId = workbook.addImage({ buffer: buffer as unknown as ExcelJS.Buffer, extension: inferImageExtension(url) });
-      anchorImageToCell(sheet, imageId, colIdx, rowNum);
+      embedImageBufferInCell(workbook, sheet, buffer, inferImageExtension(url), colIdx, rowNum);
     }
 
-    // coverImage（人物写真）: person-images.jsonに登録があれば埋め込み、なければ空欄のまま
+    // coverImage（人物写真）: person-images.jsonに登録があれば埋め込み、なければ空欄のまま。
+    // work1Image〜work3Imageと完全に同じ埋め込み方法（embedImageBufferInCell）を使う。
+    // Canvaで「サムネイル非表示・ファイル名だけ表示」される事象が確認されたため、
+    // 元画像がPNGでも常に標準的なsRGB・透過なしのJPEGへ変換してから埋め込む
+    // （work1Image〜work3Imageと完全に同じ画像形式に揃えるため。person-images.json
+    // 側の元ファイル自体は変更しない、埋め込み直前だけの一時変換）。
     const coverImageEntry = personImageMap[personName];
-    const coverImageBuffer = await resolvePersonImageBuffer(coverImageEntry);
-    if (coverImageBuffer) {
-      const ext = /^https?:\/\//i.test(coverImageEntry ?? '') ? inferImageExtension(coverImageEntry!) : 'jpeg';
-      const imageId = workbook.addImage({ buffer: coverImageBuffer as unknown as ExcelJS.Buffer, extension: ext });
-      anchorImageToCell(sheet, imageId, COVER_IMAGE_COL_INDEX, rowNum);
+    const coverImageRawBuffer = await resolvePersonImageBuffer(coverImageEntry);
+    if (coverImageRawBuffer) {
+      const coverImageBuffer = await convertToStandardJpeg(coverImageRawBuffer);
+      embedImageBufferInCell(workbook, sheet, coverImageBuffer, 'jpeg', COVER_IMAGE_COL_INDEX, rowNum);
     }
 
     // personPageImage（人物ページのスクリーンショット）: 毎回Playwrightで撮影
@@ -721,7 +614,12 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error('CSV生成に失敗しました:', err);
-  process.exit(1);
-});
+// このファイルをexport-person-for-ig.ts等から関数のみimportした際に、CSV/XLSX生成
+// （ファイル書き込み・Downloadsへのコピー等の副作用）が誤って走らないよう、
+// 直接実行された場合（`tsx tools/canva-instagram/generate-csv.ts ...`）のみ起動する。
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('CSV生成に失敗しました:', err);
+    process.exit(1);
+  });
+}

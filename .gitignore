@@ -24,3 +24,4 @@ tsconfig.tsbuildinfo
 
 # 一時レポート（dry-run 出力）
 tmp/
+.env*
