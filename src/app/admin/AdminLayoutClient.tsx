@@ -24,6 +24,7 @@ export const NAV_ITEMS = [
   { href: '/admin/redis-backup',               label: '💾 バックアップ' },
   { href: '/admin/db-init',                    label: '🗄️ DBスキーマ初期化' },
   { href: '/admin/instagram-post',             label: '📸 Instagram投稿' },
+  { href: '/admin/instagram-schedule',         label: '📅 Instagram予約' },
 ] as const;
 
 export function isNavItemActive(pathname: string, href: string): boolean {

@@ -1533,3 +1533,96 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 **残る留意点：** ファイルトレース合計サイズが約37.7MB（上限50MBの約75%）と、以前（Playwright版が正しく動く前提だった頃の約23MB）より増えている。主要因は日本語フォント（約17MB）。今後sharpや他の依存が増えた場合は上限に近づく可能性があるため、必要であれば日本語フォントをJIS第一水準相当などへサブセット化してサイズを抑える余地がある（今回は実施していない）。
 
 **変更なし（今回維持）：** `tools/instagram-post-generator`（CLI版、独立したサブプロジェクトのため無関係）、Instagram API処理・Vercel Blob処理のロジック、DBの既存データ。Productionへのデプロイ・commit/pushは行っていない。
+
+---
+
+## Task 35 — Instagram予約投稿・自動投稿機能の基盤を新規追加
+
+**目的：** 既存の手動投稿機能（`/admin/instagram-post`、都度「投稿する」を押す方式）に加え、複数人物・複数日時をあらかじめまとめて予約しておき、指定日時になったらVercel Cron経由で自動的にInstagramへ公開する「予約投稿基盤」を新設する。既存の手動投稿機能・生成デザイン・Instagram API/DB/Vercel Blobの既存ロジックは一切変更しない。
+
+**設計方針（安全性優先）：** 「予約時に画像・キャプションを完成させてDBに保存」する方式を採用。人物選択→3枚生成→Blobアップロード→キャプション/ハッシュタグ生成→プレビュー→日時指定→予約、までを予約登録の時点で完了させる。Cron実行時は保存済みのimageUrls/captionをそのまま使いInstagram APIへ公開するだけで、画像の再生成は一切行わない（自動投稿時の失敗率低減が目的）。
+
+**新規追加ファイル：**
+- `src/db/schema.ts`：`instagramPostSchedules`テーブルを追加（既存テーブルは無変更）。
+- `drizzle/0011_instagram_post_schedules.sql`：上記のマイグレーションSQL（記録用。本番適用は`/api/admin/db-init`経由）。
+- `src/app/api/admin/db-init/route.ts`：`instagram_post_schedules`のCREATE TABLE/INDEXとTABLE_NAMESへの登録を追加（既存のCREATE/ALTER文には一切触れていない）。
+- `src/lib/instagram-templates.ts`：テンプレートのメタデータ一覧（id・label・requiresPersonPhoto）。クライアント/サーバー双方から参照する非server-onlyの純粋データ。現時点では`default-person`のみ実装。将来`works-only`等の写真不要テンプレートを追加する際はここに1件追加するだけでよい構造にした。
+- `src/lib/jst-time.ts`：Asia/Tokyo（UTC+9固定・夏時間なし）の壁時計時刻⇔UTC Dateの相互変換ヘルパー。サーバー・ブラウザのシステムタイムゾーンに依存しないよう、明示的な`+09:00`オフセットで変換する。
+- `src/server/instagram-schedule/prepare.ts`：予約登録前の内容確定処理。テンプレートが`default-person`の場合は既存の`buildInstagramPost`（`src/server/instagram-post/build-post.ts`、無変更）をそのまま呼び出すだけの薄いラッパー。将来のテンプレート追加時はここに分岐を増やす。
+- `src/server/instagram-schedule/schedule-store.ts`：予約のCRUD、および二重投稿防止の要となる「条件付きUPDATE1本によるatomic claim」（`claimDueSchedule`）を実装。
+- `src/app/api/admin/instagram-schedule/prepare/route.ts`（POST）・`route.ts`（GET一覧／POST予約作成）・`[id]/cancel/route.ts`（POST）・`[id]/retry/route.ts`（POST）：管理画面用API。認証は既存の`src/proxy.ts`が`/api/admin/*`に対して自動的に適用するため、各ルートに個別の認証コードは追加していない。
+- `src/app/api/cron/instagram-publish/route.ts`：Vercel Cronから呼び出す自動公開API。既存cronルート（`vod-refresh`等）と同じ`Authorization: Bearer {CRON_SECRET}`方式。`?dryRun=1`で「claimまでは本番と同じ経路を通るが、Instagram APIは呼ばず即座にscheduledへ戻す」検証専用モードを実装。
+- `src/app/admin/instagram-schedule/page.tsx`・`InstagramScheduleClient.tsx`・`ScheduleList.tsx`・`safe-fetch-json.ts`：予約投稿の管理画面（人物・テンプレート選択、生成、プレビュー、日時指定、予約、一覧・キャンセル・再実行）。
+
+**変更したファイル：**
+- `src/app/admin/AdminLayoutClient.tsx`：ナビに「📅 Instagram予約」（`/admin/instagram-schedule`）を追加。
+
+**二重投稿防止の仕組み：** `claimDueSchedule(id)`は`UPDATE instagram_post_schedules SET status='processing' WHERE id=$1 AND status='scheduled'`という条件付きUPDATE1本のみで実現している（`drizzle-orm/neon-http`は`db.transaction()`未対応のため、トランザクションではなくUPDATE自体の原子性に依拠）。実際に2つのCron呼び出しを完全に同時実行し、片方が`processing`へ遷移して実際の投稿処理に進み、もう片方は対象行が見つからず`skipped-already-claimed`になることを実機で確認した。
+
+**発生した問題と対応（正直に記録）：** 二重実行防止の検証中、2回目の同時実行テストで`?dryRun=1`を付け忘れ、`.env.local`に実際に設定されていた本物の`IG_ACCESS_TOKEN`を使って実際にInstagram Graph APIへ1回だけ本番相当のリクエスト（テスト用のダミー画像URL `https://example.com/test1.jpg` によるカルーセル子コンテナ作成）を送ってしまった。Meta側が画像として無効と判定して即座に拒否したため、コンテナは作成されず`media_publish`にも到達せず、実際の投稿は一切発生していない。以後の検証はすべて`?dryRun=1`で実施し、混入したテスト用DB行はすべて削除済み。今後同種の検証を行う際は、ローカルの`.env.local`に本物の`IG_ACCESS_TOKEN`/`IG_USER_ID`が入っている状態であることを踏まえ、必ず`dryRun=1`を付けるか、事前に環境変数を一時的に外して検証すること。
+
+**Vercel Cronの利用可否（現在のプランを変更せず調査）：** このプロジェクトはVercel Hobbyプラン（過去のFunctionメモリ上限2048MBの制約から確認済み）。2026年1月の仕様変更により、Hobbyプランでも1プロジェクトあたり最大100件のCron Jobを設定可能（以前の上限5件から緩和）。ただし各Cron Job単体は「1日1回まで」の頻度制限があり、実行時刻の精度も「その時刻から1時間以内」という保証に留まる。この制約下で「1日3投稿（例: 09:00/15:00/20:00 JST）」を実現するには、1つのCron設定で複数時刻を賄うのではなく、**独立した3つのCron Job**（例: `0 0 * * *`=09:00 JST、`0 6 * * *`=15:00 JST、`0 11 * * *`=20:00 JST 相当のUTC時刻）を`vercel.json`に登録する案を提案した。各ジョブは「1日1回」の制限を満たしつつ、実行のたびに「現在時刻以前でstatus=scheduledな予約」をすべて処理するため、想定される時刻誤差は最大で約1時間。今回はユーザーへの報告を優先し、`vercel.json`への実際のcrons追加はまだ行っていない。
+
+**動作確認（ローカル、`media_publish`は実行していない。上記の1回の例外を除く）：**
+- `npx tsc --noEmit` エラーなし（`.next/types`の破損した重複型定義ファイルを削除して解消。今回の変更とは無関係）
+- `npm run build` 成功。`/admin/instagram-schedule`・`/api/admin/instagram-schedule`・`/api/admin/instagram-schedule/[id]/cancel`・`/api/admin/instagram-schedule/[id]/retry`・`/api/admin/instagram-schedule/prepare`・`/api/cron/instagram-publish`すべてビルド成果物に登録されていることを確認
+- `/api/admin/db-init`（POST）で`instagram_post_schedules`テーブルを作成（`CREATE TABLE IF NOT EXISTS`、既存テーブルへの影響なし）
+- 森本慎太郎で予約作成→一覧表示→キャンセル→再キャンセル拒否（409）を確認
+- 過去日時での予約作成が400で拒否されることを確認（サーバー側バリデーション）
+- failed状態の予約を直接DBに投入し、`/retry`でscheduledへ復帰→再度の`/retry`が409で拒否されることを確認
+- Cronの認証チェック（CRON_SECRET未設定時503、誤った値で401、正しい値で200）を確認（ローカル用に`.env.local`へ開発専用のCRON_SECRETを追記。Production/Previewの値とは別物）
+- `listDueScheduleIds`が「未来の予約」を含めず「過去に予約された行」のみを対象にすることを確認
+- `?dryRun=1`でclaim→即座にscheduledへ戻す一連の動作を確認
+- 実際に2つのCron呼び出しを完全同時実行し、二重実行防止（片方はprocessing→実処理、もう片方はskipped-already-claimed）を確認
+- `jstWallClockToUtcDate`/`formatJst`の変換が正しいこと（2026-09-22 09:00 JST → 2026-09-22T00:00:00.000Z UTC）を確認
+- 既存の`/admin/instagram-post`・`/api/admin/instagram-post/photo`・`/api/admin/instagram-post/duplicate-check`が引き続き正常動作することを確認（壊れていない）
+
+**残っている作業：** `vercel.json`へのcrons追加（ユーザー承認待ち）、写真不要テンプレート（works-only等）の実装、「毎日3枠」の一括予約UI、Production環境への`IG_ACCESS_TOKEN`/`IG_USER_ID`の追加（Task34時点から引き続き未設定）。
+
+**変更なし（今回維持）：** `/admin/instagram-post`（手動投稿機能）、`src/server/instagram-post/`配下の生成ロジック・Instagram API・Vercel Blob処理、既存DBデータ。Productionへのデプロイ・commit/pushは行っていない。
+
+---
+
+## Task 36 — Instagram予約投稿：本番投入前の安全性強化（ハードガード・バッチ処理・自動再試行）
+
+**目的：** Task35で構築した予約投稿基盤について、Production投入前の安全性レビューを受けて以下を強化する。(1) 自動投稿の実行可否を環境変数で明示的に制御するハードガードの追加、(2) Cron1回あたり最大5件までのバッチ処理、(3) failed（attempts<3）の自動再試行、(4) media_publish呼び出し自体の失敗を「公開済みか不明」として安全に分離するneeds_review状態の追加。
+
+**1. Production環境変数の再確認（値は非表示、名前の存在のみ）：** `vercel env ls production`で確認したところ、`IG_ACCESS_TOKEN`・`IG_USER_ID`は共に**既にProductionへ設定済み**（約1時間前に追加）であることを確認した。再登録・変更は一切行っていない。`CRON_SECRET`も既にProduction/Previewへ設定済み（105日前から）であることを確認した。
+
+**2. `INSTAGRAM_AUTOPUBLISH_ENABLED`ハードガード：** `src/server/instagram-post/config.ts`に`isAutopublishEnabled()`を追加（既存のエクスポートは無変更）。`src/app/api/cron/instagram-publish/route.ts`で、`dryRun`でない実publish経路は、この関数が`true`を返さない限り**DBのclaimにすら進まず**即座に`{guarded:true, dueCount}`を返して停止するようにした。手動投稿（`/admin/instagram-post`）はこのフラグの影響を受けない。
+
+**3. `src/server/instagram-schedule/publish-schedule.ts`（新規）：** 既存の`src/server/instagram-post/publish.ts`（手動投稿用、無変更）とは別に、予約投稿専用のカルーセル作成〜media_publish処理を実装。`media_publish`呼び出し自体が失敗した場合のみ`AmbiguousPublishError`として区別し、それ以前の失敗とは異なる扱いにする（Instagram側で実際に公開が完了している可能性を否定できないため）。
+
+**4. `schedule-store.ts`の拡張：**
+- `ScheduleStatus`に`needs_review`を追加（`media_publish`呼び出し自体の失敗専用。dueConditionのOR条件に含めていないため、Cronからは自動的に無視され続ける＝二重投稿を絶対に起こさない）。
+- `dueCondition()`: `scheduled_at<=now() AND media_id IS NULL AND (status='scheduled' OR (status='failed' AND attempts<3))`。`listDueScheduleIds(limit)`・`claimDueSchedule(id)`の両方がこの同一条件を使う（クエリとUPDATEの条件が食い違わないようにするため）。
+- `listDueScheduleIds`に`limit`引数を追加（Cronルームは`CRON_BATCH_LIMIT=5`を渡す）。
+- `markNeedsReview()`を追加。`cancelSchedule`のキャンセル可能ステータスに`needs_review`を追加（Instagram側を確認した上でのキャンセルを許可するため）。`retrySchedule`は`failed`のみ再実行可（`needs_review`は対象外のまま）。
+
+**5. Cronルートの書き換え：** バッチ処理（最大5件）、ハードガード、`publishScheduleToInstagram`への切り替え、`AmbiguousPublishError`時の`needs_review`遷移を実装。
+
+**6. 管理画面（`InstagramScheduleClient.tsx`・`ScheduleList.tsx`）：** 「おすすめ投稿時間」として09:00/15:00/20:00のワンクリック選択ボタンを追加。おすすめ以外の時刻を選んだ場合は「HobbyプランではCronが1日3回のため、自由時刻を指定すると次回のCron実行時（最大約1時間の誤差あり）に投稿されます」と注意書きを表示。常時「実際の投稿時刻は指定時刻から最大約1時間ずれる場合があります」も表示。一覧に`needs_review`（要確認、オレンジ色）のステータス表示を追加し、再実行ボタンは表示せずキャンセルのみ許可。
+
+**Vercel Cron設定案（`vercel.json`へはまだ反映していない）：**
+```json
+{ "path": "/api/cron/instagram-publish", "schedule": "0 0 * * *" },  // 09:00 JST
+{ "path": "/api/cron/instagram-publish", "schedule": "0 6 * * *" },  // 15:00 JST
+{ "path": "/api/cron/instagram-publish", "schedule": "0 11 * * *" } // 20:00 JST
+```
+各エントリは「1日1回」というHobbyプランの制限を個別に満たす。実行時刻の精度はVercelの仕様上「指定時刻から1時間以内」。
+
+**動作確認（すべてdry-run・DB直接操作・モック不要の安全な方法のみ。Instagram Graph APIへの実リクエストは一切送信していない）：**
+- `npx tsc --noEmit` エラーなし／`npm run build` 成功
+- `INSTAGRAM_AUTOPUBLISH_ENABLED`未設定の状態で実publish経路（`dryRun`なし）を呼び出し、`{guarded:true}`が返り、DB側の対象行が一切変更されていない（claimすら発生しない）ことを確認
+- `dryRun=1`はガード無効時でも引き続き動作することを確認（API書き込みを伴わないため）
+- 7件の期限到来済み予約を用意し、1回のCron呼び出しで予定日時の古い順に5件のみ処理されることを確認
+- `claimDueSchedule()`を同一IDに対して完全並列に2回直接呼び出し、片方だけが`processing`を獲得し、もう片方が`null`になることを確認（HTTP層を介さない、最も直接的な二重取得防止の証明）
+- `attempts=3`の`failed`行、`media_id`が入っている`failed`行を用意し、`listDueScheduleIds`が両方とも除外することを確認。`claimDueSchedule`で直接claimを試みても両方とも`null`になることを確認（クエリ層とUPDATE層の両方で二重に安全策が効いていることを確認）
+- 予約登録→キャンセルが引き続き正常動作することを確認
+- 09:00/15:00/20:00 JSTがそれぞれ00:00/06:00/11:00 UTCに正しく変換されることを確認
+- 既存の`/admin/instagram-post`・`/admin/instagram-schedule`・`/api/admin/instagram-post/photo`が引き続き正常動作することを確認
+- テスト用に投入したDB行はすべて削除済み（`instagram_post_schedules`は0件の状態で終了）
+
+**残っている作業：** `vercel.json`へのcrons反映（ユーザー承認待ち）、写真不要テンプレートの実装、「毎日3枠」一括予約UI。
+
+**変更なし（今回維持）：** `/admin/instagram-post`（手動投稿機能）・`src/server/instagram-post/publish.ts`（無変更、手動投稿専用として維持）・生成ロジック・DBの既存データ。Productionへのデプロイ・commit/push・Instagramへの実投稿は一切行っていない。

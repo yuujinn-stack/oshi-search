@@ -38,3 +38,15 @@ export function loadInstagramConfig(): InstagramPostConfig {
 export function isBlobUploadConfigured(): boolean {
   return !!process.env.BLOB_READ_WRITE_TOKEN?.trim();
 }
+
+/**
+ * 予約投稿の自動公開（/api/cron/instagram-publish）専用のハードガード。
+ *
+ * 手動投稿（/admin/instagram-post、「投稿する」ボタン）はこのフラグの影響を受けない
+ * （既存の手動投稿機能は変更しない）。このフラグは「Cronが人の確認なしに
+ * media_publishを実行してよいか」だけを制御する、自動投稿専用の安全装置。
+ * 明示的に文字列 "true" のときのみ許可する（未設定・"false"・その他の値はすべて拒否＝安全側）。
+ */
+export function isAutopublishEnabled(): boolean {
+  return process.env.INSTAGRAM_AUTOPUBLISH_ENABLED?.trim().toLowerCase() === 'true';
+}

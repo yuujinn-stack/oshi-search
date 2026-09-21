@@ -467,3 +467,41 @@ export const instagramPosts = pgTable('instagram_posts', {
   index('ip_person_name_idx').on(t.personName),
   index('ip_published_at_idx').on(t.publishedAt),
 ]);
+
+// ── Instagram予約投稿（instagram_post_schedules）──────────────────────────────
+// /admin/instagram-schedule から作成する予約の本体。「予約時に画像・キャプションを
+// 完成させて保存」する方式のため、Cron実行時はここに保存済みのimageUrls/caption/hashtags
+// をそのまま使ってInstagram APIへ公開するだけで、画像の再生成は一切行わない。
+// 公開成功後の履歴（media_id等）は既存のinstagram_postsにもrecordInstagramPost経由で
+// 記録される（instagram_postsは「実際に公開された投稿の履歴」、
+// instagram_post_schedulesは「予約〜実行のライフサイクル管理」という役割分担）。
+//
+// status: draft(未予約の下書き・現状は未使用、将来の「予約せず保存」用に予約) |
+//         scheduled(予約済み・Cron実行待ち) | processing(Cron実行中・二重実行防止用) |
+//         published(投稿成功) | failed(投稿失敗) | cancelled(キャンセル済み)
+export const instagramPostSchedules = pgTable('instagram_post_schedules', {
+  id:                  serial('id').primaryKey(),
+  // persons.name（現状このプロジェクトに数値/UUIDの人物IDは存在しないため、
+  // 人物名そのものをIDとして扱う。人物が改名・削除された後も予約履歴を残すため
+  // personNameと分けて持つが、現時点では常に同じ値になる）。
+  personId:            text('person_id').notNull(),
+  personName:          text('person_name').notNull(),
+  templateId:          text('template_id').notNull().default('default-person'),
+  scheduledAt:         timestamp('scheduled_at', { withTimezone: true }).notNull(),
+  status:              text('status').notNull().default('draft'),
+  caption:             text('caption').notNull().default(''),
+  hashtags:            text('hashtags').notNull().default(''),
+  imageUrls:           jsonb('image_urls').$type<string[]>().notNull().default([]),
+  mediaId:             text('media_id'),
+  publishedAt:         timestamp('published_at', { withTimezone: true }),
+  errorMessage:        text('error_message'),
+  attempts:            integer('attempts').notNull().default(0),
+  // Cron二重実行防止のロック用タイムスタンプ（status='processing'に遷移した時刻）
+  processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),
+  createdAt:           timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:           timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // Cronの「今すぐ公開すべき予約」抽出クエリ（status='scheduled' AND scheduled_at<=now()）に対応
+  index('ips_status_scheduled_at_idx').on(t.status, t.scheduledAt),
+  index('ips_person_id_idx').on(t.personId),
+]);
