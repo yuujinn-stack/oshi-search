@@ -1,7 +1,7 @@
 import 'server-only';
 import { db } from '@/db/client';
 import { instagramPostSchedules } from '@/db/schema';
-import { and, asc, eq, gte, isNull, lt, lte, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, isNull, lt, lte, ne, or } from 'drizzle-orm';
 
 /**
  * needs_review: media_publish呼び出し自体が失敗し、Instagram側で実際には公開が
@@ -94,6 +94,21 @@ export async function listSchedules(): Promise<ScheduleRecord[]> {
 export async function getScheduleById(id: number): Promise<ScheduleRecord | null> {
   const [row] = await db.select().from(instagramPostSchedules).where(eq(instagramPostSchedules.id, id)).limit(1);
   return row ? toRecord(row) : null;
+}
+
+/**
+ * 直近に作成された予約（cancelled除く）のtemplateIdを返す。
+ * 「自動（おすすめ）」テンプレートのローテーション（同じテンプレートが連続しにくくする）で、
+ * 一括予約のように呼び出し側が直前の選択結果を渡せない場合（通常の単発予約）の
+ * 基準値として使う。予約が1件もない場合はnullを返す。
+ */
+export async function getMostRecentTemplateId(): Promise<string | null> {
+  const [row] = await db.select({ templateId: instagramPostSchedules.templateId })
+    .from(instagramPostSchedules)
+    .where(ne(instagramPostSchedules.status, 'cancelled'))
+    .orderBy(desc(instagramPostSchedules.createdAt))
+    .limit(1);
+  return row?.templateId ?? null;
 }
 
 /**

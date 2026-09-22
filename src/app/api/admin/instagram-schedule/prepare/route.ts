@@ -4,6 +4,7 @@ import {
   InsufficientWorksError,
   PersonPhotoMissingError,
   UnknownTemplateError,
+  NoEligibleTemplateError,
 } from '@/server/instagram-schedule/prepare';
 import { PersonNotFoundError } from '@/server/instagram-post/person-data';
 
@@ -18,13 +19,16 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const personName = typeof body.personName === 'string' ? body.personName.trim() : '';
   const templateId = typeof body.templateId === 'string' && body.templateId.trim() ? body.templateId.trim() : 'default-person';
+  const previousTemplateId = typeof body.previousTemplateId === 'string' && body.previousTemplateId.trim()
+    ? body.previousTemplateId.trim()
+    : undefined;
 
   if (!personName) {
     return NextResponse.json({ error: '人物名が指定されていません' }, { status: 400 });
   }
 
   try {
-    const result = await prepareScheduleContent(personName, templateId);
+    const result = await prepareScheduleContent(personName, templateId, previousTemplateId);
     return NextResponse.json(result);
   } catch (err) {
     if (err instanceof PersonNotFoundError) {
@@ -35,6 +39,9 @@ export async function POST(req: NextRequest) {
     }
     if (err instanceof InsufficientWorksError) {
       return NextResponse.json({ error: err.message, code: 'INSUFFICIENT_WORKS' }, { status: 422 });
+    }
+    if (err instanceof NoEligibleTemplateError) {
+      return NextResponse.json({ error: err.message, code: 'NO_ELIGIBLE_TEMPLATE' }, { status: 422 });
     }
     if (err instanceof UnknownTemplateError) {
       return NextResponse.json({ error: err.message, code: 'UNKNOWN_TEMPLATE' }, { status: 400 });

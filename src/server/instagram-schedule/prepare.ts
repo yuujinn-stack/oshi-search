@@ -1,16 +1,11 @@
 import 'server-only';
-import {
-  buildInstagramPost,
-  InsufficientWorksError,
-  PersonPhotoMissingError,
-  type BuildPostResult,
-} from '../instagram-post/build-post';
-import { buildInstagramPostWorksOnly } from '../instagram-post/build-post-works-only';
-import { buildInstagramPostWorksPicks } from '../instagram-post/build-post-works-picks';
-import { buildInstagramPostVodCompare } from '../instagram-post/build-post-vod-compare';
-import { getInstagramTemplateMeta } from '@/lib/instagram-templates';
+import { InsufficientWorksError, PersonPhotoMissingError, type BuildPostResult } from '../instagram-post/build-post';
+import { TEMPLATE_BUILDERS } from '../instagram-post/template-builders';
+import { getInstagramTemplateMeta, AUTO_TEMPLATE_ID } from '@/lib/instagram-templates';
+import { resolveAutoTemplateId, NoEligibleTemplateError } from './auto-template';
+import { getMostRecentTemplateId } from './schedule-store';
 
-export { InsufficientWorksError, PersonPhotoMissingError };
+export { InsufficientWorksError, PersonPhotoMissingError, NoEligibleTemplateError };
 export class UnknownTemplateError extends Error {}
 
 export interface PrepareScheduleContentResult extends BuildPostResult {
@@ -19,39 +14,42 @@ export interface PrepareScheduleContentResult extends BuildPostResult {
 
 /**
  * 予約登録前の「投稿内容を完成させる」処理（人物選択→3枚生成→Blobアップロード→
- * キャプション/ハッシュタグ生成）。テンプレートごとに分岐する入口をここに用意する。
+ * キャプション/ハッシュタグ生成）。テンプレートごとの実際の生成関数は
+ * src/server/instagram-post/template-builders.ts のTEMPLATE_BUILDERSに集約されており、
+ * ここではテンプレートIDから対応する関数を引いて呼び出すだけにしている
+ * （テンプレート追加のたびにここへif文を増やす必要はない）。
  *
- * 現時点で実装済みのテンプレートは default-person のみで、これは既存の手動投稿
- * （/admin/instagram-post）が使っている buildInstagramPost をそのまま呼び出す
- * （生成ロジックは一切複製しない）。将来 requiresPersonPhoto: false のテンプレート
- * （works-only等）を追加する際は、ここに template.id ごとの分岐を増やし、
- * 人物写真を使わない専用の生成関数を呼び出すようにする。
+ * templateIdが'auto'の場合のみ、人物の実データ（人物写真・作品件数・配信サービス数）に
+ * 応じて候補テンプレートを絞り込み、直前に使われたテンプレートを避けて自動選択する
+ * （src/server/instagram-schedule/auto-template.ts）。手動で具体的なテンプレートIDを
+ * 指定した場合はこの解決処理を一切通らず、従来通りそのテンプレートを必ず使用する。
+ *
+ * previousTemplateIdは、一括予約のように呼び出し側（クライアント）が同一バッチ内で
+ * 直前に解決したテンプレートIDを把握している場合に渡す。省略時は、DB上の直近の予約
+ * （cancelled除く）のtemplateIdを基準にローテーションする。
  */
-export async function prepareScheduleContent(personName: string, templateId: string): Promise<PrepareScheduleContentResult> {
-  const template = getInstagramTemplateMeta(templateId);
+export async function prepareScheduleContent(
+  personName: string,
+  templateId: string,
+  previousTemplateId?: string | null,
+): Promise<PrepareScheduleContentResult> {
+  let resolvedTemplateId = templateId;
+
+  if (templateId === AUTO_TEMPLATE_ID) {
+    const prev = previousTemplateId !== undefined ? previousTemplateId : await getMostRecentTemplateId();
+    resolvedTemplateId = await resolveAutoTemplateId(personName, prev);
+  }
+
+  const template = getInstagramTemplateMeta(resolvedTemplateId);
   if (!template) {
     throw new UnknownTemplateError(`未知のテンプレートIDです: ${templateId}`);
   }
 
-  if (template.id === 'default-person') {
-    const result = await buildInstagramPost(personName);
-    return { ...result, templateId: template.id };
+  const builder = TEMPLATE_BUILDERS[template.id];
+  if (!builder) {
+    throw new UnknownTemplateError(`テンプレート「${template.id}」の生成処理はまだ実装されていません`);
   }
 
-  if (template.id === 'works-only') {
-    const result = await buildInstagramPostWorksOnly(personName);
-    return { ...result, templateId: template.id };
-  }
-
-  if (template.id === 'works-picks') {
-    const result = await buildInstagramPostWorksPicks(personName);
-    return { ...result, templateId: template.id };
-  }
-
-  if (template.id === 'vod-compare') {
-    const result = await buildInstagramPostVodCompare(personName);
-    return { ...result, templateId: template.id };
-  }
-
-  throw new UnknownTemplateError(`テンプレート「${templateId}」の生成処理はまだ実装されていません`);
+  const result = await builder(personName);
+  return { ...result, templateId: template.id };
 }

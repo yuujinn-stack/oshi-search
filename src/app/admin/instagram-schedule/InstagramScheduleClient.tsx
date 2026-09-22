@@ -5,7 +5,7 @@ import PersonCombobox, { type PersonOption } from '@/components/admin/PersonComb
 import { safeFetchJson } from './safe-fetch-json';
 import ScheduleList from './ScheduleList';
 import BulkScheduleClient from './BulkScheduleClient';
-import { INSTAGRAM_TEMPLATES, DEFAULT_INSTAGRAM_TEMPLATE_ID, getInstagramTemplateMeta } from '@/lib/instagram-templates';
+import { SCHEDULE_TEMPLATE_OPTIONS, DEFAULT_INSTAGRAM_TEMPLATE_ID, getScheduleTemplateMeta } from '@/lib/instagram-templates';
 import { jstWallClockToUtcDate, nowJstParts } from '@/lib/jst-time';
 
 interface PostImage {
@@ -68,7 +68,7 @@ export default function InstagramScheduleClient({ persons }: Props) {
 
   const [reloadToken, setReloadToken] = useState(0);
 
-  const selectedTemplate = getInstagramTemplateMeta(templateId);
+  const selectedTemplate = getScheduleTemplateMeta(templateId);
 
   // 人物 or テンプレートを変えたら、それまでの写真確認・生成結果はリセットする
   useEffect(() => {
@@ -189,7 +189,7 @@ export default function InstagramScheduleClient({ persons }: Props) {
               onChange={(e) => setTemplateId(e.target.value)}
               className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
             >
-              {INSTAGRAM_TEMPLATES.map((t) => (
+              {SCHEDULE_TEMPLATE_OPTIONS.map((t) => (
                 <option key={t.id} value={t.id}>{t.label}</option>
               ))}
             </select>

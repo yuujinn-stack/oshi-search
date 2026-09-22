@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import { safeFetchJson } from './safe-fetch-json';
 import PersonMultiSelect from './PersonMultiSelect';
-import { INSTAGRAM_TEMPLATES, DEFAULT_INSTAGRAM_TEMPLATE_ID } from '@/lib/instagram-templates';
+import { SCHEDULE_TEMPLATE_OPTIONS, DEFAULT_INSTAGRAM_TEMPLATE_ID, AUTO_TEMPLATE_ID, getScheduleTemplateMeta } from '@/lib/instagram-templates';
 import { allocateBulkSlots, formatJst, nowJstParts, type BulkSlotAssignment } from '@/lib/jst-time';
 
 interface PostImage {
@@ -89,12 +89,18 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
     }
   }, [occupiedIsos, selectedNames.length, startDate]);
 
-  async function generateOne(personName: string, scheduledAtIso: string): Promise<BulkRow> {
+  async function generateOne(personName: string, scheduledAtIso: string, previousTemplateId: string | null): Promise<BulkRow> {
     try {
+      const body: { personName: string; templateId: string; previousTemplateId?: string } = { personName, templateId };
+      // 「自動」の場合のみ、同じバッチ内で直前に解決したテンプレートIDを渡し、
+      // 連続で同じテンプレートにならないようローテーションさせる（手動指定時は無関係）。
+      if (templateId === AUTO_TEMPLATE_ID && previousTemplateId) {
+        body.previousTemplateId = previousTemplateId;
+      }
       const data = await safeFetchJson<PrepareResult>('/api/admin/instagram-schedule/prepare', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personName, templateId }),
+        body: JSON.stringify(body),
       });
       return { personName, scheduledAtIso, genStatus: 'ready', prepared: data, excluded: false };
     } catch (err) {
@@ -114,10 +120,14 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
     }));
     setRows(initial);
 
+    let previousTemplateId: string | null = null;
     for (let i = 0; i < initial.length; i++) {
       setRows((prev) => prev?.map((r, idx) => (idx === i ? { ...r, genStatus: 'generating' } : r)) ?? prev);
-      const result = await generateOne(initial[i].personName, initial[i].scheduledAtIso);
+      const result = await generateOne(initial[i].personName, initial[i].scheduledAtIso, previousTemplateId);
       setRows((prev) => prev?.map((r, idx) => (idx === i ? result : r)) ?? prev);
+      if (result.genStatus === 'ready' && result.prepared) {
+        previousTemplateId = result.prepared.templateId;
+      }
     }
     setGenerating(false);
   }
@@ -125,8 +135,10 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
   async function handleRegenerate(index: number) {
     if (!rows) return;
     const target = rows[index];
+    // 直前の行（存在すれば）が解決済みのテンプレートIDをローテーションの基準にする
+    const previousTemplateId = index > 0 ? rows[index - 1].prepared?.templateId ?? null : null;
     setRows((prev) => prev?.map((r, i) => (i === index ? { ...r, genStatus: 'generating', error: undefined } : r)) ?? prev);
-    const result = await generateOne(target.personName, target.scheduledAtIso);
+    const result = await generateOne(target.personName, target.scheduledAtIso, previousTemplateId);
     setRows((prev) => prev?.map((r, i) => (i === index ? result : r)) ?? prev);
   }
 
@@ -145,7 +157,10 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
     try {
       const items = includedRows.map((r) => ({
         personName: r.personName,
-        templateId,
+        // 「自動」で行ごとに異なるテンプレートへ解決されている場合があるため、
+        // 一律の選択値ではなく、各行がprepareで実際に解決した結果のtemplateIdを使う
+        // （手動でテンプレートを指定した場合はprepared.templateIdも同じ値になるため挙動は変わらない）。
+        templateId: r.prepared!.templateId,
         scheduledAtIso: r.scheduledAtIso,
         caption: r.prepared!.caption,
         hashtags: r.prepared!.hashtags,
@@ -218,7 +233,7 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
               onChange={(e) => setTemplateId(e.target.value)}
               className="text-sm border border-gray-300 rounded-lg px-3 py-2"
             >
-              {INSTAGRAM_TEMPLATES.map((t) => (
+              {SCHEDULE_TEMPLATE_OPTIONS.map((t) => (
                 <option key={t.id} value={t.id}>{t.label}</option>
               ))}
             </select>
@@ -282,7 +297,14 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
               >
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div>
-                    <p className="text-sm font-bold text-slate-800">{row.personName}</p>
+                    <p className="text-sm font-bold text-slate-800">
+                      {row.personName}
+                      {templateId === AUTO_TEMPLATE_ID && row.genStatus === 'ready' && row.prepared && (
+                        <span className="ml-2 text-xs font-semibold text-violet-600 bg-violet-50 rounded-full px-2 py-0.5 align-middle">
+                          {getScheduleTemplateMeta(row.prepared.templateId)?.label ?? row.prepared.templateId}
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-gray-500">{formatJst(row.scheduledAtIso)}</p>
                   </div>
                   <div className="flex items-center gap-2">
