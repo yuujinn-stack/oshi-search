@@ -1685,3 +1685,40 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 **残っている作業：** commit / push / Production deploy（ユーザー承認待ち）。写真不要テンプレート、1日1枠/2枠切り替え、投稿時刻自体の変更UI、曜日別スケジュールは今回のスコープ外。
 
 **変更なし（今回維持）：** `/api/cron/instagram-publish`・`src/server/instagram-schedule/publish-schedule.ts`・`src/server/instagram-post/config.ts`（`isAutopublishEnabled`含む）・`vercel.json`・既存の単発予約ロジック（`claimDueSchedule`等）。Instagramへの実投稿・commit・push・Production deployは行っていない。
+
+---
+
+## Task 39 — Instagram投稿：人物写真を使わない新テンプレート「works-only」を追加
+
+**目的：** 人物写真の登録なしでもInstagram投稿画像（1080×1080の正方形カルーセル3枚）を生成できる新テンプレート`works-only`を追加する。既存の`default-person`テンプレート（1080×1350、人物写真あり）のデザイン・動作・関連ファイルは一切変更しない。
+
+**設計方針：** `og-templates/`直下の既存ファイル（`theme.ts`・`shared.tsx`・`page1〜3.tsx`・`index.ts`）は1バイトも変更せず、完全に独立した`og-templates/works-only/`サブフォルダを新設した。`pickDefined()`（テーマに依存しない純粋関数）だけは既存`shared.tsx`から再利用し、それ以外（`Decorations`・`BrandLabel`・配色・サイズ）は独立して定義している。生成ロジック側も同様に、既存の`build-post.ts`・`og-render.tsx`は無変更のまま、新規ファイル（`build-post-works-only.ts`・`og-render-works-only.ts`）を並置した。
+
+**新規追加：**
+- `src/server/instagram-post/og-templates/works-only/theme.ts`：CANVAS(1080×1080)・COLORS・BRAND・PAGE1〜3のデザイン設定。
+- `src/server/instagram-post/og-templates/works-only/shared.tsx`：`Decorations`・`BrandLabel`・`ArtChipCluster`（人物写真の代わりに表示する抽象的な3枚の作品カード風チップ）・`PlayBadge`（汎用の再生アイコン風バッジ、特定サービスのロゴは使用しない）。
+- `src/server/instagram-post/og-templates/works-only/page1.tsx`：表紙（タイトル＋抽象カード装飾＋CTA文言）。
+- `src/server/instagram-post/og-templates/works-only/page2.tsx`：出演作品3件（default-personの2枚目カードデザインを踏襲、独立実装）。
+- `src/server/instagram-post/og-templates/works-only/page3.tsx`：CTA専用ページ（検索窓風UI＋簡易作品チップ＋CTAボタン）。
+- `src/server/instagram-post/og-templates/works-only/index.ts`：バレル。
+- `src/server/instagram-post/og-render-works-only.ts`：works-only専用のレンダリング（1080×1080、`ImageResponse`）。フォント読み込みのみ既存`font-loader.ts`を共有。
+- `src/server/instagram-post/build-post-works-only.ts`：`buildInstagramPostWorksOnly()`。人物写真の取得（`findExistingPersonPhoto`）を一切呼び出さない点以外は、既存の汎用関数（`fetchPersonWorks`・`fetchImageBuffer`・`convertToInstagramJpeg`・`uploadPostImage`・`buildCaption`・`buildHashtags`）をそのまま再利用。
+
+**変更（既存の動作分岐を追加しただけで、default-person側の処理は不変）：**
+- `src/lib/instagram-templates.ts`：`works-only`（`requiresPersonPhoto: false`）を追加。`default-person`の表示ラベルを「標準（人物写真あり）」に更新（デザイン・動作には影響しない表示文言のみの変更）。
+- `src/server/instagram-schedule/prepare.ts`：コード内に元々あった拡張コメント通りの分岐を追加（`template.id === 'works-only'`のとき`buildInstagramPostWorksOnly`を呼ぶ）。`default-person`分岐は無変更。
+- `src/app/api/admin/instagram-post/generate/route.ts`：`templateId`を受け取り、`'works-only'`のときだけ`buildInstagramPostWorksOnly`を呼ぶよう分岐を追加。`templateId`未指定または`'default-person'`のときは従来と全く同じ`buildInstagramPost`呼び出しのみ。
+- `src/app/admin/instagram-post/InstagramPostClient.tsx`：テンプレート選択UIを追加（`/admin/instagram-schedule`側は元々テンプレート選択UIを持っていたため無変更で新テンプレートが選べるようになった）。人物写真確認・アップロードUIは`requiresPersonPhoto`が`true`のときだけ表示するよう変更。プレビュー画像のアスペクト比もテンプレートに応じて切り替え（works-onlyは正方形）。
+
+**動作確認（ローカルのみ。Instagram Graph APIへの実リクエストなし）：**
+- `npx tsc --noEmit` エラーなし／`npm run build` 成功
+- 人物写真が未登録の実在人物（京本大我）でworks-onlyの3枚を生成 → 成功。`personPhotoUrl`は空文字列、`findExistingPersonPhoto`は呼ばれていない
+- 生成画像3枚とも1080×1080ちょうど（JPEGヘッダから実測）であることを確認
+- 日本語文字化けなし、タイトル・キャプションの表示崩れなし、作品3件・配信サービスとも正しく表示、1枚目・3枚目とも人物写真は一切含まれていないことを目視確認
+- 手動投稿API（`/api/admin/instagram-post/generate`）・予約API（`/api/admin/instagram-schedule/prepare`）の両方から`templateId:"works-only"`で実際にHTTP経由の生成が成功することを確認（人物写真未登録エラーで止まらない）
+- `/admin/instagram-post`のテンプレート選択に「標準（人物写真あり）」「作品・配信情報（人物写真なし）」の両方が表示されることを確認
+- **default-personへの影響確認：** 同じ人物（森本慎太郎）でdefault-personテンプレートを再生成し、1枚目・3枚目はバイト単位で完全一致、2枚目も目視で完全に同一のデザインであることを確認（JPEGエンコーダの数バイトの差のみで、レイアウト・色・文言に一切変化なし）
+
+**残っている作業：** commit / push / Production deploy（ユーザー承認待ち）。Vercel本番環境でのフォントファイルの`outputFileTracingIncludes`は、works-onlyも同じ`/api/admin/instagram-post/generate`・`/api/admin/instagram-schedule/prepare`ルートを経由するため追加設定は不要と判断したが、Production初回デプロイ時に実機確認が望ましい。
+
+**変更なし（今回維持）：** `og-templates/theme.ts`・`shared.tsx`・`page1〜3.tsx`・`index.ts`（default-person本体）、`build-post.ts`、`og-render.tsx`、Instagram API認証・`media_publish`・Cron・自動投稿・一括予約・Atomic Claim・投稿履歴・Vercel Blob処理ロジック・既存DBデータ・既存予約データ・`INSTAGRAM_AUTOPUBLISH_ENABLED`。Instagramへの実投稿・commit・push・Production deployは行っていない。

@@ -21,11 +21,15 @@ export interface InstagramTemplateMeta {
 export const INSTAGRAM_TEMPLATES: InstagramTemplateMeta[] = [
   {
     id: 'default-person',
-    label: '標準（人物写真＋出演作3件＋プロフィールCTA）',
+    label: '標準（人物写真あり）',
     requiresPersonPhoto: true,
   },
+  {
+    id: 'works-only',
+    label: '作品・配信情報（人物写真なし）',
+    requiresPersonPhoto: false,
+  },
   // 将来追加予定（今回は未実装）:
-  // { id: 'works-only', label: '作品のみ（人物写真なし）', requiresPersonPhoto: false },
   // { id: 'subscription-comparison', label: 'サブスク比較', requiresPersonPhoto: false },
   // { id: 'ranking', label: 'ランキング', requiresPersonPhoto: false },
   // { id: 'text-only', label: 'テキストのみ', requiresPersonPhoto: false },

@@ -5,6 +5,7 @@ import {
   PersonPhotoMissingError,
   type BuildPostResult,
 } from '../instagram-post/build-post';
+import { buildInstagramPostWorksOnly } from '../instagram-post/build-post-works-only';
 import { getInstagramTemplateMeta } from '@/lib/instagram-templates';
 
 export { InsufficientWorksError, PersonPhotoMissingError };
@@ -32,6 +33,11 @@ export async function prepareScheduleContent(personName: string, templateId: str
 
   if (template.id === 'default-person') {
     const result = await buildInstagramPost(personName);
+    return { ...result, templateId: template.id };
+  }
+
+  if (template.id === 'works-only') {
+    const result = await buildInstagramPostWorksOnly(personName);
     return { ...result, templateId: template.id };
   }
 

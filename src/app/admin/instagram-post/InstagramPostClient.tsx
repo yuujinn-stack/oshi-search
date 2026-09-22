@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import PersonCombobox, { type PersonOption } from '@/components/admin/PersonCombobox';
 import PublishConfirmModal from './PublishConfirmModal';
 import { safeFetchJson } from './safe-fetch-json';
+import { INSTAGRAM_TEMPLATES, DEFAULT_INSTAGRAM_TEMPLATE_ID, getInstagramTemplateMeta } from '@/lib/instagram-templates';
 
 interface PostImage {
   order: 1 | 2 | 3;
@@ -41,6 +42,8 @@ interface Props {
 
 export default function InstagramPostClient({ persons }: Props) {
   const [personName, setPersonName] = useState('');
+  const [templateId, setTemplateId] = useState(DEFAULT_INSTAGRAM_TEMPLATE_ID);
+  const selectedTemplate = getInstagramTemplateMeta(templateId);
 
   const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
@@ -55,7 +58,7 @@ export default function InstagramPostClient({ persons }: Props) {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
 
-  // 人物を選び直したら、それまでのプレビュー・投稿結果はリセットする
+  // 人物・テンプレートを選び直したら、それまでのプレビュー・投稿結果はリセットする
   useEffect(() => {
     setPost(null);
     setGenerateError(null);
@@ -66,18 +69,21 @@ export default function InstagramPostClient({ persons }: Props) {
 
     if (!personName) return;
 
+    // 重複投稿チェックはテンプレートによらず常に行う
+    safeFetchJson<DuplicateInfo>(`/api/admin/instagram-post/duplicate-check?personName=${encodeURIComponent(personName)}`)
+      .then(setDuplicateInfo)
+      .catch(() => {});
+
+    // 人物写真の確認は「人物写真が必須のテンプレート」のときだけ行う
+    if (!selectedTemplate?.requiresPersonPhoto) return;
+
     setPhotoChecking(true);
-    Promise.all([
-      safeFetchJson<{ photoUrl: string | null }>(`/api/admin/instagram-post/photo?personName=${encodeURIComponent(personName)}`),
-      safeFetchJson<DuplicateInfo>(`/api/admin/instagram-post/duplicate-check?personName=${encodeURIComponent(personName)}`),
-    ])
-      .then(([photoData, dupData]) => {
-        setPhotoUrl(photoData.photoUrl ?? null);
-        setDuplicateInfo(dupData);
-      })
+    safeFetchJson<{ photoUrl: string | null }>(`/api/admin/instagram-post/photo?personName=${encodeURIComponent(personName)}`)
+      .then((data) => setPhotoUrl(data.photoUrl ?? null))
       .catch((err) => setPhotoError(String(err instanceof Error ? err.message : err)))
       .finally(() => setPhotoChecking(false));
-  }, [personName]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [personName, templateId]);
 
   const handlePhotoFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -115,7 +121,7 @@ export default function InstagramPostClient({ persons }: Props) {
       const data = await safeFetchJson<BuildPostResult>('/api/admin/instagram-post/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personName }),
+        body: JSON.stringify({ personName, templateId }),
       });
       setPost(data);
     } catch (err) {
@@ -125,24 +131,37 @@ export default function InstagramPostClient({ persons }: Props) {
     }
   }
 
-  const canGenerate = !!personName && !!photoUrl && !photoChecking && !uploadingPhoto && !generating;
+  const canGenerate = !!personName && !generating && (!selectedTemplate?.requiresPersonPhoto || (!!photoUrl && !photoChecking && !uploadingPhoto));
+  const previewAspectClass = templateId === 'works-only' ? 'aspect-square' : 'aspect-[4/5]';
 
   return (
     <div className="space-y-6">
-      {/* 人物選択 */}
+      {/* 人物・テンプレート選択 */}
       <section className="bg-white border border-gray-200 rounded-xl p-5">
-        <h2 className="text-sm font-bold text-slate-700 mb-3">1. 人物を選択</h2>
-        <PersonCombobox
-          persons={persons}
-          value={personName}
-          onChange={setPersonName}
-          placeholder="人物名で検索..."
-        />
-        {personName && (
-          <p className="text-xs text-gray-500 mt-2">
-            選択中: <span className="font-semibold text-slate-700">{personName}</span>
-          </p>
-        )}
+        <h2 className="text-sm font-bold text-slate-700 mb-3">1. 人物・テンプレートを選択</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="text-xs font-semibold text-gray-500 block mb-1">人物</label>
+            <PersonCombobox
+              persons={persons}
+              value={personName}
+              onChange={setPersonName}
+              placeholder="人物名で検索..."
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 block mb-1">投稿テンプレート</label>
+            <select
+              value={templateId}
+              onChange={(e) => setTemplateId(e.target.value)}
+              className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
+            >
+              {INSTAGRAM_TEMPLATES.map((t) => (
+                <option key={t.id} value={t.id}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
 
         {duplicateInfo?.alreadyPosted && (
           <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
@@ -152,7 +171,7 @@ export default function InstagramPostClient({ persons }: Props) {
           </div>
         )}
 
-        {personName && (
+        {personName && selectedTemplate?.requiresPersonPhoto && (
           <div className="mt-4 pt-4 border-t border-gray-100">
             <p className="text-xs font-semibold text-gray-600 mb-2">人物写真</p>
             {photoChecking ? (
@@ -177,6 +196,12 @@ export default function InstagramPostClient({ persons }: Props) {
             )}
             {photoError && <p className="text-xs text-red-600 mt-2">{photoError}</p>}
           </div>
+        )}
+
+        {personName && selectedTemplate && !selectedTemplate.requiresPersonPhoto && (
+          <p className="mt-4 pt-4 border-t border-gray-100 text-xs text-emerald-600">
+            このテンプレートは人物写真を使用しません。人物写真の登録なしで生成できます。
+          </p>
         )}
       </section>
 
@@ -215,7 +240,7 @@ export default function InstagramPostClient({ persons }: Props) {
                 <img
                   src={img.url}
                   alt={`投稿画像${img.order}枚目`}
-                  className="w-full rounded-lg border border-gray-200 object-cover aspect-[4/5]"
+                  className={`w-full rounded-lg border border-gray-200 object-cover ${previewAspectClass}`}
                 />
               </div>
             ))}

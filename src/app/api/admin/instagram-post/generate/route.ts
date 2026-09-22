@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { buildInstagramPost, InsufficientWorksError, PersonPhotoMissingError } from '@/server/instagram-post/build-post';
+import { buildInstagramPostWorksOnly } from '@/server/instagram-post/build-post-works-only';
 import { PersonNotFoundError } from '@/server/instagram-post/person-data';
 
 export const dynamic = 'force-dynamic';
@@ -13,13 +14,18 @@ export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const personName = typeof body.personName === 'string' ? body.personName.trim() : '';
+  const templateId = typeof body.templateId === 'string' && body.templateId.trim() ? body.templateId.trim() : 'default-person';
   if (!personName) {
     return NextResponse.json({ error: '人物名が指定されていません' }, { status: 400 });
   }
 
   try {
-    const result = await buildInstagramPost(personName);
-    return NextResponse.json(result);
+    // templateIdが未指定・'default-person'の場合は従来通りbuildInstagramPostのみを呼ぶ
+    // （既存の手動投稿の挙動は一切変更していない）。
+    const result = templateId === 'works-only'
+      ? await buildInstagramPostWorksOnly(personName)
+      : await buildInstagramPost(personName);
+    return NextResponse.json({ ...result, templateId });
   } catch (err) {
     if (err instanceof PersonNotFoundError) {
       return NextResponse.json({ error: err.message, code: 'PERSON_NOT_FOUND' }, { status: 404 });
