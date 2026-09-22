@@ -1,6 +1,6 @@
 import 'server-only';
 import { fetchPersonWorks } from './person-data';
-import { fetchImageBuffer, convertToInstagramJpeg, bufferToDataUri } from './image-prep';
+import { fetchImageBuffer, fetchImageBufferSafe, convertToInstagramJpeg, bufferToDataUri } from './image-prep';
 import { detectImageMimeType } from './mime-detect';
 import { renderPostImagesOg } from './og-render';
 import { uploadPostImage, findExistingPersonPhoto } from './blob';
@@ -59,9 +59,14 @@ export async function buildInstagramPost(personName: string): Promise<BuildPostR
   // （Vercel Hobby環境でのコールドスタート・メモリ・タイムアウト問題を構造的になくすため）。
   // 3枚目もPlaywrightでの本番サイトスクリーンショットは行わず、人物写真とテキストのみで
   // 構成する専用テンプレートに変更している。
+  //
+  // 人物写真は投稿の主役であり代替できないため、従来通りfetchImageBufferで取得し、
+  // 失敗した場合はそのまま投稿全体を失敗させる（このエラーハンドリングは変更しない）。
+  // 作品画像は1枚取得できなくても投稿全体を失敗させたくないため、
+  // fetchImageBufferSafe（一時的エラーは自動リトライ、最終的に失敗すればnull）を使う。
   const [personPhotoBuffer, workBuffers] = await Promise.all([
     fetchImageBuffer(personPhotoUrl),
-    Promise.all(works.map((w) => fetchImageBuffer(w.imageUrl!))),
+    Promise.all(works.map((w) => fetchImageBufferSafe(w.imageUrl!))),
   ]);
 
   const personImageDataUri = bufferToDataUri(personPhotoBuffer, detectImageMimeType(personPhotoBuffer));
@@ -71,11 +76,11 @@ export async function buildInstagramPost(personName: string): Promise<BuildPostR
     works: [0, 1, 2].map((i) => ({
       title: works[i].title,
       vod: works[i].vod,
-      imageDataUri: bufferToDataUri(workBuffers[i], detectImageMimeType(workBuffers[i])),
+      imageDataUri: workBuffers[i] ? bufferToDataUri(workBuffers[i]!, detectImageMimeType(workBuffers[i]!)) : null,
     })) as [
-      { title: string; vod: string; imageDataUri: string },
-      { title: string; vod: string; imageDataUri: string },
-      { title: string; vod: string; imageDataUri: string },
+      { title: string; vod: string; imageDataUri: string | null },
+      { title: string; vod: string; imageDataUri: string | null },
+      { title: string; vod: string; imageDataUri: string | null },
     ],
   });
 

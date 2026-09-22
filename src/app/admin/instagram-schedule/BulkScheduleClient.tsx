@@ -5,7 +5,7 @@ import type { PersonOption } from '@/components/admin/PersonCombobox';
 import { safeFetchJson } from './safe-fetch-json';
 import PersonMultiSelect from './PersonMultiSelect';
 import { SCHEDULE_TEMPLATE_OPTIONS, DEFAULT_INSTAGRAM_TEMPLATE_ID, AUTO_TEMPLATE_ID, getScheduleTemplateMeta } from '@/lib/instagram-templates';
-import { allocateBulkSlots, formatJst, nowJstParts, type BulkSlotAssignment } from '@/lib/jst-time';
+import { allocateBulkSlots, formatJst, nowJstParts, DEFAULT_DAILY_SLOTS, type BulkSlotAssignment } from '@/lib/jst-time';
 
 interface PostImage {
   order: 1 | 2 | 3;
@@ -41,12 +41,20 @@ interface Props {
   onBulkCreated: () => void;
 }
 
+/** 「1週間分を作成」モードの対象日数 */
+const WEEK_DAYS = 7;
+
 export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
   const [templateId, setTemplateId] = useState(DEFAULT_INSTAGRAM_TEMPLATE_ID);
   const [startDate, setStartDate] = useState(nowJstParts().date);
 
+  // 「通常」＝従来通り開始日から件数ぶん連続で埋める。「week」＝1週間(7日)×1日あたり件数の枠に限定する。
+  const [bulkMode, setBulkMode] = useState<'normal' | 'week'>('normal');
+  const [perDayCount, setPerDayCount] = useState<1 | 2 | 3>(3);
+
   const [postedNames, setPostedNames] = useState<Set<string>>(new Set());
+  const [lastPostedAt, setLastPostedAt] = useState<Map<string, string>>(new Map());
   const [occupiedIsos, setOccupiedIsos] = useState<Set<string> | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -60,11 +68,12 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
 
   const loadReferenceData = useCallback(() => {
     Promise.all([
-      safeFetchJson<{ personNames: string[] }>('/api/admin/instagram-schedule/posted-persons'),
+      safeFetchJson<{ personNames: string[]; lastPostedAt?: Record<string, string> }>('/api/admin/instagram-schedule/posted-persons'),
       safeFetchJson<{ occupied: string[] }>('/api/admin/instagram-schedule/occupied-slots?days=120'),
     ])
       .then(([posted, occ]) => {
         setPostedNames(new Set(posted.personNames));
+        setLastPostedAt(new Map(Object.entries(posted.lastPostedAt ?? {})));
         setOccupiedIsos(new Set(occ.occupied));
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)));
@@ -74,20 +83,32 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
     loadReferenceData();
   }, [loadReferenceData]);
 
-  // 選択・開始日・テンプレートが変わったら、生成済みプレビューは古くなるためリセットする
+  // 選択・開始日・テンプレート・モード・1日あたり件数が変わったら、生成済みプレビューは古くなるためリセットする
   useEffect(() => {
     setRows(null);
     setSubmittedCount(null);
-  }, [selectedNames, startDate, templateId]);
+  }, [selectedNames, startDate, templateId, bulkMode, perDayCount]);
+
+  function handleSelectWeekMode() {
+    setBulkMode('week');
+    // 「自動（おすすめ）」をデフォルトにする（既に手動で選び直している場合はそのまま尊重してもよいが、
+    // モード切替のタイミングでは明示的にautoへ戻す方が分かりやすいため統一する）。
+    setTemplateId(AUTO_TEMPLATE_ID);
+  }
+
+  const dailySlots = bulkMode === 'week' ? DEFAULT_DAILY_SLOTS.slice(0, perDayCount) : DEFAULT_DAILY_SLOTS;
+  const maxSelectable = bulkMode === 'week' ? WEEK_DAYS * perDayCount : undefined;
+  const overLimitCount = maxSelectable !== undefined ? Math.max(0, selectedNames.length - maxSelectable) : 0;
 
   const plan: BulkSlotAssignment[] = useMemo(() => {
     if (!occupiedIsos || selectedNames.length === 0) return [];
+    const count = maxSelectable !== undefined ? Math.min(selectedNames.length, maxSelectable) : selectedNames.length;
     try {
-      return allocateBulkSlots(startDate, selectedNames.length, occupiedIsos);
+      return allocateBulkSlots(startDate, count, occupiedIsos, dailySlots);
     } catch {
       return [];
     }
-  }, [occupiedIsos, selectedNames.length, startDate]);
+  }, [occupiedIsos, selectedNames.length, startDate, dailySlots, maxSelectable]);
 
   async function generateOne(personName: string, scheduledAtIso: string, previousTemplateId: string | null): Promise<BulkRow> {
     try {
@@ -202,20 +223,58 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{loadError}</div>
       )}
 
-      {/* 1. 人物を複数選択 */}
+      {/* 1. モードを選択 */}
       <section className="bg-white border border-gray-200 rounded-xl p-5">
-        <h2 className="text-sm font-bold text-slate-700 mb-3">1. 人物を複数選択</h2>
+        <h2 className="text-sm font-bold text-slate-700 mb-3">1. モードを選択</h2>
+        <div className="flex gap-1.5 bg-gray-100 rounded-lg p-1 w-fit">
+          <button
+            type="button"
+            onClick={() => setBulkMode('normal')}
+            className={`text-xs font-semibold px-4 py-1.5 rounded-md transition-colors ${
+              bulkMode === 'normal' ? 'bg-white text-slate-800 shadow-sm' : 'text-gray-500 hover:text-slate-700'
+            }`}
+          >
+            通常
+          </button>
+          <button
+            type="button"
+            onClick={handleSelectWeekMode}
+            className={`text-xs font-semibold px-4 py-1.5 rounded-md transition-colors ${
+              bulkMode === 'week' ? 'bg-white text-slate-800 shadow-sm' : 'text-gray-500 hover:text-slate-700'
+            }`}
+          >
+            1週間分を作成
+          </button>
+        </div>
+        {bulkMode === 'week' && (
+          <p className="text-xs text-gray-500 mt-3">
+            開始日から{WEEK_DAYS}日間、1日あたり{perDayCount}件（最大{WEEK_DAYS * perDayCount}人）の投稿をまとめて準備します。
+            テンプレートは既定で「自動（おすすめ）」になります（手動固定に変更も可能です）。
+          </p>
+        )}
+      </section>
+
+      {/* 2. 人物を複数選択 */}
+      <section className="bg-white border border-gray-200 rounded-xl p-5">
+        <h2 className="text-sm font-bold text-slate-700 mb-3">2. 人物を複数選択</h2>
         <PersonMultiSelect
           persons={persons}
           postedPersonNames={postedNames}
+          lastPostedAt={lastPostedAt}
           selected={selectedNames}
           onChange={setSelectedNames}
+          maxSelected={maxSelectable}
         />
+        {overLimitCount > 0 && (
+          <p className="text-xs text-amber-600 mt-2">
+            選択人数が上限（{maxSelectable}人）を超えています。超過分（{overLimitCount}人、末尾側）は今回の生成対象に含まれません。
+          </p>
+        )}
       </section>
 
-      {/* 2. 開始日・テンプレート・配置プレビュー */}
+      {/* 3. 開始日・投稿数・テンプレートと自動配置プレビュー */}
       <section className="bg-white border border-gray-200 rounded-xl p-5">
-        <h2 className="text-sm font-bold text-slate-700 mb-3">2. 開始日・テンプレートと自動配置プレビュー</h2>
+        <h2 className="text-sm font-bold text-slate-700 mb-3">3. 開始日・投稿数・テンプレートと自動配置プレビュー</h2>
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1">開始日（JST）</label>
@@ -226,6 +285,20 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
               className="text-sm border border-gray-300 rounded-lg px-3 py-2"
             />
           </div>
+          {bulkMode === 'week' && (
+            <div>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">1日あたり投稿数</label>
+              <select
+                value={perDayCount}
+                onChange={(e) => setPerDayCount(Number(e.target.value) as 1 | 2 | 3)}
+                className="text-sm border border-gray-300 rounded-lg px-3 py-2"
+              >
+                <option value={1}>1件（09:00）</option>
+                <option value={2}>2件（09:00 / 15:00）</option>
+                <option value={3}>3件（09:00 / 15:00 / 20:00）</option>
+              </select>
+            </div>
+          )}
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1">投稿テンプレート</label>
             <select
@@ -240,7 +313,7 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
           </div>
         </div>
         <p className="text-xs text-gray-400 mb-2">
-          1日3枠（09:00 / 15:00 / 20:00 JST）。既に予約済みの枠は自動でスキップし、次の空き枠へ配置します。
+          1日{dailySlots.length}枠（{dailySlots.join(' / ')} JST）。既に予約済み（cancelledを除く）の枠は自動でスキップし、次の空き枠へ配置します。
         </p>
 
         {selectedNames.length === 0 ? (
@@ -269,9 +342,9 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
         )}
       </section>
 
-      {/* 3. 一括生成 */}
+      {/* 4. 一括生成 */}
       <section className="bg-white border border-gray-200 rounded-xl p-5">
-        <h2 className="text-sm font-bold text-slate-700 mb-3">3. 投稿画像・キャプションを一括生成</h2>
+        <h2 className="text-sm font-bold text-slate-700 mb-3">4. 投稿画像・キャプションを一括生成</h2>
         <p className="text-xs text-gray-500 mb-3">
           選択した人物ごとに、作品・配信先の取得、投稿画像3枚の生成、Vercel Blobへのアップロード、キャプション生成を順番に行います。
           <strong>この段階ではまだ予約されません（Instagramへの投稿も行いません）。</strong>
@@ -285,10 +358,10 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
         </button>
       </section>
 
-      {/* 4. プレビュー一覧 */}
+      {/* 5. プレビュー一覧 */}
       {rows && (
         <section className="bg-white border border-gray-200 rounded-xl p-5">
-          <h2 className="text-sm font-bold text-slate-700 mb-3">4. 一括プレビュー確認</h2>
+          <h2 className="text-sm font-bold text-slate-700 mb-3">5. 一括プレビュー確認（{rows.length}件）</h2>
           <div className="space-y-3">
             {rows.map((row, i) => (
               <div
@@ -372,7 +445,7 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
         </div>
       )}
 
-      {/* 7. 確認モーダル */}
+      {/* 6. 確認モーダル */}
       {confirmOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col">

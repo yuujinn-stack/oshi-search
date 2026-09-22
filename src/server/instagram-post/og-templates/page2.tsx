@@ -9,7 +9,8 @@ import { BrandLabel, Decorations } from './shared';
 export interface Page2WorkData {
   title: string;
   vod: string;
-  imageDataUri: string;
+  /** 取得失敗時はnull（画像なしのフォールバックカードとして描画する） */
+  imageDataUri: string | null;
 }
 
 export interface Page2Data {
@@ -41,16 +42,31 @@ function WorkCard({ work }: { work: Page2WorkData }): ReactElement {
           overflow: 'hidden',
           background: COLORS.accentSoft,
           display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
           flexShrink: 0,
         }}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={work.imageDataUri}
-          width={card.image.width}
-          height={card.image.height}
-          style={{ objectFit: 'cover' }}
-        />
+        {work.imageDataUri ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={work.imageDataUri}
+            width={card.image.width}
+            height={card.image.height}
+            style={{ objectFit: 'cover' }}
+          />
+        ) : (
+          // 作品画像が取得できなかった場合のシンプルなプレースホルダー（テキストなし、人物写真は使用しない）
+          <div
+            style={{
+              width: Math.round(Math.min(card.image.width, card.image.height) * 0.4),
+              height: Math.round(Math.min(card.image.width, card.image.height) * 0.4),
+              borderRadius: '50%',
+              background: COLORS.cardBorder,
+              display: 'flex',
+            }}
+          />
+        )}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 10, flex: 1 }}>
         <div

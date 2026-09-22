@@ -54,3 +54,20 @@ export async function listPostedPersonNames(): Promise<string[]> {
   const rows = await db.selectDistinct({ personName: instagramPosts.personName }).from(instagramPosts);
   return rows.map((r) => r.personName);
 }
+
+/**
+ * 投稿済みの人物ごとに、直近の投稿日時（最新のpublishedAt）を返す。
+ * 一括予約画面（1週間分作成モード）の「投稿済み・直近投稿日」表示用。
+ * publishedAt降順で取得し、人物名ごとに最初に出てきたもの（＝最新）だけを残す。
+ */
+export async function listPostedPersonsWithLastDate(): Promise<{ personName: string; lastPublishedAt: Date }[]> {
+  const rows = await db.select({ personName: instagramPosts.personName, publishedAt: instagramPosts.publishedAt })
+    .from(instagramPosts)
+    .orderBy(desc(instagramPosts.publishedAt));
+
+  const seen = new Map<string, Date>();
+  for (const r of rows) {
+    if (!seen.has(r.personName)) seen.set(r.personName, r.publishedAt);
+  }
+  return Array.from(seen, ([personName, lastPublishedAt]) => ({ personName, lastPublishedAt }));
+}

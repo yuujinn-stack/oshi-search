@@ -1,6 +1,6 @@
 import 'server-only';
 import { fetchPersonWorks } from './person-data';
-import { fetchImageBuffer, convertToInstagramJpeg, bufferToDataUri } from './image-prep';
+import { fetchImageBufferSafe, convertToInstagramJpeg, bufferToDataUri } from './image-prep';
 import { detectImageMimeType } from './mime-detect';
 import { renderPostImagesOgWorksPicks } from './og-render-works-picks';
 import { uploadPostImage } from './blob';
@@ -33,18 +33,20 @@ export async function buildInstagramPostWorksPicks(personName: string): Promise<
     );
   }
 
-  const workBuffers = await Promise.all(works.map((w) => fetchImageBuffer(w.imageUrl!)));
+  // 作品画像は1枚取得できなくても投稿全体を失敗させたくないため、
+  // fetchImageBufferSafe（一時的エラーは自動リトライ、最終的に失敗すればnull）を使う。
+  const workBuffers = await Promise.all(works.map((w) => fetchImageBufferSafe(w.imageUrl!)));
 
   const pngBuffers = await renderPostImagesOgWorksPicks({
     personName,
     works: [0, 1, 2].map((i) => ({
       title: works[i].title,
       vod: works[i].vod,
-      imageDataUri: bufferToDataUri(workBuffers[i], detectImageMimeType(workBuffers[i])),
+      imageDataUri: workBuffers[i] ? bufferToDataUri(workBuffers[i]!, detectImageMimeType(workBuffers[i]!)) : null,
     })) as [
-      { title: string; vod: string; imageDataUri: string },
-      { title: string; vod: string; imageDataUri: string },
-      { title: string; vod: string; imageDataUri: string },
+      { title: string; vod: string; imageDataUri: string | null },
+      { title: string; vod: string; imageDataUri: string | null },
+      { title: string; vod: string; imageDataUri: string | null },
     ],
   });
 

@@ -36,7 +36,8 @@ async function renderElementToPng(element: ReactElement): Promise<Buffer> {
 export interface RenderWorksOnlyWorkInput {
   title: string;
   vod: string;
-  imageDataUri: string;
+  /** 取得失敗時はnull（画像なしのフォールバックカードとして描画される） */
+  imageDataUri: string | null;
 }
 
 export interface RenderWorksOnlyInput {

@@ -1,6 +1,6 @@
 import 'server-only';
 import { fetchPersonWorks } from './person-data';
-import { fetchImageBuffer, convertToInstagramJpeg, bufferToDataUri } from './image-prep';
+import { fetchImageBufferSafe, convertToInstagramJpeg, bufferToDataUri } from './image-prep';
 import { detectImageMimeType } from './mime-detect';
 import { renderPostImagesOgWorksOnly } from './og-render-works-only';
 import { uploadPostImage } from './blob';
@@ -40,18 +40,20 @@ export async function buildInstagramPostWorksOnly(personName: string): Promise<B
 
   // 人物写真は使用しないため、findExistingPersonPhoto は一切呼び出さない
   // （このテンプレートは人物写真が未登録の人物でも生成できることが要件）。
-  const workBuffers = await Promise.all(works.map((w) => fetchImageBuffer(w.imageUrl!)));
+  // 作品画像は1枚取得できなくても投稿全体を失敗させたくないため、
+  // fetchImageBufferSafe（一時的エラーは自動リトライ、最終的に失敗すればnull）を使う。
+  const workBuffers = await Promise.all(works.map((w) => fetchImageBufferSafe(w.imageUrl!)));
 
   const pngBuffers = await renderPostImagesOgWorksOnly({
     personName,
     works: [0, 1, 2].map((i) => ({
       title: works[i].title,
       vod: works[i].vod,
-      imageDataUri: bufferToDataUri(workBuffers[i], detectImageMimeType(workBuffers[i])),
+      imageDataUri: workBuffers[i] ? bufferToDataUri(workBuffers[i]!, detectImageMimeType(workBuffers[i]!)) : null,
     })) as [
-      { title: string; vod: string; imageDataUri: string },
-      { title: string; vod: string; imageDataUri: string },
-      { title: string; vod: string; imageDataUri: string },
+      { title: string; vod: string; imageDataUri: string | null },
+      { title: string; vod: string; imageDataUri: string | null },
+      { title: string; vod: string; imageDataUri: string | null },
     ],
   });
 
