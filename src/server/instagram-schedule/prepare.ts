@@ -6,6 +6,8 @@ import {
   type BuildPostResult,
 } from '../instagram-post/build-post';
 import { buildInstagramPostWorksOnly } from '../instagram-post/build-post-works-only';
+import { buildInstagramPostWorksPicks } from '../instagram-post/build-post-works-picks';
+import { buildInstagramPostVodCompare } from '../instagram-post/build-post-vod-compare';
 import { getInstagramTemplateMeta } from '@/lib/instagram-templates';
 
 export { InsufficientWorksError, PersonPhotoMissingError };
@@ -38,6 +40,16 @@ export async function prepareScheduleContent(personName: string, templateId: str
 
   if (template.id === 'works-only') {
     const result = await buildInstagramPostWorksOnly(personName);
+    return { ...result, templateId: template.id };
+  }
+
+  if (template.id === 'works-picks') {
+    const result = await buildInstagramPostWorksPicks(personName);
+    return { ...result, templateId: template.id };
+  }
+
+  if (template.id === 'vod-compare') {
+    const result = await buildInstagramPostVodCompare(personName);
     return { ...result, templateId: template.id };
   }
 

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { buildInstagramPost, InsufficientWorksError, PersonPhotoMissingError } from '@/server/instagram-post/build-post';
 import { buildInstagramPostWorksOnly } from '@/server/instagram-post/build-post-works-only';
+import { buildInstagramPostWorksPicks } from '@/server/instagram-post/build-post-works-picks';
+import { buildInstagramPostVodCompare } from '@/server/instagram-post/build-post-vod-compare';
 import { PersonNotFoundError } from '@/server/instagram-post/person-data';
 
 export const dynamic = 'force-dynamic';
@@ -22,9 +24,16 @@ export async function POST(req: NextRequest) {
   try {
     // templateIdが未指定・'default-person'の場合は従来通りbuildInstagramPostのみを呼ぶ
     // （既存の手動投稿の挙動は一切変更していない）。
-    const result = templateId === 'works-only'
-      ? await buildInstagramPostWorksOnly(personName)
-      : await buildInstagramPost(personName);
+    let result;
+    if (templateId === 'works-only') {
+      result = await buildInstagramPostWorksOnly(personName);
+    } else if (templateId === 'works-picks') {
+      result = await buildInstagramPostWorksPicks(personName);
+    } else if (templateId === 'vod-compare') {
+      result = await buildInstagramPostVodCompare(personName);
+    } else {
+      result = await buildInstagramPost(personName);
+    }
     return NextResponse.json({ ...result, templateId });
   } catch (err) {
     if (err instanceof PersonNotFoundError) {

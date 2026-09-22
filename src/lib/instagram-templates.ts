@@ -29,13 +29,31 @@ export const INSTAGRAM_TEMPLATES: InstagramTemplateMeta[] = [
     label: '作品・配信情報（人物写真なし）',
     requiresPersonPhoto: false,
   },
+  {
+    id: 'works-picks',
+    label: '出演作3選（人物写真なし）',
+    requiresPersonPhoto: false,
+  },
+  {
+    id: 'vod-compare',
+    label: 'サブスク比較（人物写真なし）',
+    requiresPersonPhoto: false,
+  },
   // 将来追加予定（今回は未実装）:
-  // { id: 'subscription-comparison', label: 'サブスク比較', requiresPersonPhoto: false },
   // { id: 'ranking', label: 'ランキング', requiresPersonPhoto: false },
   // { id: 'text-only', label: 'テキストのみ', requiresPersonPhoto: false },
 ];
 
 export const DEFAULT_INSTAGRAM_TEMPLATE_ID = 'default-person';
+
+/**
+ * 人物写真を使わないテンプレートのID一覧（works-only / works-picks / vod-compare）。
+ * 将来、予約投稿・一括予約でこれらを自動的に順番へ切り替える「自動ローテーション」機能を
+ * 追加する際に、この配列をそのままローテーション対象として使える想定（今回は未実装）。
+ */
+export const PHOTO_FREE_TEMPLATE_IDS = INSTAGRAM_TEMPLATES
+  .filter((t) => !t.requiresPersonPhoto)
+  .map((t) => t.id);
 
 export function getInstagramTemplateMeta(templateId: string): InstagramTemplateMeta | undefined {
   return INSTAGRAM_TEMPLATES.find((t) => t.id === templateId);
