@@ -50,7 +50,7 @@ export function formatJst(value: Date | string): string {
 /** 一括予約のデフォルト1日3枠（JST）。将来「1日1枠/2枠」等に変える場合はここか呼び出し側で差し替える */
 export const DEFAULT_DAILY_SLOTS = ['09:00', '15:00', '20:00'] as const;
 
-/** JSTの"YYYY-MM-DD"文字列に日数を加算する（月またぎ・年またぎも正しく処理する） */
+/** JSTの"YYYY-MM-DD"文字列に日数を加算する（月またぎ・年またぎも正しく処理する。負数も可） */
 export function addDaysJst(dateJst: string, days: number): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateJst)) {
     throw new Error(`日付の形式が不正です: ${dateJst}`);
@@ -59,6 +59,23 @@ export function addDaysJst(dateJst: string, days: number): string {
   const dt = new Date(Date.UTC(y, m - 1, d));
   dt.setUTCDate(dt.getUTCDate() + days);
   return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * JSTの「今日を含む過去(daysBack+1)日間」に対応する半開区間 [from, to) のUTC Dateペアを返す。
+ * 例: daysBack=0 → 今日1日分（今日の00:00〜翌日00:00未満）。
+ *     daysBack=6 → 今日を含む過去7日間。daysBack=29 → 今日を含む過去30日間。
+ * 上限を「翌日0時未満」という半開区間にすることで、23:59:59的な端数処理を避けている。
+ * ダッシュボードの日次/週次/月次集計（Instagram運用状況）で使う。
+ */
+export function getJstDayRangeUtc(daysBack: number): { from: Date; to: Date } {
+  const todayJst = nowJstParts().date;
+  const startDateJst = addDaysJst(todayJst, -daysBack);
+  const endDateJst = addDaysJst(todayJst, 1);
+  return {
+    from: jstWallClockToUtcDate(startDateJst, '00:00'),
+    to: jstWallClockToUtcDate(endDateJst, '00:00'),
+  };
 }
 
 export interface BulkSlotAssignment {

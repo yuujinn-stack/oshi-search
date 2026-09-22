@@ -117,6 +117,67 @@ export async function listRecentSchedules(limit: number = 5): Promise<ScheduleRe
   return rows.map(toRecord);
 }
 
+export interface ScheduleRangeBreakdown {
+  total: number;
+  scheduled: number;
+  processing: number;
+  published: number;
+  failed: number;
+  needs_review: number;
+  cancelled: number;
+}
+
+const KNOWN_STATUS_KEYS: (keyof Omit<ScheduleRangeBreakdown, 'total'>)[] = [
+  'scheduled', 'processing', 'published', 'failed', 'needs_review', 'cancelled',
+];
+
+/**
+ * scheduledAtが[from, to)の範囲に入る予約を、status別に件数集計する（DB側でGROUP BY）。
+ * Instagram運用ダッシュボード（今日/直近7日/直近30日）で使う。範囲・タイムゾーンの解釈は
+ * 呼び出し側（@/lib/jst-time の getJstDayRangeUtc）に委ねる、このファイルはUTCの
+ * Date範囲を受け取るだけの汎用関数として保つ。
+ */
+export async function getScheduleStatusCountsInRange(from: Date, to: Date): Promise<ScheduleRangeBreakdown> {
+  const rows = await db.select({
+    status: instagramPostSchedules.status,
+    count: sql<number>`count(*)::int`,
+  }).from(instagramPostSchedules)
+    .where(and(gte(instagramPostSchedules.scheduledAt, from), lt(instagramPostSchedules.scheduledAt, to)))
+    .groupBy(instagramPostSchedules.status);
+
+  const breakdown: ScheduleRangeBreakdown = {
+    total: 0, scheduled: 0, processing: 0, published: 0, failed: 0, needs_review: 0, cancelled: 0,
+  };
+  for (const row of rows) {
+    breakdown.total += row.count;
+    if ((KNOWN_STATUS_KEYS as string[]).includes(row.status)) {
+      breakdown[row.status as (typeof KNOWN_STATUS_KEYS)[number]] = row.count;
+    }
+  }
+  return breakdown;
+}
+
+/** 直近のscheduledな予約のうち、最も予定日時が近いもの1件（ダッシュボードの「次回投稿」用） */
+export async function getNextScheduledItem(): Promise<ScheduleRecord | null> {
+  const [row] = await db.select().from(instagramPostSchedules)
+    .where(eq(instagramPostSchedules.status, 'scheduled'))
+    .orderBy(asc(instagramPostSchedules.scheduledAt))
+    .limit(1);
+  return row ? toRecord(row) : null;
+}
+
+/**
+ * failed または needs_review の予約を、最終更新が新しい順にN件（ダッシュボードの
+ * 「注意が必要な投稿」用）。published/cancelled等は含まれない。
+ */
+export async function listAttentionNeededSchedules(limit: number = 5): Promise<ScheduleRecord[]> {
+  const rows = await db.select().from(instagramPostSchedules)
+    .where(or(eq(instagramPostSchedules.status, 'failed'), eq(instagramPostSchedules.status, 'needs_review')))
+    .orderBy(desc(instagramPostSchedules.updatedAt))
+    .limit(limit);
+  return rows.map(toRecord);
+}
+
 export async function getScheduleById(id: number): Promise<ScheduleRecord | null> {
   const [row] = await db.select().from(instagramPostSchedules).where(eq(instagramPostSchedules.id, id)).limit(1);
   return row ? toRecord(row) : null;

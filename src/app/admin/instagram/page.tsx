@@ -1,8 +1,17 @@
 import type { Metadata } from 'next';
 import { LogoutButton } from '@/components/admin/LogoutButton';
-import { listRecentSchedules } from '@/server/instagram-schedule/schedule-store';
+import {
+  listRecentSchedules,
+  getScheduleStatusCountsInRange,
+  getNextScheduledItem,
+  listAttentionNeededSchedules,
+  type ScheduleRangeBreakdown,
+} from '@/server/instagram-schedule/schedule-store';
 import { getStatusLabel, getStatusStyle } from '@/lib/instagram-schedule-status';
-import { formatJst } from '@/lib/jst-time';
+import { formatJst, getJstDayRangeUtc } from '@/lib/jst-time';
+import { getScheduleTemplateMeta } from '@/lib/instagram-templates';
+import { maskSecrets } from '@/lib/mask-secrets';
+import { isAutopublishEnabled } from '@/server/instagram-post/config';
 
 export const metadata: Metadata = {
   robots: { index: false, follow: false, noarchive: true },
@@ -59,9 +68,28 @@ const CARDS: InstagramHubCard[] = [
   },
 ];
 
+/** published / (published + failed + needs_review)。分母が0件なら「—」を返す */
+function formatSuccessRate(breakdown: ScheduleRangeBreakdown): string {
+  const denom = breakdown.published + breakdown.failed + breakdown.needs_review;
+  if (denom === 0) return '—';
+  return `${Math.round((breakdown.published / denom) * 100)}%`;
+}
+
 export default async function InstagramHubPage() {
-  // 読み取り専用（直近の予定日時順、最大5件）。DB書き込み・Instagram APIへのアクセスは一切行わない。
-  const recentSchedules = await listRecentSchedules(5);
+  // すべて読み取り専用。DB書き込み・Instagram APIへのアクセスは一切行わない。
+  const todayRange = getJstDayRangeUtc(0);
+  const sevenDayRange = getJstDayRangeUtc(6);
+  const thirtyDayRange = getJstDayRangeUtc(29);
+
+  const [recentSchedules, todayBreakdown, sevenDayBreakdown, thirtyDayBreakdown, nextScheduled, attentionNeeded] = await Promise.all([
+    listRecentSchedules(5),
+    getScheduleStatusCountsInRange(todayRange.from, todayRange.to),
+    getScheduleStatusCountsInRange(sevenDayRange.from, sevenDayRange.to),
+    getScheduleStatusCountsInRange(thirtyDayRange.from, thirtyDayRange.to),
+    getNextScheduledItem(),
+    listAttentionNeededSchedules(5),
+  ]);
+  const autopublishOn = isAutopublishEnabled();
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
@@ -74,6 +102,98 @@ export default async function InstagramHubPage() {
         </div>
         <div className="flex items-center gap-3 mt-1 flex-wrap text-xs">
           <LogoutButton className="text-gray-400 hover:text-red-500" />
+        </div>
+      </div>
+
+      {/* Instagram運用状況ダッシュボード（すべて読み取り専用の集計・表示） */}
+      <div className="bg-white border border-gray-200 rounded-xl p-5 mb-6">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <h2 className="text-sm font-bold text-slate-700">Instagram運用状況</h2>
+          <span
+            className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
+              autopublishOn ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'
+            }`}
+          >
+            自動投稿：{autopublishOn ? 'ON' : 'OFF'}
+          </span>
+        </div>
+
+        {/* ①今日 ②直近7日 ③直近30日 */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
+          <div className="border border-gray-100 rounded-lg p-3">
+            <p className="text-xs font-semibold text-gray-500 mb-2">今日</p>
+            <div className="grid grid-cols-2 gap-y-1 text-xs text-slate-700">
+              <span>予約</span><span className="text-right font-semibold">{todayBreakdown.scheduled}</span>
+              <span>投稿済み</span><span className="text-right font-semibold text-emerald-700">{todayBreakdown.published}</span>
+              <span>失敗</span><span className="text-right font-semibold text-red-600">{todayBreakdown.failed}</span>
+              <span>要確認</span><span className="text-right font-semibold text-orange-600">{todayBreakdown.needs_review}</span>
+            </div>
+          </div>
+
+          <div className="border border-gray-100 rounded-lg p-3">
+            <p className="text-xs font-semibold text-gray-500 mb-2">直近7日</p>
+            <div className="grid grid-cols-2 gap-y-1 text-xs text-slate-700">
+              <span>投稿予定数</span><span className="text-right font-semibold">{sevenDayBreakdown.scheduled}</span>
+              <span>投稿済み</span><span className="text-right font-semibold text-emerald-700">{sevenDayBreakdown.published}</span>
+              <span>失敗</span><span className="text-right font-semibold text-red-600">{sevenDayBreakdown.failed}</span>
+              <span>要確認</span><span className="text-right font-semibold text-orange-600">{sevenDayBreakdown.needs_review}</span>
+              <span>成功率</span><span className="text-right font-semibold">{formatSuccessRate(sevenDayBreakdown)}</span>
+            </div>
+          </div>
+
+          <div className="border border-gray-100 rounded-lg p-3">
+            <p className="text-xs font-semibold text-gray-500 mb-2">直近30日</p>
+            <div className="grid grid-cols-2 gap-y-1 text-xs text-slate-700">
+              <span>投稿済み</span><span className="text-right font-semibold text-emerald-700">{thirtyDayBreakdown.published}</span>
+              <span>失敗</span><span className="text-right font-semibold text-red-600">{thirtyDayBreakdown.failed}</span>
+              <span>要確認</span><span className="text-right font-semibold text-orange-600">{thirtyDayBreakdown.needs_review}</span>
+              <span>成功率</span><span className="text-right font-semibold">{formatSuccessRate(thirtyDayBreakdown)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* ④次回投稿 */}
+          <div className="border border-gray-100 rounded-lg p-3">
+            <p className="text-xs font-semibold text-gray-500 mb-2">次回投稿</p>
+            {nextScheduled ? (
+              <div className="text-sm">
+                <p className="text-slate-800 font-semibold">{formatJst(nextScheduled.scheduledAt)}</p>
+                <p className="text-slate-700">{nextScheduled.personName}</p>
+                <p className="text-xs text-gray-500">{getScheduleTemplateMeta(nextScheduled.templateId)?.label ?? nextScheduled.templateId}</p>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400">現在、次の予約投稿はありません</p>
+            )}
+          </div>
+
+          {/* ⑤注意が必要な投稿 */}
+          <div className="border border-gray-100 rounded-lg p-3">
+            <p className="text-xs font-semibold text-gray-500 mb-2">注意が必要な投稿</p>
+            {attentionNeeded.length === 0 ? (
+              <p className="text-xs text-emerald-700">現在、確認が必要な投稿はありません</p>
+            ) : (
+              <ul className="space-y-2">
+                {attentionNeeded.map((s) => (
+                  <li key={s.id} className="text-xs border-b border-gray-50 last:border-0 pb-2 last:pb-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-800">{s.personName}</span>
+                      <span className={`inline-block px-1.5 py-0.5 rounded-full font-semibold ${getStatusStyle(s.status)}`}>
+                        {getStatusLabel(s.status)}
+                      </span>
+                    </div>
+                    <p className="text-gray-500">{formatJst(s.scheduledAt)}</p>
+                    {s.errorMessage && (
+                      <p className="text-red-600 line-clamp-1">{maskSecrets(s.errorMessage)}</p>
+                    )}
+                    <a href="/admin/instagram-schedule" className="text-violet-600 hover:text-violet-700 font-semibold">
+                      確認する →
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       </div>
 
