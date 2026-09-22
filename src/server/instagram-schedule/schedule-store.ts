@@ -1,17 +1,20 @@
 import 'server-only';
 import { db } from '@/db/client';
 import { instagramPostSchedules } from '@/db/schema';
-import { and, asc, desc, eq, gte, isNull, lt, lte, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { type ScheduleStatus, MAX_AUTO_RETRY_ATTEMPTS } from '@/lib/instagram-schedule-status';
 
 /**
  * needs_review: media_publish呼び出し自体が失敗し、Instagram側で実際には公開が
  * 完了している可能性を否定できない状態。二重投稿を避けるため自動再試行の対象には
  * 一切含めない（人が実際にInstagramを確認した上で、キャンセルするか手動で判断する）。
  */
-export type ScheduleStatus = 'draft' | 'scheduled' | 'processing' | 'published' | 'failed' | 'cancelled' | 'needs_review';
+export type { ScheduleStatus };
 
-/** 自動再試行の上限（この回数に達したfailedはCronの自動対象から外れ、手動再実行のみ可能になる） */
-export const MAX_AUTO_RETRY_ATTEMPTS = 3;
+// MAX_AUTO_RETRY_ATTEMPTS（自動再試行の上限）は管理画面の表示（「再試行回数: 2/3」等）にも
+// 必要なため @/lib/instagram-schedule-status（client-safe）で定義し、ここではそれを再利用・
+// 再exportする（値の定義箇所は1か所のまま）。
+export { MAX_AUTO_RETRY_ATTEMPTS };
 /** 1回のCron実行で処理する予約の最大件数 */
 export const CRON_BATCH_LIMIT = 5;
 
@@ -88,6 +91,29 @@ export async function listSchedules(): Promise<ScheduleRecord[]> {
   const rows = await db.select().from(instagramPostSchedules)
     .orderBy(asc(instagramPostSchedules.scheduledAt))
     .limit(200);
+  return rows.map(toRecord);
+}
+
+/**
+ * status別の件数（管理画面上部のサマリーカード用）。listSchedules()の200件上限とは無関係に、
+ * テーブル全体をDB側でGROUP BY COUNTして集計するため、件数が増えても軽量。
+ */
+export async function getScheduleStatusCounts(): Promise<Record<string, number>> {
+  const rows = await db.select({
+    status: instagramPostSchedules.status,
+    count: sql<number>`count(*)::int`,
+  }).from(instagramPostSchedules).groupBy(instagramPostSchedules.status);
+
+  const counts: Record<string, number> = {};
+  for (const row of rows) counts[row.status] = row.count;
+  return counts;
+}
+
+/** 直近の予定日時順にN件（Instagram管理トップの「最近の投稿結果」表示用、読み取り専用） */
+export async function listRecentSchedules(limit: number = 5): Promise<ScheduleRecord[]> {
+  const rows = await db.select().from(instagramPostSchedules)
+    .orderBy(desc(instagramPostSchedules.scheduledAt))
+    .limit(limit);
   return rows.map(toRecord);
 }
 
@@ -212,12 +238,27 @@ export async function cancelSchedule(id: number): Promise<ScheduleRecord> {
   return toRecord(row);
 }
 
-/** failedの予約を再度scheduledへ戻す（画像・キャプションは再生成せず、保存済みのものをそのまま再利用） */
+/**
+ * failed または needs_review の予約を再度scheduledへ戻す
+ * （画像・キャプションは再生成せず、保存済みのものをそのまま再利用する）。
+ *
+ * これ自体はInstagram APIを一切呼び出さない。statusをscheduledへ戻すだけで、
+ * 実際の投稿は次回のCron実行時に既存のclaimDueSchedule（Atomic Claim）・
+ * publishScheduleToInstagram（二重投稿防止込み）がそのまま処理する
+ * ＝新しい投稿経路は一切追加していない。
+ *
+ * media_idが既に入っている（＝Instagram側で公開済みの可能性がある）予約は、
+ * statusが不整合であっても誤って再実行できないよう明示的に拒否する
+ * （claimDueSchedule側のmedia_id IS NULL条件と合わせた二重の安全策）。
+ */
 export async function retrySchedule(id: number): Promise<ScheduleRecord> {
   const current = await getScheduleById(id);
   if (!current) throw new ScheduleNotFoundError(`予約が見つかりません（id=${id}）`);
-  if (current.status !== 'failed') {
-    throw new InvalidScheduleStateError(`status=${current.status} の予約は再実行できません（failedのみ再実行可能）`);
+  if (current.status !== 'failed' && current.status !== 'needs_review') {
+    throw new InvalidScheduleStateError(`status=${current.status} の予約は再実行できません（failed/needs_reviewのみ再実行可能）`);
+  }
+  if (current.mediaId) {
+    throw new InvalidScheduleStateError(`予約id=${id}は既にmedia_id=${current.mediaId}で公開済みのため、再実行できません`);
   }
   const [row] = await db.update(instagramPostSchedules)
     .set({ status: 'scheduled', errorMessage: null, processingStartedAt: null, updatedAt: new Date() })

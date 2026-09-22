@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createSchedule, listSchedules } from '@/server/instagram-schedule/schedule-store';
+import { createSchedule, listSchedules, getScheduleStatusCounts } from '@/server/instagram-schedule/schedule-store';
 import { getInstagramTemplateMeta } from '@/lib/instagram-templates';
+import { maskSecrets } from '@/lib/mask-secrets';
 
 export const dynamic = 'force-dynamic';
 
-/** 予約一覧（直近200件、予定日時の昇順） */
+/**
+ * 予約一覧（直近200件、予定日時の昇順）＋status別件数（サマリーカード用、DB側で集計）。
+ * errorMessageは万一外部APIレスポンス由来の秘密情報らしき文字列が混ざっていた場合に備え、
+ * クライアントへ返す前に防御的にマスクする（保存データ自体は変更しない）。
+ */
 export async function GET() {
   try {
-    const schedules = await listSchedules();
-    return NextResponse.json({ schedules });
+    const [schedules, statusCounts] = await Promise.all([listSchedules(), getScheduleStatusCounts()]);
+    const maskedSchedules = schedules.map((s) => ({ ...s, errorMessage: maskSecrets(s.errorMessage) }));
+    return NextResponse.json({ schedules: maskedSchedules, statusCounts });
   } catch (err) {
     return NextResponse.json({ error: String(err instanceof Error ? err.message : err) }, { status: 500 });
   }
