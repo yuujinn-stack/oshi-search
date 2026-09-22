@@ -12,6 +12,8 @@ import { formatJst, getJstDayRangeUtc } from '@/lib/jst-time';
 import { getScheduleTemplateMeta } from '@/lib/instagram-templates';
 import { maskSecrets } from '@/lib/mask-secrets';
 import { isAutopublishEnabled } from '@/server/instagram-post/config';
+import { listUnreadAdminNotifications } from '@/server/instagram-schedule/admin-notifications';
+import AdminNotificationsPanel, { type NotificationItem } from './AdminNotificationsPanel';
 
 export const metadata: Metadata = {
   robots: { index: false, follow: false, noarchive: true },
@@ -81,15 +83,29 @@ export default async function InstagramHubPage() {
   const sevenDayRange = getJstDayRangeUtc(6);
   const thirtyDayRange = getJstDayRangeUtc(29);
 
-  const [recentSchedules, todayBreakdown, sevenDayBreakdown, thirtyDayBreakdown, nextScheduled, attentionNeeded] = await Promise.all([
+  const [recentSchedules, todayBreakdown, sevenDayBreakdown, thirtyDayBreakdown, nextScheduled, attentionNeeded, unreadNotifications] = await Promise.all([
     listRecentSchedules(5),
     getScheduleStatusCountsInRange(todayRange.from, todayRange.to),
     getScheduleStatusCountsInRange(sevenDayRange.from, sevenDayRange.to),
     getScheduleStatusCountsInRange(thirtyDayRange.from, thirtyDayRange.to),
     getNextScheduledItem(),
     listAttentionNeededSchedules(5),
+    listUnreadAdminNotifications(5),
   ]);
   const autopublishOn = isAutopublishEnabled();
+
+  // 表示直前にerrorMessageをマスクし、テンプレートIDを日本語ラベルへ変換してからクライアント側へ渡す
+  const notificationItems: NotificationItem[] = unreadNotifications.map((n) => ({
+    id: n.id,
+    scheduleId: n.scheduleId,
+    status: n.status,
+    personName: n.schedule.personName,
+    scheduledAt: n.schedule.scheduledAt.toISOString(),
+    templateLabel: getScheduleTemplateMeta(n.schedule.templateId)?.label ?? n.schedule.templateId,
+    attempts: n.schedule.attempts,
+    errorMessage: maskSecrets(n.schedule.errorMessage),
+    updatedAt: n.schedule.updatedAt.toISOString(),
+  }));
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
@@ -116,6 +132,11 @@ export default async function InstagramHubPage() {
           >
             自動投稿：{autopublishOn ? 'ON' : 'OFF'}
           </span>
+        </div>
+
+        {/* 要対応（failed/needs_reviewの未読通知） */}
+        <div className="border border-gray-100 rounded-lg p-3 mb-5">
+          <AdminNotificationsPanel initial={notificationItems} />
         </div>
 
         {/* ①今日 ②直近7日 ③直近30日 */}

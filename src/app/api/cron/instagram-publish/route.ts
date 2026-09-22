@@ -36,6 +36,7 @@ import {
 } from '@/server/instagram-schedule/schedule-store';
 import { publishScheduleToInstagram, AmbiguousPublishError, GraphApiRequestError } from '@/server/instagram-schedule/publish-schedule';
 import { isAutopublishEnabled } from '@/server/instagram-post/config';
+import { createAdminNotificationIfNeeded } from '@/server/instagram-schedule/admin-notifications';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -103,14 +104,26 @@ export async function GET(req: NextRequest) {
         ? err.message
         : err instanceof Error ? err.message : String(err);
 
-      if (err instanceof AmbiguousPublishError) {
-        await markNeedsReview(claimed.id, { errorMessage: message, attempts: claimed.attempts + 1 });
+      const nextAttempts = claimed.attempts + 1;
+      const notifyStatus: 'needs_review' | 'failed' = err instanceof AmbiguousPublishError ? 'needs_review' : 'failed';
+
+      if (notifyStatus === 'needs_review') {
+        await markNeedsReview(claimed.id, { errorMessage: message, attempts: nextAttempts });
         outcomes.push({ id: claimed.id, personName: claimed.personName, result: 'needs_review' });
         console.error(`[cron/instagram-publish] needs_review（要手動確認）: id=${claimed.id} personName=${claimed.personName} error=${message}`);
       } else {
-        await markFailed(claimed.id, { errorMessage: message, attempts: claimed.attempts + 1 });
+        await markFailed(claimed.id, { errorMessage: message, attempts: nextAttempts });
         outcomes.push({ id: claimed.id, personName: claimed.personName, result: 'failed' });
         console.error(`[cron/instagram-publish] failed: id=${claimed.id} personName=${claimed.personName} error=${message}`);
+      }
+
+      // 管理画面内通知の作成は投稿結果の保存（上のmarkFailed/markNeedsReview）が完了した「後」に行い、
+      // 失敗してもここで握りつぶす（投稿処理結果の保存は既に成功しているため、通知作成の失敗が
+      // Instagram投稿処理の成否に影響することは一切ない）。
+      try {
+        await createAdminNotificationIfNeeded({ scheduleId: claimed.id, status: notifyStatus, attempts: nextAttempts });
+      } catch (notifyErr) {
+        console.error(`[cron/instagram-publish] 管理画面内通知の作成に失敗しました（投稿結果の保存には影響しません）: id=${claimed.id}`, notifyErr);
       }
     }
   }

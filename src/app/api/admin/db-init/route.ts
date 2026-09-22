@@ -248,6 +248,18 @@ const CREATE_STATEMENTS = [
   )`,
   sql`CREATE INDEX IF NOT EXISTS ips_status_scheduled_at_idx ON instagram_post_schedules (status, scheduled_at)`,
   sql`CREATE INDEX IF NOT EXISTS ips_person_id_idx ON instagram_post_schedules (person_id)`,
+  sql`CREATE TABLE IF NOT EXISTS instagram_admin_notifications (
+    id           SERIAL PRIMARY KEY,
+    schedule_id  INTEGER NOT NULL,
+    event_key    TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    is_read      BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    read_at      TIMESTAMPTZ
+  )`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS ian_event_key_idx ON instagram_admin_notifications (event_key)`,
+  sql`CREATE INDEX IF NOT EXISTS ian_schedule_id_idx ON instagram_admin_notifications (schedule_id)`,
+  sql`CREATE INDEX IF NOT EXISTS ian_is_read_idx ON instagram_admin_notifications (is_read)`,
 ];
 
 // ── ALTER TABLE ADD COLUMN IF NOT EXISTS ─────────────────────────────────────
@@ -338,7 +350,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE verdicts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
 ];
 
-const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements', 'instagram_posts', 'instagram_post_schedules'];
+const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements', 'instagram_posts', 'instagram_post_schedules', 'instagram_admin_notifications'];
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。

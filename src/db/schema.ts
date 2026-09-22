@@ -8,6 +8,7 @@ import {
   numeric,
   primaryKey,
   index,
+  uniqueIndex,
   serial,
 } from 'drizzle-orm/pg-core';
 
@@ -504,4 +505,28 @@ export const instagramPostSchedules = pgTable('instagram_post_schedules', {
   // Cronの「今すぐ公開すべき予約」抽出クエリ（status='scheduled' AND scheduled_at<=now()）に対応
   index('ips_status_scheduled_at_idx').on(t.status, t.scheduledAt),
   index('ips_person_id_idx').on(t.personId),
+]);
+
+/**
+ * Instagram予約がfailed/needs_reviewになったことを管理者へ知らせる「管理画面内通知」専用テーブル。
+ * instagram_post_schedulesとは完全に独立しており、このテーブルへの書き込みが
+ * 予約側のstatus等を変更することは一切ない（既読状態と投稿statusを分離するため）。
+ *
+ * eventKeyは `${scheduleId}:${status}:${attempts}` の形式（一意制約）。
+ * 同じ予約・同じstatus・同じattemptsの組み合わせでは1件しか作られない（＝重複通知防止）。
+ * 再試行の結果、再びfailed/needs_reviewになった場合はattemptsが増えるため、
+ * 自然に新しいeventKey＝新しい通知として扱われる。
+ */
+export const instagramAdminNotifications = pgTable('instagram_admin_notifications', {
+  id:         serial('id').primaryKey(),
+  scheduleId: integer('schedule_id').notNull(),
+  eventKey:   text('event_key').notNull(),
+  status:     text('status').notNull(),
+  isRead:     boolean('is_read').notNull().default(false),
+  createdAt:  timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  readAt:     timestamp('read_at', { withTimezone: true }),
+}, (t) => [
+  uniqueIndex('ian_event_key_idx').on(t.eventKey),
+  index('ian_schedule_id_idx').on(t.scheduleId),
+  index('ian_is_read_idx').on(t.isRead),
 ]);

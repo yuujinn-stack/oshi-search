@@ -58,6 +58,23 @@ export default function ScheduleList({ reloadToken }: Props) {
     reload();
   }, [reload, reloadToken]);
 
+  // 通知パネルの「詳細を確認」（/admin/instagram-schedule?status=failed&scheduleId=35）から来た場合、
+  // 初回表示時だけstatusフィルターを適用し、対象の予約を自動的に展開する。
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const statusParam = params.get('status');
+    if (statusParam && STATUS_FILTER_OPTIONS.some((opt) => opt.value === statusParam)) {
+      setStatusFilter(statusParam);
+    }
+    const scheduleIdParam = params.get('scheduleId');
+    if (scheduleIdParam) {
+      const id = Number(scheduleIdParam);
+      if (Number.isInteger(id)) setExpandedId(id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleCancel(id: number) {
     if (!window.confirm('この予約をキャンセルしますか？')) return;
     setBusyId(id);
