@@ -1,13 +1,11 @@
 import Link from 'next/link';
 import { unstable_cache } from 'next/cache';
 import { getAllPersonsEnrichedWithGenres, getAllPersonsWithConfig } from '@/lib/persons';
-import { getRankingData, RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
-import type { RankingData } from '@/lib/ranking';
+import { getHomeRankingData, RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
+import type { HomeRankingData } from '@/lib/ranking';
 import type { PersonCardData } from '@/lib/persons';
 import { DEFAULT_GENRE_ORDER } from '@/lib/genre-utils';
 import HeroSearchForm from '@/components/site/HeroSearchForm';
-import HomePersonCard from '@/components/site/HomePersonCard';
-import RankingPersonCard from '@/components/site/RankingPersonCard';
 import type { SuggestionItem } from '@/types/search';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
@@ -16,6 +14,8 @@ import { getRenderableProductTitle } from '@/lib/product-image';
 import { VOD_PAGE_PROVIDERS, getVodProviderWorkCounts } from '@/lib/vod-page';
 import { getPhotobookHomeItems } from '@/lib/photobook-store';
 import PhotobookHomeSection from '@/components/site/PhotobookHomeSection';
+import HomeGroupSection from '@/components/site/HomeGroupSection';
+import type { HomeGroupItem } from '@/components/site/HomeGroupSection';
 
 // Redis への問い合わせ結果を 60 秒間 Vercel Data Cache でキャッシュ
 // → 同一デプロイ内でリクエストが集中しても Redis 呼び出しは最大1回/60秒
@@ -25,9 +25,14 @@ const getCachedEnrichedData = unstable_cache(
   { revalidate: 60 },
 );
 
+// トップページで表示している「人気検索」「人気商品」だけを取得する軽量版。
+// 「今人気の人物」「急上昇」「人気作品」「注目の人物」はトップページで表示しないため
+// （src/components/site/HomeDiscoverySections.tsx に退避）、それらの集計処理は走らせない。
+// キャッシュキーは旧 getRankingData() 用の 'home-ranking-data' と分けている（返却形が異なるため）。
+// 管理画面の revalidateTag(RANKING_DATA_CACHE_TAG) による即時失効は引き続き有効。
 const getCachedRankingData = unstable_cache(
-  getRankingData,
-  ['home-ranking-data'],
+  getHomeRankingData,
+  ['home-ranking-lite-data'],
   { revalidate: 60, tags: [RANKING_DATA_CACHE_TAG] },
 );
 
@@ -67,11 +72,8 @@ const getCachedHomePhotobookItems = unstable_cache(
   { revalidate: 60, tags: ['photobook-home'] },
 );
 
-const EMPTY_RANKING: RankingData = {
-  popularPersons: [],
-  risingPersons: [],
+const EMPTY_RANKING: HomeRankingData = {
   popularSearches: [],
-  popularWorks: [],
   popularProducts: [],
 };
 
@@ -98,24 +100,30 @@ const GENRE_CATEGORIES: { label: string; icon: string; genres: string[] }[] = [
   { label: 'その他',            icon: '💡', genres: ['YouTuber', 'インフルエンサー', '実業家', '政治家', '研究者', '文化人', '芸能界引退'] },
 ];
 
-const WORK_TYPE_LABEL: Record<string, string> = {
-  movie: '映画', tv: 'ドラマ', variety: 'バラエティ', anime: 'アニメ',
-};
+// トップページ初期表示で出す主要ジャンル（既存データ上のジャンル名）。これ以外は
+// 「すべてのジャンルを見る」（<details>）の中に表示する。
+const HOME_PRIMARY_GENRES = ['アイドル', '俳優', '女優', 'タレント', '歌手', 'アーティスト', '声優', 'モデル', '芸人'];
 
-// ─── 共通セクションヘッダー ──────────────────────────────────────────────────────
-function SectionHeader({ title, href, linkText }: { title: string; href?: string; linkText?: string }) {
+function GenrePill({ genre }: { genre: string }) {
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '0 16px', marginBottom: '16px',
-    }}>
-      <h2 className="section-heading" style={{ marginBottom: 0, fontSize: '16px', fontWeight: 700 }}>{title}</h2>
-      {href && linkText && (
-        <Link href={href} className="theme-text-link" style={{ fontSize: '13px', fontWeight: 500, textDecoration: 'none' }}>
-          {linkText}
-        </Link>
-      )}
-    </div>
+    <Link
+      href={`/genre/${encodeURIComponent(genre)}`}
+      className="theme-link-pill"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px',
+        padding: '6px 12px',
+        borderRadius: '999px',
+        fontWeight: 600,
+        fontSize: '13px',
+        textDecoration: 'none',
+        minHeight: '34px',
+      }}
+    >
+      <span aria-hidden="true">{GENRE_EMOJI[genre]}</span>
+      <span>{genre}</span>
+    </Link>
   );
 }
 
@@ -160,10 +168,9 @@ export default async function HomePage() {
     ]),
   ];
 
-  const { popularPersons, risingPersons, popularSearches, popularWorks, popularProducts } = ranking;
-
-  // フォールバック（データなし時に使う人物）
-  const featured = persons.slice(0, 12);
+  // 「今人気の人物」「急上昇」「人気作品」「注目の人物」はトップページでは表示しない
+  // （src/components/site/HomeDiscoverySections.tsx に退避。データ取得も getHomeRankingData() で省略）。
+  const { popularSearches, popularProducts } = ranking;
 
   // ジャンルを大分類カードに振り分け（実データにあるジャンルのみ表示、未分類は「その他」に追加）
   const genreSet = new Set(allGenres);
@@ -180,6 +187,17 @@ export default async function HomePage() {
         : cat
     )
     .filter((cat) => cat.genres.length > 0);
+  const primaryGenres = HOME_PRIMARY_GENRES.filter((g) => genreSet.has(g));
+  const primaryGenreSet = new Set(primaryGenres);
+  const moreCategories = visibleCategories
+    .map((cat) => ({ ...cat, genres: cat.genres.filter((g) => !primaryGenreSet.has(g)) }))
+    .filter((cat) => cat.genres.length > 0);
+
+  // 「グループで探す」用。絞り込み分類は HomeGroupSection 内の表示用マッピングで決める（DBの値は使わない）
+  const homeGroups: HomeGroupItem[] = groups.map((g) => ({
+    name: g,
+    href: groupHrefByName(g, groupMetaList),
+  }));
 
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
   // サイト全体のWebSite/Organization JSON-LD。個別ページ（Person/Movie等）とは異なり
@@ -207,11 +225,13 @@ export default async function HomePage() {
     <div>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }} />
-      {/* ━━━ Hero ━━━ */}
+      {/* ━━━ Hero（メインコピー＋検索） ━━━ */}
+      {/* すでに推しがいるユーザーがすぐ検索できるよう、スマホでも検索欄がファーストビューに入る高さに抑える */}
       <section
         style={{
           background: 'linear-gradient(135deg, var(--ds-hero-from) 0%, var(--ds-hero-to) 100%)',
-          padding: 'clamp(48px, 8vw, 96px) 16px',
+          // 下側はPCで「グループで探す」が早く見えるよう上側より控えめ（スマホ幅では従来どおり32px）
+          padding: 'clamp(28px, 7vw, 80px) 16px clamp(32px, 5vw, 56px)',
         }}
       >
         <div style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center' }}>
@@ -223,36 +243,80 @@ export default async function HomePage() {
             letterSpacing: '-0.02em',
             lineHeight: 1.25,
           }}>
-            推しの出演作品・写真集・CD・<wbr />配信情報をまとめて検索
+            {/* 語の途中（「まとめ／て」等）で折れないよう、自然な区切りごとに inline-block でまとめる */}
+            <span style={{ display: 'inline-block' }}>推しの出演作・配信先・商品を</span>
+            <span style={{ display: 'inline-block' }}>まとめてチェック</span>
           </h1>
-          <p style={{ color: 'rgba(255,255,255,0.78)', marginBottom: '32px', fontSize: '15px', lineHeight: 1.65 }}>
-            楽天の商品も、出演作品も、配信サービスも一度に探せます。
+          <p style={{ color: 'rgba(255,255,255,0.78)', marginBottom: '20px', fontSize: '15px', lineHeight: 1.65 }}>
+            推しの名前・グループ名から探す
           </p>
-          <HeroSearchForm suggestions={heroSuggestions} />
+          {/* 「人気:」キーワードチップはトップページでは非表示（HeroSearchForm 内に固定リストとして残している） */}
+          <HeroSearchForm suggestions={heroSuggestions} showPopularKeywords={false} />
         </div>
       </section>
 
-      {/* ━━━ スタッツバー ━━━ */}
-      <div className="hero-stats-bar">
-        <div className="hero-stat">
-          <span className="hero-stat-num">{persons.length}</span>
-          <span className="hero-stat-label">登録タレント</span>
-        </div>
-        <div className="hero-stat-divider" aria-hidden="true" />
-        <div className="hero-stat">
-          <span className="hero-stat-num">{groups.length}</span>
-          <span className="hero-stat-label">グループ対応</span>
-        </div>
-        <div className="hero-stat-divider" aria-hidden="true" />
-        <div className="hero-stat">
-          <span className="hero-stat-num">楽天</span>
-          <span className="hero-stat-label">関連商品もまとめてチェック</span>
-        </div>
-        <div className="hero-stat-divider" aria-hidden="true" />
-        <div className="hero-stat">
-          <span className="hero-stat-num">VOD</span>
-          <span className="hero-stat-label">配信先をまとめて確認</span>
-        </div>
+      {/* ━━━ グループ・ジャンルから探す ━━━ */}
+      <div style={{ maxWidth: '1152px', margin: '0 auto', padding: 'clamp(24px, 5vw, 48px) 16px' }}>
+
+        {/* グループで探す */}
+        <HomeGroupSection groups={homeGroups} />
+
+        {/* ジャンルで探す（主要ジャンルのみ初期表示。残りは <details> で展開。リンクはすべてサーバーHTMLに含まれる） */}
+        <section>
+          <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '12px' }}>ジャンルで探す</h2>
+          {primaryGenres.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+              {primaryGenres.map((genre) => (
+                <GenrePill key={genre} genre={genre} />
+              ))}
+            </div>
+          )}
+          {moreCategories.length > 0 && (
+            <details className="home-genre-more" style={{ marginTop: '12px' }}>
+              <summary className="theme-text-link">
+                <span className="home-genre-more-open">すべてのジャンルを見る</span>
+                <span className="home-genre-more-close">ジャンルを閉じる</span>
+              </summary>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+                gap: '12px',
+                marginTop: '12px',
+              }}>
+                {moreCategories.map((cat) => (
+                  <div
+                    key={cat.label}
+                    style={{
+                      background: 'var(--ds-surface)',
+                      border: '1px solid var(--ds-border)',
+                      borderRadius: 'var(--ds-radius)',
+                      padding: '14px 16px',
+                    }}
+                  >
+                    <p style={{
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      color: 'var(--ds-muted)',
+                      marginBottom: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      letterSpacing: '0.02em',
+                    }}>
+                      <span aria-hidden="true">{cat.icon}</span>
+                      {cat.label}
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {cat.genres.map((genre) => (
+                        <GenrePill key={genre} genre={genre} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </section>
       </div>
 
       {/* ━━━ 配信サービスから探す ━━━ */}
@@ -287,34 +351,6 @@ export default async function HomePage() {
         </section>
       )}
 
-      {/* ━━━ 🔥 今人気の人物 ━━━ */}
-      <section style={{ background: 'var(--ds-surface)', borderBottom: '1px solid var(--ds-border)', paddingTop: '24px', paddingBottom: '32px' }}>
-        <div style={{ maxWidth: '1152px', margin: '0 auto' }}>
-          <SectionHeader title="🔥 今人気の人物" href="/search" linkText="全員を見る →" />
-          <div className="persons-row">
-            {popularPersons.map((person, i) => (
-              <div key={person.name} className="persons-row-item">
-                <RankingPersonCard person={person} rank={i + 1} />
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ━━━ 📈 急上昇 ━━━ */}
-      <section style={{ background: 'var(--ds-bg)', borderBottom: '1px solid var(--ds-border)', paddingTop: '24px', paddingBottom: '32px' }}>
-        <div style={{ maxWidth: '1152px', margin: '0 auto' }}>
-          <SectionHeader title="📈 急上昇" href="/search" linkText="もっと見る →" />
-          <div className="persons-row">
-            {risingPersons.map((person, i) => (
-              <div key={person.name} className="persons-row-item">
-                <RankingPersonCard person={person} rank={i + 1} />
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* ━━━ 🔍 人気検索 ━━━ */}
       {popularSearches.length > 0 && (
         <section style={{ background: 'var(--ds-surface)', borderBottom: '1px solid var(--ds-border)', paddingTop: '24px', paddingBottom: '32px' }}>
@@ -347,95 +383,6 @@ export default async function HomePage() {
                 >
                   <span style={{ fontSize: '10px', color: 'var(--ds-muted)', fontWeight: 500, minWidth: '14px' }}>{i + 1}</span>
                   {keyword}
-                </Link>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* ━━━ 🎬 人気作品 ━━━ */}
-      {popularWorks.length > 0 && (
-        <section style={{ background: 'var(--ds-bg)', borderBottom: '1px solid var(--ds-border)', paddingTop: '24px', paddingBottom: '32px' }}>
-          <div style={{ maxWidth: '1152px', margin: '0 auto', padding: '0 16px' }}>
-            <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>🎬 人気作品</h2>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-              gap: '12px',
-            }}>
-              {popularWorks.map((work) => (
-                <Link
-                  key={work.workId}
-                  href={work.detailUrl}
-                  className="theme-card"
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    textDecoration: 'none',
-                    overflow: 'hidden',
-                    borderRadius: 'var(--ds-radius)',
-                  }}
-                >
-                  {/* ポスター */}
-                  {work.posterUrl ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      src={work.posterUrl}
-                      alt={work.title}
-                      loading="lazy"
-                      style={{
-                        width: '100%',
-                        aspectRatio: work.posterUrl.includes('image.tmdb.org') ? '2/3' : '16/9',
-                        objectFit: 'cover',
-                        display: 'block',
-                      }}
-                    />
-                  ) : (
-                    <div style={{
-                      width: '100%',
-                      aspectRatio: '2/3',
-                      background: 'linear-gradient(135deg, var(--ds-primary-soft), var(--ds-border))',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '32px',
-                    }}>
-                      🎬
-                    </div>
-                  )}
-                  {/* テキスト */}
-                  <div style={{ padding: '10px', flex: 1 }}>
-                    <p style={{
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      color: 'var(--ds-text)',
-                      lineHeight: 1.4,
-                      display: '-webkit-box',
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical' as const,
-                      overflow: 'hidden',
-                      marginBottom: '4px',
-                    }}>
-                      {work.title}
-                    </p>
-                    <p style={{ fontSize: '10px', color: 'var(--ds-muted)' }}>
-                      {work.personName}
-                      {work.workType && (
-                        <span style={{
-                          marginLeft: '6px',
-                          background: 'var(--ds-primary-soft)',
-                          color: 'var(--ds-primary)',
-                          borderRadius: '4px',
-                          padding: '1px 5px',
-                          fontSize: '9px',
-                          fontWeight: 600,
-                        }}>
-                          {WORK_TYPE_LABEL[work.workType] ?? work.workType}
-                        </span>
-                      )}
-                    </p>
-                  </div>
                 </Link>
               ))}
             </div>
@@ -552,108 +499,27 @@ export default async function HomePage() {
         <PhotobookHomeSection femaleItems={photobookFemale} maleItems={photobookMale} />
       )}
 
-      {/* ━━━ メインコンテンツ ━━━ */}
-      <div style={{ maxWidth: '1152px', margin: '0 auto', padding: 'clamp(32px, 5vw, 56px) 16px' }}>
-
-        {/* 注目の人物 */}
-        <section style={{ marginBottom: '48px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <h2 className="section-heading" style={{ marginBottom: 0, fontSize: '16px', fontWeight: 700 }}>注目の人物</h2>
-            <Link href="/search" className="theme-text-link" style={{ fontSize: '14px', fontWeight: 500, textDecoration: 'none' }}>
-              全員を見る →
-            </Link>
-          </div>
-          <div className="persons-grid">
-            {featured.map((person) => (
-              <HomePersonCard key={person.name} person={person} />
-            ))}
-          </div>
-        </section>
-
-        {/* グループで探す */}
-        <section style={{ marginBottom: '48px' }}>
-          <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>グループで探す</h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-            {groups.map((group) => (
-              <Link
-                key={group}
-                href={groupHrefByName(group, groupMetaList)}
-                className="theme-group-chip"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '9px 16px',
-                  borderRadius: '10px',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                  textDecoration: 'none',
-                  minHeight: '40px',
-                }}
-              >
-                {group}
-              </Link>
-            ))}
-          </div>
-        </section>
-
-        {/* ジャンルで探す */}
-        <section>
-          <h2 className="section-heading" style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px' }}>ジャンルで探す</h2>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-            gap: '12px',
-          }}>
-            {visibleCategories.map((cat) => (
-              <div
-                key={cat.label}
-                style={{
-                  background: 'var(--ds-surface)',
-                  border: '1px solid var(--ds-border)',
-                  borderRadius: 'var(--ds-radius)',
-                  padding: '14px 16px',
-                }}
-              >
-                <p style={{
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  color: 'var(--ds-muted)',
-                  marginBottom: '10px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                  letterSpacing: '0.02em',
-                }}>
-                  <span aria-hidden="true">{cat.icon}</span>
-                  {cat.label}
-                </p>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                  {cat.genres.map((genre) => (
-                    <Link
-                      key={genre}
-                      href={`/genre/${encodeURIComponent(genre)}`}
-                      className="theme-link-pill"
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        padding: '6px 12px',
-                        borderRadius: '999px',
-                        fontWeight: 600,
-                        fontSize: '13px',
-                        textDecoration: 'none',
-                        minHeight: '34px',
-                      }}
-                    >
-                      <span aria-hidden="true">{GENRE_EMOJI[genre]}</span>
-                      <span>{genre}</span>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+      {/* ━━━ スタッツバー（トップページでは優先度を下げ最下部に配置） ━━━ */}
+      <div className="hero-stats-bar">
+        <div className="hero-stat">
+          <span className="hero-stat-num">{persons.length}</span>
+          <span className="hero-stat-label">登録タレント</span>
+        </div>
+        <div className="hero-stat-divider" aria-hidden="true" />
+        <div className="hero-stat">
+          <span className="hero-stat-num">{groups.length}</span>
+          <span className="hero-stat-label">グループ対応</span>
+        </div>
+        <div className="hero-stat-divider" aria-hidden="true" />
+        <div className="hero-stat">
+          <span className="hero-stat-num">楽天</span>
+          <span className="hero-stat-label">関連商品もまとめてチェック</span>
+        </div>
+        <div className="hero-stat-divider" aria-hidden="true" />
+        <div className="hero-stat">
+          <span className="hero-stat-num">VOD</span>
+          <span className="hero-stat-label">配信先をまとめて確認</span>
+        </div>
       </div>
     </div>
   );

@@ -125,6 +125,78 @@ function buildSearchKeywordWhitelist(persons: Person[], groupMetas: GroupMeta[])
   return whitelist;
 }
 
+// 「人気検索」: search:ranking ハッシュから実在する人物名・グループ名のみ TOP10 を返す
+// （自由入力の検索ログをそのまま公開表示せず、サイトテーマと無関係な語・スパム・不適切な語の表示を防止）。
+function computePopularSearches(
+  searchHash: Record<string, string> | null,
+  allPersons: Person[],
+  groupMetas: GroupMeta[],
+): RankedSearch[] {
+  const searchWhitelist = buildSearchKeywordWhitelist(allPersons, groupMetas);
+  return Object.entries(searchHash ?? {})
+    .map(([normalizedKeyword, count]) => {
+      const displayName = searchWhitelist.get(normalizedKeyword);
+      if (!displayName) return null;
+      return { keyword: displayName, count: parseInt(String(count), 10) || 0 };
+    })
+    .filter((s): s is RankedSearch => s !== null)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+}
+
+// 「人気商品」: product:click:* のクリック数 TOP8（画像はDB現在値で差し替え）
+async function computePopularProducts(redis: Redis, productKeys: string[]): Promise<RankedProduct[]> {
+  let popularProducts: RankedProduct[] = [];
+  if (productKeys.length > 0) {
+    const counts = await redis.mget<(string | null)[]>(...productKeys);
+    const metaPipe = redis.pipeline();
+    for (const k of productKeys) {
+      metaPipe.hgetall(`product:meta:${k.replace('product:click:', '')}`);
+    }
+    const metas = await metaPipe.exec() as unknown[];
+    const snapshotProducts = productKeys
+      .map((key, i) => {
+        const productId = key.replace('product:click:', '');
+        const meta = metas[i] as Record<string, string> | null;
+        if (!meta?.title) return null;
+        return {
+          productId,
+          title: meta.title,
+          personSlug: meta.personSlug ?? '',
+          category: meta.category ?? '',
+          imageUrl: meta.imageUrl ?? '',
+          affiliateUrl: meta.affiliateUrl ?? '',
+          clickCount: parseInt(String(counts[i] ?? '0'), 10) || 0,
+        };
+      })
+      .filter((p): p is RankedProduct => p !== null)
+      .sort((a, b) => b.clickCount - a.clickCount)
+      .slice(0, 8);
+
+    // product:meta:* の imageUrl はクリック時点のスナップショットのため、その後
+    // 管理画面での手動編集やRakuten再取得で商品画像が更新されても反映されない。
+    // 表示対象TOP8のみ、getStoredProductImageUrl()でDB側から対象商品1件だけを
+    // ピンポイントに絞り込んで現在のimageUrlを取得し、見つかった場合だけ差し替える
+    // （他のフィールド・並び順・クリック集計は一切変更しない。商品が削除済み等で
+    // 見つからない場合はスナップショットのまま）。
+    // getAllStoredProducts()（カテゴリ内の商品を丸ごと取得）は使わない。1人物・1カテゴリの
+    // 商品点数が数百〜千件規模になり得るため、TOP8のためだけに丸ごと転送するのは無駄が大きい。
+    const liveImageUrls = await Promise.all(
+      snapshotProducts.map((p) =>
+        p.personSlug && p.category
+          ? getStoredProductImageUrl(p.personSlug, p.category as ProductCategory, p.productId)
+          : Promise.resolve(null),
+      ),
+    );
+
+    popularProducts = snapshotProducts.map((p, i) => {
+      const liveImageUrl = liveImageUrls[i];
+      return liveImageUrl ? { ...p, imageUrl: liveImageUrl } : p;
+    });
+  }
+  return popularProducts;
+}
+
 // ─── メイン ──────────────────────────────────────────────────────────────────────
 export async function getRankingData(): Promise<RankingData> {
   const allPersons = await getAllPersonsMerged();
@@ -205,16 +277,7 @@ export async function getRankingData(): Promise<RankingData> {
   // ── 3. 検索ランキング ─────────────────────────────────────────────────────────
   // 自由入力の検索ログをそのまま公開表示せず、実在する人物名・グループ名と完全一致
   // するものだけに絞り込む（サイトテーマと無関係な語・スパム・不適切な語の表示を防止）。
-  const searchWhitelist = buildSearchKeywordWhitelist(allPersons, groupMetas);
-  const popularSearches: RankedSearch[] = Object.entries(searchHash ?? {})
-    .map(([normalizedKeyword, count]) => {
-      const displayName = searchWhitelist.get(normalizedKeyword);
-      if (!displayName) return null;
-      return { keyword: displayName, count: parseInt(String(count), 10) || 0 };
-    })
-    .filter((s): s is RankedSearch => s !== null)
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10);
+  const popularSearches = computePopularSearches(searchHash, allPersons, groupMetas);
 
   // ── 4. 人気作品 (SCAN + pipeline meta + DB照合) ───────────────────────────────
   // workPersonMap でDBに存在する公開作品のみ採用し、personName はDB値を正とする。
@@ -292,58 +355,41 @@ export async function getRankingData(): Promise<RankingData> {
   }
 
   // ── 5. 人気商品 (SCAN + pipeline meta) ────────────────────────────────────────
-  let popularProducts: RankedProduct[] = [];
-  if (productKeys.length > 0) {
-    const counts = await redis.mget<(string | null)[]>(...productKeys);
-    const metaPipe = redis.pipeline();
-    for (const k of productKeys) {
-      metaPipe.hgetall(`product:meta:${k.replace('product:click:', '')}`);
-    }
-    const metas = await metaPipe.exec() as unknown[];
-    const snapshotProducts = productKeys
-      .map((key, i) => {
-        const productId = key.replace('product:click:', '');
-        const meta = metas[i] as Record<string, string> | null;
-        if (!meta?.title) return null;
-        return {
-          productId,
-          title: meta.title,
-          personSlug: meta.personSlug ?? '',
-          category: meta.category ?? '',
-          imageUrl: meta.imageUrl ?? '',
-          affiliateUrl: meta.affiliateUrl ?? '',
-          clickCount: parseInt(String(counts[i] ?? '0'), 10) || 0,
-        };
-      })
-      .filter((p): p is RankedProduct => p !== null)
-      .sort((a, b) => b.clickCount - a.clickCount)
-      .slice(0, 8);
-
-    // product:meta:* の imageUrl はクリック時点のスナップショットのため、その後
-    // 管理画面での手動編集やRakuten再取得で商品画像が更新されても反映されない。
-    // 表示対象TOP8のみ、getStoredProductImageUrl()でDB側から対象商品1件だけを
-    // ピンポイントに絞り込んで現在のimageUrlを取得し、見つかった場合だけ差し替える
-    // （他のフィールド・並び順・クリック集計は一切変更しない。商品が削除済み等で
-    // 見つからない場合はスナップショットのまま）。
-    // getAllStoredProducts()（カテゴリ内の商品を丸ごと取得）は使わない。1人物・1カテゴリの
-    // 商品点数が数百〜千件規模になり得るため、TOP8のためだけに丸ごと転送するのは無駄が大きい。
-    const liveImageUrls = await Promise.all(
-      snapshotProducts.map((p) =>
-        p.personSlug && p.category
-          ? getStoredProductImageUrl(p.personSlug, p.category as ProductCategory, p.productId)
-          : Promise.resolve(null),
-      ),
-    );
-
-    popularProducts = snapshotProducts.map((p, i) => {
-      const liveImageUrl = liveImageUrls[i];
-      return liveImageUrl ? { ...p, imageUrl: liveImageUrl } : p;
-    });
-  }
+  const popularProducts = await computePopularProducts(redis, productKeys);
 
   return { popularPersons, risingPersons, popularSearches, popularWorks, popularProducts };
   } catch (err) {
     console.error('[ranking] Redis error, using fallback:', err);
     return emptyRanking;
+  }
+}
+
+// ─── トップページ用（軽量版） ───────────────────────────────────────────────────
+// トップページは「自分の推しを探す」導線を優先し、「今人気の人物」「急上昇」「人気作品」
+// 「注目の人物」を表示していない（src/components/site/HomeDiscoverySections.tsx に退避）。
+// そのため、表示している「人気検索」「人気商品」だけを計算し、getRankingData() が行う
+// 全人物の閲覧数パイプライン・TOP8人物の作品/商品全件取得・work:click:* SCAN+DB照合は行わない。
+// 4セクションを復活させる場合は、トップページ側を getRankingData() に戻すこと。
+export type HomeRankingData = Pick<RankingData, 'popularSearches' | 'popularProducts'>;
+
+export async function getHomeRankingData(): Promise<HomeRankingData> {
+  const empty: HomeRankingData = { popularSearches: [], popularProducts: [] };
+  const redis = getRedis();
+  if (!redis) return empty;
+
+  try {
+    const [allPersons, searchHash, productKeys, groupMetas] = await Promise.all([
+      getAllPersonsMerged(),
+      redis.hgetall('search:ranking') as Promise<Record<string, string> | null>,
+      scanKeys(redis, 'product:click:*'),
+      getAllGroupMetas(),
+    ]);
+    return {
+      popularSearches: computePopularSearches(searchHash, allPersons, groupMetas),
+      popularProducts: await computePopularProducts(redis, productKeys),
+    };
+  } catch (err) {
+    console.error('[ranking] home ranking Redis error, using fallback:', err);
+    return empty;
   }
 }

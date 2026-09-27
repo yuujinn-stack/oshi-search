@@ -166,40 +166,162 @@ export interface PhotobookItem {
   settingsTargets: PhotobookSettingsTarget[];
 }
 
+// ── 一時的な接続切断のみ1回だけ再試行 ─────────────────────────────────────────────
+// 自動候補SQLは応答が大きく（実測 約23MB・12〜15秒）、Neon HTTP 経由の転送途中で
+// 「SocketError: other side closed」により接続が切られることがある（2026-09 実測で再現）。
+// Drizzle は元エラーを cause に包む（Failed query → TypeError: terminated → SocketError）。
+// また応答ヘッダ受信前に切れた場合、Neon は NeonDbError の sourceError に元エラーを入れる
+// （Failed query → NeonDbError → sourceError: TypeError: terminated → cause: SocketError）。
+// cause / sourceError をたどって「接続切断」と明確に判断できる場合だけ true を返す。
+// SQL構文エラー・データ不整合など、それ以外のエラーは再試行しない。
+const TRANSIENT_DB_ERROR_CODES = new Set(['UND_ERR_SOCKET', 'ECONNRESET', 'EPIPE']);
+const TRANSIENT_DB_RETRY_DELAY_MS = 300;
+
+export function isTransientDbConnectionError(err: unknown, depth = 0): boolean {
+  if (!err || typeof err !== 'object' || depth > 6) return false;
+  const e = err as { name?: unknown; code?: unknown; message?: unknown; cause?: unknown; sourceError?: unknown };
+  if (e.name === 'SocketError') return true;
+  if (typeof e.code === 'string' && TRANSIENT_DB_ERROR_CODES.has(e.code)) return true;
+  if (typeof e.message === 'string' && e.message.includes('other side closed')) return true;
+  return isTransientDbConnectionError(e.cause, depth + 1) || isTransientDbConnectionError(e.sourceError, depth + 1);
+}
+
+export async function withTransientDbRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!isTransientDbConnectionError(err)) throw err;
+    console.warn(`[photobook-store] ${label}: transient DB connection error, retrying once`);
+    await new Promise((resolve) => setTimeout(resolve, TRANSIENT_DB_RETRY_DELAY_MS));
+    return fn(); // 再試行は1回のみ。失敗したらそのまま呼び出し元へ投げる
+  }
+}
+
 // ── Step 1: スキャン対象カテゴリの自動候補（verdict=related のみ）───────────────
-async function fetchAutoCandidateRows(): Promise<RawCandidateRow[]> {
-  const result = await db.execute(sql`
+// 2段階取得（2026-09 軽量化）:
+//   従来は全候補（約38,000行）の商品JSON全体（約23MB）を一度に取得してからアプリ側で
+//   約374件に絞っており、Neon HTTP の転送途中で「other side closed」が発生していた。
+//   第1段階: 判定に必要な最小限の列（人物・カテゴリ・配列内位置・id・title・isUsed・status）のみ取得
+//   ↓ 従来と同じ「人物×id の最初の1件」重複排除 → 従来と同じ isAutoDetectedPhotobook() で事前判定
+//   第2段階: 残った行だけ商品JSON全体と photobook_settings を取得し、第1段階の順序に戻す
+//   事前判定は公開側・管理側の両フィルタの和集合（手動設定あり or 自動判定合格）のみ残すため、
+//   以降の toCandidateItems() / fetchAllCandidates() / fetchAllCandidatesForAdmin() の結果は従来と同一。
+interface LightCandidateRow {
+  person_name: string;
+  category: string;
+  ord: number;
+  id: string;
+  title: string | null;
+  is_used: unknown;
+  status: string | null;
+}
+
+type AutoCandidatesResult = {
+  /** 事前判定を通過した行（商品JSON全体つき、第1段階の順序） */
+  rows: RawCandidateRow[];
+  /** 第1段階で見つかった全候補の「人物::id」キー（manual_include 行の重複判定用。従来の seen と同じ集合） */
+  allKeys: Set<string>;
+};
+
+const AUTO_CANDIDATE_FULL_FETCH_CHUNK = 1000;
+
+async function fetchAutoCandidateLightRows(): Promise<LightCandidateRow[]> {
+  const result = await withTransientDbRetry('fetchAutoCandidateLightRows', () => db.execute(sql`
     WITH candidates AS (
-      SELECT p.person_name, item
-      FROM products p, jsonb_array_elements(p.items) AS item
+      SELECT p.person_name, p.category, e.ord::int AS ord, e.item->>'id' AS id,
+             e.item->>'title' AS title, e.item->'isUsed' AS is_used
+      FROM products p, jsonb_array_elements(p.items) WITH ORDINALITY AS e(item, ord)
       WHERE p.category = ANY(${textArraySql(PHOTOBOOK_SCAN_CATEGORIES)})
     )
-    SELECT
-      c.person_name,
-      c.item,
-      pbs.status,
-      pbs.published,
-      pbs.home_state,
-      pbs.home_pinned_position,
-      pbs.sort_order,
-      pbs.dedup_group_override,
-      pbs.force_representative,
-      pbs.source_category,
-      pbs.note
+    SELECT c.person_name, c.category, c.ord, c.id, c.title, c.is_used, pbs.status
     FROM candidates c
     JOIN verdicts v
       ON v.person_name = c.person_name
-      AND v.product_id = c.item->>'id'
+      AND v.product_id = c.id
       AND v.verdict = 'related'
     LEFT JOIN photobook_settings pbs
-      ON pbs.person_name = c.person_name AND pbs.product_id = c.item->>'id'
-  `);
-  return result.rows as unknown as RawCandidateRow[];
+      ON pbs.person_name = c.person_name AND pbs.product_id = c.id
+  `));
+  return result.rows as unknown as LightCandidateRow[];
+}
+
+type FullCandidateRow = RawCandidateRow & { category: string; ord: number };
+
+// 第1段階で特定した (人物, カテゴリ, 配列内位置) の商品JSON全体を取得する。
+// products の主キーは (person_name, category) のため1行に定まる。第1段階と第2段階の間に
+// items が更新され位置がずれた場合に備え、位置の id が一致しないときは同じ配列内を id で探す。
+async function fetchAutoCandidateFullRows(keys: { person_name: string; category: string; ord: number; id: string }[]): Promise<FullCandidateRow[]> {
+  const rows: FullCandidateRow[] = [];
+  for (let i = 0; i < keys.length; i += AUTO_CANDIDATE_FULL_FETCH_CHUNK) {
+    const chunk = keys.slice(i, i + AUTO_CANDIDATE_FULL_FETCH_CHUNK);
+    const result = await withTransientDbRetry('fetchAutoCandidateFullRows', () => db.execute(sql`
+      SELECT
+        t.person_name,
+        t.category,
+        t.ord,
+        CASE
+          WHEN p.items -> (t.ord - 1) ->> 'id' = t.id THEN p.items -> (t.ord - 1)
+          ELSE (SELECT e FROM jsonb_array_elements(p.items) AS e WHERE e->>'id' = t.id LIMIT 1)
+        END AS item,
+        pbs.status,
+        pbs.published,
+        pbs.home_state,
+        pbs.home_pinned_position,
+        pbs.sort_order,
+        pbs.dedup_group_override,
+        pbs.force_representative,
+        pbs.source_category,
+        pbs.note
+      FROM jsonb_to_recordset(${JSON.stringify(chunk)}::jsonb)
+        AS t(person_name text, category text, ord int, id text)
+      JOIN products p
+        ON p.person_name = t.person_name AND p.category = t.category
+      LEFT JOIN photobook_settings pbs
+        ON pbs.person_name = t.person_name AND pbs.product_id = t.id
+    `));
+    rows.push(...(result.rows as unknown as FullCandidateRow[]));
+  }
+  return rows;
+}
+
+async function fetchAutoCandidateRows(): Promise<AutoCandidatesResult> {
+  const lightRows = await fetchAutoCandidateLightRows();
+
+  // 従来の toCandidateItems() と同じく「人物::id」の最初の1件だけを採用する（第1段階の順序）
+  const allKeys = new Set<string>();
+  const firstRows: LightCandidateRow[] = [];
+  for (const row of lightRows) {
+    const key = `${row.person_name}::${row.id}`;
+    if (allKeys.has(key)) continue;
+    allKeys.add(key);
+    firstRows.push(row);
+  }
+
+  // 事前判定: 公開側・管理側のいずれかのフィルタで残り得る行のみ（手動設定あり or 自動判定合格）
+  const kept = firstRows.filter((row) => {
+    const status = row.status ?? DEFAULT_SETTINGS.status;
+    if (status !== 'auto') return true;
+    return isAutoDetectedPhotobook({ title: row.title ?? undefined, isUsed: row.is_used } as Pick<RakutenItem, 'title' | 'isUsed'>);
+  });
+
+  const fullRows = await fetchAutoCandidateFullRows(
+    kept.map((r) => ({ person_name: r.person_name, category: r.category, ord: r.ord, id: r.id })),
+  );
+  const fullByPos = new Map(fullRows.map((r) => [`${r.person_name}\u0000${r.category}\u0000${r.ord}`, r]));
+
+  // 第1段階の順序に戻す（商品が第1〜第2段階の間に削除された場合は除外）
+  const rows: RawCandidateRow[] = [];
+  for (const r of kept) {
+    const full = fullByPos.get(`${r.person_name}\u0000${r.category}\u0000${r.ord}`);
+    if (!full?.item) continue;
+    rows.push(full);
+  }
+  return { rows, allKeys };
 }
 
 // ── Step 2: 手動追加(manual_include)のうちスキャン対象外カテゴリ（グッズ等）の商品 ──
 async function fetchManualIncludeCrossCategoryRows(): Promise<RawManualRow[]> {
-  const result = await db.execute(sql`
+  const result = await withTransientDbRetry('fetchManualIncludeCrossCategoryRows', () => db.execute(sql`
     SELECT person_name, product_id, source_category, status, published,
            home_state, home_pinned_position, sort_order, dedup_group_override,
            force_representative, note
@@ -207,7 +329,7 @@ async function fetchManualIncludeCrossCategoryRows(): Promise<RawManualRow[]> {
     WHERE status = 'manual_include'
       AND source_category IS NOT NULL
       AND source_category <> ALL(${textArraySql(PHOTOBOOK_SCAN_CATEGORIES)})
-  `);
+  `));
   return result.rows as unknown as RawManualRow[];
 }
 
@@ -230,15 +352,36 @@ function toSettingsView(row: {
   };
 }
 
-async function fetchCandidatesRaw(): Promise<{ autoRows: RawCandidateRow[]; manualRows: RawManualRow[] }> {
-  const [autoRows, manualRows] = await Promise.all([
+type CandidatesRaw = { autoRows: RawCandidateRow[]; autoKeys: Set<string>; manualRows: RawManualRow[] };
+
+// 同時実行の重複排除（in-flight共有）のみ。キャッシュではない。
+// 例: ホームの女性/男性、/photobooks の一覧/ファセットが同時に呼ぶと、従来は重いSQL
+// （約23MB）が並行して2本走っていた。取得中は同じ Promise を共有し、完了・失敗した時点で
+// 必ず解除するため、次の呼び出しは常に新しくSQLを実行する（古いデータを返し続けない）。
+// 60秒revalidate等の既存キャッシュ仕様はこの外側（unstable_cache / ISR）で従来どおり動く。
+// 呼び出し側は返却行を読み取りのみで扱う（書き換えない）前提。
+let candidatesRawInFlight: Promise<CandidatesRaw> | null = null;
+
+async function fetchCandidatesRawUncached(): Promise<CandidatesRaw> {
+  const [auto, manualRows] = await Promise.all([
     fetchAutoCandidateRows(),
     fetchManualIncludeCrossCategoryRows(),
   ]);
-  return { autoRows, manualRows };
+  return { autoRows: auto.rows, autoKeys: auto.allKeys, manualRows };
 }
 
-async function toCandidateItems(autoRows: RawCandidateRow[], manualRows: RawManualRow[]): Promise<CandidateItem[]> {
+function fetchCandidatesRaw(): Promise<CandidatesRaw> {
+  if (candidatesRawInFlight) return candidatesRawInFlight;
+  const promise = fetchCandidatesRawUncached().finally(() => {
+    if (candidatesRawInFlight === promise) candidatesRawInFlight = null;
+  });
+  candidatesRawInFlight = promise;
+  return promise;
+}
+
+// autoKeys: 第1段階で見つかった全自動候補のキー。事前判定で落とした行も含むため、
+// manual_include 行の重複判定は従来（全自動候補を seen に入れていた）と同じ結果になる。
+async function toCandidateItems(autoRows: RawCandidateRow[], autoKeys: Set<string>, manualRows: RawManualRow[]): Promise<CandidateItem[]> {
   const result: CandidateItem[] = [];
   const seen = new Set<string>();
   for (const row of autoRows) {
@@ -250,7 +393,7 @@ async function toCandidateItems(autoRows: RawCandidateRow[], manualRows: RawManu
   const manualItems = await Promise.all(
     manualRows.map(async (row) => {
       const key = `${row.person_name}::${row.product_id}`;
-      if (seen.has(key)) return null;
+      if (seen.has(key) || autoKeys.has(key)) return null;
       const item = await getStoredProductItemById(
         row.person_name,
         row.source_category as ProductCategory,
@@ -267,8 +410,8 @@ async function toCandidateItems(autoRows: RawCandidateRow[], manualRows: RawManu
 
 // 公開側（写真集一覧・ホーム）: auto判定に落ちた商品・manual_exclude商品を除外する
 async function fetchAllCandidates(): Promise<CandidateItem[]> {
-  const { autoRows, manualRows } = await fetchCandidatesRaw();
-  const all = await toCandidateItems(autoRows, manualRows);
+  const { autoRows, autoKeys, manualRows } = await fetchCandidatesRaw();
+  const all = await toCandidateItems(autoRows, autoKeys, manualRows);
   return all.filter((c) => {
     if (c.settings.status === 'manual_exclude') return false;
     if (c.settings.status === 'auto' && !isAutoDetectedPhotobook(c.item)) return false;
@@ -281,8 +424,8 @@ async function fetchAllCandidates(): Promise<CandidateItem[]> {
 // status='auto'かつisAutoDetectedPhotobook()=falseの商品（写真集シグナルを一切持たない
 // CD/Blu-ray等）は除外する（自動判定に一度も乗っていない無関係な商品を大量表示しないため）。
 async function fetchAllCandidatesForAdmin(): Promise<CandidateItem[]> {
-  const { autoRows, manualRows } = await fetchCandidatesRaw();
-  const all = await toCandidateItems(autoRows, manualRows);
+  const { autoRows, autoKeys, manualRows } = await fetchCandidatesRaw();
+  const all = await toCandidateItems(autoRows, autoKeys, manualRows);
   return all.filter((c) => {
     if (c.settings.status !== 'auto') return true;
     return isAutoDetectedPhotobook(c.item);

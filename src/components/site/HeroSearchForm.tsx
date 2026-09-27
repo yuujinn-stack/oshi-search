@@ -15,9 +15,11 @@ const POPULAR_ITEMS: Array<{ label: string; href: string }> = [
 
 interface Props {
   suggestions?: SuggestionItem[];
+  /** 検索欄下の「人気:」キーワードチップを表示するか（固定リスト。データ取得なし）。トップページでは false */
+  showPopularKeywords?: boolean;
 }
 
-export default function HeroSearchForm({ suggestions = [] }: Props) {
+export default function HeroSearchForm({ suggestions = [], showPopularKeywords = true }: Props) {
   return (
     <div>
       {/* 検索フォーム（SmartSearchInput: サジェスト + 履歴付き） */}
@@ -30,27 +32,29 @@ export default function HeroSearchForm({ suggestions = [] }: Props) {
       />
 
       {/* 人気キーワード */}
-      <div style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: '8px',
-        justifyContent: 'center',
-        marginTop: '16px',
-      }}>
-        <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: '12px', alignSelf: 'center' }}>
-          人気:
-        </span>
-        {POPULAR_ITEMS.map(({ label, href }) => (
-          <a
-            key={label}
-            href={href}
-            className="hero-keyword-chip"
-            style={{ textDecoration: 'none' }}
-          >
-            {label}
-          </a>
-        ))}
-      </div>
+      {showPopularKeywords && (
+        <div style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '8px',
+          justifyContent: 'center',
+          marginTop: '16px',
+        }}>
+          <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: '12px', alignSelf: 'center' }}>
+            人気:
+          </span>
+          {POPULAR_ITEMS.map(({ label, href }) => (
+            <a
+              key={label}
+              href={href}
+              className="hero-keyword-chip"
+              style={{ textDecoration: 'none' }}
+            >
+              {label}
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -363,6 +363,36 @@ body {
   color: var(--ds-primary);
 }
 
+/* ─── ホーム「ジャンルで探す」: すべてのジャンルを見る（<details>、JS不要） ─── */
+.home-genre-more > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+.home-genre-more > summary::-webkit-details-marker {
+  display: none;
+}
+.home-genre-more > summary::after {
+  content: '▾';
+  font-size: 11px;
+  transition: transform 0.15s;
+}
+.home-genre-more[open] > summary::after {
+  transform: rotate(180deg);
+}
+.home-genre-more .home-genre-more-close,
+.home-genre-more[open] .home-genre-more-open {
+  display: none;
+}
+.home-genre-more[open] .home-genre-more-close {
+  display: inline;
+}
+
 /* ─── スタッツバー (Hero直下) ────────────────────────────────────────── */
 .hero-stats-bar {
   display: flex;
@@ -419,6 +449,19 @@ body {
   }
   .hero-stat-label {
     font-size: 10px;
+  }
+}
+
+/* スマホ幅: 4項目が1行に収まらず「3+1」に崩れるため 2列×2行のグリッドにする（区切り線は非表示）。
+   上の 479px ブロックの gap: 0 より後に置き、row-gap を有効にする */
+@media (max-width: 639px) {
+  .hero-stats-bar {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    row-gap: 8px;
+  }
+  .hero-stat-divider {
+    display: none;
   }
 }
 

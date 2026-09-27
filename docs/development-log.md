@@ -1722,3 +1722,163 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 **残っている作業：** commit / push / Production deploy（ユーザー承認待ち）。Vercel本番環境でのフォントファイルの`outputFileTracingIncludes`は、works-onlyも同じ`/api/admin/instagram-post/generate`・`/api/admin/instagram-schedule/prepare`ルートを経由するため追加設定は不要と判断したが、Production初回デプロイ時に実機確認が望ましい。
 
 **変更なし（今回維持）：** `og-templates/theme.ts`・`shared.tsx`・`page1〜3.tsx`・`index.ts`（default-person本体）、`build-post.ts`、`og-render.tsx`、Instagram API認証・`media_publish`・Cron・自動投稿・一括予約・Atomic Claim・投稿履歴・Vercel Blob処理ロジック・既存DBデータ・既存予約データ・`INSTAGRAM_AUTOPUBLISH_ENABLED`。Instagramへの実投稿・commit・push・Production deployは行っていない。
+
+---
+
+## Task 40 — トップページを「推し発見型」から「自分の推しを探す型」へ変更
+
+**目的：** すでに推し・気になる人物がいるユーザーが、トップページから自分の推しをすぐ探せる情報設計に変える（人物名・グループ名検索／グループから探す／ジャンルから探す を中心に）。色・カード・フォント等のデザインは維持。
+
+**新しい表示順：** ヘッダー → Hero（メインコピー＋検索） → グループで探す → ジャンルで探す → スタッツバー → 配信サービスから探す → 人気検索 → 人気商品 → 写真集を探す → フッター
+
+**変更ファイル：**
+- `src/app/page.tsx`
+  - Heroコピーを「推しの出演作・配信先・商品をまとめてチェック」、サブ文言を「推しの名前・グループ名から探す」に変更。スマホで検索欄がファーストビューに入るよう上余白を `clamp(48px,8vw,96px)` → `clamp(28px,7vw,80px)` に縮小
+  - 「グループで探す」「ジャンルで探す」をHero直下へ移動（JSX・リンク・クラスは無変更）
+  - スタッツバー（登録タレント数等）はHero直下からジャンルの下へ移動（上に境界線を追加）
+  - 「今人気の人物」「急上昇」「人気作品」「注目の人物」をレンダリングしないよう削除し、ランキング取得を `getRankingData()` → `getHomeRankingData()`（軽量版）に変更。キャッシュキーは `home-ranking-lite-data`（返却形が異なるため旧キーと分離）、タグ `RANKING_DATA_CACHE_TAG` は維持
+- `src/components/site/HomeDiscoverySections.tsx`（新規）：上記4セクションの旧JSXをそのまま移設して保持（`PopularPersonsSection` / `RisingPersonsSection` / `PopularWorksSection` / `FeaturedPersonsSection`）。現在はどこからもimportしていない。`RankingPersonCard`・`HomePersonCard` も削除せず残している
+- `src/lib/ranking.ts`
+  - 「人気検索」「人気商品」の計算を `computePopularSearches()` / `computePopularProducts()` に切り出し（処理内容は無変更、`getRankingData()` もこれを呼ぶだけで挙動同一。既存 `ranking.test.ts` 全件通過）
+  - `getHomeRankingData()` を追加：人気検索・人気商品のみ計算。全人物の閲覧数パイプライン、TOP8人物の作品/商品全件取得、`getInactiveProviderSlugs()`、`work:click:*` SCAN＋公開作品マップ/エイリアスマップ取得＋作品DB照合は行わない
+
+**設計上の判断・注意点：**
+- 「人気検索」「人気商品」「配信サービスから探す」「写真集」は非表示指定の4セクションに含まれないため「その他のコンテンツ」として残した
+- `HeroSearchForm`（検索サジェスト・検索履歴・「人気:」チップ・placeholder）は無変更
+- 4セクションを復活させる場合は、`HomeDiscoverySections.tsx` のコンポーネントを page.tsx に戻し、取得を `getRankingData()` に戻す（ファイル冒頭コメント参照）
+- ESLintはプロジェクトに `eslint.config.*` が存在せず実行不可（既存状態）。`tsc --noEmit` のエラーは `.next/types/* 2.ts`（重複ファイル）由来のみで `src` 配下は0件
+
+---
+
+## Task 41 — トップページ：ヘッダー検索の非表示・グループ絞り込み・ジャンルのコンパクト化
+
+**目的：** Task 40の方向性を維持しつつ、「自分の推しを探しやすいUI」に整理する（大規模デザイン変更なし）。
+
+**新しい表示順：** ヘッダー（トップのみ検索欄なし） → Hero（メインコピー＋検索） → グループで探す（絞り込み付き） → ジャンルで探す（主要9ジャンル＋展開） → 配信サービスから探す → 人気検索 → 人気商品 → 写真集を探す → スタッツバー → フッター
+
+**変更ファイル：**
+- `src/components/HeaderSearchSlot.tsx`（新規・client）：`usePathname()` が `/` のときだけヘッダー検索枠を描画しない。他ページは従来どおり
+- `src/components/Header.tsx`：検索フォームのラッパー div を `HeaderSearchSlot` に置き換えただけ（サジェスト生成等は無変更）
+- `src/components/site/HomeGroupSection.tsx`（新規・client）：「グループで探す」本体。説明文と絞り込みボタン（すべて／女性グループ／男性グループ／その他）を追加。グループリンクのURL・`theme-group-chip` の見た目は旧実装と同一。初期表示は「すべて」で全リンクをSSR
+- `src/app/page.tsx`
+  - グループ一覧を `HomeGroupSection` に置き換え（`group_meta.gender` を付与して渡す）
+  - ジャンル：主要ジャンル `HOME_PRIMARY_GENRES`（アイドル・俳優・女優・タレント・歌手・アーティスト・声優・モデル・芸人）のみ初期表示。残りは既存のカテゴリカード形式のまま `<details>`「すべてのジャンルを見る」内へ。ピルは `GenrePill` に共通化（スタイル同一）
+  - スタッツバーをページ最下部（写真集の下）へ移動（削除はしない）
+- `src/app/globals.css`：`.home-genre-more`（`<details>` の summary 表示・開閉ラベル切り替え）を追加のみ
+
+**設計上の判断・注意点：**
+- 性別分類は既存の `group_meta.gender`（写真集機能用、管理画面で手動設定）のみ使用し推測しない。未設定のグループは「その他」に入る。2026-09-27時点で未設定：バナナマン（group_meta自体なし）・嵐・モナキ・timelesz・Travis Japan・なにわ男子。管理画面で gender を設定すれば自動で正しい絞り込みに入る
+- 「女性アイドル／男性アイドル」表記は採用しなかった：男性側に芸人（オードリー）・バンド（UVERworld・SPYAIR等）が含まれ、メンバーのジャンルも「テレビ」等でアイドル判定できないため
+- ジャンル展開は `<details>` のためJS不要。閉じていても全ジャンルリンク（計49件）がサーバーHTMLに含まれる
+- トップでもヘッダーのサジェストデータはサーバー側で生成されRSCペイロードに含まれる（ルートレイアウトのHeaderはパスを知らないため。描画のみ抑止）
+
+---
+
+## Task 42 — トップページ「グループで探す」の分類を表示用マッピングに変更
+
+**目的：** Task 41 の `group_meta.gender` ベースの絞り込みでは gender 未設定の嵐・timelesz・Travis Japan・なにわ男子等が「その他」に入りUXとして不自然だったため、トップページ表示専用の明示的な分類（女性アイドル／男性アイドル／その他）に変更する。DB・管理画面・人物データ・グループURLは変更しない。
+
+**変更ファイル：**
+- `src/components/site/HomeGroupSection.tsx`：`HOME_GROUP_CATEGORY`（グループ名→分類）を追加し、絞り込みボタンを「すべて／女性アイドル／男性アイドル／その他」に変更。`HomeGroupItem` から `gender` を削除。マッピングに無いグループは「その他」にフォールバック。照合は NFKC 正規化後（データ上の「＝LOVE」は全角＝のため）。絞り込みUI・リンクURL・見た目は維持
+- `src/app/page.tsx`：`homeGroups` 生成から `gender` 付与を削除のみ
+
+**分類（全22グループ、2026-09-27時点）：**
+- 女性アイドル：乃木坂46・日向坂46・櫻坂46・欅坂46・＝LOVE・FRUITS ZIPPER
+- 男性アイドル：Snow Man・SixTONES・嵐・M!LK・timelesz・Travis Japan・なにわ男子
+- その他：オードリー・モナキ・バナナマン・DISH//・D-BOYS・THE ORAL CIGARETTES・BLUE ENCOUNT・SPYAIR・UVERworld
+
+**注意点：** モナキは既存データ（メンバーのジャンルは全員「テレビ」・gender未設定）から男性アイドルと判断できる根拠がないため「その他」。指示にないグループを名称・メンバー構成から独自に推測して分類しないこと。グループ追加時はトップの分類を `HOME_GROUP_CATEGORY` に追記すること（未追記なら「その他」）。`group_meta.gender`（写真集機能用）はトップの絞り込みでは使わなくなった。
+
+---
+
+## Task 43 — トップページ：ヒーロー見出しの改行位置を調整
+
+**目的：** PCで見出しが「…まとめ／てチェック」と語の途中で折れていたため、自然な位置（「…商品を／まとめてチェック」）で改行させる。文言は変更しない。
+
+**変更ファイル：**
+- `src/app/page.tsx`：h1 の `<wbr />` をやめ、「推しの出演作・配信先・商品を」「まとめてチェック」をそれぞれ `display: inline-block` の span で囲んだ。幅が足りない狭い画面では span 内でも通常どおり折り返す
+
+**確認：** 「グループで探す」の初期状態はもともと `useState('all')`（「すべて」選択）のため変更なし。SSR HTMLで「すべて」が aria-pressed="true" であることを確認。
+
+---
+
+## Task 44 — トップページ：スマホのStatsを2列×2行に／🎨ボタンの確認
+
+**目的：** スマホ幅でStatsが「3項目＋VODだけ次の行」に崩れていたのを 2列×2行 にする。右下の🎨ボタンの用途を確認する。
+
+**変更ファイル：**
+- `src/app/globals.css`：`@media (max-width: 639px)` を追加（既存 479px ブロックの後ろ）。`.hero-stats-bar` を `display: grid; grid-template-columns: repeat(2, 1fr); row-gap: 8px`、`.hero-stat-divider` を非表示。640px以上（PC）は従来の flex 4列＋区切り線のまま。`.hero-stat*` はトップページでしか使っていない
+
+**🎨ボタン（`src/components/site/DesignPreviewToggle.tsx`）：** デザインテーマ（data-design）切り替えの開発・デザイン確認用。Task 4 で production 非表示済み（`NEXT_PUBLIC_VERCEL_ENV === 'production'` または VERCEL_ENV 未設定かつ `NODE_ENV === 'production'`）。localhost（dev）・Vercel preview では表示される。強制表示用の `NEXT_PUBLIC_ENABLE_DESIGN_PREVIEW` は .env.local・.env.preview・Vercel production 環境変数のいずれにも未設定（2026-09-27確認）のため、コード変更なし。
+
+**確認：** ヘッドレスChromeで幅375px（iframe）と1280pxのスクリーンショットを撮り、スマホ2×2・PC4列を目視確認。
+
+---
+
+## Task 45 — トップページ：検索欄下の「人気:」キーワードチップを非表示
+
+**目的：** トップページのヒーロー検索欄の下にある「人気: 乃木坂46 / 櫻坂46 / 日向坂46 / オードリー / バナナマン / あの」のチップ一式を表示しない。
+
+**変更ファイル：**
+- `src/components/site/HeroSearchForm.tsx`：任意prop `showPopularKeywords`（デフォルト true）を追加し、false のときチップ部分を描画しない。`SmartSearchInput`（検索・サジェスト・履歴）への props は無変更。`POPULAR_ITEMS` は復活用に残している
+- `src/app/page.tsx`：`<HeroSearchForm showPopularKeywords={false} />` を渡すのみ
+
+**データ取得：** チップは `HeroSearchForm` 内の固定配列（`POPULAR_ITEMS`）で、API・DB・Redisからの取得は元々無いため停止すべき処理は無し。`HeroSearchForm` はトップページ専用（他ページ未使用）。`.hero-keyword-chip` のCSSは残置。
+
+---
+
+## Task 46 — トップページ：ヒーロー下側の余白を調整（PC中心）
+
+**目的：** PCで検索欄〜「グループで探す」の間（ヒーロー下80px＋グループ上48px）が広かったため、ヒーロー下側のみ少し詰めて「グループで探す」を早く見せる。
+
+**変更ファイル：**
+- `src/app/page.tsx`：Hero の padding 下側を `clamp(32px, 7vw, 80px)` → `clamp(32px, 5vw, 56px)`。上側・左右・見出し・検索欄・グループセクションは無変更。PC(1280px)で 80→56px、スマホ(375px)は 32px のまま（変化なし）
+
+**確認：** ヘッドレスChromeで 1280×800 と 375×812（iframe）のファーストビューを撮影し崩れがないことを確認。
+
+---
+
+## Task 47 — 写真集取得の other side closed 対策（同時実行の重複排除＋接続切断時のみ1回再試行）
+
+**背景（調査結果）：** `fetchAutoCandidateRows()` の自動候補SQLが 約38,000行・約23MB・12〜15秒 を返し（最終的に使うのは約374件）、ホーム（女性/男性）や `/photobooks`（一覧/ファセット）がこれを同時に2本流していたため、Neon HTTP 経由の転送途中で `SocketError: other side closed` が発生していた（build外の単体実行でも再現）。
+
+**変更ファイル：**
+- `src/lib/photobook-store.ts`
+  - `fetchCandidatesRaw()`：実行中の Promise を共有する in-flight 重複排除。完了・失敗時に `finally` で必ず解除（キャッシュではない。次の呼び出しは常に新規実行）。公開側（`getAllPhotobookItems`）・管理側（`fetchAllCandidatesForAdmin`）の両方がここを通る
+  - `isTransientDbConnectionError()`：cause チェーン（最大5段）をたどり、`name === 'SocketError'`／`code` が `UND_ERR_SOCKET`・`ECONNRESET`・`EPIPE`／message に `other side closed` を含む場合のみ true
+  - `withTransientDbRetry()`：上記に該当する場合のみ 300ms 待って1回だけ再試行。再試行も失敗したらそのまま throw。`fetchAutoCandidateRows()`・`fetchManualIncludeCrossCategoryRows()` に適用
+- `src/lib/__tests__/photobook-store-inflight.test.ts`（新規・9件）：同時2回で重いSQL1回／ホーム女性+男性で1回／結果が単独呼び出しと同一／完了後は再実行（非キャッシュ）／失敗後に in-flight 解除／other side closed で1回再試行し成功／再試行も失敗なら2回で終了／通常エラーは再試行しない／判定関数の真偽
+
+**実施しなかったこと：** SQLの書き換え（取得量削減）、写真集の選定・判定ロジック、DBスキーマ、UI、管理画面。
+
+**確認結果（2026-09-27）：**
+- 本番DBに対しホームと同条件（女性+男性同時）を5回：5回とも成功（約16〜22秒、修正前は30〜38秒）。1回は接続切断が発生したが再試行で回復（66秒）
+- build 3回：いずれも成功。1回目は接続切断→再試行で回復。2・3回目は再試行も接続切断で失敗したが、unstable_cache の既存エントリが保持され、プリレンダーされたホームに写真集は表示されている
+- build中はページ生成が並列でCPU負荷が高く、大きな応答の受信が遅れて切断されやすいとみられる。根本対策は取得量の削減（2段階取得等、別タスク）
+
+---
+
+## Task 48 — 写真集取得の2段階化（根本対策）
+
+**目的：** 約38,000行・約23MBを一括取得してからアプリ側で約374件に絞っていた処理を、選定結果を変えずに軽量化し、Neon HTTP の転送途中切断（other side closed）を防ぐ。Task 47 の in-flight 共有・1回再試行・60秒キャッシュ仕様は維持。
+
+**変更ファイル：**
+- `src/lib/photobook-store.ts`
+  - `fetchAutoCandidateLightRows()`（第1段階）：`WITH ORDINALITY` で配列内位置を付け、person_name・category・ord・id・title・isUsed・status のみ取得
+  - `fetchAutoCandidateRows()`：第1段階の順序で「人物::id」最初の1件に重複排除（従来の toCandidateItems と同じ）→ `isAutoDetectedPhotobook()`（従来と同じ関数）で事前判定。残すのは「status≠auto（手動設定あり）or 自動判定合格」＝公開側・管理側フィルタの和集合
+  - `fetchAutoCandidateFullRows()`（第2段階）：選定キーを JSON パラメータ1個（`jsonb_to_recordset`）で渡し 1000件ずつ取得。`products` 主キー (person_name, category) と位置で要素を特定し、位置の id が不一致なら同配列内を id で探す。商品JSON全体＋photobook_settings を取得し、第1段階の順序に戻す
+  - `toCandidateItems()`：manual_include 行の重複判定に第1段階の全キー（`autoKeys`）を使用（従来は全自動候補が seen に入っていたのと同じ結果）
+  - `isTransientDbConnectionError()`：`cause` に加え Neon の `sourceError` もたどるよう修正（応答ヘッダ受信前の切断は NeonDbError.sourceError に入るため、従来の判定では再試行されなかった）
+- `src/lib/__tests__/photobook-store-inflight.test.ts`：2段階用にモック更新＋テスト追加（計14件）
+
+**変更していないもの：** `src/lib/photobook.ts`（判定・統合・男女・並び順ロジック、差分0行）、UI、DBスキーマ、管理画面。
+
+**計測（2026-09-27、ローカル→Neon、新方式のみ）：**
+- 第1段階: 37,985行・約3.6MB（旧 約23MB）・4.4〜20秒（回線状況で変動。この日は旧SQLが連続切断されるほど不安定）
+- 第2段階: 882キー → 882行・約0.54MB・約2.7秒（882行は「人物×商品」単位。人物またぎ統合後が374件）
+- 最終: 374件（公開300件：女性266・男性32・性別なし2）
+- 直列3回：すべて成功、切断・再試行なし（約11〜30秒）
+
+**旧結果との比較：** 旧ロジックの全374件のID一覧は保存されていなかったため全件の実データ比較は未実施（比較のため旧SQLを再実行すると切断が連発したため中止）。旧ロジックで生成された `.next/cache/fetch-cache` のホーム写真集（女性8・男性8、全項目・順序）を baseline とし、新方式の結果と3回とも完全一致。件数（374件／公開300件）も旧実測値と一致。
+
+**本番前最終 build（2026-09-27 22:09）：** 1回実行し成功（43秒、静的ページ117/117生成）。other side closed・SocketError・再試行・Failed query いずれも0件。build中にホーム写真集の unstable_cache エントリが新方式で再取得・更新され（女性8・男性8）、旧ロジック時のキャッシュと ID・順序・全項目が一致。プリレンダーされたホームに写真集カード8件（初期タブ分）を確認。TypeScript（src）エラー0、テスト 65ファイル／1460件 通過。

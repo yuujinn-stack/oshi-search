@@ -3,6 +3,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHref, groupHrefByName } from '@/lib/group-slug';
 import SearchForm from './SearchForm';
+import HeaderSearchSlot from './HeaderSearchSlot';
 import type { SuggestionItem } from '@/types/search';
 
 export default async function Header() {
@@ -46,9 +47,9 @@ export default async function Header() {
         <Link href="/" className="text-xl font-black whitespace-nowrap tracking-tight" style={{ color: 'var(--ds-primary)' }}>
           推しサーチ
         </Link>
-        <div className="flex-1 min-w-0 max-w-lg">
+        <HeaderSearchSlot>
           <SearchForm compact suggestions={suggestions} />
-        </div>
+        </HeaderSearchSlot>
       </div>
     </header>
   );
