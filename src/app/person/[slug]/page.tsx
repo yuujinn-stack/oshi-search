@@ -38,6 +38,16 @@ import type { WorkRecord } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
 import { buildHeroBadgeTitles, buildInfoGenreList, normalizeTag } from '@/lib/person-display-tags';
 import { ACTIVITY_LABEL } from '@/lib/person-badges';
+import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
+import './person-graphic.css';
+
+// 人物ページのデザイン「C. Graphic Pop」用フォント（person-graphic.css の --pp-* を上書き）。
+// next/font でビルド時にセルフホスト。日本語Webフォントは極太（900）の人物名・見出し・ロゴ用のみ
+// （本文は既存のフォントスタック。トップページと同じ軽量化方針）。
+const graphicDisplayFont = Space_Grotesk({ subsets: ['latin'], weight: ['700'], display: 'swap' });
+const graphicMonoFont = Space_Mono({ subsets: ['latin'], weight: ['400', '700'], display: 'swap' });
+const graphicJpFont = Noto_Sans_JP({ subsets: ['latin'], weight: ['900'], display: 'swap', preload: false });
+const PERSON_GRAPHIC_FONT_VARS_CSS = `html:not([data-proto]):has(.oshi-person-graphic){--pp-display:${graphicDisplayFont.style.fontFamily},system-ui,sans-serif;--pp-jp:${graphicJpFont.style.fontFamily},'Hiragino Sans',system-ui,sans-serif;--pp-mono:${graphicMonoFont.style.fontFamily},ui-monospace,monospace;}`;
 
 // ─── 商品ソート（既存ロジック・変更禁止） ─────────────────────────────────────
 // ─ 中古カテゴリ商品（'中古'カテゴリ）をティア＋スコア順にソート ──────────────
@@ -618,7 +628,9 @@ export default async function PersonPage({ params }: Props) {
       {/* ─── 閲覧数記録（30分以内は重複カウントしない） ─── */}
       <PageViewTracker entity="person" slug={name} />
 
-      <div className="page-bg">
+      {/* oshi-person-graphic: 人物ページのデザイン「C. Graphic Pop」（./person-graphic.css）の適用範囲 */}
+      <style dangerouslySetInnerHTML={{ __html: PERSON_GRAPHIC_FONT_VARS_CSS }} />
+      <div className="page-bg oshi-person-graphic">
 
         {/* ─── パンくず ─── */}
         <nav aria-label="パンくずリスト" className="breadcrumb-bar">

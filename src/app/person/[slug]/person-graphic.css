@@ -1,0 +1,440 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   人物ページ正式デザイン「C. Graphic Pop」（通常表示）
+   design-prototypes.css の人物ページプロトタイプ（html[data-proto="person-graphic"]、梅澤美波で最終確定）を、
+   人物ページのルート要素（src/app/person/[slug]/page.tsx の .oshi-person-graphic）がある場合だけ効くように移したもの。
+   - スコープ: html:not([data-proto]):has(.oshi-person-graphic)
+     → 他ページには効かない。開発用の比較プロトタイプ（?design=graphic）表示中は data-proto が付くため無効になる。
+   - サーバー描画時点で適用（ちらつきなし）。:has() 非対応の古いブラウザでは従来デザイン。
+   - フォント: page.tsx で next/font により読み込み --pp-display / --pp-jp / --pp-mono を上書き。
+     日本語Webフォント（Noto Sans JP）は 900 の人物名・セクション見出し・ロゴのみ。本文は既存フォントスタック
+     （トップページの軽量化方針と同じ）。
+   page.tsx のマークアップ・データ取得・リンク・SEO・JSON-LD は変更せず、見た目のみを上書きする。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+html:not([data-proto]):has(.oshi-person-graphic) {
+  --ds-bg: #F4F4F1;
+  --ds-surface: #FFFFFF;
+  --ds-primary: #0A0A0A;
+  --ds-primary-soft: #EFEEE8;
+  --ds-accent: #FF5A00;
+  --ds-accent-soft: #FFE4D2;
+  --ds-text: #141414;
+  --ds-muted: #62625C;
+  --ds-border: #D9D8D1;
+  --ds-cta: #E85400;
+  --ds-cta-text: #FFFFFF;
+  --ds-radius: 2px;
+  /* --pp-jp は極太（font-weight: 900）の人物名・セクション見出し・ロゴ専用の日本語Webフォント。本文は既存のフォントスタック */
+  --pp-jp: 'Noto Sans JP', 'Hiragino Sans', system-ui, sans-serif;
+  --pp-mono: 'Space Mono', ui-monospace, monospace;
+  --pp-display: 'Space Grotesk', system-ui, sans-serif;
+  --pp-orange: #FF5A00;
+}
+html:not([data-proto]):has(.oshi-person-graphic) body {
+  background-color: #F4F4F1;
+  background-image: radial-gradient(rgba(10, 10, 10, 0.07) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* ── ヘッダー・フッター（トップの C と同じブランド表現） ── */
+html:not([data-proto]):has(.oshi-person-graphic) .site-header {
+  background: #F4F4F1;
+  border-bottom: 2px solid #0A0A0A;
+  box-shadow: none;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .site-header a {
+  color: #0A0A0A !important;
+  font-family: var(--pp-jp);
+  font-weight: 900 !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .site-header a::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--pp-orange);
+  flex-shrink: 0;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .site-header a::after {
+  content: 'OSHI SEARCH';
+  font-family: var(--pp-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 3px 6px;
+  background: #0A0A0A;
+  color: #FFFFFF;
+}
+@media (max-width: 479px) {
+  /* スマホではヘッダー検索の幅を優先し、英字ラベルは省略 */
+  html:not([data-proto]):has(.oshi-person-graphic) .site-header a::after { display: none; }
+}
+html:not([data-proto]):has(.oshi-person-graphic) .site-header form input {
+  border-radius: 0 !important;
+  border: 1.5px solid #0A0A0A !important;
+  background: #FFFFFF !important;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .site-header form button {
+  border-radius: 0 !important;
+  background: #0A0A0A !important;
+  color: #FFFFFF !important;
+}
+html:not([data-proto]):has(.oshi-person-graphic) footer { background: #0A0A0A !important; border-color: #0A0A0A !important; color: #BDBDB6 !important; }
+html:not([data-proto]):has(.oshi-person-graphic) footer .text-primary { color: var(--pp-orange) !important; }
+html:not([data-proto]):has(.oshi-person-graphic) footer .text-gray-400,
+html:not([data-proto]):has(.oshi-person-graphic) footer .text-gray-500 { color: #BDBDB6 !important; }
+
+/* ── パンくず・クイックナビ ── */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type {
+  background: transparent;
+  border-bottom: 1px solid #D9D8D1;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .person-quick-nav {
+  background: rgba(244, 244, 241, 0.94);
+  border-bottom: 1px solid #0A0A0A;
+  box-shadow: none !important;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .person-quick-nav a {
+  border-radius: 0 !important;
+  border-color: #0A0A0A !important;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .person-quick-nav a:hover { background: #0A0A0A !important; color: #FFFFFF !important; }
+
+/* ── ヒーロー（人物名は大きく。ただしトップほど巨大にしない） ── */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type + div {
+  background: transparent !important;
+  border-bottom: 2px solid #0A0A0A;
+  padding-top: 36px !important;
+  padding-bottom: 32px !important;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type + div [class*="text-white"] { color: #55554F !important; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type + div a { text-decoration-color: rgba(10, 10, 10, 0.25) !important; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type + div h1[class*="text-white"] {
+  color: #0A0A0A !important;
+  font-family: var(--pp-jp);
+  font-size: clamp(30px, 6vw, 44px) !important;
+  font-weight: 900 !important;
+  letter-spacing: -0.02em;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type + div h1::before {
+  content: 'PROFILE / PERSON';
+  display: block;
+  margin-bottom: 8px;
+  font-family: var(--pp-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--pp-orange);
+}
+/* イニシャルのアバター：オフホワイト＋細いオレンジ枠＋オレンジ文字（黒ベタは避ける） */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type + div [class*="w-20"][class*="h-20"] {
+  background: #FFF7F1 !important;
+  border: 1.5px solid var(--pp-orange);
+  border-radius: 0 !important;
+  color: #E85400 !important;
+  backdrop-filter: none;
+}
+/* バッジ：角のある細い枠（色つきバッジは色を保持） */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type + div span[class*="rounded-full"] { border-radius: 0 !important; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type + div span[class*="bg-white"] {
+  background: transparent !important;
+  border: 1px solid #0A0A0A;
+  color: #0A0A0A !important;
+}
+/* 数字タイル：白地＋黒枠、数字は大きく黒 */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type + div a[class*="bg-white"] {
+  background: #FFFFFF !important;
+  border: 1.5px solid #0A0A0A;
+  border-radius: 0 !important;
+  backdrop-filter: none;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type + div a[class*="bg-white"]:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 3px 3px 0 var(--pp-orange);
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > nav:first-of-type + div a[class*="bg-white"] p[class*="font-black"] {
+  color: #0A0A0A !important;
+  font-family: var(--pp-display);
+  font-weight: 700 !important;
+}
+
+/* ── セクション見出し：番号＋英字ラベル（小さく）＋日本語 ── */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] { counter-reset: pp-sec; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section {
+  counter-increment: pp-sec;
+  border-top: 1.5px solid #0A0A0A;
+  padding-top: 18px;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section h2 {
+  font-family: var(--pp-jp);
+  font-size: 19px !important;
+  font-weight: 900 !important;
+  color: #0A0A0A !important;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section h2::before {
+  display: block;
+  margin-bottom: 5px;
+  font-family: var(--pp-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--pp-orange);
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section#streaming-now h2::before { content: counter(pp-sec, decimal-leading-zero) ' — WATCH NOW'; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section#vod h2::before { content: counter(pp-sec, decimal-leading-zero) ' — STREAMING'; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section:has(#featured-products-heading) h2::before { content: counter(pp-sec, decimal-leading-zero) ' — PICK UP'; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section#products h2::before { content: counter(pp-sec, decimal-leading-zero) ' — ITEMS'; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section#works h2::before { content: counter(pp-sec, decimal-leading-zero) ' — WORKS'; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section#profile h2::before { content: counter(pp-sec, decimal-leading-zero) ' — PROFILE'; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section:not([id]):not(:has(details)):not(:has(#featured-products-heading)) h2::before { content: counter(pp-sec, decimal-leading-zero) ' — RELATED'; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section:not([id]):has(details) h2::before { content: counter(pp-sec, decimal-leading-zero) ' — FAQ'; }
+/* 見出し行：2行見出し（ラベル＋日本語）の下端に件数ピル・リンクを揃える */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section div[class*="flex"]:has(h2) { align-items: flex-end !important; }
+@media (max-width: 479px) {
+  html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section h2 { font-size: 17px !important; }
+}
+/* 件数などの丸いピルは角を落とす */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] span[class*="rounded-full"] { border-radius: 2px !important; }
+
+/* ── カード共通：薄い境界線・影なし（読みやすさ優先） ── */
+html:not([data-proto]):has(.oshi-person-graphic) .theme-card { border-color: #D2D1CA; box-shadow: none; }
+html:not([data-proto]):has(.oshi-person-graphic) .theme-card:hover { transform: none; box-shadow: none; border-color: #0A0A0A; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg button[class*="rounded-full"],
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg button[class*="rounded-xl"],
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg select,
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg input { border-radius: 2px !important; }
+
+/* 今すぐ見る・配信サービス：CTAは黒枠→hoverで黒地 */
+html:not([data-proto]):has(.oshi-person-graphic) section#streaming-now a[class*="rounded-lg"][style*="border"] {
+  border-radius: 0 !important;
+  border-color: #9C9B94 !important;
+  color: #2B2B28 !important;
+  font-weight: 700;
+}
+html:not([data-proto]):has(.oshi-person-graphic) section#streaming-now a[class*="rounded-lg"][style*="border"]:hover { background: #FFF1E8; border-color: var(--pp-orange) !important; color: #C84A00 !important; }
+html:not([data-proto]):has(.oshi-person-graphic) section#vod details[open] { border-color: #B9B8B0; }
+html:not([data-proto]):has(.oshi-person-graphic) section#vod details > summary { border-left: 3px solid transparent; }
+html:not([data-proto]):has(.oshi-person-graphic) section#vod details[open] > summary { border-left-color: var(--pp-orange); }
+
+/* 出演作品：細い罫線のカタログ＋小さな番号。画像が主役 */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .grid { counter-reset: pp-work; }
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root {
+  counter-increment: pp-work;
+  border-color: #0A0A0A;
+  border-radius: 0;
+}
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root:hover { transform: none; box-shadow: 3px 3px 0 #0A0A0A; }
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-title::before {
+  content: counter(pp-work, decimal-leading-zero) '  ';
+  font-family: var(--pp-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--pp-orange);
+}
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-detail-btn {
+  border-radius: 0 !important;
+  border: 1px solid #0A0A0A !important;
+  background: #FFFFFF !important;
+  color: #0A0A0A !important;
+}
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-detail-btn:hover { background: #0A0A0A !important; color: #FFFFFF !important; }
+
+/* 商品（ピックアップ・関連商品）：プロダクトカタログ。画像面は白 */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg div[class*="group"][class*="flex-col"][class*="overflow-hidden"] {
+  box-shadow: none !important;
+  border-color: #D2D1CA !important;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg div[class*="group"][class*="flex-col"][class*="overflow-hidden"]:hover {
+  transform: none !important;
+  border-color: #0A0A0A !important;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg div[class*="group"][class*="flex-col"][class*="overflow-hidden"] > div:first-child { background: #FFFFFF !important; border-bottom: 1px solid #ECEBE5; }
+
+/* プロフィール：唯一の黒枠ボックス。項目名は小さく */
+html:not([data-proto]):has(.oshi-person-graphic) section#profile .theme-card { border: 1.5px solid #0A0A0A; }
+html:not([data-proto]):has(.oshi-person-graphic) section#profile dt { color: #62625C !important; }
+
+/* 関連メンバー：角のあるカード、アバターは黒 */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg a.block > div[class*="rounded-2xl"] {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border-color: #D2D1CA !important;
+  transform: none !important;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg a.block:hover > div[class*="rounded-2xl"] { border-color: #0A0A0A !important; }
+/* 関連メンバーのアバター：「梅」のプロフィールアイコンと同じ方向性（オフホワイト＋細いオレンジ枠＋オレンジ文字、丸形は維持） */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg a.block div[class*="bg-gradient-to-br"] {
+  background: #FFF7F1 !important;
+  border: 1.5px solid var(--pp-orange);
+  color: #E85400 !important;
+  box-shadow: none !important;
+}
+
+/* FAQ：罫線で区切るリスト。Q はオレンジ、回答は読みやすい濃さ */
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section:not([id]):has(details) details {
+  border: none;
+  border-bottom: 1px solid #0A0A0A;
+  border-radius: 0;
+  background: transparent;
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section:not([id]):has(details) summary { background: transparent !important; padding-left: 2px; padding-right: 2px; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section:not([id]):has(details) summary > span:first-child {
+  color: var(--pp-orange) !important;
+  font-family: var(--pp-mono);
+}
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section:not([id]):has(details) details > div { border-top-color: #E4E3DC !important; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section:not([id]):has(details) .text-emerald-500 { color: #0A0A0A !important; font-family: var(--pp-mono); }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section:not([id]):has(details) details p { color: #3A3A35 !important; }
+
+/* ── 配信情報まわりの視認性（黒ベタを減らし、白・薄グレーの面＋濃いグレー文字。強調はグリーン／オレンジ） ── */
+/* 2. 配信状態バッジ（見放題・無料・広告付き無料）：薄いグリーン地＋濃いグリーン文字＋薄い枠。小さくても読める11px */
+html:not([data-proto]):has(.oshi-person-graphic) section#streaming-now span[class*="rounded-full"][class*="bg-gray-50"] {
+  background: #EAF7EF !important;
+  color: #146C3A !important;
+  border: 1px solid #BFE3CC;
+  border-radius: 2px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.35;
+  padding: 1px 6px !important;
+}
+/* 作品名・補足テキスト：純黒ではなく濃いグレー／読みやすい中間グレー */
+html:not([data-proto]):has(.oshi-person-graphic) section#streaming-now .theme-card p.font-bold { color: #1F1F1C !important; }
+html:not([data-proto]):has(.oshi-person-graphic) section#streaming-now .theme-card span.text-\[11px\],
+html:not([data-proto]):has(.oshi-person-graphic) section#streaming-now .theme-card p.text-\[10px\] { color: #55554F !important; }
+/* 配信サービスのロゴ：ロゴ自体が黒地のサービス（ABEMA・Netflix・FOD等）が黒い塊に見えないよう、
+   薄いグレーのタイルに余白をとって配置（ロゴ画像そのものは変更しない） */
+html:not([data-proto]):has(.oshi-person-graphic) section#vod summary > div:first-child {
+  background: #F4F4F1 !important;
+  border: 1px solid #E2E1DA;
+  border-radius: 6px !important;
+  padding: 4px;
+}
+html:not([data-proto]):has(.oshi-person-graphic) section#vod summary > div:first-child img { border-radius: 4px; }
+html:not([data-proto]):has(.oshi-person-graphic) section#vod summary h3 { color: #2B2B28 !important; }
+/* 件数バッジ：グリーン＋薄い枠で状態として読める形に */
+html:not([data-proto]):has(.oshi-person-graphic) section#vod summary > span[class*="text-green-600"] {
+  background: #EAF7EF !important;
+  color: #146C3A !important;
+  border: 1px solid #BFE3CC;
+  font-weight: 700;
+}
+/* パネル内の作品リスト */
+html:not([data-proto]):has(.oshi-person-graphic) section#vod details > div a p { color: #2B2B28 !important; }
+html:not([data-proto]):has(.oshi-person-graphic) section#vod details > div a:hover p { color: #C84A00 !important; }
+/* 見出し横の「🟢 75件」も同じグリーンのバッジ表現に */
+html:not([data-proto]):has(.oshi-person-graphic) :is(section#streaming-now, section#vod) h2 + span[class*="bg-green-100"] {
+  background: #EAF7EF !important;
+  color: #146C3A !important;
+  border: 1px solid #BFE3CC;
+}
+/* 「追加チャンネル」等のサービス補足バッジは途中で折らない（行末に収まらなければバッジごと次の行へ） */
+html:not([data-proto]):has(.oshi-person-graphic) section#vod summary h3 > span { display: inline-block; white-space: nowrap; }
+
+/* ── 出演作品カード内の配信サービスバッジ（白・黒・オレンジ＋配信状態の緑のルールに合わせる） ──
+   黒ベタ・濃色ベタは使わず、白地＋細いグレー枠＋濃グレー文字。データ取得元（source）ごとの色分け
+   （オレンジ・紫等）も揃える。ブランドカラーは細い枠程度に限定。ロゴ画像は加工せず、白い余白で囲む。 */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root span[title][class*="rounded-full"][class*="border"] {
+  background: #FFFFFF !important;
+  border: 1px solid #D9D8D1 !important;
+  color: #2B2B28 !important;
+  border-radius: 3px !important;
+  padding: 3px 8px 3px 3px !important;
+  gap: 6px !important;
+  font-size: 11px !important;
+  font-weight: 600;
+  max-width: 100%;
+  min-width: 0;
+}
+/* ロゴ：白い余白＋細い枠のタイルに収め、黒地のロゴ（FOD・ABEMA・Netflix等）が塊に見えないようにする */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root span[title][class*="rounded-full"][class*="border"] > div:first-child {
+  width: 22px !important;
+  height: 22px !important;
+  padding: 3px;
+  background: #FFFFFF !important;
+  border: 1px solid #E6E5DF !important;
+  border-radius: 3px !important;
+}
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root span[title][class*="rounded-full"][class*="border"] > div:first-child img { border-radius: 2px; }
+/* サービス名は省略せず、長い場合はバッジ内で折り返す（文字切れ防止） */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root span[title][class*="rounded-full"][class*="border"] > span {
+  max-width: none !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+/* ブランドカラーは細い枠のみ（title 先頭のサービス名で判定。Prime Video内チャンネルは下で別扱い） */
+html:not([data-proto]):has(.oshi-person-graphic) section#works span[title^="Hulu"][class*="rounded-full"] { border-color: #8FE0B0 !important; }
+html:not([data-proto]):has(.oshi-person-graphic) section#works span[title^="Netflix"][class*="rounded-full"] { border-color: #F0B3B0 !important; }
+html:not([data-proto]):has(.oshi-person-graphic) section#works span[title^="Prime Video（"][class*="rounded-full"] { border-color: #A7D8EE !important; }
+html:not([data-proto]):has(.oshi-person-graphic) section#works span[title^="Lemino"][class*="rounded-full"] { border-color: #F1B4D2 !important; }
+html:not([data-proto]):has(.oshi-person-graphic) section#works span[title^="YouTube"][class*="rounded-full"] { border-color: #F3B3B3 !important; }
+html:not([data-proto]):has(.oshi-person-graphic) section#works span[title^="TVer"][class*="rounded-full"] { border-color: #A9D9F0 !important; }
+/* Prime Video内チャンネル：黄色ベタではなく、淡い黄色の細い枠で区別 */
+html:not([data-proto]):has(.oshi-person-graphic) section#works span[title^="Prime Video内"][class*="rounded-full"] { border-color: #E8D39A !important; }
+/* 「+N」「購入・レンタルあり」の補助チップも読める濃さに */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root span.text-gray-400:not(.w-full) { color: #62625C !important; }
+
+/* ── 出演作品カード：作品種別ラベル（ドラマ・映画・アイドル番組等）と確認日 ──
+   種別ラベルは黒ベタ半透明（bg-black/60）→ オフホワイト＋薄グレー枠＋濃グレー文字＋左端の細いオレンジ線。
+   「配信中」（緑ベタ・太字）より弱い視覚階層にする。画像なしカードの種別ラベルも同じ表現に揃える。 */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root .absolute.top-2.left-2 > span,
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-no-poster span[class*="self-start"] {
+  background: rgba(252, 252, 250, 0.95) !important;
+  color: #3A3A35 !important;
+  border: 1px solid #D9D8D1;
+  border-left: 2px solid var(--pp-orange);
+  border-radius: 2px !important;
+  backdrop-filter: none !important;
+  font-size: 11px !important;
+  font-weight: 500;
+  line-height: 1.35;
+  padding: 1px 6px 1px 5px !important;
+}
+/* 確認日：薄すぎた gray-300 → 中間グレー（作品名・配信情報より目立たせない） */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root p.text-gray-300 { color: #7A7973 !important; }
+/* 種別ラベルは画像の左下へ（スマホの2列表示で「アイドル番組」等の長いラベルが右上の「配信中」と重なるのを防ぐ。
+   通常人物ページでも375〜390pxで発生している既存の重なり。位置のみ変更し、サイズ・リンクは変えない） */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root .absolute.top-2.left-2 {
+  top: auto !important;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+}
+
+/* ── 最終仕上げ（出演作品・配信比較の明るさとコントラスト） ── */
+/* 1. 横長サムネイル枠（aspect-video, 元 bg-gray-800）の余白を濃グレー → ごく薄いグレーに。画像は object-contain のまま（比率・トリミング不変） */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root .relative.aspect-video { background-color: #EFEEE8 !important; }
+/* 3. 画像右上の「配信中」：明るい緑（green-500）＋白文字はコントラスト不足 → 濃い緑＋白文字 */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root span[class*="bg-green-500"] { background-color: #15803D !important; color: #FFFFFF !important; }
+/* 4. 薄すぎた補足文字 */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root p.text-gray-400 { color: #6B6A64 !important; }          /* 配信サービス情報は現在確認できません */
+html:not([data-proto]):has(.oshi-person-graphic) section#vod .affiliate-slot span.text-gray-400 { color: #6B6A64 !important; }          /* 配信比較パネル内の「PR」 */
+html:not([data-proto]):has(.oshi-person-graphic) section#works a.text-green-600 { color: #15803D !important; }                           /* ▶ 配信中を見る */
+html:not([data-proto]):has(.oshi-person-graphic) section#works .work-card-root span.text-orange-400 { color: #C2410C !important; font-size: 10px !important; } /* 配信情報を確認済み */
+
+/* 「今すぐ見られる作品」の配信ボタン：長いサービス名（例「Prime Video内 FODチャンネルで今すぐ見る」）で
+   ボタンが「見放題」バッジの横で縮めず、スマホ幅でカード右端からはみ出していたのを修正。
+   ボタンを行内で縮められるようにし（min-width: 0）、サービス名は省略せず自然に折り返す。
+   短いサービス名は1行に収まるため見た目は変わらない。 */
+html:not([data-proto]):has(.oshi-person-graphic) section#streaming-now .vod-cta-btn {
+  min-width: 0;
+  /* 左右の内側余白を各1px詰める（px-2 = 8px → 7px）。ちょうど1行に収まる長さのサービス名が
+     1px未満の差で末尾1文字だけ折り返すのを防ぐ。中身は中央寄せのため短いボタンの見た目は変わらない */
+  padding-left: 7px;
+  padding-right: 7px;
+}
+html:not([data-proto]):has(.oshi-person-graphic) section#streaming-now .vod-cta-btn > span.truncate {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: center;
+  overflow-wrap: anywhere;
+  word-break: auto-phrase; /* 折り返す場合は文節単位で（Chrome。非対応ブラウザは通常の折り返し） */
+  text-wrap: balance;      /* 行の長さを揃え、末尾に短い語だけが残るのを防ぐ */
+}

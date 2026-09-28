@@ -16,6 +16,17 @@ import { getPhotobookHomeItems } from '@/lib/photobook-store';
 import PhotobookHomeSection from '@/components/site/PhotobookHomeSection';
 import HomeGroupSection from '@/components/site/HomeGroupSection';
 import type { HomeGroupItem } from '@/components/site/HomeGroupSection';
+import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
+import './home-graphic.css';
+
+// トップページのデザイン「C. Graphic Pop」用フォント（home-graphic.css の --pc-* を上書き）。
+// next/font でビルド時にセルフホストする（外部CDNへのリクエストなし）。
+// 日本語Webフォント（Noto Sans JP）は極太見出し・ロゴ用の 900 のみ。本文は既存のフォントスタックを使う
+// （本文用の太さまで読み込むと、ページ内の文字に応じて多数の分割フォントが読み込まれるため）。
+const graphicDisplayFont = Space_Grotesk({ subsets: ['latin'], weight: ['700'], display: 'swap' });
+const graphicMonoFont = Space_Mono({ subsets: ['latin'], weight: ['400', '700'], display: 'swap' });
+const graphicJpFont = Noto_Sans_JP({ subsets: ['latin'], weight: ['900'], display: 'swap', preload: false });
+const GRAPHIC_FONT_VARS_CSS = `html:not([data-proto]):has(.oshi-home-graphic){--pc-display:${graphicDisplayFont.style.fontFamily},system-ui,sans-serif;--pc-jp:${graphicJpFont.style.fontFamily},'Hiragino Sans',system-ui,sans-serif;--pc-mono:${graphicMonoFont.style.fontFamily},ui-monospace,monospace;}`;
 
 // Redis への問い合わせ結果を 60 秒間 Vercel Data Cache でキャッシュ
 // → 同一デプロイ内でリクエストが集中しても Redis 呼び出しは最大1回/60秒
@@ -222,7 +233,9 @@ export default async function HomePage() {
   };
 
   return (
-    <div>
+    // oshi-home-graphic: トップページのデザイン「C. Graphic Pop」（src/app/home-graphic.css）の適用範囲
+    <div className="oshi-home-graphic">
+      <style dangerouslySetInnerHTML={{ __html: GRAPHIC_FONT_VARS_CSS }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }} />
       {/* ━━━ Hero（メインコピー＋検索） ━━━ */}

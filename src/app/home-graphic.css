@@ -1,0 +1,258 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   トップページ正式デザイン候補「C. Graphic Pop」（通常表示）
+   design-prototypes.css の C案（html[data-proto="graphic"]）を、トップページのルート要素
+   （src/app/page.tsx の .oshi-home-graphic）がある場合だけ効くように移したもの。
+   - スコープ: html:not([data-proto]):has(.oshi-home-graphic)
+     → 他ページには効かない。開発用の比較プロトタイプ（?design=...）表示中は data-proto が付くため無効になり、
+       A/B/C/D/旧デザインとの比較はそのまま行える。
+   - サーバー描画時点で適用される（クライアント側での切り替えなし＝ちらつきなし）。
+   - :has() 非対応の古いブラウザでは従来デザイン（CSS変数の既定値）で表示される。
+   - フォントは page.tsx で next/font により読み込み、--pc-display / --pc-jp / --pc-mono を上書きする。
+     日本語Webフォント（Noto Sans JP）は font-weight: 900 の見出し・ロゴ専用（--pc-jp）。本文・通常文字は
+     既存のフォントスタックを使い、日本語Webフォントを読み込まない（初期CSS・フォント転送量の削減）。
+   page.tsx のマークアップ・データ取得・リンクは変更せず、見た目のみを上書きする。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+html:not([data-proto]):has(.oshi-home-graphic) {
+  --ds-bg: #F3F3F0;
+  --ds-surface: #FFFFFF;
+  --ds-primary: #0A0A0A;
+  --ds-primary-soft: #FFE4D2;
+  --ds-accent: #FF5A00;
+  --ds-accent-soft: #FFE4D2;
+  --ds-text: #0A0A0A;
+  --ds-muted: #6B6B66;
+  --ds-border: #0A0A0A;
+  --ds-cta: #FF5A00;
+  --ds-cta-text: #0A0A0A;
+  --ds-radius: 0px;
+  /* --pc-jp は極太（font-weight: 900）の見出し・ロゴ専用の日本語Webフォント。本文は既存のフォントスタックのまま */
+  --pc-display: 'Space Grotesk', system-ui, sans-serif;
+  --pc-jp: 'Noto Sans JP', 'Hiragino Sans', system-ui, sans-serif;
+  --pc-mono: 'Space Mono', ui-monospace, monospace;
+  --pc-orange: #FF5A00;
+}
+html:not([data-proto]):has(.oshi-home-graphic) body {
+  background-color: #F3F3F0;
+  background-image: radial-gradient(rgba(10, 10, 10, 0.11) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+html:not([data-proto]):has(.oshi-home-graphic) .site-header {
+  background: #F3F3F0;
+  border-bottom: 2px solid #0A0A0A;
+  box-shadow: none;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .site-header a {
+  color: #0A0A0A !important;
+  font-family: var(--pc-jp);
+  font-weight: 900 !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .site-header a::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--pc-orange);
+}
+html:not([data-proto]):has(.oshi-home-graphic) .site-header a::after {
+  content: 'OSHI SEARCH';
+  font-family: var(--pc-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 3px 6px;
+  background: #0A0A0A;
+  color: #FFFFFF;
+}
+
+/* Hero：大きなタイポグラフィ＋オレンジのマーカー */
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:first-of-type {
+  background: transparent !important;
+  padding: clamp(40px, 9vw, 112px) 16px clamp(36px, 6vw, 72px) !important;
+  border-bottom: 2px solid #0A0A0A;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:first-of-type > div {
+  max-width: 1120px !important;
+  text-align: left !important;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:first-of-type h1 {
+  font-family: var(--pc-jp);
+  font-size: clamp(32px, 7.4vw, 76px) !important;
+  font-weight: 900 !important;
+  line-height: 1.08 !important;
+  letter-spacing: -0.03em !important;
+  color: #0A0A0A !important;
+  margin-bottom: 22px !important;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:first-of-type h1::before {
+  content: 'FIND YOUR OSHI.';
+  display: block;
+  margin-bottom: 18px;
+  font-family: var(--pc-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--pc-orange);
+}
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:first-of-type h1 > span:last-child {
+  background: var(--pc-orange);
+  padding: 0 0.12em;
+  margin-top: 0.08em;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:first-of-type p {
+  color: #0A0A0A !important;
+  font-family: var(--pc-mono);
+  font-size: 13px !important;
+  letter-spacing: 0.02em;
+  margin-bottom: 24px !important;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:first-of-type p::before { content: '→ '; color: var(--pc-orange); font-weight: 700; }
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:first-of-type form { max-width: 760px; }
+html:not([data-proto]):has(.oshi-home-graphic) .hero-search-input {
+  background: #FFFFFF;
+  color: #0A0A0A;
+  border: 2px solid #0A0A0A;
+  border-radius: 0;
+  padding: 15px 16px;
+  box-shadow: 4px 4px 0 #0A0A0A;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .hero-search-input:focus { border-color: #0A0A0A; box-shadow: 4px 4px 0 var(--pc-orange); }
+html:not([data-proto]):has(.oshi-home-graphic) .hero-search-input::placeholder { color: #8C8C86; }
+html:not([data-proto]):has(.oshi-home-graphic) .hero-search-btn {
+  background: #0A0A0A;
+  color: #FFFFFF;
+  border-radius: 0;
+  border: 2px solid #0A0A0A;
+  font-family: var(--pc-mono);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  box-shadow: 4px 4px 0 var(--pc-orange);
+}
+html:not([data-proto]):has(.oshi-home-graphic) .hero-search-btn:hover { opacity: 1; background: var(--pc-orange); color: #0A0A0A; }
+
+/* 見出し：英字ラベル（番号つき）＋太い日本語 */
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic .section-heading {
+  font-family: var(--pc-jp);
+  font-size: clamp(20px, 3.4vw, 28px) !important;
+  font-weight: 900 !important;
+  letter-spacing: -0.01em;
+  color: #0A0A0A;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic .section-heading::before {
+  display: block;
+  margin-bottom: 8px;
+  font-family: var(--pc-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--pc-orange);
+}
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > div:first-of-type > section:nth-of-type(1) .section-heading::before { content: '01 — GROUP'; }
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > div:first-of-type > section:nth-of-type(2) .section-heading::before { content: '02 — GENRE'; }
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:has(.vod-provider-grid) .section-heading::before { content: '03 — STREAMING'; }
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:has(.theme-search-chip) .section-heading::before { content: 'TRENDING'; }
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:has(.popular-products-grid) .section-heading::before { content: 'PRODUCTS'; }
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:has(.photobook-row-item) .section-heading::before { content: '04 — PHOTOBOOK'; }
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > div:first-of-type > section {
+  padding-top: 20px;
+  border-top: 2px solid #0A0A0A;
+  margin-bottom: 48px !important;
+}
+
+/* グループ：番号＋罫線のカタログ */
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > div:first-of-type > section:nth-of-type(1) > div:last-of-type {
+  counter-reset: pc-group;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 18px !important;
+  border-top: 1px solid #0A0A0A;
+}
+@media (min-width: 640px) {
+  html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > div:first-of-type > section:nth-of-type(1) > div:last-of-type { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (min-width: 1024px) {
+  html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > div:first-of-type > section:nth-of-type(1) > div:last-of-type { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+html:not([data-proto]):has(.oshi-home-graphic) .theme-group-chip {
+  counter-increment: pc-group;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #0A0A0A;
+  border-radius: 0 !important;
+  padding: 14px 4px !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  min-width: 0;
+  transition: background 0.12s, color 0.12s;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .theme-group-chip::before {
+  content: counter(pc-group, decimal-leading-zero);
+  font-family: var(--pc-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--pc-orange);
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .theme-group-chip:hover { background: #0A0A0A; color: #FFFFFF; border-color: #0A0A0A; }
+
+html:not([data-proto]):has(.oshi-home-graphic) button[aria-pressed] {
+  border-radius: 0 !important;
+  border: 1.5px solid #0A0A0A !important;
+  background: #FFFFFF !important;
+  color: #0A0A0A !important;
+  font-family: var(--pc-mono);
+  font-weight: 700 !important;
+}
+html:not([data-proto]):has(.oshi-home-graphic) button[aria-pressed="true"] { background: var(--pc-orange) !important; }
+html:not([data-proto]):has(.oshi-home-graphic) button[aria-pressed]:hover { transform: none; box-shadow: none; }
+
+/* ジャンル：角のあるラベル */
+html:not([data-proto]):has(.oshi-home-graphic) .theme-link-pill {
+  border: 1.5px solid #0A0A0A;
+  border-radius: 0 !important;
+  color: #0A0A0A;
+  background: #FFFFFF;
+  font-weight: 700 !important;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .theme-link-pill > span[aria-hidden] { display: none; }
+html:not([data-proto]):has(.oshi-home-graphic) .theme-link-pill:hover { background: var(--pc-orange); color: #0A0A0A; }
+html:not([data-proto]):has(.oshi-home-graphic) .home-genre-more > summary { color: #0A0A0A; font-family: var(--pc-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+html:not([data-proto]):has(.oshi-home-graphic) .home-genre-more > div > div { border: 1.5px solid #0A0A0A !important; }
+
+/* 下部セクション */
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:not(:first-of-type) {
+  background: transparent !important;
+  border-bottom: 2px solid #0A0A0A !important;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .theme-card { border: 1.5px solid #0A0A0A; box-shadow: none; }
+html:not([data-proto]):has(.oshi-home-graphic) .theme-card:hover { transform: translate(-2px, -2px); box-shadow: 4px 4px 0 #0A0A0A; }
+html:not([data-proto]):has(.oshi-home-graphic) .vod-provider-icon { background: var(--pc-orange); color: #0A0A0A; border-radius: 0; }
+
+/* 写真集：プロダクトカタログ */
+html:not([data-proto]):has(.oshi-home-graphic) .photobook-row-item > div {
+  border: 1.5px solid #0A0A0A !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+html:not([data-proto]):has(.oshi-home-graphic) .photobook-row-item > div:hover { transform: translate(-2px, -2px) !important; box-shadow: 4px 4px 0 #0A0A0A !important; }
+html:not([data-proto]):has(.oshi-home-graphic) .photobook-row-item > div > div:first-child { background: #FFFFFF !important; border-bottom: 1.5px solid #0A0A0A; }
+
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:has(.photobook-row-item) button { border-radius: 0 !important; border-color: #0A0A0A !important; }
+
+/* Stats：黒地＋オレンジ数字のブランドブロック */
+html:not([data-proto]):has(.oshi-home-graphic) .hero-stats-bar { background: #0A0A0A; border-bottom: none; }
+html:not([data-proto]):has(.oshi-home-graphic) .hero-stat-num { color: var(--pc-orange); font-family: var(--pc-display); font-weight: 700; }
+html:not([data-proto]):has(.oshi-home-graphic) .hero-stat-label { color: #FFFFFF; font-family: var(--pc-mono); letter-spacing: 0.04em; }
+html:not([data-proto]):has(.oshi-home-graphic) .hero-stat-divider { background: rgba(255, 255, 255, 0.25); }
+html:not([data-proto]):has(.oshi-home-graphic) footer { background: #0A0A0A !important; border-color: #0A0A0A !important; color: #BDBDB6 !important; margin-top: 0 !important; }
+html:not([data-proto]):has(.oshi-home-graphic) footer .text-primary { color: var(--pc-orange) !important; }
+html:not([data-proto]):has(.oshi-home-graphic) footer .text-gray-400,
+html:not([data-proto]):has(.oshi-home-graphic) footer .text-gray-500 { color: #BDBDB6 !important; }
+
+/* 見出しを語の途中で折らない（Chrome の日本語文節改行。非対応ブラウザは通常の折り返し） */
+html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:first-of-type h1 > span { word-break: auto-phrase; }
