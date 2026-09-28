@@ -2063,3 +2063,49 @@ workId,personName,workTitle,workType,releaseYear,roleName,currentVodServices,las
 **コミット対象：** `src/app/page.tsx`・`src/app/home-graphic.css`・`src/app/person/[slug]/page.tsx`・`src/app/person/[slug]/person-graphic.css`・本ログ。
 
 **コミットしないもの：** デザイン比較用プロトタイプ（`src/components/site/DesignPrototypeLab.tsx`・`DesignPrototypeStyles.tsx`・`design-prototypes.css`、およびそれを読み込む `src/app/layout.tsx` の変更）は開発専用のためローカルにのみ残す（Task 49〜56 の記述はこのローカル機能を指す）。本番用CSSはプロトタイプに依存せず単独で動作する（`:not([data-proto])` は属性が無ければ常に成立）。
+
+---
+
+## Task 60 — トップページC・人物ページCの本番反映（commit 3ce001f）
+
+**目的：** 確定したデザイン「C. Graphic Pop」をトップページと人物ページの通常表示として本番反映する。
+
+**内容：** Task 59 のコミット範囲（`src/app/page.tsx`・`src/app/home-graphic.css`・`src/app/person/[slug]/page.tsx`・`src/app/person/[slug]/person-graphic.css`・本ログ）を commit `3ce001f` として main へ push し、Vercel Production へ反映。比較用プロトタイプ（DesignPrototypeLab 等・`layout.tsx` の変更）は開発専用のためコミットしていない。コミット内容だけを取り出したコピーで production build が成功することを事前確認済み。
+
+---
+
+## Task 61 — React hydration error #418 の原因特定と修正（commit cf182e8）
+
+**症状：** 本番（oshi-search.jp）のトップページでほぼ毎回、阿部寛などの人物ページで条件により React error #418（サーバー生成HTMLとブラウザ初回描画の不一致）。表示・検索・リンクは正常。
+
+**原因1（トップ）：** `src/components/HeaderSearchSlot.tsx` は `usePathname() === '/'` のときヘッダー検索を描画しない。Vercel 上でトップ（ISR, revalidate=60）を再生成する際はサーバー側の pathname が `/index` になるため、再生成後のHTMLにはヘッダー検索が入り、ブラウザ側（`/`）では消える → 不一致。証拠：本番HTMLの RSC ペイロードが `"c":["","index"]` でヘッダー検索入り、ビルド直後のHTMLは `"c":["",""]` で検索なし。ローカルの再生成では `/index` にならないため再現しなかった。27b7378 で入った処理で、C案の変更が原因ではない（当初「1つ前の本番では発生しない」と判断したのは、デプロイ固有URLが Vercel 認証ページへリダイレクトされていたための誤り）。
+
+**原因2（人物ページ）：** `src/components/WorkCard.tsx` の「確認日」が `toLocaleDateString('ja-JP', …)` をタイムゾーン指定なしで使用。サーバー（UTC）とブラウザ（JST）で日付境界がずれる（開発モードの差分：server「2026年8月14日」／client「2026年8月15日」）。以前からの不具合。
+
+**修正（2ファイル・見た目の変更なし）：**
+- `HeaderSearchSlot.tsx`：`pathname === '/' || pathname === '/index'` のときトップとして扱う
+- `WorkCard.tsx`：確認日の整形に `timeZone: 'Asia/Tokyo'` を指定（利用者に見える日付は従来のブラウザ表示＝日本時間と同じ）
+
+**検証：** ブランチ `fix/hydration-418` の Vercel Preview で ISR 再生成（`"c":["","index"]`）を実際に発生させ、サーバーHTML・hydration 後ともヘッダー検索0で一致、#418 = 0 を確認してから main へ fast-forward で取り込み。阿部寛は出演作品212件すべてでサーバーHTMLと hydration 後の確認日が一致。
+
+---
+
+## Task 62 — スマホ表示の4点修正（commit 3d98275）
+
+**変更ファイル：**
+- `src/components/affiliate/OshiAdBanner.tsx`：推しアド（AccessTrade）のバナー画像の読み込み失敗時（error イベント、または hydration 前に失敗済み＝complete かつ naturalWidth=0）に広告枠全体を非表示。AccessTrade のリンクコード・計測・リンク先は無変更。画像取得成功時は従来どおり表示
+- `src/app/person/[slug]/person-graphic.css`（639px以下のみ）：「関連商品ピックアップ」見出しの右の「関連商品をもっと見る（N件）→」を見出しの下の行へ（最後の1文字だけ改行する問題の解消）。固定クイックナビの上下余白を縮小（高さ 約59px → 約51px、文字サイズ・横スクロール・リンクは不変）
+- `src/app/home-graphic.css`（639px以下のみ）：「ジャンルで探す」〜「03 — STREAMING 配信サービスから探す」の余白を縮小（約96px → 約64px、ジャンル欄の下マージン 48px → 16px）。他のセクション間隔は不変
+
+PC表示は変更なし（CSSはすべて `max-width: 639px` 内）。
+
+---
+
+## 最終確認（2026-09-28・本番 https://oshi-search.jp）
+
+- **現在の本番：** commit `3d982750648a371abd16660383efc17c43d2b53f`（main）、Production デプロイ `https://oshi-search-tjju-fceuxai8s-yuujinn-stacks-projects.vercel.app`（Ready、oshi-search.jp のエイリアス先）
+- **確認幅：** 375 / 390 / 430 / 1280px
+- **対象：** トップページ（各幅5回リロード、ISR 再生成後の状態を含む）、人物ページ（梅澤美波・阿部寛・齊藤京子・松田里奈・成田凌）
+- **結果：** React error #418 = 0、横スクロール = 0、文字切れ = 0、要素重なり = 0、配信ボタンのカード外はみ出し = 0。検索（サジェスト→ /search?q=）、人物ページ内リンク（クイックナビのアンカー）、出演作品リンク・内部リンク（4xx/5xx 0）、楽天リンク（全て hb.afl.rakuten.co.jp、target=_blank）、配信リンク、FAQ はいずれも正常。関連商品ピックアップはスマホで1行、クイックナビはスマホ51px／PC59px、トップのジャンル→配信サービス間はスマホ64px／PC120px（PCは従来どおり）
+- **推しアド：** 画像取得成功時は表示（300×250）、画像取得失敗時は壊れた画像を出さず枠ごと非表示（前後の間隔は通常の40px）
+- **既知（対象外）：** 齊藤京子ページの外部画像1件が404（データ側の画像URLの問題）
