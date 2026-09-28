@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
+
 // 全人物詳細ページ共通の「#推しアド」（AccessTrade）広告枠。
 // 人物ごとにDBへ広告情報を保存する方式ではなく、このコンポーネント側に
 // 一度だけ実装することで、既存人物・CSV追加人物・管理画面追加人物のすべてに
@@ -27,10 +29,28 @@ interface Props {
 }
 
 export default function OshiAdBanner({ personName }: Props) {
+  // バナー画像の読み込みに失敗した場合は、壊れた画像アイコン（「？」）を見せないよう
+  // 広告枠全体を非表示にする（リンクは画像そのものに付いているため、画像なしで枠を残す意味がない）。
+  // AccessTradeのリンクコード自体は改変せず、描画後の <img> の error を監視するだけ。
+  // React が listener を付ける前に失敗済みの場合（complete かつ naturalWidth=0）も拾う。
+  const creativeRef = useRef<HTMLDivElement>(null);
+  const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => {
+    const img = creativeRef.current?.querySelector('img');
+    if (!img) return;
+    const onError = () => setImageFailed(true);
+    if (img.complete && img.naturalWidth === 0) {
+      onError();
+      return;
+    }
+    img.addEventListener('error', onError);
+    return () => img.removeEventListener('error', onError);
+  }, []);
+
   // 明示的に 'true' を設定した場合のみ表示する（opt-in）。
   // 未設定・'false'・その他の値はすべて非表示にすることで、案件終了後や
   // 環境変数の設定漏れ時に広告が表示され続けるのを防ぐ。
-  if (process.env.NEXT_PUBLIC_OSHI_AD_ENABLED !== 'true') return null;
+  if (process.env.NEXT_PUBLIC_OSHI_AD_ENABLED !== 'true' || imageFailed) return null;
 
   const handleClick = () => {
     if (typeof window !== 'undefined' && typeof window.gtag === 'function') {
@@ -97,6 +117,7 @@ export default function OshiAdBanner({ personName }: Props) {
         </div>
         {/* eslint-disable-next-line react/no-danger -- AccessTrade提供のリンクコードを改変せずそのまま利用する仕様 */}
         <div
+          ref={creativeRef}
           className="oshi-ad-banner__creative md:flex-shrink-0"
           onClick={handleClick}
           dangerouslySetInnerHTML={{ __html: ACCESSTRADE_BANNER_HTML }}

@@ -438,3 +438,23 @@ html:not([data-proto]):has(.oshi-person-graphic) section#streaming-now .vod-cta-
   word-break: auto-phrase; /* 折り返す場合は文節単位で（Chrome。非対応ブラウザは通常の折り返し） */
   text-wrap: balance;      /* 行の長さを揃え、末尾に短い語だけが残るのを防ぐ */
 }
+
+/* ── スマホのみ（639px以下）の微調整。PC表示には影響しない ── */
+@media (max-width: 639px) {
+  /* 「関連商品ピックアップ」：右の「関連商品をもっと見る（N件）→」に幅を取られて
+     見出しの最後の1文字だけが改行されていたため、スマホではリンクを見出しの下の行へ */
+  html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section:has(#featured-products-heading) > div:first-child {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 6px;
+  }
+  /* 固定クイックナビ：上下の余白だけを少し詰める（高さ 約59px → 約51px）。文字サイズ・横スクロール・リンクは不変 */
+  html:not([data-proto]):has(.oshi-person-graphic) .person-quick-nav > div {
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+  html:not([data-proto]):has(.oshi-person-graphic) .person-quick-nav a {
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+}

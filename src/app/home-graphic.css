@@ -256,3 +256,12 @@ html:not([data-proto]):has(.oshi-home-graphic) footer .text-gray-500 { color: #B
 
 /* 見出しを語の途中で折らない（Chrome の日本語文節改行。非対応ブラウザは通常の折り返し） */
 html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > section:first-of-type h1 > span { word-break: auto-phrase; }
+
+/* スマホのみ（639px以下）：「ジャンルで探す」〜「03 — STREAMING 配信サービスから探す」の間の余白を縮める
+   （ジャンル欄の下マージン 48px → 16px。区間全体 約96px → 約64px、約33%減）。
+   グループ／ジャンルの外枠内で最後のセクション（＝ジャンル）だけが対象のため、他のセクション間隔は不変 */
+@media (max-width: 639px) {
+  html:not([data-proto]):has(.oshi-home-graphic) .oshi-home-graphic > div:first-of-type > section:last-of-type {
+    margin-bottom: 16px !important;
+  }
+}
