@@ -120,12 +120,13 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
     sortedProviders.length > 0 &&
     sortedProviders.every((p) => p.source === 'manual_csv');
 
-  // 確認日表示
+  // 確認日表示（サーバー（UTC）とブラウザで日付がずれて hydration error #418 にならないよう日本時間で固定）
   const checkedDate = work.vodUpdatedAt
     ? new Date(work.vodUpdatedAt).toLocaleDateString('ja-JP', {
         year: 'numeric',
         month: 'short',
         day: 'numeric',
+        timeZone: 'Asia/Tokyo',
       })
     : null;
 
