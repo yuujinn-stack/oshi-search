@@ -2109,3 +2109,25 @@ PC表示は変更なし（CSSはすべて `max-width: 639px` 内）。
 - **結果：** React error #418 = 0、横スクロール = 0、文字切れ = 0、要素重なり = 0、配信ボタンのカード外はみ出し = 0。検索（サジェスト→ /search?q=）、人物ページ内リンク（クイックナビのアンカー）、出演作品リンク・内部リンク（4xx/5xx 0）、楽天リンク（全て hb.afl.rakuten.co.jp、target=_blank）、配信リンク、FAQ はいずれも正常。関連商品ピックアップはスマホで1行、クイックナビはスマホ51px／PC59px、トップのジャンル→配信サービス間はスマホ64px／PC120px（PCは従来どおり）
 - **推しアド：** 画像取得成功時は表示（300×250）、画像取得失敗時は壊れた画像を出さず枠ごと非表示（前後の間隔は通常の40px）
 - **既知（対象外）：** 齊藤京子ページの外部画像1件が404（データ側の画像URLの問題）
+
+---
+
+## Task 63 — C案「Graphic Pop」を全公開ページへ適用
+
+**目的：** トップ・人物ページ（C案済み・今回は無変更）を基準に、残りの公開ページの見た目を C案へ統一する。表示のみの変更で、DB・API・データ取得・検索ロジック・リンク先・アフィリエイトURL・JSON-LD・canonical・metadata・SEO文言・件数・並び順・管理画面は変更しない。
+
+**対象（旧デザイン → C案）：** `/vod/[provider]`・`/groups/[groupSlug]`・`/work/[workId]`・`/search`・`/genre/[genre]`・`/photobooks`・`/about`・`/contact`・`/disclaimer`・`/editorial-policy`・`/privacy`・404。C案済みは `/` と `/person/[slug]`（無変更）。`/group/[groupSlug]`・`/person/[slug]/work/[workId]` はリダイレクトのみ。
+
+**変更ファイル：**
+- 新規 `src/app/graphic-site.css`：共通トークン `--graphic-*`（色・角丸・フォント）と、`html:not([data-proto]):has(.oshi-graphic-page)` にスコープした C案スタイル一式。既存 `--ds-*` を C案の配色へ差し替え、ドット背景、ヘッダー（●ロゴ・OSHI SEARCH・黒い検索ボタン）／黒フッター、H1 上のラベル（`h1::before`：`03 — STREAMING`・`02 — GENRE`・`04 — PHOTOBOOK` 等。H1 の文言は不変）、H2 の番号付きラベル（CSS カウンター＋`:has()` で内容に応じ WORKS / FAQ / PERSONS / NOTE / GUIDE 等）、Tailwind の gray/indigo/blue 系の色を C案へ置換、カードの角丸2px・影なし、VOD の統計ボックス（白地・黒枠）、注記（オレンジ左線）、作品カード（人物ページC案と同じ表現）、グループヒーロー、検索フォーム、塗りのインディゴボタン → 黒CTA
+- 新規 `src/components/site/GraphicPageStyles.tsx`：上記 CSS と `next/font`（Space Grotesk 700・Space Mono 400/700・Noto Sans JP 900 のみ／preload:false）を読み込み、フォント名を CSS 変数へ渡すサーバーコンポーネント
+- 12ページ（上記対象の page.tsx と `not-found.tsx`）：import 1行、既存ルート要素の className に `oshi-graphic-page oshi-graphic-page--{vod|group|work|search|genre|photobooks|info|notfound}` を追加、ルート先頭に `<GraphicPageStyles />` を追加のみ
+
+**設計上の判断・注意点：**
+- マーカークラス方式のため管理画面（同じ root layout 配下）・トップ・人物ページには一切影響しない。SSR 時点で適用されるので切り替わりのちらつきなし。`:has()` 非対応ブラウザは従来デザインのまま
+- `home-graphic.css`・`person-graphic.css` はリファクタリングせず、そのまま基準として残した（トークンは新 CSS 側に定義）
+- Tailwind の `[class*="text-indigo-"]` は `group-hover:` クラスにも一致するため、色置換は `:is(.text-indigo-500, …)` の完全一致＋ホバー専用ルールで行う
+- 404 ページはルート先頭が `<style>` のため `p:first-of-type` で指定
+- `/photobooks` は DB 接続の一時エラー（other side closed）でリトライも失敗すると 500 になりうる（既存の挙動・今回は対象外）
+
+**最終確認（ローカル：開発サーバー＋`next start`）：** 17ページ（VOD 4サービス含む）× 375/390/430/1280px で横スクロール 0・文字切れ 0・はみ出し 0・React #418 = 0。検索・人物→作品・作品→人物・人物→配信・VOD→人物/作品・楽天リンク（72件）・内部リンク（60件）・アンカー（10件）正常。`tsc --noEmit` エラー0、test 65ファイル/1460件合格、`next build` 成功。ページ側の差分は import・className 追加・`<GraphicPageStyles />` のみで、metadata・canonical・JSON-LD・href への差分なし。

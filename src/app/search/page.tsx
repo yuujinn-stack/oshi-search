@@ -1,3 +1,4 @@
+import GraphicPageStyles from '@/components/site/GraphicPageStyles';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import SearchForm from '@/components/SearchForm';
@@ -227,7 +228,8 @@ export default async function SearchPage({ searchParams }: Props) {
   ];
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 py-8 oshi-graphic-page oshi-graphic-page--search">
+      <GraphicPageStyles />
       {/* 検索フォーム */}
       <div className="mb-6 max-w-2xl">
         <SearchForm defaultValue={query} suggestions={suggestions} />

@@ -1,3 +1,4 @@
+import GraphicPageStyles from '@/components/site/GraphicPageStyles';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -113,7 +114,8 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
   } : null;
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 py-8 oshi-graphic-page oshi-graphic-page--vod">
+      <GraphicPageStyles />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }} />
       {itemListJsonLd && (
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(itemListJsonLd) }} />

@@ -1,3 +1,4 @@
+import GraphicPageStyles from '@/components/site/GraphicPageStyles';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -70,7 +71,8 @@ export default async function PhotobooksPage({ searchParams }: Props) {
   const personOptions = facets.persons.map((p) => ({ name: p.name, group: p.group }));
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 py-8 oshi-graphic-page oshi-graphic-page--photobooks">
+      <GraphicPageStyles />
       {/* パンくず */}
       <nav className="text-xs mb-6 flex items-center gap-1.5" style={{ color: 'var(--ds-muted)' }}>
         <Link href="/" className="hover:underline">トップ</Link>

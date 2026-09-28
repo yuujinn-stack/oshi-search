@@ -1,3 +1,4 @@
+import GraphicPageStyles from '@/components/site/GraphicPageStyles';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import PersonCard from '@/components/PersonCard';
@@ -75,7 +76,8 @@ export default async function GenrePage({ params }: Props) {
   // データなし → 準備中ページ
   if (persons.length === 0) {
     return (
-      <div className="max-w-6xl mx-auto px-4 py-8">
+      <div className="max-w-6xl mx-auto px-4 py-8 oshi-graphic-page oshi-graphic-page--genre">
+        <GraphicPageStyles />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }} />
         <nav aria-label="パンくずリスト" className="text-xs mb-6 flex items-center gap-1.5 text-gray-500">
           <Link href="/" className="hover:underline">ホーム</Link>
@@ -96,7 +98,8 @@ export default async function GenrePage({ params }: Props) {
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 py-8 oshi-graphic-page oshi-graphic-page--genre">
+      <GraphicPageStyles />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }} />
       <nav aria-label="パンくずリスト" className="text-xs mb-6 flex items-center gap-1.5 text-gray-500">
         <Link href="/" className="hover:underline">ホーム</Link>

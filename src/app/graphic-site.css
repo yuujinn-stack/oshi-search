@@ -1,0 +1,414 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   公開サイト共通デザイン「C. Graphic Pop」（トップ・人物ページ以外の公開ページ用）
+   基準はトップ（home-graphic.css）と人物ページ（person/[slug]/person-graphic.css）の確定版。
+   この2ページのCSSは変更せず、他ページをそれに合わせる。
+
+   - 適用範囲: ルート要素に .oshi-graphic-page を持つページ（GraphicPageStyles と併用）だけ。
+     スコープ: html:not([data-proto]):has(.oshi-graphic-page)
+     → トップ・人物ページ（別クラス）や /admin には効かない。
+   - ページ種別は .oshi-graphic-page--{vod|group|work|search|genre|photobooks|info|notfound}。
+   - 見た目のみを上書きする（マークアップ・データ・リンク・SEOテキストは変更しない）。
+     H1 の文言は変えず、英字ラベルは ::before で表示する。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ── C案デザイントークン（共通） ── */
+:root {
+  --graphic-bg: #F4F4F1;
+  --graphic-surface: #FFFFFF;
+  --graphic-panel: #F7F6F2;
+  --graphic-ink: #0A0A0A;
+  --graphic-text: #141414;
+  --graphic-body: #2B2B28;
+  --graphic-muted: #62625C;
+  --graphic-subtle: #7A7973;
+  --graphic-border: #D9D8D1;
+  --graphic-border-strong: #B9B8B0;
+  --graphic-rule: #0A0A0A;
+  --graphic-orange: #FF5A00;
+  --graphic-orange-text: #C84A00;
+  --graphic-orange-soft: #FFF7F1;
+  --graphic-green: #15803D;
+  --graphic-green-text: #146C3A;
+  --graphic-green-soft: #EAF7EF;
+  --graphic-green-border: #BFE3CC;
+  --graphic-radius: 2px;
+  /* フォント（GraphicPageStyles が next/font の実フォント名で上書き）。日本語Webフォントは 900 の見出し・ロゴ専用 */
+  --graphic-font-jp: 'Noto Sans JP', 'Hiragino Sans', system-ui, sans-serif;
+  --graphic-font-mono: 'Space Mono', ui-monospace, monospace;
+  --graphic-font-display: 'Space Grotesk', system-ui, sans-serif;
+}
+
+/* ── 既存テーマ変数を C案の値に（該当ページのみ） ── */
+html:not([data-proto]):has(.oshi-graphic-page) {
+  --ds-bg: var(--graphic-bg);
+  --ds-surface: var(--graphic-surface);
+  --ds-primary: var(--graphic-ink);
+  --ds-primary-soft: #EFEEE8;
+  --ds-accent: var(--graphic-orange);
+  --ds-accent-soft: #FFE4D2;
+  --ds-text: var(--graphic-text);
+  --ds-muted: var(--graphic-muted);
+  --ds-border: var(--graphic-border);
+  --ds-cta: #E85400;
+  --ds-cta-text: #FFFFFF;
+  --ds-radius: var(--graphic-radius);
+  --ds-hero-from: var(--graphic-bg);
+  --ds-hero-to: var(--graphic-bg);
+}
+html:not([data-proto]):has(.oshi-graphic-page) body {
+  background-color: var(--graphic-bg);
+  background-image: radial-gradient(rgba(10, 10, 10, 0.07) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* ── ヘッダー・フッター（人物ページC案と同一） ── */
+html:not([data-proto]):has(.oshi-graphic-page) .site-header {
+  background: var(--graphic-bg);
+  border-bottom: 2px solid var(--graphic-rule);
+  box-shadow: none;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .site-header a {
+  color: var(--graphic-ink) !important;
+  font-family: var(--graphic-font-jp);
+  font-weight: 900 !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .site-header a::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--graphic-orange);
+  flex-shrink: 0;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .site-header a::after {
+  content: 'OSHI SEARCH';
+  font-family: var(--graphic-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 3px 6px;
+  background: var(--graphic-ink);
+  color: #FFFFFF;
+}
+@media (max-width: 479px) {
+  html:not([data-proto]):has(.oshi-graphic-page) .site-header a::after { display: none; }
+}
+html:not([data-proto]):has(.oshi-graphic-page) .site-header form input {
+  border-radius: 0 !important;
+  border: 1.5px solid var(--graphic-ink) !important;
+  background: #FFFFFF !important;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .site-header form button {
+  border-radius: 0 !important;
+  background: var(--graphic-ink) !important;
+  color: #FFFFFF !important;
+}
+html:not([data-proto]):has(.oshi-graphic-page) footer { background: var(--graphic-ink) !important; border-color: var(--graphic-ink) !important; color: #BDBDB6 !important; }
+html:not([data-proto]):has(.oshi-graphic-page) footer .text-primary { color: var(--graphic-orange) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) footer .text-gray-400,
+html:not([data-proto]):has(.oshi-graphic-page) footer .text-gray-500 { color: #BDBDB6 !important; }
+
+/* ── ページタイトル（H1）：英字ラベル＋黒の極太見出し。文言は変えない ── */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--vod { --graphic-page-label: '03 — STREAMING'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--genre { --graphic-page-label: '02 — GENRE'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--photobooks { --graphic-page-label: '04 — PHOTOBOOK'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--group { --graphic-page-label: 'PROFILE / GROUP'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--work { --graphic-page-label: 'WORK / DETAIL'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--search { --graphic-page-label: 'SEARCH / RESULTS'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--info { --graphic-page-label: 'OSHI SEARCH / INFO'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--notfound { --graphic-page-label: 'ERROR / NOT FOUND'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page h1 {
+  color: var(--graphic-ink) !important;
+  font-family: var(--graphic-font-jp);
+  font-weight: 900 !important;
+  letter-spacing: -0.01em;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page h1::before {
+  content: var(--graphic-page-label, 'OSHI SEARCH');
+  display: block;
+  margin-bottom: 8px;
+  font-family: var(--graphic-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  line-height: 1.5;
+  color: var(--graphic-orange);
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page h1 span { font-family: system-ui, sans-serif; }
+
+/* ── セクション見出し（H2）：番号＋英字ラベル（小さく）＋黒の見出し ── */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page { counter-reset: gsec; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page section h2,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--work h2 {
+  counter-increment: gsec;
+  color: var(--graphic-ink) !important;
+  font-family: var(--graphic-font-jp);
+  font-weight: 900 !important;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page section h2::before,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--work h2::before {
+  content: counter(gsec, decimal-leading-zero) ' — ' var(--graphic-sec-label, 'SECTION');
+  display: block;
+  margin-bottom: 5px;
+  font-family: var(--graphic-font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  line-height: 1.5;
+  color: var(--graphic-orange);
+}
+/* ラベル（セクションの中身から判定。該当しないものは SECTION） */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page section:has(.work-card-root) { --graphic-sec-label: 'WORKS'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page section:has(details) { --graphic-sec-label: 'FAQ'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page section:has(details summary [class*="w-8"][class*="h-8"]) { --graphic-sec-label: 'STREAMING'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page section:has(details .grid) { --graphic-sec-label: 'WORKS'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page section:has(.mini-product-link) { --graphic-sec-label: 'ITEMS'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page section:has(.theme-group-chip) { --graphic-sec-label: 'RELATED'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page section:has([class*="bg-gradient-to-br"]),
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page section:has(a.block [class*="rounded-full"][class*="w-12"]) { --graphic-sec-label: 'PERSONS'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page section:has(ul.list-disc) { --graphic-sec-label: 'NOTE'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--vod section { --graphic-sec-label: 'GUIDE'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--genre section { --graphic-sec-label: 'GROUP'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--info section { --graphic-sec-label: 'INFO'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--work > div > div:has(.w-11) { --graphic-sec-label: 'STREAMING'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--work > div > div:has(.w-9.h-9) { --graphic-sec-label: 'CAST'; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--work > div > div:has(.grid-cols-3) { --graphic-sec-label: 'WORKS'; }
+/* 大きなセクションの区切り：太めの黒罫線（背景つきの箱型セクションは除く） */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--vod > section:not([style*="background"]),
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--genre > div > section,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--search section,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--group > div[class*="space-y-10"] > section {
+  border-top: 1.5px solid var(--graphic-rule);
+  padding-top: 18px;
+}
+/* ジャンルページの見出し（左の色線＋主色 → C案の見出し） */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--genre h2.border-l-4 { border-left: none !important; padding-left: 0 !important; font-size: 17px !important; }
+/* 情報ページの見出し下線を細いグレー罫線に */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--info h2 { border-bottom-color: var(--graphic-border) !important; }
+
+/* ── 本文・リンク（Tailwind のグレー・インディゴ・青・主色(#4F46E5)を C案の配色へ） ── */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .text-slate-800,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .text-gray-800 { color: var(--graphic-text) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .text-slate-700,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .text-gray-700 { color: var(--graphic-body) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .text-gray-600,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .text-gray-500 { color: var(--graphic-muted) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .text-gray-400,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .text-gray-300 { color: var(--graphic-subtle) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page :is(.text-indigo-300, .text-indigo-400, .text-indigo-500, .text-indigo-600, .text-indigo-700) { color: var(--graphic-orange-text) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page a:is(.text-indigo-500, .text-indigo-600, .text-indigo-700) { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(200, 74, 0, 0.35); }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .group:hover [class*="group-hover:text-indigo-"] { color: var(--graphic-orange-text) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page [class*="hover:text-indigo-"]:hover { color: var(--graphic-orange-text) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .bg-indigo-50,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .bg-indigo-100 { background-color: var(--graphic-orange-soft) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page [class*="hover:bg-indigo-"]:hover { background-color: var(--graphic-orange-soft) !important; }
+/* 半透明のインディゴ面（bg-indigo-50/60 等の案内ボックス）は C案の白い注記ボックスに */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page [class*="bg-indigo-50/"] { background-color: var(--graphic-surface) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page [class*=" border-indigo-"],
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page [class^="border-indigo-"] { border-color: var(--graphic-border) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .text-primary { color: var(--graphic-ink) !important; }
+/* 塗りのインディゴ（お問い合わせボタン等）は C案のCTA＝黒ベタ＋白文字に */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page :is(.bg-indigo-500, .bg-indigo-600, .bg-indigo-700) {
+  background-color: var(--graphic-ink) !important;
+  color: #FFFFFF !important;
+  border-radius: var(--graphic-radius) !important;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page :is(.bg-indigo-500, .bg-indigo-600, .bg-indigo-700):hover { background-color: #2B2B28 !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .bg-primary { background-color: var(--graphic-ink) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .border-primary { border-color: var(--graphic-ink) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .bg-blue-100,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .bg-blue-50 { background-color: #EFEEE8 !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .text-blue-700,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .text-blue-600 { color: #3A3A35 !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .border-gray-100,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .border-gray-200,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .border-gray-300 { border-color: var(--graphic-border) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .bg-gray-50 { background-color: var(--graphic-panel) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page.bg-gray-50 { background-color: transparent !important; }
+
+/* ── カード・パネル：白地＋細い罫線、角丸は最小限、影なし ── */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .rounded-2xl,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .rounded-xl { border-radius: var(--graphic-radius) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page button.rounded-full,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page a.rounded-full,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page span.rounded-full,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page [style*="999px"] { border-radius: var(--graphic-radius) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page [class*="shadow"] { box-shadow: none !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .theme-card { border-color: #D2D1CA; box-shadow: none; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .theme-card:hover { transform: none; box-shadow: none; border-color: var(--graphic-ink); }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .bg-white.rounded-2xl { border-color: #D2D1CA !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page a:hover > .bg-white.rounded-2xl,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page a:hover > div[class*="rounded-2xl"][style*="background"] { border-color: var(--graphic-ink) !important; transform: none !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .mini-product-link { box-shadow: none !important; transform: none !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .mini-product-link:hover { border-color: var(--graphic-ink) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page details[open] { border-color: var(--graphic-border-strong); }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page details > summary { border-left: 3px solid transparent; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page details[open] > summary { border-left-color: var(--graphic-orange); }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page select,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page input { border-radius: var(--graphic-radius) !important; }
+
+/* 人物アイコン（グラデーション丸）：「梅」アイコンと同じ オフホワイト＋細いオレンジ枠＋オレンジ文字（丸形は維持） */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page div.rounded-full[class*="bg-gradient-to-br"],
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page a.block div.rounded-full[class*="w-12"][style*="background"] {
+  background: var(--graphic-orange-soft) !important;
+  border: 1.5px solid var(--graphic-orange);
+  color: #E85400 !important;
+}
+/* 検索結果の人物サムネイル（グラデーション面）も同じ配色 */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page div[class*="aspect-"][class*="bg-gradient-to-br"] {
+  background: var(--graphic-orange-soft) !important;
+  color: #E85400 !important;
+  border-bottom: 1px solid var(--graphic-border);
+}
+/* 状態バッジ（緑） */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page span[class*="bg-green-500"] { background-color: var(--graphic-green) !important; color: #FFFFFF !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page span.bg-green-100,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page span.bg-green-50 {
+  background: var(--graphic-green-soft) !important;
+  color: var(--graphic-green-text) !important;
+  border: 1px solid var(--graphic-green-border);
+}
+
+/* ── 出演作品カード（人物ページC案と同一の表現） ── */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .grid:has(> .work-card-root) { counter-reset: gwork; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root {
+  counter-increment: gwork;
+  border-color: var(--graphic-ink);
+  border-radius: 0;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root:hover { transform: none; box-shadow: 3px 3px 0 var(--graphic-ink); }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-title::before {
+  content: counter(gwork, decimal-leading-zero) '  ';
+  font-family: var(--graphic-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--graphic-orange);
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-detail-btn {
+  border-radius: 0 !important;
+  border: 1px solid var(--graphic-ink) !important;
+  background: #FFFFFF !important;
+  color: var(--graphic-ink) !important;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-detail-btn:hover { background: var(--graphic-ink) !important; color: #FFFFFF !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root .relative.aspect-video { background-color: #EFEEE8 !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root .absolute.top-2.left-2 {
+  top: auto !important;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root .absolute.top-2.left-2 > span,
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-no-poster span[class*="self-start"] {
+  background: rgba(252, 252, 250, 0.95) !important;
+  color: #3A3A35 !important;
+  border: 1px solid var(--graphic-border);
+  border-left: 2px solid var(--graphic-orange);
+  border-radius: 2px !important;
+  backdrop-filter: none !important;
+  font-size: 11px !important;
+  font-weight: 500;
+  line-height: 1.35;
+  padding: 1px 6px 1px 5px !important;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root p.text-gray-300 { color: var(--graphic-subtle) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root p.text-gray-400 { color: #6B6A64 !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root span.text-orange-400 { color: #C2410C !important; font-size: 10px !important; }
+/* 配信サービスバッジ：白地＋細いグレー枠＋濃グレー文字、ロゴは白い余白で囲む */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root span[title][class*="rounded-full"][class*="border"] {
+  background: #FFFFFF !important;
+  border: 1px solid var(--graphic-border) !important;
+  color: var(--graphic-body) !important;
+  border-radius: 3px !important;
+  padding: 3px 8px 3px 3px !important;
+  gap: 6px !important;
+  font-size: 11px !important;
+  font-weight: 600;
+  max-width: 100%;
+  min-width: 0;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root span[title][class*="rounded-full"][class*="border"] > div:first-child {
+  width: 22px !important;
+  height: 22px !important;
+  padding: 3px;
+  background: #FFFFFF !important;
+  border: 1px solid #E6E5DF !important;
+  border-radius: 3px !important;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root span[title][class*="rounded-full"][class*="border"] > span {
+  max-width: none !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page .work-card-root span.text-gray-400:not(.w-full) { color: var(--graphic-muted) !important; }
+
+/* ── 配信サービスページ（/vod/[provider]） ── */
+/* Stats：人物ページと同じ白地＋黒罫線＋黒の大きな数字 */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--vod > div.grid.grid-cols-2 > div {
+  background: #FFFFFF !important;
+  border: 1.5px solid var(--graphic-ink);
+  border-radius: 0 !important;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--vod > div.grid.grid-cols-2 > div > p:first-child {
+  color: var(--graphic-ink) !important;
+  font-family: var(--graphic-font-display);
+  font-weight: 700 !important;
+}
+/* 人物カード内の「N作品」は小さなオレンジのアクセント */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--vod a.block p[class*="text-[11px]"] { color: var(--graphic-orange-text) !important; }
+/* 注意書き（白地＋細い罫線） */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--vod > p[style*="background"] { border-left: 3px solid var(--graphic-orange) !important; }
+
+/* ── グループページ（/groups/[slug]）：ヒーローは人物ページと同じ表現 ── */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--group > nav:first-of-type {
+  background: transparent;
+  border-bottom: 1px solid var(--graphic-border);
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--group > nav:first-of-type + div {
+  background: transparent !important;
+  border-bottom: 2px solid var(--graphic-rule);
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--group > nav:first-of-type + div [class*="text-white"] { color: #55554F !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--group > nav:first-of-type + div h1[class*="text-white"] { font-size: clamp(30px, 6vw, 44px) !important; color: var(--graphic-ink) !important; }
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--group > nav:first-of-type + div [class*="w-16"][class*="h-16"] {
+  background: var(--graphic-orange-soft) !important;
+  border: 1.5px solid var(--graphic-orange);
+  border-radius: 0 !important;
+  color: #E85400 !important;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--group > nav:first-of-type + div div[class*="bg-white/15"] {
+  background: #FFFFFF !important;
+  border: 1.5px solid var(--graphic-ink);
+  border-radius: 0 !important;
+  backdrop-filter: none;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--group > nav:first-of-type + div div[class*="bg-white/15"] p[class*="font-black"] {
+  color: var(--graphic-ink) !important;
+  font-family: var(--graphic-font-display);
+  font-weight: 700 !important;
+}
+
+/* ── 検索結果ページ（/search）：検索フォームはトップと同じ表現 ── */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--search form input {
+  border: 2px solid var(--graphic-ink) !important;
+  border-radius: 0 !important;
+  box-shadow: 4px 4px 0 var(--graphic-ink) !important;
+  background: #FFFFFF !important;
+}
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--search form button {
+  background: var(--graphic-ink) !important;
+  color: #FFFFFF !important;
+  border-radius: 0 !important;
+  box-shadow: 4px 4px 0 var(--graphic-orange) !important;
+}
+
+/* ── 404 ── */
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--notfound > p:first-of-type {
+  color: var(--graphic-orange) !important;
+  font-family: var(--graphic-font-display);
+}

@@ -1,3 +1,4 @@
+import GraphicPageStyles from '@/components/site/GraphicPageStyles';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, permanentRedirect } from 'next/navigation';
@@ -236,7 +237,8 @@ export default async function WorkDetailPage({ params }: Props) {
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(workJsonLd) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }} />
 
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 oshi-graphic-page oshi-graphic-page--work">
+        <GraphicPageStyles />
 
         {/* ━━━ パンくずリスト ━━━ */}
         <nav aria-label="パンくずリスト" className="bg-white border-b border-gray-200">

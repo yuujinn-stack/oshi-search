@@ -1,3 +1,4 @@
+import GraphicPageStyles from '@/components/site/GraphicPageStyles';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, permanentRedirect } from 'next/navigation';
@@ -565,7 +566,8 @@ export default async function GroupsPage({ params }: Props) {
       />
       <PageViewTracker entity="group" slug={groupSlug} />
 
-      <div className="page-bg">
+      <div className="page-bg oshi-graphic-page oshi-graphic-page--group">
+        <GraphicPageStyles />
 
         {/* パンくずリスト */}
         <nav aria-label="パンくずリスト" className="breadcrumb-bar">

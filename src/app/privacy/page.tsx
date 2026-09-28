@@ -1,3 +1,4 @@
+import GraphicPageStyles from '@/components/site/GraphicPageStyles';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -9,7 +10,8 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <div className="max-w-3xl mx-auto px-4 py-12">
+    <div className="max-w-3xl mx-auto px-4 py-12 oshi-graphic-page oshi-graphic-page--info">
+      <GraphicPageStyles />
       {/* パンくず */}
       <nav className="text-xs text-gray-400 mb-8 flex items-center gap-1.5">
         <Link href="/" className="hover:underline">トップ</Link>
