@@ -1,7 +1,7 @@
 import 'server-only';
 import { InsufficientWorksError, PersonPhotoMissingError, type BuildPostResult } from '../instagram-post/build-post';
 import { TEMPLATE_BUILDERS } from '../instagram-post/template-builders';
-import { getInstagramTemplateMeta, AUTO_TEMPLATE_ID } from '@/lib/instagram-templates';
+import { getSchedulableTemplateMeta, AUTO_TEMPLATE_ID } from '@/lib/instagram-templates';
 import { resolveAutoTemplateId, NoEligibleTemplateError } from './auto-template';
 import { getMostRecentTemplateId } from './schedule-store';
 
@@ -40,7 +40,7 @@ export async function prepareScheduleContent(
     resolvedTemplateId = await resolveAutoTemplateId(personName, prev);
   }
 
-  const template = getInstagramTemplateMeta(resolvedTemplateId);
+  const template = getSchedulableTemplateMeta(resolvedTemplateId);
   if (!template) {
     throw new UnknownTemplateError(`未知のテンプレートIDです: ${templateId}`);
   }

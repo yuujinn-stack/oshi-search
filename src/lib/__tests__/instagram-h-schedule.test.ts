@@ -19,17 +19,25 @@ vi.mock('@/server/instagram-post/config', () => ({
 }));
 const recordMock = vi.fn();
 vi.mock('@/lib/instagram-post-store', () => ({ recordInstagramPost: (...args: unknown[]) => recordMock(...args) }));
+// 予約APIのテスト用：DBへは書き込まず、渡された内容だけを記録する（publish-schedule はモジュールの型だけを使う）
+const createScheduleMock = vi.fn(async (input: Record<string, unknown>) => ({ id: 1, status: 'scheduled', ...input }));
+const createSchedulesBatchMock = vi.fn(async (inputs: Record<string, unknown>[]) => inputs.map((x, i) => ({ id: i + 1, status: 'scheduled', ...x })));
+vi.mock('@/server/instagram-schedule/schedule-store', () => ({
+  createSchedule: (input: Record<string, unknown>) => createScheduleMock(input),
+  createSchedulesBatch: (inputs: Record<string, unknown>[]) => createSchedulesBatchMock(inputs),
+  listSchedules: vi.fn(),
+  getScheduleStatusCounts: vi.fn(),
+  SlotConflictError: class extends Error {},
+}));
 
-import {
-  buildWatchAndBuyCaption,
-  buildWatchAndBuyHashtags,
-  countHashtags,
-  isOwnPostImageUrl,
-  validateHScheduleInput,
-} from '@/server/instagram-post/site-ui/h-schedule';
+import { buildWatchAndBuyCaption, buildWatchAndBuyHashtags } from '@/server/instagram-post/site-ui/h-schedule';
+import { countHashtags, validateCaption } from '@/lib/instagram-caption-rules';
+import { NextRequest } from 'next/server';
+import { POST as postSchedule } from '@/app/api/admin/instagram-schedule/route';
+import { POST as postBulk } from '@/app/api/admin/instagram-schedule/bulk/route';
 import { publishScheduleToInstagram, AmbiguousPublishError, AlreadyPublishedError } from '@/server/instagram-schedule/publish-schedule';
 import type { ScheduleRecord } from '@/server/instagram-schedule/schedule-store';
-import { H_TEMPLATE_ID, getScheduleTemplateMeta, getInstagramTemplateMeta, SCHEDULE_TEMPLATE_OPTIONS } from '@/lib/instagram-templates';
+import { H_TEMPLATE_ID, AUTO_TEMPLATE_ID, getScheduleTemplateMeta, getInstagramTemplateMeta, getSchedulableTemplateMeta, SCHEDULE_TEMPLATE_OPTIONS, INSTAGRAM_TEMPLATES } from '@/lib/instagram-templates';
 
 const BLOB = 'https://abc123.public.blob.vercel-storage.com';
 const urls = [1, 2, 3].map((n) => `${BLOB}/ig-posts/person_1_watchbuy_0${n}-XYZ.jpg`);
@@ -47,35 +55,57 @@ describe('H キャプション', () => {
   });
 });
 
-describe('H 予約の入力チェック', () => {
-  const base = { personName: '松本若菜', imageUrls: urls, caption: buildWatchAndBuyCaption('松本若菜'), hashtags: '', scheduledAt: new Date('2099-01-01T11:00:00Z') };
-  const now = new Date('2026-09-30T00:00:00Z');
-
-  it('正しい入力は通る', () => {
-    expect(validateHScheduleInput(base, now)).toBeNull();
+describe('キャプションの上限チェック（予約画面の編集欄と予約APIで共通）', () => {
+  it('生成したHのキャプションは通る', () => {
+    expect(validateCaption(buildWatchAndBuyCaption('松本若菜'))).toBeNull();
   });
-  it('画像は自分たちのBlob（ig-posts/）のURLちょうど3枚のみ', () => {
-    expect(validateHScheduleInput({ ...base, imageUrls: urls.slice(0, 2) }, now)).toMatch(/3枚/);
-    expect(validateHScheduleInput({ ...base, imageUrls: [...urls.slice(0, 2), 'https://example.com/a.jpg'] }, now)).toMatch(/URLが不正/);
-    expect(isOwnPostImageUrl(`${BLOB}/person-photos/a.jpg`)).toBe(false);
-    expect(isOwnPostImageUrl('http://abc.public.blob.vercel-storage.com/ig-posts/a.jpg')).toBe(false);
-  });
-  it('過去日時・空キャプション・長すぎるキャプション・ハッシュタグ過多は拒否', () => {
-    expect(validateHScheduleInput({ ...base, scheduledAt: new Date('2026-09-29T00:00:00Z') }, now)).toMatch(/過去/);
-    expect(validateHScheduleInput({ ...base, caption: '   ' }, now)).toMatch(/空/);
-    expect(validateHScheduleInput({ ...base, caption: 'あ'.repeat(2201) }, now)).toMatch(/2200/);
-    expect(validateHScheduleInput({ ...base, caption: Array.from({ length: 31 }, (_, i) => `#t${i}`).join(' ') }, now)).toMatch(/ハッシュタグ/);
+  it('空・2200文字超・ハッシュタグ30個超は拒否', () => {
+    expect(validateCaption('   ')).toMatch(/空/);
+    expect(validateCaption('あ'.repeat(2201))).toMatch(/2200/);
+    expect(validateCaption(Array.from({ length: 31 }, (_, i) => `#t${i}`).join(' '))).toMatch(/ハッシュタグ/);
     expect(countHashtags('#a #b c #d')).toBe(3);
   });
 });
 
-describe('H テンプレートの表示名と、既存の予約・自動選択への非混入', () => {
-  it('予約一覧の表示名は「H 観るもの・買うもの、まとめて」', () => {
+describe('H は既存の予約画面のテンプレートの1つ（自動選択には入らない）', () => {
+  it('予約画面の選択肢に「H 観るもの・買うもの、まとめて」がある（自動＋既存4テンプレートの後ろ）', () => {
+    expect(SCHEDULE_TEMPLATE_OPTIONS.map((t) => t.id)).toEqual([AUTO_TEMPLATE_ID, ...INSTAGRAM_TEMPLATES.map((t) => t.id), H_TEMPLATE_ID]);
     expect(getScheduleTemplateMeta(H_TEMPLATE_ID)?.label).toBe('H 観るもの・買うもの、まとめて');
   });
-  it('既存の予約・一括予約APIの検証（getInstagramTemplateMeta）と選択肢には含まれない', () => {
+  it('予約できるテンプレートに含まれるが、自動選択の候補（INSTAGRAM_TEMPLATES）と手動投稿には含まれない', () => {
+    expect(getSchedulableTemplateMeta(H_TEMPLATE_ID)?.id).toBe(H_TEMPLATE_ID);
     expect(getInstagramTemplateMeta(H_TEMPLATE_ID)).toBeUndefined();
-    expect(SCHEDULE_TEMPLATE_OPTIONS.some((t) => t.id === H_TEMPLATE_ID)).toBe(false);
+    expect(INSTAGRAM_TEMPLATES.some((t) => t.id === H_TEMPLATE_ID)).toBe(false);
+  });
+  it('予約できないID（Preview専用・自動）は引き続き拒否', () => {
+    expect(getSchedulableTemplateMeta('search-flow')).toBeUndefined();
+    expect(getSchedulableTemplateMeta(AUTO_TEMPLATE_ID)).toBeUndefined();
+  });
+});
+
+describe('既存の予約API（通常・一括）でHを予約できる（DBはモック）', () => {
+  const future = new Date(Date.now() + 86400_000).toISOString();
+  const req = (url: string, body: unknown) => new NextRequest(url, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
+  const item = { personName: '松本若菜', templateId: H_TEMPLATE_ID, scheduledAtIso: future, caption: buildWatchAndBuyCaption('松本若菜'), hashtags: buildWatchAndBuyHashtags('松本若菜'), imageUrls: urls };
+
+  beforeEach(() => { createScheduleMock.mockClear(); createSchedulesBatchMock.mockClear(); });
+
+  it('通常予約：template_id=watch-and-buy で保存される', async () => {
+    const res = await postSchedule(req('http://x/api/admin/instagram-schedule', item));
+    expect(res.status).toBe(200);
+    expect(createScheduleMock).toHaveBeenCalledWith(expect.objectContaining({ templateId: H_TEMPLATE_ID, imageUrls: urls, caption: item.caption }));
+  });
+  it('一括予約：複数件をまとめて保存（既存テンプレートとの混在も可）', async () => {
+    const res = await postBulk(req('http://x/api/admin/instagram-schedule/bulk', { items: [item, { ...item, personName: '久保史緒里', templateId: 'works-only' }] }));
+    expect(res.status).toBe(200);
+    expect(createSchedulesBatchMock.mock.calls[0][0].map((x) => x.templateId)).toEqual([H_TEMPLATE_ID, 'works-only']);
+  });
+  it('未知のテンプレート・長すぎるキャプションは拒否（DBへ書き込まない）', async () => {
+    expect((await postSchedule(req('http://x', { ...item, templateId: 'search-flow' }))).status).toBe(400);
+    expect((await postSchedule(req('http://x', { ...item, caption: 'あ'.repeat(2201) }))).status).toBe(400);
+    expect((await postBulk(req('http://x', { items: [{ ...item, caption: '' }] }))).status).toBe(400);
+    expect(createScheduleMock).not.toHaveBeenCalled();
+    expect(createSchedulesBatchMock).not.toHaveBeenCalled();
   });
 });
 

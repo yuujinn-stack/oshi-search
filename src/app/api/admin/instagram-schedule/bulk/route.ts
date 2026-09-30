@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSchedulesBatch, SlotConflictError } from '@/server/instagram-schedule/schedule-store';
-import { getInstagramTemplateMeta } from '@/lib/instagram-templates';
+import { getSchedulableTemplateMeta } from '@/lib/instagram-templates';
+import { validateCaption } from '@/lib/instagram-caption-rules';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,12 +37,16 @@ export async function POST(req: NextRequest) {
     const imageUrls = Array.isArray(item.imageUrls) ? item.imageUrls.filter((u) => typeof u === 'string') : [];
 
     if (!personName) return NextResponse.json({ error: `${i + 1}件目: 人物名が指定されていません` }, { status: 400 });
-    if (!templateId || !getInstagramTemplateMeta(templateId)) {
+    if (!templateId || !getSchedulableTemplateMeta(templateId)) {
       return NextResponse.json({ error: `${i + 1}件目（${personName}）: 未知のテンプレートIDです` }, { status: 400 });
     }
     if (!scheduledAtIso) return NextResponse.json({ error: `${i + 1}件目（${personName}）: 予約日時が指定されていません` }, { status: 400 });
     if (imageUrls.length !== 3) {
       return NextResponse.json({ error: `${i + 1}件目（${personName}）: 投稿画像は3枚である必要があります` }, { status: 400 });
+    }
+    const captionError = validateCaption(item.caption ?? '');
+    if (captionError) {
+      return NextResponse.json({ error: `${i + 1}件目（${personName}）: ${captionError}` }, { status: 400 });
     }
 
     const scheduledAt = new Date(scheduledAtIso);

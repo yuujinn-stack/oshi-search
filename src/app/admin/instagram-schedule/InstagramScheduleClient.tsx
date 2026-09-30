@@ -5,8 +5,10 @@ import PersonCombobox, { type PersonOption } from '@/components/admin/PersonComb
 import { safeFetchJson } from './safe-fetch-json';
 import ScheduleList from './ScheduleList';
 import BulkScheduleClient from './BulkScheduleClient';
+import CaptionEditor from './CaptionEditor';
 import { SCHEDULE_TEMPLATE_OPTIONS, DEFAULT_INSTAGRAM_TEMPLATE_ID, getScheduleTemplateMeta } from '@/lib/instagram-templates';
 import { jstWallClockToUtcDate, nowJstParts } from '@/lib/jst-time';
+import { validateCaption } from '@/lib/instagram-caption-rules';
 
 interface PostImage {
   order: 1 | 2 | 3;
@@ -41,15 +43,23 @@ const RECOMMENDED_TIMES = ['09:00', '15:00', '20:00'] as const;
 export default function InstagramScheduleClient({ persons }: Props) {
   const [mode, setMode] = useState<'single' | 'bulk'>('single');
 
-  // ?mode=bulk が付いていれば一括予約タブを直接開く（Instagram管理ハブからの導線用）
+  const [personName, setPersonName] = useState('');
+  const [templateId, setTemplateId] = useState(DEFAULT_INSTAGRAM_TEMPLATE_ID);
+  // ?template=… で指定されたテンプレートの初期選択（一括予約タブにも同じ値を渡す）。null=指定なし
+  const [initialTemplateId, setInitialTemplateId] = useState<string | null>(null);
+
+  // ?mode=bulk が付いていれば一括予約タブを直接開く（Instagram管理ハブからの導線用）。
+  // ?template=watch-and-buy のように予約できるテンプレートIDが付いていれば、それを最初から選択する。
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     if (params.get('mode') === 'bulk') setMode('bulk');
+    const t = params.get('template');
+    if (t && getScheduleTemplateMeta(t)) {
+      setTemplateId(t);
+      setInitialTemplateId(t);
+    }
   }, []);
-
-  const [personName, setPersonName] = useState('');
-  const [templateId, setTemplateId] = useState(DEFAULT_INSTAGRAM_TEMPLATE_ID);
 
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [photoChecking, setPhotoChecking] = useState(false);
@@ -57,6 +67,8 @@ export default function InstagramScheduleClient({ persons }: Props) {
   const [preparing, setPreparing] = useState(false);
   const [prepareError, setPrepareError] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<PrepareResult | null>(null);
+  // 生成時のキャプション（編集欄の「生成時のキャプションに戻す」用）
+  const [generatedCaption, setGeneratedCaption] = useState('');
 
   const initialJst = nowJstParts();
   const [scheduleDate, setScheduleDate] = useState(initialJst.date);
@@ -101,6 +113,7 @@ export default function InstagramScheduleClient({ persons }: Props) {
         body: JSON.stringify({ personName, templateId }),
       });
       setPrepared(data);
+      setGeneratedCaption(data.caption);
     } catch (err) {
       setPrepareError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -169,7 +182,12 @@ export default function InstagramScheduleClient({ persons }: Props) {
       </div>
 
       {mode === 'bulk' && (
-        <BulkScheduleClient persons={persons} onBulkCreated={() => setReloadToken((v) => v + 1)} />
+        <BulkScheduleClient
+          key={initialTemplateId ?? 'default'}
+          persons={persons}
+          initialTemplateId={initialTemplateId ?? undefined}
+          onBulkCreated={() => setReloadToken((v) => v + 1)}
+        />
       )}
 
       {mode === 'single' && (
@@ -251,7 +269,8 @@ export default function InstagramScheduleClient({ persons }: Props) {
               <div key={img.order} className="space-y-1">
                 <p className="text-xs font-semibold text-gray-500">{img.order}枚目</p>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={img.url} alt={`投稿画像${img.order}枚目`} className="w-full rounded-lg border border-gray-200 object-cover aspect-[4/5]" />
+                {/* テンプレートにより縦横比が異なる（Hは正方形）ため、切り抜かずにそのままの比率で表示する */}
+                <img src={img.url} alt={`投稿画像${img.order}枚目`} className="w-full h-auto rounded-lg border border-gray-200" />
               </div>
             ))}
           </div>
@@ -266,8 +285,13 @@ export default function InstagramScheduleClient({ persons }: Props) {
           </div>
 
           <div>
-            <p className="text-xs font-semibold text-gray-500 mb-1">キャプション</p>
-            <div className="bg-gray-50 rounded-lg p-3 text-sm text-slate-700 whitespace-pre-wrap">{prepared.caption}</div>
+            <p className="text-xs font-semibold text-gray-500 mb-1">キャプション（編集できます。保存した内容がそのまま投稿されます）</p>
+            <CaptionEditor
+              value={prepared.caption}
+              original={generatedCaption}
+              onChange={(caption) => setPrepared((prev) => (prev ? { ...prev, caption } : prev))}
+              rows={10}
+            />
           </div>
 
           <div>
@@ -334,7 +358,7 @@ export default function InstagramScheduleClient({ persons }: Props) {
           <div className="flex justify-end pt-2 border-t border-gray-100">
             <button
               onClick={handleCreateSchedule}
-              disabled={creating || isPastSelection}
+              disabled={creating || isPastSelection || !!validateCaption(prepared.caption)}
               className="text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {creating ? '予約登録中...' : '📅 この内容で予約する'}

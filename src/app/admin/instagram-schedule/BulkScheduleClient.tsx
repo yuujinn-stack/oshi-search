@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import { safeFetchJson } from './safe-fetch-json';
 import PersonMultiSelect from './PersonMultiSelect';
-import { SCHEDULE_TEMPLATE_OPTIONS, DEFAULT_INSTAGRAM_TEMPLATE_ID, AUTO_TEMPLATE_ID, getScheduleTemplateMeta } from '@/lib/instagram-templates';
+import CaptionEditor from './CaptionEditor';
+import { SCHEDULE_TEMPLATE_OPTIONS, DEFAULT_INSTAGRAM_TEMPLATE_ID, AUTO_TEMPLATE_ID, H_TEMPLATE_ID, getScheduleTemplateMeta } from '@/lib/instagram-templates';
+import { validateCaption } from '@/lib/instagram-caption-rules';
 import { allocateBulkSlots, formatJst, nowJstParts, DEFAULT_DAILY_SLOTS, type BulkSlotAssignment } from '@/lib/jst-time';
 
 interface PostImage {
@@ -31,12 +33,16 @@ interface BulkRow {
   scheduledAtIso: string;
   genStatus: 'pending' | 'generating' | 'ready' | 'error';
   prepared?: PrepareResult;
+  /** 生成時のキャプション（編集欄の「生成時のキャプションに戻す」用） */
+  originalCaption?: string;
   error?: string;
   excluded: boolean;
 }
 
 interface Props {
   persons: PersonOption[];
+  /** 最初に選択しておくテンプレートID（?template=… から。未指定なら従来どおり標準） */
+  initialTemplateId?: string;
   /** 一括予約完了後に呼ばれる（親側で予約一覧の再取得トリガーに使う） */
   onBulkCreated: () => void;
 }
@@ -44,9 +50,9 @@ interface Props {
 /** 「1週間分を作成」モードの対象日数 */
 const WEEK_DAYS = 7;
 
-export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
+export default function BulkScheduleClient({ persons, initialTemplateId, onBulkCreated }: Props) {
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
-  const [templateId, setTemplateId] = useState(DEFAULT_INSTAGRAM_TEMPLATE_ID);
+  const [templateId, setTemplateId] = useState(initialTemplateId ?? DEFAULT_INSTAGRAM_TEMPLATE_ID);
   const [startDate, setStartDate] = useState(nowJstParts().date);
 
   // 「通常」＝従来通り開始日から件数ぶん連続で埋める。「week」＝1週間(7日)×1日あたり件数の枠に限定する。
@@ -93,7 +99,8 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
     setBulkMode('week');
     // 「自動（おすすめ）」をデフォルトにする（既に手動で選び直している場合はそのまま尊重してもよいが、
     // モード切替のタイミングでは明示的にautoへ戻す方が分かりやすいため統一する）。
-    setTemplateId(AUTO_TEMPLATE_ID);
+    // ただしHは「自動」では選ばれないテンプレートのため、Hを選んでいる場合はHのままにする。
+    setTemplateId((prev) => (prev === H_TEMPLATE_ID ? prev : AUTO_TEMPLATE_ID));
   }
 
   const dailySlots = bulkMode === 'week' ? DEFAULT_DAILY_SLOTS.slice(0, perDayCount) : DEFAULT_DAILY_SLOTS;
@@ -123,7 +130,7 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      return { personName, scheduledAtIso, genStatus: 'ready', prepared: data, excluded: false };
+      return { personName, scheduledAtIso, genStatus: 'ready', prepared: data, originalCaption: data.caption, excluded: false };
     } catch (err) {
       return { personName, scheduledAtIso, genStatus: 'error', error: err instanceof Error ? err.message : String(err), excluded: false };
     }
@@ -163,6 +170,10 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
     setRows((prev) => prev?.map((r, i) => (i === index ? result : r)) ?? prev);
   }
 
+  function updateCaption(index: number, caption: string) {
+    setRows((prev) => prev?.map((r, i) => (i === index && r.prepared ? { ...r, prepared: { ...r.prepared, caption } } : r)) ?? prev);
+  }
+
   function toggleExclude(index: number) {
     setRows((prev) => prev?.map((r, i) => (i === index ? { ...r, excluded: !r.excluded } : r)) ?? prev);
   }
@@ -171,6 +182,8 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
     () => (rows ?? []).filter((r) => !r.excluded && r.genStatus === 'ready' && r.prepared),
     [rows],
   );
+  // 編集したキャプションが上限を超えている行があれば一括予約させない（予約APIでも同じ判定で拒否される）
+  const invalidCaptionCount = includedRows.filter((r) => validateCaption(r.prepared!.caption)).length;
 
   async function handleConfirmBulkCreate() {
     setSubmitting(true);
@@ -407,14 +420,18 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
 
                 {row.genStatus === 'ready' && row.prepared && (
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-4 gap-3">
-                    <div className="sm:col-span-1 flex gap-1.5">
+                    <div className="sm:col-span-2 flex items-start gap-1.5">
                       {row.prepared.images.map((img) => (
+                        // テンプレートにより縦横比が異なる（Hは正方形）ため、切り抜かずにそのままの比率で表示する
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img key={img.order} src={img.url} alt="" className="w-1/3 rounded border border-gray-200 object-cover aspect-[4/5]" />
+                        <a key={img.order} href={img.url} target="_blank" rel="noreferrer" className="w-1/3">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={img.url} alt={`${row.personName} ${img.order}枚目`} className="w-full h-auto rounded border border-gray-200" />
+                        </a>
                       ))}
                     </div>
-                    <div className="sm:col-span-3 text-xs text-gray-600 space-y-1">
-                      <p className="whitespace-pre-wrap line-clamp-3">{row.prepared.caption}</p>
+                    <div className="sm:col-span-2 text-xs text-gray-600 space-y-1">
+                      <CaptionEditor value={row.prepared.caption} original={row.originalCaption ?? row.prepared.caption} onChange={(c) => updateCaption(i, c)} rows={6} />
                       <p className="text-indigo-600">{row.prepared.hashtags}</p>
                     </div>
                   </div>
@@ -430,7 +447,7 @@ export default function BulkScheduleClient({ persons, onBulkCreated }: Props) {
           <div className="flex justify-end pt-4 mt-4 border-t border-gray-100">
             <button
               onClick={() => setConfirmOpen(true)}
-              disabled={includedRows.length === 0 || generating}
+              disabled={includedRows.length === 0 || generating || invalidCaptionCount > 0}
               className="text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {includedRows.length}件を一括予約

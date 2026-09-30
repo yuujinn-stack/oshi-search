@@ -95,20 +95,13 @@ export const AUTO_TEMPLATE_META: InstagramTemplateMeta = {
 };
 
 /**
- * Instagram予約投稿画面・一括予約画面のテンプレート選択肢（「自動」＋既存4テンプレート）。
- * 手動投稿画面（/admin/instagram-post）は引き続き INSTAGRAM_TEMPLATES のみを使用し、
- * 「自動」は表示しない。
- */
-export const SCHEDULE_TEMPLATE_OPTIONS: InstagramTemplateMeta[] = [AUTO_TEMPLATE_META, ...INSTAGRAM_TEMPLATES];
-
-/**
- * H「観るもの・買うもの、まとめて」。人物は /admin/instagram-h で人が選び、そこから予約する
- * （/api/admin/instagram-h/schedule）。予約・一括予約画面の選択肢、自動選択・ローテーション、
- * 既存の予約API（getInstagramTemplateMeta による検証）には含めない。
+ * H「観るもの・買うもの、まとめて」（生成処理は src/server/instagram-post/site-ui/builders.ts）。
+ * 予約投稿画面・一括予約画面で、管理者が明示的に選んだ場合だけ使うテンプレート。
+ * INSTAGRAM_TEMPLATES には含めないため、「自動（おすすめ）」の候補・ローテーション
+ * （getEligibleTemplates / getMostRecentTemplateId）と手動投稿画面には現れない。
  */
 export const H_TEMPLATE_ID = 'watch-and-buy';
 
-/** 予約一覧・通知などでH予約の表示名を出すためのメタデータ（表示専用） */
 export const H_SCHEDULE_TEMPLATE_META: InstagramTemplateMeta = {
   id: H_TEMPLATE_ID,
   label: 'H 観るもの・買うもの、まとめて',
@@ -119,19 +112,34 @@ export const H_SCHEDULE_TEMPLATE_META: InstagramTemplateMeta = {
 };
 
 /**
- * 予約のテンプレートIDから表示用のメタデータを返す（予約一覧・通知・ハブの表示名用）。
- * H予約（/admin/instagram-h から登録）の表示名も返すが、テンプレートの選択肢や予約APIの検証には使われない。
+ * 予約できるテンプレート（既存4テンプレート＋H）。予約・一括予約APIと予約内容の生成（prepare）の検証に使う。
+ * 「自動」はここに含めない（prepareで実テンプレートへ解決してから保存するため）。
  */
+export const SCHEDULABLE_TEMPLATES: InstagramTemplateMeta[] = [...INSTAGRAM_TEMPLATES, H_SCHEDULE_TEMPLATE_META];
+
+export function getSchedulableTemplateMeta(templateId: string): InstagramTemplateMeta | undefined {
+  return SCHEDULABLE_TEMPLATES.find((t) => t.id === templateId);
+}
+
+/**
+ * Instagram予約投稿画面・一括予約画面のテンプレート選択肢（「自動」＋既存4テンプレート＋H）。
+ * 手動投稿画面（/admin/instagram-post）は引き続き INSTAGRAM_TEMPLATES のみを使用し、
+ * 「自動」とHは表示しない。
+ */
+export const SCHEDULE_TEMPLATE_OPTIONS: InstagramTemplateMeta[] = [AUTO_TEMPLATE_META, ...SCHEDULABLE_TEMPLATES];
+
+/** 予約のテンプレートIDから表示用のメタデータを返す（選択肢・予約一覧・通知・ハブの表示名用） */
 export function getScheduleTemplateMeta(templateId: string): InstagramTemplateMeta | undefined {
-  return SCHEDULE_TEMPLATE_OPTIONS.find((t) => t.id === templateId) ?? (templateId === H_TEMPLATE_ID ? H_SCHEDULE_TEMPLATE_META : undefined);
+  return SCHEDULE_TEMPLATE_OPTIONS.find((t) => t.id === templateId);
 }
 
 /**
  * 手動投稿画面（/admin/instagram-post）でのPreview確認専用テンプレート。
  *
  * INSTAGRAM_TEMPLATESには含めないため、予約投稿・一括予約の選択肢、「自動（おすすめ）」の
- * 候補・ローテーション、予約APIのテンプレートID検証（getInstagramTemplateMeta）の
+ * 候補・ローテーション、予約APIのテンプレートID検証（getSchedulableTemplateMeta）の
  * いずれにも現れない（予約APIに直接このIDを送っても未知のテンプレートとして拒否される）。
+ * 例外として watch-and-buy（H）は予約テンプレートとして正式採用済み（SCHEDULABLE_TEMPLATES）。
  * 手動投稿画面でも生成・プレビューまでに限り、「Instagramに投稿」ボタンは表示しない。
  * 正式採用する際は、ここからINSTAGRAM_TEMPLATESへ移し、template-builders.tsへ登録する。
  */

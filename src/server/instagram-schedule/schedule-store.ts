@@ -191,7 +191,7 @@ export async function getScheduleById(id: number): Promise<ScheduleRecord | null
  * 基準値として使う。予約が1件もない場合はnullを返す。
  *
  * 対象は自動選択の候補になりうるテンプレート（INSTAGRAM_TEMPLATES）の予約だけ。
- * H（/admin/instagram-h から人が選んで予約する専用テンプレート）など候補外の予約は無視するため、
+ * H（予約画面で管理者が明示的に選んだ場合だけ使うテンプレート）など候補外の予約は無視するため、
  * 直近の予約がHでも、自動選択はその前の既存テンプレートの予約を基準にローテーションを続ける。
  */
 export async function getMostRecentTemplateId(): Promise<string | null> {

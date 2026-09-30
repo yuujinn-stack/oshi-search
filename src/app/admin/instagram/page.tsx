@@ -71,8 +71,8 @@ const CARDS: InstagramHubCard[] = [
   {
     icon: '🛍️',
     title: 'H投稿を作成（観るもの・買うもの）',
-    description: '人物を選んでH「観るもの・買うもの、まとめて」の3枚を作成し、キャプションと日時を確認して予約します。',
-    href: '/admin/instagram-h',
+    description: 'Instagram予約画面で、テンプレート「H 観るもの・買うもの、まとめて」を選んだ状態から人物を選んで予約します（通常予約・一括予約）。',
+    href: '/admin/instagram-schedule?template=watch-and-buy',
     cta: 'H投稿を作成する',
   },
 ];

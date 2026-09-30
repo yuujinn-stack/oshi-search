@@ -2521,3 +2521,60 @@ PC表示は変更なし（CSSはすべて `max-width: 639px` 内）。
 - `tools/instagram-post-generator/`、`.env*`
 
 commit前に、除外したものを含まない状態（HEAD＋commit対象のみ）で、tsc・全テスト・buildが成功することを確認した。
+
+---
+
+## Task 74：H を既存のInstagram予約画面（/admin/instagram-schedule）へ統合
+
+**目的：** Hを別システムにせず、既存の予約画面のテンプレートの1つとして使えるようにする。人物選択・通常予約・一括予約・1週間分・枠割当・予約一覧・予約API・Cronは既存のものを共用する。
+
+**変更：**
+- `src/lib/instagram-templates.ts`：
+  - `SCHEDULABLE_TEMPLATES`（既存4テンプレート＋H）と `getSchedulableTemplateMeta` を追加。
+  - `SCHEDULE_TEMPLATE_OPTIONS` の末尾に「H 観るもの・買うもの、まとめて」を追加。`getScheduleTemplateMeta` は選択肢から引くだけにした。
+  - `INSTAGRAM_TEMPLATES` は変更していない。自動（おすすめ）の候補・ローテーション（`getEligibleTemplates`／`getMostRecentTemplateId`）と手動投稿画面にHは入らない。
+- `src/server/instagram-post/template-builders.ts`：`TEMPLATE_BUILDERS` に H（`SITE_UI_BUILDERS['watch-and-buy']`）を登録。Hの生成処理自体は変更なし。
+- `src/server/instagram-schedule/prepare.ts`、`api/admin/instagram-schedule/route.ts`・`bulk/route.ts`：テンプレートの検証を `getSchedulableTemplateMeta` にした。
+- 新規 `src/lib/instagram-caption-rules.ts`：`validateCaption`（空・2200文字超・ハッシュタグ30個超を拒否）。予約API（通常・一括）と編集欄で共用する。
+- 新規 `src/app/admin/instagram-schedule/CaptionEditor.tsx`：キャプション編集欄（文字数表示・生成時に戻す）。通常予約・一括予約の両方で、全テンプレート共通で使う。
+- `InstagramScheduleClient.tsx`：
+  - `?template=` で予約できるテンプレートを初期選択し、一括予約タブにも渡す。
+  - キャプションを編集できるようにした。上限を超えると予約ボタンが無効になる。
+  - Preview画像を切り抜かずに元の比率で表示する（Hは正方形）。
+- `BulkScheduleClient.tsx`：
+  - `initialTemplateId` を受け取るようにした。
+  - 「1週間分を作成」に切り替えるとテンプレートは従来どおり「自動」に戻るが、Hを選んでいる場合はHのままにする（Hは自動では選ばれないため）。
+  - 行ごとにキャプションを編集できる。上限を超えた行があると一括予約できない。
+  - サムネイルは元の比率で、行の半分の幅に広げた。クリックすると原寸で開く。
+- `src/app/admin/instagram/page.tsx`：「H投稿を作成」カードの移動先を `/admin/instagram-schedule?template=watch-and-buy` にした。
+- `/admin/instagram-h`：上記URLへのリダイレクトだけを残した。
+- 削除：H専用の画面・API（`InstagramHClient.tsx`、`/api/admin/instagram-h/{candidates,preview,schedule}`）、`site-ui/h-candidates.ts`（H適性度）、`h-schedule.ts` 内の検証関数（`validateCaption` へ統合）。
+- テスト（`instagram-h-schedule.test.ts`）：
+  - 選択肢の並び。
+  - H は予約できるが、自動の候補・手動投稿には入らない。
+  - Preview専用テンプレートと「自動」は予約APIで拒否される。
+  - 通常予約・一括予約のAPIで template_id=watch-and-buy が保存される（DBはモック）。
+  - 長すぎる・空のキャプションは拒否される。
+
+**注意点：**
+- 既存の一括予約の枠割当は、過去の枠（開始日が今日のときの経過済みの時刻）も割り当てる。予約APIが過去日時を拒否するので登録はされないが、画面上は並ぶ（従来からの挙動で、今回は変更していない）。
+- 1週間分でも、既存予約の枠をスキップした分だけ8日目にかかる（例：9/30開始で9/30 20:00が予約済みなら、21人目は10/7 09:00）。これも従来の `allocateBulkSlots` の挙動。
+- 通常予約の日時の初期値は、従来どおり「今日 09:00」。それを過ぎた時刻に開くと、「過去の日時」の表示が出て予約ボタンが無効になる。
+
+**確認（ローカル。予約の登録POSTはネットワーク層で遮断し、0件）：**
+- 導線：カード → `/admin/instagram-schedule?template=watch-and-buy` で「H」が選択済み。`/admin/instagram-h` もここへ転送される。
+- 通常予約：
+  - 松本若菜をHで生成した（1080×1080×3）。キャプションの編集と「生成時に戻す」も動作した。人物写真の必須表示は出ない。
+  - 「自動（おすすめ）」で久保史緒里を生成すると works-only に解決された（Hにならない）。
+- 一括予約：
+  - Hが初期選択されていた。「乃木坂46」の検索で絞り込めた。
+  - 3人を選び、選択順（梅澤美波→山下美月→久保史緒里）が保持された。
+  - 開始日9/30では、予約済みの9/30 20:00（ID 40）がスキップされた。
+  - 2人の一括生成で、各1080×1080×3と、行ごとのキャプション編集欄が出た。
+- 1週間分：
+  - Hのまま切り替わった。21人で上限表示になり、22人目は選べない。
+  - 21件の枠に配置された。
+- PC・スマホ幅で横スクロールなし。
+- テスト用に生成した画像12枚は削除した（予約・投稿が参照している画像は除外して削除）。
+- 予約テーブル全体・ID 40・instagram_posts はハッシュが一致し、変更なし。Instagramの最新投稿は9/22のまま。
+- `npx tsc --noEmit` 成功、`npx vitest run` 67ファイル1479件成功、`npm run build` 成功。
