@@ -29,6 +29,21 @@ export class GraphApiRequestError extends Error {
   }
 }
 
+/**
+ * エラーの原因切り分け用に、Meta側のエラーコード・種別・fbtrace_id（Metaサポートへの問い合わせ用）を
+ * 「（HTTP 400 / code 200 / OAuthException / fbtrace_id xxx）」の形で返す。
+ * いずれもMetaが返すエラー情報のみで、アクセストークン等の秘密情報は含まない。
+ */
+export function formatGraphErrorDetail(status: number, body: GraphApiError | undefined): string {
+  const e = body?.error;
+  if (!e) return '';
+  const parts = [`HTTP ${status}`];
+  if (e.code !== undefined) parts.push(`code ${e.code}${e.error_subcode !== undefined ? `/${e.error_subcode}` : ''}`);
+  if (e.type) parts.push(e.type);
+  if (e.fbtrace_id) parts.push(`fbtrace_id ${e.fbtrace_id}`);
+  return `（${parts.join(' / ')}）`;
+}
+
 export class InstagramGraphClient {
   constructor(private readonly config: InstagramPostConfig) {}
 
@@ -69,7 +84,7 @@ export class InstagramGraphClient {
     if (!res.ok) {
       const errBody = json as GraphApiError;
       const message = errBody?.error?.message ?? `Graph APIエラー（HTTP ${res.status}）`;
-      throw new GraphApiRequestError(res.status, json, message);
+      throw new GraphApiRequestError(res.status, json, `${message}${formatGraphErrorDetail(res.status, errBody)}`);
     }
     return json as T;
   }

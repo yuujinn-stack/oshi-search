@@ -101,6 +101,73 @@ export const AUTO_TEMPLATE_META: InstagramTemplateMeta = {
  */
 export const SCHEDULE_TEMPLATE_OPTIONS: InstagramTemplateMeta[] = [AUTO_TEMPLATE_META, ...INSTAGRAM_TEMPLATES];
 
+/**
+ * H「観るもの・買うもの、まとめて」。人物は /admin/instagram-h で人が選び、そこから予約する
+ * （/api/admin/instagram-h/schedule）。予約・一括予約画面の選択肢、自動選択・ローテーション、
+ * 既存の予約API（getInstagramTemplateMeta による検証）には含めない。
+ */
+export const H_TEMPLATE_ID = 'watch-and-buy';
+
+/** 予約一覧・通知などでH予約の表示名を出すためのメタデータ（表示専用） */
+export const H_SCHEDULE_TEMPLATE_META: InstagramTemplateMeta = {
+  id: H_TEMPLATE_ID,
+  label: 'H 観るもの・買うもの、まとめて',
+  requiresPersonPhoto: false,
+  autoRotation: false,
+  minWorks: 1,
+  minVodServices: 1,
+};
+
+/**
+ * 予約のテンプレートIDから表示用のメタデータを返す（予約一覧・通知・ハブの表示名用）。
+ * H予約（/admin/instagram-h から登録）の表示名も返すが、テンプレートの選択肢や予約APIの検証には使われない。
+ */
 export function getScheduleTemplateMeta(templateId: string): InstagramTemplateMeta | undefined {
-  return SCHEDULE_TEMPLATE_OPTIONS.find((t) => t.id === templateId);
+  return SCHEDULE_TEMPLATE_OPTIONS.find((t) => t.id === templateId) ?? (templateId === H_TEMPLATE_ID ? H_SCHEDULE_TEMPLATE_META : undefined);
+}
+
+/**
+ * 手動投稿画面（/admin/instagram-post）でのPreview確認専用テンプレート。
+ *
+ * INSTAGRAM_TEMPLATESには含めないため、予約投稿・一括予約の選択肢、「自動（おすすめ）」の
+ * 候補・ローテーション、予約APIのテンプレートID検証（getInstagramTemplateMeta）の
+ * いずれにも現れない（予約APIに直接このIDを送っても未知のテンプレートとして拒否される）。
+ * 手動投稿画面でも生成・プレビューまでに限り、「Instagramに投稿」ボタンは表示しない。
+ * 正式採用する際は、ここからINSTAGRAM_TEMPLATESへ移し、template-builders.tsへ登録する。
+ */
+export const PREVIEW_ONLY_INSTAGRAM_TEMPLATES: InstagramTemplateMeta[] = [
+  {
+    id: 'search-flow',
+    label: '【Preview】検索体験（人物写真なし）',
+    requiresPersonPhoto: false,
+    autoRotation: false,
+    minWorks: 2,
+    minVodServices: 0,
+  },
+  // 以下5件は比較検討用のテンプレート候補（src/server/instagram-post/candidates/builders.ts）。
+  // minWorks / minVodServices は自動選択用の値で、Preview専用のため使われない（生成可否は各生成関数が実データで判定する）。
+  { id: 'curious-person', label: '【Preview】最近この人、気になってる？', requiresPersonPhoto: false, autoRotation: false, minWorks: 1, minVodServices: 0 },
+  { id: 'service-only', label: '【Preview】○○だけ契約してる人へ', requiresPersonPhoto: false, autoRotation: false, minWorks: 1, minVodServices: 1 },
+  { id: 'subscription-count', label: '【Preview】この推し、サブスク何個必要？', requiresPersonPhoto: false, autoRotation: false, minWorks: 1, minVodServices: 1 },
+  { id: 'oshi-status', label: '【Preview】推しの現在地', requiresPersonPhoto: false, autoRotation: false, minWorks: 1, minVodServices: 1 },
+  { id: 'search-pain', label: '【Preview】推し活で地味に面倒なこと', requiresPersonPhoto: false, autoRotation: false, minWorks: 0, minVodServices: 0 },
+  // 以下4件は推しサーチの人物ページUIをベースにしたテンプレート候補（src/server/instagram-post/site-ui/builders.ts）。
+  { id: 'name-to-everything', label: '【Preview】F 名前を入れたら、ここまで出る', requiresPersonPhoto: false, autoRotation: false, minWorks: 1, minVodServices: 0 },
+  { id: 'search-too-much', label: '【Preview】G 推し活、検索しすぎ問題', requiresPersonPhoto: false, autoRotation: false, minWorks: 1, minVodServices: 0 },
+  { id: 'watch-and-buy', label: '【Preview】H 観るもの・買うもの、まとめて', requiresPersonPhoto: false, autoRotation: false, minWorks: 1, minVodServices: 1 },
+  { id: 'oshi-products', label: '【Preview】I ○○の商品、どこまで知ってる？', requiresPersonPhoto: false, autoRotation: false, minWorks: 0, minVodServices: 0 },
+];
+
+/** 手動投稿画面のテンプレート選択肢（既存4テンプレート＋Preview専用テンプレート） */
+export const MANUAL_POST_TEMPLATE_OPTIONS: InstagramTemplateMeta[] = [
+  ...INSTAGRAM_TEMPLATES,
+  ...PREVIEW_ONLY_INSTAGRAM_TEMPLATES,
+];
+
+export function getManualPostTemplateMeta(templateId: string): InstagramTemplateMeta | undefined {
+  return MANUAL_POST_TEMPLATE_OPTIONS.find((t) => t.id === templateId);
+}
+
+export function isPreviewOnlyTemplate(templateId: string | undefined): boolean {
+  return !!templateId && PREVIEW_ONLY_INSTAGRAM_TEMPLATES.some((t) => t.id === templateId);
 }

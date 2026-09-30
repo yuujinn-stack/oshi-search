@@ -2131,3 +2131,393 @@ PC表示は変更なし（CSSはすべて `max-width: 639px` 内）。
 - `/photobooks` は DB 接続の一時エラー（other side closed）でリトライも失敗すると 500 になりうる（既存の挙動・今回は対象外）
 
 **最終確認（ローカル：開発サーバー＋`next start`）：** 17ページ（VOD 4サービス含む）× 375/390/430/1280px で横スクロール 0・文字切れ 0・はみ出し 0・React #418 = 0。検索・人物→作品・作品→人物・人物→配信・VOD→人物/作品・楽天リンク（72件）・内部リンク（60件）・アンカー（10件）正常。`tsc --noEmit` エラー0、test 65ファイル/1460件合格、`next build` 成功。ページ側の差分は import・className 追加・`<GraphicPageStyles />` のみで、metadata・canonical・JSON-LD・href への差分なし。
+
+---
+
+## Task 64 — Instagram投稿：検索体験型テンプレート「search-flow」をPreview専用で追加（未commit・Production未反映）
+
+**目的：** 推しサーチを知らない人にも「人物名を検索 → 出演作品 → 配信先」という使い方が1枚目から伝わる、1080×1080・3枚構成・人物写真なしの新テンプレートを、まず手動投稿画面（`/admin/instagram-post`）のPreviewだけで確認できるようにする。既存4テンプレート（default-person / works-only / works-picks / vod-compare）と、予約投稿・一括予約・自動選択・ローテーション・Cron・DBには追加しない。
+
+**新規ファイル：**
+- `src/server/instagram-post/og-templates/search-flow/`（`theme.ts`・`shared.tsx`・`page1〜3.tsx`・`index.ts`）：1枚目＝ロゴ＋「{人物名}の出演作、どこで見れる？」＋STEP 1＋実際の人物名入りの検索窓＋「人物名から出演作品・配信先をチェック」。2枚目＝STEP 2 出演作品（作品カード1〜3件：作品画像・タイトル・配信先バッジ）→矢印→STEP 3 配信先＋「※配信情報は確認時点の情報です」。3枚目＝大きなロゴ＋「推しの名前を入れるだけ」＋「推しの名前を入力」の検索窓＋「出演作品・配信先をまとめてチェック」＋「プロフィールのリンクから推しサーチへ」。`pickDefined()`のみ既存`og-templates/shared.tsx`から流用。
+- `src/server/instagram-post/og-render-search-flow.ts`：1080×1080のレンダリング（`font-loader.ts`のみ共有）。
+- `src/server/instagram-post/build-post-search-flow.ts`：`buildInstagramPostSearchFlow()`。`fetchPersonWorks`・`fetchImageBufferSafe`・`convertToInstagramJpeg`・`uploadPostImage`・`buildCaption`/`buildHashtags`を再利用。人物写真は取得しない。
+
+**既存ファイルへの追記：**
+- `src/lib/instagram-templates.ts`：`PREVIEW_ONLY_INSTAGRAM_TEMPLATES`（search-flow）、`MANUAL_POST_TEMPLATE_OPTIONS`、`getManualPostTemplateMeta()`、`isPreviewOnlyTemplate()`を末尾に追加。`INSTAGRAM_TEMPLATES`・`SCHEDULE_TEMPLATE_OPTIONS`・`getInstagramTemplateMeta()`は無変更。
+- `src/app/api/admin/instagram-post/generate/route.ts`：`templateId === 'search-flow'`の分岐を1つ追加（既存分岐は無変更）。
+- `src/app/admin/instagram-post/InstagramPostClient.tsx`：テンプレート選択肢を`MANUAL_POST_TEMPLATE_OPTIONS`に変更。search-flowのプレビューを正方形で表示。Preview専用テンプレートで生成した投稿では「Instagramに投稿」ボタンと確認モーダルを出さない。
+
+**設計上の判断・注意点：**
+- **予約・自動選択からの隔離：** `INSTAGRAM_TEMPLATES`に入れず、`template-builders.ts`（`TEMPLATE_BUILDERS`）にも登録していない。そのため予約・一括予約の選択肢、自動選択の候補、ローテーションには出ない。予約APIに直接`search-flow`を送っても`UNKNOWN_TEMPLATE`（400）で拒否される（実機確認済み）。正式採用時は`INSTAGRAM_TEMPLATES`へ移し、`TEMPLATE_BUILDERS`へ登録する。
+- **VODなし作品の除外：** `selectTopWorks()`はVODあり作品を優先するが必須にはしないため、新しい生成関数の中で配信先が空の作品を除外する（`filterWorksWithVod`、選定ロジック自体は無変更）。配信先ありの作品が2件未満なら`InsufficientWorksError`にする。2枚目は1〜3件に対応し、本文ブロックを縦方向の中央に配置する。
+- **作品画像が取れない場合：** 画像URLがない、または取得に失敗した場合は、淡い水色のグラデーション＋タイトル頭文字（先頭の括弧・記号は飛ばす）のカードで代用する。投稿全体は失敗させない。
+- **長い文字列：** 人物名は文字幅の目安（全角1・半角0.58）から、タイトル74〜50px・検索窓56〜36pxの範囲で自動縮小する。検索窓内は1行で「…」省略する。作品タイトルは2行で省略し、英単語の途中では改行しない（`wordBreak: 'break-word'`）。
+- **表現：** 「無料・登録なし」は使わない。3枚目のCTAは、押せるボタンに見えないよう影なしの淡い帯にした。「ここをタップ」のような表現は使わない。絵文字は使わず、アイコンはSVGで描く。
+- **キャプション：** 既存の`buildCaption`をそのまま使うため、既存テンプレートと同じ文面になる。
+- **フォント：** `next.config.ts`の`outputFileTracingIncludes`は既に`/api/admin/instagram-post/generate`を対象にしているため、追加設定は不要。
+
+**動作確認（ローカルのみ。Instagram Graph APIへのリクエストなし）：**
+- 登録済みの360人からランダムに40人を走査し、配信先ありの作品が3件そろう人物を自動選択した（今回は村山美羽、人物写真は未登録）。配信先なしの作品を含む人物（大和里菜）も同様に抽出した。
+- 開発サーバーで`/api/admin/instagram-post/generate`（`templateId: "search-flow"`）を2人分実行し、どちらも200。Blobに保存されたJPEG 6枚がすべて1080×1080・RGBであることを確認した。大和里菜は配信先なしの作品が除外され、2件で生成された。
+- ローカルで次の描画を目視確認：全件の画像取得失敗、一部の画像取得失敗、62文字の英語タイトル、3行を超える日本語タイトル（2行で省略）、長い人物名（10文字の日本語名、英字混在の長い名前）。
+- 既存のworks-picksの生成が引き続き200であることを確認した。
+- `/admin/instagram-post`にだけ「【Preview】検索体験」が表示され、`/admin/instagram-schedule`（通常予約・一括予約）には表示されないことを確認した。
+- `npx tsc --noEmit` エラー0。
+
+**変更なし：** 既存4テンプレートの`og-templates`・`build-post*.ts`・`og-render*.ts`、`template-builders.ts`、`auto-template.ts`、`prepare.ts`、予約・Cron・DB schema・`vercel.json`・`next.config.ts`。commit・push・Production deployは行っていない。
+
+---
+
+## Task 65 — search-flow：YouTube系除外・黒帯サムネ対策・専用キャプション・デザイン改善（未commit・Production未反映）
+
+**目的：** Task 64 で追加した Preview 専用テンプレート `search-flow` の実画像を確認した結果を受けて、スクロール停止力と分かりやすさを改善する。あわせて、YouTube系作品の除外、黒帯サムネの対策、専用キャプションを追加する。既存4テンプレート・Canvaツールの挙動は変えない。
+
+**変更ファイル：**
+- `tools/canva-instagram/work-selection.ts`：`selectTopWorks(personName, options?)` に省略可能な `SelectTopWorksOptions.excludeProvider` を追加。指定時のみ、その配信サービスを「確認済みの配信先」から除外する（配信先が0件になった作品は、既存の並び順どおりVODなし扱いで後ろに回る）。省略時の処理は従来と同一。
+- `src/server/instagram-post/person-data.ts`：`fetchPersonWorks(personName, options?)` が options をそのまま `selectTopWorks` に渡すよう変更（省略時は従来どおり）。
+- `src/server/instagram-post/build-post-search-flow.ts`：
+  - `isYouTubeProvider`（providerName・表示名に「youtube」を含むか）で YouTube系を除外。
+  - `removeLetterbox`：sharp の `trim` で黒帯を除去。条件は、横長画像のみ、左右は削られず上下だけ削られる、上下の削られた量がほぼ同じ、除去後の比率が1.6〜1.9。すべて満たす場合だけ採用し、それ以外・失敗時は元画像を使う。
+  - 専用キャプション `buildSearchFlowCaption`（確認時点の注記入り。ハッシュタグは既存の `buildHashtags`）。
+- `src/server/instagram-post/og-templates/search-flow/*`・`og-render-search-flow.ts`：
+  - 3枚とも水色系の背景に、白いカード・検索窓・ロゴ用の白いピルを重ねる構成に変更。1枚目が最も濃い水色。
+  - 1枚目：検索窓の下に作品サムネを最大3枚、少し傾けて並べる。画像がない作品は頭文字カードで代用。重複していたステップ表示の並びは削除。
+  - 2枚目：「STEP 2 出演作品 → STEP 3 配信先」の列見出しと、1行ずつ「サムネ＋タイトル → 配信先バッジ（縦に並べる）」の2列表示に変更。タイトル36px、バッジは最大30px（サービス名が長い場合は幅に収まるよう縮小）。横長画像は横長の枠で表示。
+  - 3枚目：CTAを白い帯に変更。ロゴ・コピーを拡大。
+
+**設計上の判断・注意点：**
+- **YouTube系除外の影響（全360人を集計）：** search-flow で投稿できる人物（配信先ありの作品が2件以上）は311人→278人に減る。減るのは主にアイドルグループのメンバーで、生成時に `InsufficientWorksError`（422）として分かりやすく止める。
+- **既存の選定結果が変わっていないことの確認：** `selectTopWorks`（条件省略時）の360人分の結果（選定作品・配信先・除外候補・画像不適合）を変更前後で書き出し、バイト単位で完全一致することを確認した。
+- **残っている課題：** 既存の作品分類（`getDisplayWorkType`）が、ゲーム配信・MV・シリーズ動画を映画・ドラマとして扱うケースがある（例：林瑠奈で「良質で文化的な最大限度の乃木坂46を営む。#5/#7/#8」の3件が並ぶ）。既存ロジックの問題のため今回は対象外。
+
+**動作確認（ローカルの開発サーバー。Instagram APIへのリクエストなし）：** `/api/admin/instagram-post/generate`（`templateId: "search-flow"`）で4人分を生成した。
+- 村山美羽：YouTube Vlogが除外され2件で生成。
+- 濱岸ひより：3件で生成。
+- 林瑠奈：YouTubeサムネの黒帯が除去されて横長の枠で表示。
+- 大和里菜：配信先ありの作品が1件のため422で停止。
+
+生成された画像はすべて1080×1080。`npx tsc --noEmit` エラー0。確認用の画像は `tools/canva-instagram/output/search-flow-preview/v2/`（commit対象外）。
+
+---
+
+## Task 66 — search-flow：Vercel Preview デプロイと実ブラウザ確認（Production未反映・未commit）
+
+**目的：** Task 64・65 の search-flow を Vercel Preview 環境で確認する。
+
+**手順：**
+- worktree（`../oshi-search-searchflow-preview`、ローカルブランチ `preview/search-flow`、未commit・未push）に search-flow 関係の9ファイルだけを反映。
+- worktree から `vercel deploy` すると、HEAD のコミット作者（ローカルPCのメールアドレス）がVercelチームの権限と一致せず、`BLOCKED` になった。
+- そのため、worktree から `.git`・`node_modules`・`.next` を除いたコピー（`../oshi-search-searchflow-preview-copy`）を作り、そこから `vercel deploy`（`--prod` なし）を実行した。
+- Preview URL：`https://oshi-search-tjju-jqvwe0qwu-yuujinn-stacks-projects.vercel.app`（target=preview、Deployment Protectionあり）。
+- ブロックされた・中断したPreviewデプロイが2件残っている（`dpl_C9t5…`、`dpl_5qFk…`）。
+
+**確認方法：**
+- Playwright（Chromium）で、開発用OIDCトークンを `x-vercel-trusted-oidc-idp-token` ヘッダーに付けてアクセス。ヘッダーはPreviewのドメイン宛てのリクエストにだけ付与した。
+- Previewでの新規生成は1回（村山美羽の search-flow、3枚）のみ。スマホ表示の確認では生成APIを呼ばず、PCで生成した結果をブラウザ内で差し込んで表示した。
+- Instagram投稿・予約・DB書き込みの操作は一切行っていない。
+- ローカルの `.env.preview` の `ADMIN_PASSWORD` は、Vercel上のPreview環境の値と一致していなかった（`.env.local` の値でログインできた）。
+
+**結果：**
+- 手動投稿画面の選択肢は既存4テンプレート＋「【Preview】検索体験」。予約・一括予約画面には出ない。
+- 予約API（prepare）に `search-flow` を送ると `UNKNOWN_TEMPLATE`（400）。
+- 生成は200で、3枚とも1080×1080。「Instagramに投稿」ボタンは表示されない。
+- PC（1280px）・スマホ（390px）とも、ページ全体の横スクロールなし。
+- 画面キャプチャと生成画像は `tools/canva-instagram/output/search-flow-preview/vercel-preview/`（commit対象外）。
+
+---
+
+## Task 67 — Instagram投稿テンプレート候補5種類をPreview専用で追加（未commit・Production未反映）
+
+**目的：** 「出演作品まとめ」ではない切り口で、スクロールを止めてプロフィール → 推しサーチへ流入させるテンプレートを比較する。5種類とも手動投稿画面（`/admin/instagram-post`）でのみ選べるPreview専用とする。
+
+**新規ファイル：**
+- `src/server/instagram-post/candidates/data.ts`：人物データの集計（読み取り専用）。
+  - 公開画面と同じ `filterPublicVodProviders` を通した確認済みの配信先だけを使い、表示名でまとめる。
+  - YouTube系は search-flow と同じ `isYouTubeProvider` で除外。
+  - 集計対象：「見られる」＝flatrate/free/ads、「サブスク」＝flatrateのみ。レンタル・購入は数えない。
+  - 同じタイトルは1件にまとめる。所属グループと、同じグループの人物（最大3名）も取得。
+- `src/server/instagram-post/og-templates/candidates/`
+  - `theme.ts`・`shared.tsx`：共通部品。Page は「上部ロゴ＋残りの領域で中央寄せの本文＋overlay」の構造。
+  - `curious-person.tsx`・`service-only.tsx`・`subscription-count.tsx`・`oshi-status.tsx`・`search-pain.tsx`：各テンプレートの3枚。
+- `src/server/instagram-post/candidates/builders.ts`
+  - `prepare*`（ページとキャプションを準備）と `finalize`（描画 → JPEG → Blob）に分けた。
+  - `PREVIEW_CANDIDATE_BUILDERS`（ID→生成関数）。
+  - 専用キャプション。
+  - 作品画像は JPEG/PNG 以外を JPEG に変換（`toSatoriCompatible`）してから使う。
+
+**既存ファイルへの追記：**
+- `src/lib/instagram-templates.ts`：`PREVIEW_ONLY_INSTAGRAM_TEMPLATES` に5件追加（search-flow の定義は無変更）。
+- `src/app/api/admin/instagram-post/generate/route.ts`：`Object.hasOwn(PREVIEW_CANDIDATE_BUILDERS, templateId)` の分岐を1つ追加。
+- `src/app/admin/instagram-post/InstagramPostClient.tsx`：プレビューの正方形表示の判定を `isPreviewOnlyTemplate` に変更（works-only の判定は従来どおり）。
+
+**設計上の判断・注意点：**
+- データ不足時は生成しない（`InsufficientWorksError`）。
+  - A・D：見放題・無料で配信確認できる作品0件（全360人中9人）。
+  - B・C：見放題で配信確認できるサービス0件（全360人中12人）。
+- A：グループ未設定の人物は「まず知りたい2つ」に切り替え、関連人物の項目は表示しない。
+- B：作品数が最も多い見放題サービスを対象にする（同数ならサービス名順）。
+- D：関連商品数は使わない。人物ページ側で AI 判定（verdicts）等を経て表示件数が決まり、同じ数を再現できないため。
+- E：人物データを使わない。Blob のファイル名にも人物名を入れない。
+- **既存の不具合（今回は修正していない）：** `detectImageMimeType` が WebP を JPEG として扱うため、WebP の作品画像（例：TVer）が選ばれると、既存の works-only・search-flow 等の描画が `RangeError: Offset is outside the bounds of the DataView` で失敗する。例として、松本若菜の既存テンプレートの選定1件目がこれに該当し、ローカル描画で失敗を再現した。新テンプレートでは `toSatoriCompatible` で回避している。
+
+**検証：**
+- 既存4テンプレート関連ファイルは HEAD から差分なし。
+- search-flow 関連ファイルは Task 65 の worktree と同一。
+- 予約・Cron・Instagram API・DB関連ファイルは差分なし。
+- ブラウザ確認（ローカルの開発サーバー、Playwright）：
+  - 手動投稿画面のみ5件表示。予約・一括予約画面には出ない。
+  - 予約の prepare API は5件とも `UNKNOWN_TEMPLATE`（400）。
+  - 5件とも生成は200で3枚・1080×1080（人物写真未登録の松村沙友理で実行、Blobに15枚）。
+  - 「Instagramに投稿」ボタンは0件。PC・スマホとも横スクロールなし。
+- ローカル描画（アップロードなし）：松本若菜・大和里菜・浅井恋乃未で、1〜3件、2〜20サービス、3桁の数字を確認。
+- `npx tsc --noEmit` 成功、`npm run build` 成功。
+- 画像は `tools/canva-instagram/output/template-candidates/`（commit対象外）。
+
+---
+
+## Task 68 — Instagram投稿テンプレート F〜I（人物ページUIベース）をPreview専用で追加（未commit・Production未反映）
+
+**目的：** 「人物名を入口に、出演作品・配信先・関連商品までまとめて探せるサイト」であることを伝えるテンプレート4種類（F name-to-everything / G search-too-much / H watch-and-buy / I oshi-products）を、手動投稿画面でのみ選べるPreview専用として追加する。
+
+**新規ファイル：**
+- `src/server/instagram-post/site-ui/data.ts`：人物ページ（`src/app/person/[slug]/page.tsx`）と同じ手順で集計（読み取り専用）。
+  - 出演作品・配信中・配信サービス・関連商品を算出する。
+  - 配信は `getStreamingProviders`（見放題・無料・広告付き）。
+  - 商品は verdict が `related` のものだけを使い、`classifyProduct`・`DISPLAY_SECTIONS` で振り分け、`applyDisplayOrder`・`sortUsedProducts` で並べる（新品＋中古）。
+  - 人物ページ側の関数は export されておらず、page.tsx を変更しない方針のため、同じ処理を写した。人物ページのロジックを変える場合はここも更新すること。
+  - 梅澤美波・江口雄也・克哉・松村沙友理の4人で、画像に載せる数字が人物ページの統計ボックスの表示と一致することを確認した。
+- `src/server/instagram-post/og-templates/site-ui/`（`theme.ts`・`shared.tsx`・`types.ts`・`name-to-everything.tsx`・`search-too-much.tsx`・`watch-and-buy.tsx`・`oshi-products.tsx`）
+  - 人物ページ「Graphic Pop」の配色・部品を再現：生成り＋ドット、黒罫線、オレンジ、「01 — WORKS」ラベル、統計ボックス、`getVodServiceStyle` のサービス色、検索窓。
+  - 商品カテゴリはSVGアイコンで表す。
+- `src/server/instagram-post/site-ui/builders.ts`
+  - 準備（prepare）と確定（描画→Blob）に分けた。`SITE_UI_BUILDERS` を定義。
+  - 描画は候補A〜Eの `renderPages` を再利用。
+  - WebPの作品画像はJPEGへ変換して使う。
+
+**既存ファイルへの追記：**
+- `src/lib/instagram-templates.ts`：`PREVIEW_ONLY_INSTAGRAM_TEMPLATES` に4件追加。
+- `src/app/api/admin/instagram-post/generate/route.ts`：`Object.hasOwn(SITE_UI_BUILDERS, templateId)` の分岐を1つ追加。
+
+**設計上の判断・注意点：**
+- **商品画像は一切使わない。** 楽天の商品画像をInstagram投稿に使ってよいか確認できないため、カテゴリのSVGアイコン＋実際の商品名で表す。商品名は、先頭の【…】の宣伝タグだけ表示時に除く。
+- **生成しない条件：**
+  - F・G：出演作品0件（該当者なし）。
+  - H：配信中0件、または関連商品0件。
+  - I：関連商品0件（全360人中10人）。
+- F・Gは、商品0件なら関連商品のセクション・分岐を、配信0件なら配信先のセクション・分岐を表示しない。
+- 表示する作品は「配信中の作品のうち映画・ドラマ優先 → 新しい順」。配信中の作品が無い人物は出演作品から選ぶ。
+
+**検証：**
+- ローカル描画（アップロードなし）：
+  - 実データ6人：梅澤美波・江口雄也・克哉・齊藤京子（商品0件）・梶山朝日（作品1件）・吉田綾乃クリスティー（長い名前）。
+  - 合成1件：商品1件・作品1件・VOD1サービス・長い作品名。
+- 管理画面：梅澤美波（人物写真未登録）で4件とも生成は200・3枚・1080×1080（Blobに12枚）。
+  - 「Instagramに投稿」ボタンは0件。PC・スマホとも横スクロールなし。
+  - 予約・一括予約画面には表示されない。予約の prepare API は4件とも `UNKNOWN_TEMPLATE`（400）。
+- 差分：既存4テンプレート・人物ページ・商品関連lib・予約・Cron・DBは差分なし。search-flow は確定版と同一。候補A〜Eは変更なし。
+- `npx tsc --noEmit` 成功、`npm run build` 成功。
+- 比較画像：`~/Downloads/oshi-instagram-template-v2/`。
+
+---
+
+## Task 69 — G・H・F最終調整と、実画面型 J（real-screen-demo）の追加（Preview専用・未commit・Production未反映）
+
+**目的：** 最終候補 G（search-too-much）・H（watch-and-buy）・F（name-to-everything）を調整し、推しサーチの実際の画面を使う第4系統 J を追加して比較する。
+
+**G・H・Fの調整（`src/server/instagram-post/og-templates/site-ui/` のみ）：**
+- 3枚目の締め（`ClosingBrand`）：「気になる人を名前から検索 →」を主に、「プロフィールのリンクから推しサーチへ」を小さな補足にした。
+- G：1枚目の検索窓に「1回目〜4回目」。2枚目に「~~検索4回~~ → 1回」の対比。
+- H：1枚目の「観る」「買う」を200pxに拡大（サムネ・アイコンは外した）。買う側の説明は実データにあるカテゴリだけを「写真集・CD・Blu-ray/DVD・グッズ」の形で表示。2枚目の配信中・配信サービスのラベルを折り返さないようにした。
+- F：1枚目の「名前を1回」を黒ベタで強調。統計ボックスにアイコン（`FilmIcon`・`PlayIcon`・商品）を追加。
+
+**J 実画面型（新規・ローカル生成専用）：**
+- `tools/canva-instagram/real-screen-demo/template.tsx`：3枚のページ構成。画面部分はすべて撮影画像で、架空のUIは描かない。
+- `tools/canva-instagram/real-screen-demo/run.ts`：処理の流れは次のとおり。
+  1. 人物を自動選択する（商品4カテゴリすべて・配信中20件以上・配信サービス5以上のうち、配信中＋商品数/4 が最大の人物）。
+  2. 公開サイト（既定 https://oshi-search.jp）の人物ページをスマホ幅（390px・3倍解像度）で開き、遅延読み込みの画像を読み込ませる。
+  3. 統計ボックスの数字を `site-ui/data.ts` の集計値と照合し、不一致なら中止する。
+  4. ヘッダーの検索欄に人物名を入力する。
+  5. ヒーロー／出演作品の見出し〜タブ／作品画像が正常に表示されている配信カード1件／関連商品の見出し〜カテゴリタブ（商品画像は含めない）を切り出して撮影する。
+  6. 3枚を描画し、`tools/canva-instagram/output/real-screen-demo/<人物名>/` に保存する。
+- 閲覧計測（`/api/track`）は `page.route` で遮断する（本番の閲覧数を増やさないため）。
+- ヘッドレスブラウザが必要なため、管理画面の生成API（Vercel）には組み込まず、手動投稿画面の選択肢にも追加していない。
+- 実行方法：`NODE_OPTIONS="--conditions=react-server" npx dotenv -e .env.local -- npx tsx tools/canva-instagram/real-screen-demo/run.ts [人物名]`
+
+**注意点：**
+- **本番の閲覧数を増やしてしまった：** 遮断を入れる前の確認作業で、本番の人物ページ閲覧数（Redis `/api/track`）を梅澤美波 +1・松本若菜 +4 増やした。元に戻す作業（本番Redisへの書き込み）は行っていない。
+- **本番サイトの画像不具合：** 本番サイトの松本若菜の「今すぐ見られる作品」の先頭カード（6SixTONES）の画像が表示できていない（Jでは画像が正常なカードを選んで回避）。
+- **撮影するカードの内容：** 自動で選ばれた配信カードが災害ドキュメンタリー（3.11〜東日本大震災15年…）だった。投稿前に人の目で確認が必要。
+
+**検証：**
+- 比較用の人物は、Jが自動選択した松本若菜（出演196／配信中149／商品76／配信16）で4案を統一した。
+- 撮影した画面の数字と集計値は一致した。
+- 既存4テンプレート・search-flow・予約・Cron・DB・package.json・人物ページは差分なし。
+- `npx tsc --noEmit` 成功、`npm run build` 成功。
+- Blob・DB・Instagram APIへの書き込みなし（上記の閲覧数を除く）。
+- 比較画像：`~/Downloads/oshi-instagram-template-v3/`。
+
+---
+
+## Task 70 — H「観るもの・買うもの、まとめて」の人物選び画面と3枚Preview生成（Preview専用・未commit・Production未反映）
+
+**目的：** Hを投稿できる人物を登録人物の中からおすすめ順に選び、選んだ人物のHの3枚をPreview生成できるようにする。Instagram投稿・予約・一括予約・自動選択・Cron・DBスキーマには触れない。
+
+**Hの確定デザインを正式反映：** `src/server/instagram-post/og-templates/site-ui/watch-and-buy.tsx` を、比較で確定した3枚に置き換えた。
+- 1枚目：「○○を追うなら」＋大きな「観る」「買う」＋「名前を入れるだけで、作品も、配信先も、推し活商品も。」＋「続きで一覧を見る →」
+- 2枚目：「名前ひとつで、観るものも。買うものも。」＋観る（配信中・配信サービス・作品2件）／買う（関連商品・カテゴリ別件数、商品画像なし）
+- 3枚目：公開サイトの人物ページ上部の撮影画像をスマホの枠に入れ、「推しの名前から、まとめて探せます。」＋「プロフィールのリンクから『推しサーチ』へ」。枠の高さは520pxを上限とし、人物ページ上部が長い人物でも見出し・案内文と重ならないようにした。
+
+**新規ファイル：**
+- `src/server/instagram-post/site-ui/person-screen.ts`：3枚目の撮影画像を取得する。
+  - 撮影済みで、撮影時の統計ボックスの数字が現在の集計と一致すれば再利用する。
+  - なければ、ローカル環境でだけ `tools/canva-instagram/h-screen/capture.ts` を `execFile`（シェルなし、人物名は引数）で実行する。Vercel上では撮影しない（`PersonScreenUnavailableError`）。
+- `tools/canva-instagram/h-screen/capture.ts`：公開サイトの人物ページ上部をスマホ幅で撮影する。
+  - 統計ボックスの数字が集計と一致しなければ中止する。
+  - `/api/track` は遮断する（本番の閲覧数を増やさない）。
+  - 出力は `tools/canva-instagram/output/h-screens/<人物名>/` のみ。
+- `src/server/instagram-post/site-ui/h-candidates.ts`：全人物のH候補一覧（生成可否・おすすめ度）。10分間メモリにキャッシュする。
+  - おすすめ度（100点）＝配信中（YouTube系のみの作品を除く）30点（ln、150件で満点）＋配信サービス（YouTube系除く）20点（16社で満点）＋関連商品 30点（ln、400件で満点）＋前回Instagram投稿からの経過 20点（未投稿・60日以上で満点）。
+  - 人気度・検索需要などDBにない値は使わない。
+- `src/app/api/admin/instagram-h/candidates/route.ts`（GET）、`src/app/api/admin/instagram-h/preview/route.ts`（POST）：Preview生成はJPEGのdata URLを返すだけ（Blob・DB・Instagram APIへの書き込みなし）。
+- `src/app/admin/instagram-h/page.tsx`・`InstagramHClient.tsx`：候補一覧（順位・人物名・グループ・配信中・サービス・商品・登録作品・前回投稿・生成可否・おすすめ度）と「Hを生成」→3枚のPreview表示。
+  - 「Instagramに投稿」ボタンはない。
+  - ナビ・ハブページにはリンクを追加していない（URL直接：`/admin/instagram-h`）。
+
+**既存のPreview用ファイルへの追記：**
+- `site-ui/data.ts`：`SiteUiWork.youtubeOnly`、`streamingWorkCountExcludingYouTubeOnly`、`serviceCountExcludingYouTube` を追加（`isYouTubeProvider` で判定）。
+- `site-ui/builders.ts`：
+  - `checkWatchAndBuyEligibility` を追加（YouTube系のみの作品を除く配信中1件以上・YouTube系を除くサービス1以上・関連商品1件以上）。
+  - `prepareWatchAndBuy` は、2枚目の作品をYouTube系のみの作品を除いて選び、3枚目に撮影画像を使う。
+- `site-ui/types.ts`：`screen` を追加。
+
+**注意点：**
+- 画像内の「配信中」「配信サービス」の数字は、3枚目の撮影画面と一致させるため、人物ページと同じ（YouTube系も含む）。候補判定と2枚目の作品選びだけYouTube系のみを除外する。一覧には両方の数字を表示している。
+- 手動投稿画面の「【Preview】H」も同じ生成処理になり、ローカルでは撮影が走る。Vercel上ではHは生成できない。
+- `h-screens` はビルド時のファイル追跡で関数の同梱対象に入るが、Git管理外のためGitからのデプロイには含まれない。
+
+**検証：**
+- 候補：全360人中、生成可能342人。不可18人（関連商品0件：9人、YouTube系以外の配信中作品0件：9人）。
+- 管理画面で久保史緒里（1位、初回撮影を含め約12秒）と松本若菜を生成した。3枚とも1080×1080で、撮影画面の数字と集計値が一致。閲覧計測の遮断は1件ずつ。「Instagramに投稿」ボタンは0件、スマホ幅でページの横スクロールなし。
+- 既存4テンプレート・search-flow・予約・自動選択・Cron・DB・IG API・package.json・next.config.ts・vercel.json・Instagram管理ハブは差分なし。
+- 新しいAPIの関数にPlaywrightは含まれない。
+- `npx tsc --noEmit` 成功、`npm run build` 成功。
+
+**追記（Task 70）：** 「おすすめ度」はInstagramでの人気度・検索需要・話題性を含まず、DB内の配信中作品数・配信サービス数・関連商品数・前回投稿からの経過日数だけで算出しているため、表示名を「H適性度」（並び順の表記は「H適性度順」）に変更した。対象は `src/app/admin/instagram-h/` の画面文言と、関連コードのコメントのみ。計算ロジック・変数名（`score` 等）は変更していない。
+
+---
+
+## Task 71：H「観るもの・買うもの、まとめて」を予約投稿・自動投稿に接続
+
+**目的：** 管理画面で人が選んだ人物について、Hの3枚を生成・確認し、キャプションを確認・編集したうえで日時を指定して予約する。予約後は既存のCronが保存済みの3枚でカルーセル投稿する。人物の自動選択・自動ローテーションは行わない（H適性度は参考値）。
+
+**設計：**
+- Cron（`/api/cron/instagram-publish`）と `publishScheduleToInstagram` は、予約行に保存された `image_urls`（3枚）と `caption` だけで投稿し、テンプレートに依存しない。そのため、H予約は既存の `createSchedule` で `instagram_post_schedules` に1行保存するだけで投稿の流れに乗る。**Cron・投稿処理・二重投稿防止（`claimDueSchedule`）・failed／needs_review・通知は無変更。DBスキーマ変更なし。**
+- 画像はPreview生成時にVercel Blob（`ig-posts/`）へ保存し、予約にはその同じURLを保存する（投稿時に再生成しない＝Previewと投稿画像が一致）。
+- 3枚目はTask 69の撮影画像をやめ、人物ページ上部（ヘッダー・パンくず・PROFILE / PERSON・頭文字・人物名・統計ボックス4つ）を、人物ページと同じ集計の実データからサーバー側で描画する（案A）。ブラウザ撮影（案C：Vercel HobbyでChromiumが不安定、Task 34で撤去済み）と、サイトのCSSをそのまま描く案B（Satoriが対応しない）は不採用。これによりVercel上でも3枚とも生成できる。
+- H（`watch-and-buy`）は `INSTAGRAM_TEMPLATES`／`SCHEDULE_TEMPLATE_OPTIONS` に入れない。既存の予約・一括予約画面の選択肢、既存予約APIの検証（`getInstagramTemplateMeta`）、自動（おすすめ）選択・ローテーションには現れない。
+
+**変更ファイル：**
+- 新規 `src/server/instagram-post/og-templates/site-ui/person-page-screen.tsx`：3枚目のスマホ画面内の人物ページ上部を描画する。
+- `og-templates/site-ui/watch-and-buy.tsx`：3枚目を `PersonPageScreen` に置き換え。`types.ts`：`screen` を削除し `genre` を追加。
+- `site-ui/data.ts`：`genre` を追加。`site-ui/builders.ts`：`toTemplateData` で `genre` を設定。撮影画像の取得を削除。キャプション・ハッシュタグ生成は `h-schedule.ts` から読み込む。
+- 新規 `src/server/instagram-post/site-ui/h-schedule.ts`（純粋関数）：
+  - `buildWatchAndBuyCaption`（指定の文面、人物名を差し込む）、`buildWatchAndBuyHashtags`。
+  - `validateHScheduleInput`：画像は自サイトのBlob `ig-posts/` のhttps URLちょうど3枚、未来日時、キャプション空・2200字超・ハッシュタグ30個超を拒否。
+- `src/app/api/admin/instagram-h/preview/route.ts`：`SITE_UI_BUILDERS` で生成し、Blob URLを返す（DB・Instagram APIへの書き込みなし）。
+- 新規 `src/app/api/admin/instagram-h/schedule/route.ts`（POST）：入力チェック後、既存の `createSchedule` で予約を保存（`template_id='watch-and-buy'`）。
+- `src/lib/instagram-templates.ts`：
+  - `H_TEMPLATE_ID` と表示専用の `H_SCHEDULE_TEMPLATE_META` を追加。
+  - `getScheduleTemplateMeta` がH予約の表示名「H 観るもの・買うもの、まとめて」を返すようにした（予約一覧・通知・ハブの表示用）。
+- `src/app/admin/instagram-h/page.tsx`・`InstagramHClient.tsx`：生成→3枚確認→キャプション編集（文字数、生成時に戻す）→日時（おすすめ 09:00/15:00/20:00）→確認ダイアログ→予約。予約後は予約一覧・Instagram管理へのリンクを表示。既投稿の人物と、同じ日時の既存予約には警告を出す。
+- 削除：`src/server/instagram-post/site-ui/person-screen.ts`、`tools/canva-instagram/h-screen/`（撮影処理）。
+- 新規テスト `src/lib/__tests__/instagram-h-schedule.test.ts`（11件）：
+  - キャプション・入力チェック、Hが既存の選択肢・検証に含まれないこと。
+  - Graph APIをモックした投稿処理：子コンテナが1→2→3の順、CAROUSELのchildren／caption、`media_publish` の失敗が `AmbiguousPublishError`（needs_review）、公開済みは再投稿しない。
+
+**注意点：**
+- 既存の自動（おすすめ）は `getMostRecentTemplateId`（直近の予約のテンプレート）を回転の起点に使う。H予約が直近にあると、その次の自動選択の起点がHになる（Hは候補外なので先頭の既存テンプレートから回る想定だが、未検証）。
+- `/admin/instagram-h` へのリンクはナビ・ハブに未追加（URL直接）。
+- 3枚目は撮影画像ではなく、人物ページ上部の再構成。プロフィールのタグ・紹介文は描いていない。
+
+**検証（実投稿なし）：**
+- ローカル：
+  - 管理画面から松本若菜のHを生成し、キャプションを編集して2027/12/31 20:00で予約した（ID 38）。保存された画像URLはPreviewと同一で、編集後のキャプションも保存された。予約一覧に「H 観るもの・買うもの、まとめて」と表示された。
+  - ID 38だけを対象に、Cronと同じ関数で検証した：
+    - 予定日時を一時的に過去へ変更すると、処理対象一覧に入った。
+    - 同時に2回claimすると成功は1回だけ。処理中の3回目はnull。
+    - release後はscheduledに戻った。
+    - failedでは再試行対象に残った。needs_reviewでは対象外になった。
+    - 通知は重複作成されず、Instagram管理の要対応欄に表示された。
+  - 検証の最後に予定日時を未来へ戻し、テスト予約・通知2件・テスト画像6枚は削除した。ほかの予約（処理対象0件）には触れていない。
+- Vercel Preview（git外コピーからデプロイ、Productionへの反映なし）：久保史緒里の3枚が7.7秒で生成された（3枚目も含む）。予約はしていない（本番DB共有のため）。確認後、画像3枚を削除した。
+- `npx tsc --noEmit` 成功、`npx vitest run` 66ファイル1472件成功、`npm run build` 成功。
+
+---
+
+## Task 72：Production反映前の確認（API access blocked の調査・Hの自動選択からの除外・導線追加）
+
+**1. API access blocked の調査結果（コードの問題ではない。Meta側の制限）**
+- 失敗3件（ID 31〜33、2026/9/23の3枠）はすべて `failed`（attempts 3）で、`media_publish` より前の段階で拒否されていた（needs_review ではない＝未公開と断定できる）。9/21・9/22は同じ仕組みで投稿に成功している。
+- ローカルの `IG_ACCESS_TOKEN`（`tools/instagram-post-generator/.env.local` と同一）で、読み取り専用のAPIを確認した。
+  - `GET /me`、`GET /{IG_USER_ID}`、`content_publishing_limit`、`/media` の一覧が、すべて `API access blocked.`（HTTP 400 / code 200 / OAuthException）。
+  - 投稿系のAPIだけでなく、プロフィール取得も拒否されている。
+- 無効なトークンでは code 190（`Failed to decrypt`）、トークンなしでは code 190（`Invalid OAuth 2.0 Access Token`）になる。今回は code 200 のため、トークン自体は有効（期限切れ・形式不正ではない）で、Meta側がこのアプリ／アカウントのAPI利用を止めている状態。
+- Productionの環境変数はSensitive設定のため値を取得できず、直接の比較はできない。ただし、Productionでも9/23から同じ応答になっている。
+- コード（エンドポイント・パラメータ）の変更で直る問題ではない。Meta for Developers／Instagramアカウント側の確認が必要。
+
+**コード変更：**
+- `src/server/instagram-post/graph-client.ts`：Graph APIのエラーメッセージに「（HTTP 400 / code 200 / OAuthException / fbtrace_id …）」を付けるようにした（`formatGraphErrorDetail`）。
+  - 予約一覧・通知・手動投稿画面のエラー表示から、原因の切り分けとMetaサポートへの問い合わせ（fbtrace_id）ができる。
+  - Metaが返すエラー情報のみで、トークンは含まない。
+- `src/server/instagram-schedule/schedule-store.ts`：`getMostRecentTemplateId` の対象を、自動選択の候補テンプレート（`INSTAGRAM_TEMPLATES`）の予約だけにした。
+  - 修正前は直近の予約がHだと基準が `watch-and-buy` になり、ローテーションが先頭（works-only）に戻っていた。
+  - 既存の予約はすべて4テンプレートのいずれかなので、既存データでの結果は変わらない。
+- `src/app/admin/instagram/page.tsx`：Instagram管理のカードに「H投稿を作成（観るもの・買うもの）」（→ `/admin/instagram-h`）を追加。カードが5枚になったため、PCの列数を4→3にした。
+- `src/app/admin/instagram-h/InstagramHClient.tsx`：前回投稿日・集計日時をAsia/Tokyo固定で表示（集計日時に「JST」を付記）。
+- 新規テスト `src/lib/__tests__/instagram-h-auto-exclusion.test.ts`（4件）：
+  - 自動の候補にHが含まれない。
+  - どの「直前テンプレート」からでもHが選ばれない。
+  - 既存のローテーション順は変わらない。
+  - エラー詳細の書式。
+
+**検証（Instagramへの送信なし）：**
+- 自動選択（読み取り専用で確認）：H予約の前後で、基準テンプレート（works-only）と、3人（久保史緒里・松村北斗・田中樹）の自動解決結果（works-picks）が同じだった。修正前のクエリでは、H予約後に基準が `watch-and-buy` になることも確認した。
+- Instagram管理のカード → `/admin/instagram-h` → 生成 → キャプション編集 → 2027/12/31 20:00で予約（ID 39）。保存された画像URLはPreviewと同じで、編集後のキャプションも保存された。一覧の表示名もHになっていた。
+- 本物のCronハンドラ（`GET /api/cron/instagram-publish`）をローカルのプロセス内で直接呼んだ。Instagramへのfetchはすべてプロセス内の偽応答に差し替え、外部には送っていない。処理対象がID 39以外にもある場合は中止する設定で実行した。
+  - dryRunを同時に2回実行：`dry-run-ok` は1件だけで、APIの呼び出しは0回。
+  - 子コンテナ作成で `API access blocked` を返す：`failed`（attempts 1）。エラーに code 200 等が付いた。
+  - 再試行で `media_publish` が通信失敗：`needs_review`。処理対象から外れた。
+  - 正常系：保存済みの3URLが1→2→3の順で子コンテナになり、CAROUSEL（children 3件・保存済みキャプション）→ `media_publish` → `published`。
+  - 再度Cronを実行すると対象0件。直接呼んでも `AlreadyPublishedError`。
+  - 後片付けとして、通知2件・投稿履歴（偽media_id）1件・予約ID 39・テスト画像3枚を削除した。
+- Cron：`vercel.json` は UTC 0:00／6:00／11:00（JST 9:00／15:00／20:00）。管理画面の日時は `jst-time`（Asia/Tokyo固定）で入力・表示している。
+- `npx tsc --noEmit` 成功、`npx vitest run` 67ファイル1476件成功、`npm run build` 成功。PC・スマホ幅で横スクロールなし。
+
+---
+
+## Task 73：H「観るもの・買うもの、まとめて」のProduction反映
+
+**目的：** Hを本番1件テストできる状態にする（この段階では予約・実投稿は行わない）。
+
+**事前対応：**
+- 9/23の失敗予約（ID 31 京本大我・32 ジェシー・33 田中樹。いずれも「API access blocked」で failed、試行3回、media_id なし＝未投稿）を、既存の `cancelSchedule`（管理画面の「キャンセル」と同じ処理）で cancelled にした。
+  - 再実行はしていない。Instagram APIは呼んでいない。他の予約は変更していない。
+  - 未読通知（ID 7〜15）は残っている（「確認済みにする」で消せる）。
+- Instagram APIの接続：新しい `IG_ACCESS_TOKEN`（Production・ローカル共通）で、読み取り専用のAPIがすべて成功した（@oshisearch_jp、IG_USER_ID一致、投稿上限の取得可）。
+
+**commit対象：**
+- H本体（`/admin/instagram-h`、`/api/admin/instagram-h/*`、`site-ui/`、`og-templates/site-ui/`）
+- Hがimportする共通処理（search-flow・候補A〜Eの描画／データ関数。画面から呼ばれる経路はない）
+- 既存ファイルの変更：`instagram-templates.ts`・`schedule-store.ts`・`graph-client.ts`・`admin/instagram/page.tsx`・`person-data.ts`・`work-selection.ts`
+- テスト2件と本ログ
+
+**除外したもの：**
+- 公開サイトのデザイン試作（`layout.tsx`、`DesignPrototype*`）
+- `drizzle/0005` の変更
+- 「 2」付きの重複ファイル
+- 手動投稿画面へのPreview専用テンプレート追加（`InstagramPostClient.tsx`・`generate/route.ts`）
+- 検証スクリプト・出力物
+- `tools/instagram-post-generator/`、`.env*`
+
+commit前に、除外したものを含まない状態（HEAD＋commit対象のみ）で、tsc・全テスト・buildが成功することを確認した。

@@ -107,7 +107,17 @@ export interface SelectionResult {
   imageRejected: SelectedWork[];
 }
 
-export async function selectTopWorks(personName: string): Promise<SelectionResult> {
+export interface SelectTopWorksOptions {
+  /**
+   * trueを返した配信サービスを「確認済みの配信先」から除外する（例: search-flowテンプレートでのYouTube系除外）。
+   * 除外の結果、配信先が0件になった作品は「VODなし」として扱われ、VODあり作品より後ろに並ぶ。
+   * 省略時は従来とまったく同じ挙動（既存のInstagramテンプレート・Canva一括作成ツールはすべて省略して呼び出す）。
+   */
+  excludeProvider?: (provider: VodProvider) => boolean;
+}
+
+export async function selectTopWorks(personName: string, options: SelectTopWorksOptions = {}): Promise<SelectionResult> {
+  const { excludeProvider } = options;
   const [works, terminatedSlugs] = await Promise.all([
     getPublishedWorks(personName),
     getInactiveProviderSlugs(),
@@ -115,9 +125,10 @@ export async function selectTopWorks(personName: string): Promise<SelectionResul
 
   const withVodInfo = works.map((work) => {
     const trace = getDisplayWorkTypeTrace(work);
+    const publicProviders = filterPublicVodProviders(work.vodProviders ?? [], terminatedSlugs);
     return {
       work,
-      confirmedProviders: filterPublicVodProviders(work.vodProviders ?? [], terminatedSlugs),
+      confirmedProviders: excludeProvider ? publicProviders.filter((p) => !excludeProvider(p)) : publicProviders,
       displayType: trace.result,
       displayTypeRule: trace.rule,
     };

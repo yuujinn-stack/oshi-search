@@ -1,7 +1,8 @@
 import 'server-only';
 import { db } from '@/db/client';
 import { instagramPostSchedules } from '@/db/schema';
-import { and, asc, desc, eq, gte, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { INSTAGRAM_TEMPLATES } from '@/lib/instagram-templates';
 import { type ScheduleStatus, MAX_AUTO_RETRY_ATTEMPTS } from '@/lib/instagram-schedule-status';
 
 /**
@@ -188,11 +189,18 @@ export async function getScheduleById(id: number): Promise<ScheduleRecord | null
  * 「自動（おすすめ）」テンプレートのローテーション（同じテンプレートが連続しにくくする）で、
  * 一括予約のように呼び出し側が直前の選択結果を渡せない場合（通常の単発予約）の
  * 基準値として使う。予約が1件もない場合はnullを返す。
+ *
+ * 対象は自動選択の候補になりうるテンプレート（INSTAGRAM_TEMPLATES）の予約だけ。
+ * H（/admin/instagram-h から人が選んで予約する専用テンプレート）など候補外の予約は無視するため、
+ * 直近の予約がHでも、自動選択はその前の既存テンプレートの予約を基準にローテーションを続ける。
  */
 export async function getMostRecentTemplateId(): Promise<string | null> {
   const [row] = await db.select({ templateId: instagramPostSchedules.templateId })
     .from(instagramPostSchedules)
-    .where(ne(instagramPostSchedules.status, 'cancelled'))
+    .where(and(
+      ne(instagramPostSchedules.status, 'cancelled'),
+      inArray(instagramPostSchedules.templateId, INSTAGRAM_TEMPLATES.map((t) => t.id)),
+    ))
     .orderBy(desc(instagramPostSchedules.createdAt))
     .limit(1);
   return row?.templateId ?? null;

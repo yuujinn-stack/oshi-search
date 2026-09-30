@@ -68,6 +68,13 @@ const CARDS: InstagramHubCard[] = [
     href: '/admin/instagram-schedule?mode=bulk',
     cta: '一括予約へ進む',
   },
+  {
+    icon: '🛍️',
+    title: 'H投稿を作成（観るもの・買うもの）',
+    description: '人物を選んでH「観るもの・買うもの、まとめて」の3枚を作成し、キャプションと日時を確認して予約します。',
+    href: '/admin/instagram-h',
+    cta: 'H投稿を作成する',
+  },
 ];
 
 /** published / (published + failed + needs_review)。分母が0件なら「—」を返す */
@@ -218,7 +225,7 @@ export default async function InstagramHubPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         {CARDS.map((card) => (
           <a
             key={card.title}
