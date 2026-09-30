@@ -35,9 +35,8 @@ interface Props {
   persons: PersonOption[];
 }
 
-// 1日3枠運用（09:00 / 15:00 / 20:00 JST）のおすすめ投稿時間。
-// Vercel Hobbyプランのcron 1日1回制限に合わせて、この3時刻それぞれに専用のCron Jobを
-// 割り当てる想定（vercel.jsonへの反映は別途）。
+// おすすめ投稿時間（09:00 / 15:00 / 20:00 JST）。自動投稿のCronは毎時0分（JST 00:00〜23:00）の24本
+// （Vercel Hobbyの制約で各1日1回・最大約59分遅れ）なので、毎時0分の時刻ならその時間帯に投稿される。
 const RECOMMENDED_TIMES = ['09:00', '15:00', '20:00'] as const;
 
 export default function InstagramScheduleClient({ persons }: Props) {
@@ -336,10 +335,9 @@ export default function InstagramScheduleClient({ persons }: Props) {
               <span className="text-xs text-gray-400">JST</span>
             </div>
 
-            {!(RECOMMENDED_TIMES as readonly string[]).includes(scheduleTime) && (
+            {!scheduleTime.endsWith(':00') && (
               <p className="text-xs text-amber-600 mt-2">
-                ⚠️ おすすめ時間（09:00 / 15:00 / 20:00）以外の時刻です。HobbyプランではCronが1日3回のため、
-                自由時刻を指定すると次回のCron実行時（最大約1時間の誤差あり）に投稿されます。
+                ⚠️ 自動投稿のCronは毎時0分に動くため、分を指定した時刻（例: 10:30）は次の時間帯（例: 11:00台）に投稿されます。
               </p>
             )}
             <p className="text-xs text-gray-400 mt-1">

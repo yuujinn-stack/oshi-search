@@ -100,6 +100,12 @@ describe('既存の予約API（通常・一括）でHを予約できる（DBは�
     expect(res.status).toBe(200);
     expect(createSchedulesBatchMock.mock.calls[0][0].map((x) => x.templateId)).toEqual([H_TEMPLATE_ID, 'works-only']);
   });
+  it('一括予約：1週間×10件＝70件をまとめて保存できる（件数の上限なし・日時の重複なし）', async () => {
+    const items = Array.from({ length: 70 }, (_, i) => ({ ...item, scheduledAtIso: new Date(Date.now() + (i + 1) * 3600_000).toISOString() }));
+    const res = await postBulk(req('http://x/api/admin/instagram-schedule/bulk', { items }));
+    expect(res.status).toBe(200);
+    expect(createSchedulesBatchMock.mock.calls[0][0]).toHaveLength(70);
+  });
   it('未知のテンプレート・長すぎるキャプションは拒否（DBへ書き込まない）', async () => {
     expect((await postSchedule(req('http://x', { ...item, templateId: 'search-flow' }))).status).toBe(400);
     expect((await postSchedule(req('http://x', { ...item, caption: 'あ'.repeat(2201) }))).status).toBe(400);
