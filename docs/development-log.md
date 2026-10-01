@@ -3063,3 +3063,37 @@ Task 80 を本番で目視確認した際に見つかった3点を直す。人�
 
 ### 確認（ローカル。非GETはすべて遮断、生成・予約・画像生成なし）
 - ケース1 9投稿/2日、ケース2 18投稿/4日（開始日10/05に変えると10/05〜10/08）、ケース3 30投稿/3日、ケース4 99投稿/20日、ケース5 予約予定35・未予約64・7日、ケース6（予約済み3枠を応答差し替え）18投稿/5日・1日延長、ケース7 5/5/1・3日、ケース8 5/6・2日（1日短縮）、ケース9・11 白石麻衣（元）＋目黒蓮×4テンプレ＝8投稿、ケース10 乃木坂46一括33人、ケース12 390pxで横スクロール0。
+
+---
+
+## Task 85：Instagram予約の人物選択に「人物 × テンプレート」の投稿状況を表示（投稿済みは警告のみ）
+
+### 調査結果（読み取りのみ）
+- `instagram_post_schedules`：template_id・status・media_id・published_at を持つ。status='published' は Instagram の media_publish 成功後にだけ設定され、media_id が入る。
+- `instagram_posts`：実際に公開された投稿の履歴だが、テンプレートの列はない。予約からの投稿は media_id で予約と結び付く。管理画面 /admin/instagram-post からの手動投稿は予約が無く、テンプレートが分からない。
+- 実データ（2026-10-01時点）：予約 #27 松村北斗×標準（published・media あり）、#40 目黒蓮×H（published・media あり）。森本慎太郎の 9/21 の投稿は手動投稿（予約 #26 は cancelled）でテンプレート不明。#31〜33 は cancelled。
+- 結論：予約からの投稿は既存データで正確に判定できるため、DB変更なし。手動投稿は推測でテンプレートに割り当てず「テンプレ不明」として表示する。
+
+### 判定ルール（`src/lib/instagram-template-history.ts`）
+- 投稿済み＝予約の status='published' かつ media_id・published_at あり。人物×テンプレートごとに最新の published_at。
+- scheduled / processing / failed / needs_review / cancelled / draft、生成のみは投稿済みにしない。
+- 予約と media_id で結び付かない instagram_posts は「テンプレ不明の投稿」（人物ごとの最新日時）。
+
+### 変更ファイル
+- 新規 `src/lib/instagram-template-history.ts`（純粋関数）：buildTemplateHistory／templatePostedAt／findPostedCombos／personTemplateChips（テンプレート定義の順。定義外のIDも末尾に出す。テンプレ不明の投稿がある人物には未投稿を返さない）／unknownTemplatePostedAt／shortTemplateLabel（定義のラベルから作る。H/G/J決め打ちなし）／formatPostedDate。
+- `src/lib/instagram-post-store.ts`：`getTemplateHistory()`（published の予約と instagram_posts を読むだけ）。
+- `src/app/api/admin/instagram-schedule/posted-persons/route.ts`：既存の personNames・lastPostedAt に加えて templateHistory を返す。
+- `PersonMultiSelect.tsx`：人物名の下にテンプレート状況。3状態：✓ 投稿済みと確認できる（今回も選択中なら ⚠）／○ 未投稿と確認できる（今回選択中）／？ テンプレ不明の投稿あり。
+  - テンプレ不明の投稿がある人物には ○ を出さない（どのテンプレートも未投稿と断定しない）。例：森本慎太郎は「？ テンプレ不明 09/21」だけ。
+  - 投稿履歴が1件もない人物には何も出さない。
+  - 人物固定モードでは人物単位の「投稿済み（日付）」バッジを出さず、テンプレート別の表示に統一（`showPersonPostedBadge`）。従来モードは既存バッジのまま。
+  - 選択中パネル：テンプレートIDが一致した場合だけ「⚠ 人物：H（日付）は投稿済みです」。テンプレ不明の過去投稿は「？ 過去にテンプレート不明の投稿があります（日付）」（灰色の補助表示。警告にしない）。選択の禁止・自動除外はしない。
+- `BulkScheduleClient.tsx`：
+  - 配置プレビューの各行に「⚠ 投稿済み 日付」、上部に「投稿済みの組み合わせがN件含まれています」（両モード。従来モードは「自動」以外のテンプレートで判定）。
+  - 一括予約の確認ダイアログに、実際に生成されたテンプレート（Jの代替を含む）で判定した組み合わせ一覧を出し、ボタンを「このまま予約」にする（予約は禁止しない）。
+  - 「最終日の投稿数を±1件調整してまとめる」の表示を「最終日が1投稿だけなら前日にまとめる」＋短い説明にし、例外は「詳細を見る」に収納（動作は変更なし）。
+- テスト：新規 `instagram-template-history.test.ts`（A〜J、3状態の表示 A〜E、テンプレ不明だけでは警告しない、定義外テンプレ、短縮名）。
+
+### 注意点
+- 手動投稿（/admin/instagram-post）のテンプレートを今後も判定したい場合は、instagram_posts に template_id（null 可）を追加して手動投稿時に記録する案がある（未実施・別タスク。既存の手動投稿はテンプレ不明のまま）。
+- 投稿順・必要日数・最大7日・最終日調整・予約済み枠スキップのロジックは変更なし。

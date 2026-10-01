@@ -4,6 +4,8 @@ import { useMemo, useState } from 'react';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import { GROUP_ALL, GROUP_NONE, buildGroupOptions, filterPersons, isCurrentMember, selectAllMatching } from '@/lib/person-group-filter';
 import GroupFilterSelect from './GroupFilterSelect';
+import { SCHEDULABLE_TEMPLATES, getScheduleTemplateMeta } from '@/lib/instagram-templates';
+import { personTemplateChips, unknownTemplatePostedAt, shortTemplateLabel, formatPostedDate, type TemplateHistory, type TemplateChip } from '@/lib/instagram-template-history';
 
 interface Props {
   persons: PersonOption[];
@@ -20,6 +22,45 @@ interface Props {
   allowBulkSelect?: boolean;
   /** 一覧の上に出す案内（人物固定モードへ切り替えて先頭1人に絞ったとき等。呼び出し側で管理） */
   notice?: string | null;
+  /** 人物 × テンプレートの投稿履歴（投稿成功が記録されたものだけ）。人物ごとにテンプレートの投稿状況を出す */
+  templateHistory?: TemplateHistory | null;
+  /** 今回の予約で使うテンプレート（投稿済みなら警告。選択の禁止・自動除外はしない） */
+  selectedTemplateIds?: readonly string[];
+  /** 人物単位の「投稿済み（日付）」バッジを出すか（人物固定モードはテンプレート別の表示に統一するため false） */
+  showPersonPostedBadge?: boolean;
+}
+
+const TEMPLATE_ORDER = SCHEDULABLE_TEMPLATES.map((t) => t.id);
+const shortLabel = (id: string) => shortTemplateLabel(getScheduleTemplateMeta(id)?.label ?? id);
+const mmdd = (isoString: string) => formatPostedDate(isoString).slice(5);
+
+/**
+ * 人物1人ぶんのテンプレート投稿状況。✓ 投稿済み（⚠＝今回も選択中）／○ 今回選択中で未投稿と確認できる／？ テンプレ不明の投稿あり。
+ * テンプレ不明の投稿がある人物には ○ を出さない（personTemplateChips が返さない＝未投稿と断定しない）。
+ * 一覧がごちゃごちゃしないよう、投稿履歴が1件もない人物には何も出さない。
+ */
+function TemplateChips({ chips, unknownAt }: { chips: TemplateChip[]; unknownAt?: string }) {
+  if (!unknownAt && !chips.some((c) => c.postedAt)) return null;
+  return (
+    <span className="flex flex-wrap gap-1 mt-1">
+      {chips.map((c) => (
+        <span
+          key={c.templateId}
+          title={`${getScheduleTemplateMeta(c.templateId)?.label ?? c.templateId}：${c.postedAt ? `投稿済み（最新 ${formatPostedDate(c.postedAt)}）` : '未投稿'}${c.selected ? '・今回選択中' : ''}`}
+          className={`text-[10px] px-1.5 py-0.5 rounded ${
+            c.postedAt && c.selected ? 'bg-amber-100 text-amber-800 font-semibold' : c.postedAt ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'
+          }`}
+        >
+          {c.postedAt ? `${c.selected ? '⚠' : '✓'} ${shortLabel(c.templateId)} ${mmdd(c.postedAt)}` : `○ ${shortLabel(c.templateId)}`}
+        </span>
+      ))}
+      {unknownAt && (
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500" title="テンプレートの記録がない投稿（手動投稿など）。どのテンプレートかは判定しません">
+          ？ テンプレ不明 {mmdd(unknownAt)}
+        </span>
+      )}
+    </span>
+  );
 }
 
 function formatShortDateJst(iso: string): string {
@@ -34,7 +75,7 @@ const MAX_RESULTS = 60;
  * 選択順がそのまま投稿枠への割り当て順になる（allocateBulkSlots参照）。
  * 絞り込みを変えても選択済みの人物は解除しない（右側の「選択中」には絞り込み外の人物も含めて全員を出す）。
  */
-export default function PersonMultiSelect({ persons, postedPersonNames, lastPostedAt, selected, onChange, maxSelected, allowBulkSelect = true, notice }: Props) {
+export default function PersonMultiSelect({ persons, postedPersonNames, lastPostedAt, selected, onChange, maxSelected, allowBulkSelect = true, notice, templateHistory, selectedTemplateIds = [], showPersonPostedBadge = true }: Props) {
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState(GROUP_ALL);
   // グループを選んだときは既定で現役メンバーだけ。ONで卒業・元メンバーも含める
@@ -157,10 +198,11 @@ export default function PersonMultiSelect({ persons, postedPersonNames, lastPost
             const posted = postedPersonNames.has(p.name);
             const lastDate = lastPostedAt?.get(p.name);
             const disabled = !checked && atMax;
+            const chips = personTemplateChips(templateHistory, p.name, TEMPLATE_ORDER, selectedTemplateIds);
             return (
               <label
                 key={p.name}
-                className={`flex items-center gap-2 px-3 py-2 text-xs border-b border-gray-50 last:border-0 transition-colors ${
+                className={`flex items-start gap-2 px-3 py-2 text-xs border-b border-gray-50 last:border-0 transition-colors ${
                   checked ? 'bg-violet-50' : disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-50'
                 }`}
               >
@@ -169,18 +211,23 @@ export default function PersonMultiSelect({ persons, postedPersonNames, lastPost
                   checked={checked}
                   disabled={disabled}
                   onChange={() => toggle(p.name)}
-                  className="shrink-0"
+                  className="shrink-0 mt-0.5"
                 />
-                <span className="font-medium text-slate-700 truncate">{p.name}</span>
-                {p.group && <span className="text-[10px] text-gray-400 shrink-0">{p.group}</span>}
-                {isGroup && includeFormer && !isCurrentMember(p, group) && (
-                  <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded shrink-0">卒業・元</span>
-                )}
-                {posted && (
-                  <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded shrink-0 ml-auto">
-                    投稿済み{lastDate ? `（${formatShortDateJst(lastDate)}）` : ''}
+                <span className="flex-1 min-w-0">
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="font-medium text-slate-700 truncate">{p.name}</span>
+                    {p.group && <span className="text-[10px] text-gray-400 shrink-0">{p.group}</span>}
+                    {isGroup && includeFormer && !isCurrentMember(p, group) && (
+                      <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded shrink-0">卒業・元</span>
+                    )}
+                    {posted && showPersonPostedBadge && (
+                      <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded shrink-0 ml-auto">
+                        投稿済み{lastDate ? `（${formatShortDateJst(lastDate)}）` : ''}
+                      </span>
+                    )}
                   </span>
-                )}
+                  <TemplateChips chips={chips} unknownAt={unknownTemplatePostedAt(templateHistory, p.name) ?? undefined} />
+                </span>
               </label>
             );
           })}
@@ -203,11 +250,17 @@ export default function PersonMultiSelect({ persons, postedPersonNames, lastPost
           {selected.length === 0 && (
             <p className="text-xs text-gray-400 px-3 py-4 text-center">左の一覧から人物を選択してください</p>
           )}
-          {selected.map((name, i) => (
-            <div key={name} className="flex items-center gap-2 px-3 py-2 text-xs border-b border-gray-50 last:border-0">
+          {selected.map((name, i) => {
+            // 今回選んだテンプレートのうち投稿済みのもの（警告のみ。選択は外さない）
+            const postedSelected = personTemplateChips(templateHistory, name, TEMPLATE_ORDER, selectedTemplateIds).filter((c) => c.selected && c.postedAt);
+            // テンプレ不明の過去投稿は補助表示だけ（「投稿済み」警告にはしない）
+            const unknownAt = unknownTemplatePostedAt(templateHistory, name);
+            return (
+            <div key={name} className="border-b border-gray-50 last:border-0">
+            <div className="flex items-center gap-2 px-3 py-2 text-xs">
               <span className="text-[10px] text-gray-400 w-5 shrink-0 text-right">{i + 1}.</span>
               <span className="font-medium text-slate-700 truncate flex-1">{name}</span>
-              {postedPersonNames.has(name) && (
+              {postedPersonNames.has(name) && showPersonPostedBadge && (
                 <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded shrink-0">
                   投稿済み{lastPostedAt?.get(name) ? `（${formatShortDateJst(lastPostedAt.get(name)!)}）` : ''}
                 </span>
@@ -239,7 +292,19 @@ export default function PersonMultiSelect({ persons, postedPersonNames, lastPost
                 ✕
               </button>
             </div>
-          ))}
+            {postedSelected.length > 0 && (
+              <p className="text-[10px] text-amber-700 px-3 pb-1.5 -mt-1 pl-10">
+                ⚠ {name}：{postedSelected.map((c) => `${shortLabel(c.templateId)}（${formatPostedDate(c.postedAt!)}）`).join('・')}は投稿済みです
+              </p>
+            )}
+            {unknownAt && (
+              <p className="text-[10px] text-gray-500 px-3 pb-1.5 -mt-1 pl-10">
+                ？ 過去にテンプレート不明の投稿があります（{formatPostedDate(unknownAt)}）
+              </p>
+            )}
+            </div>
+            );
+          })}
         </div>
       </div>
     </div>

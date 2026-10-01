@@ -13,6 +13,7 @@ import { validateCaption } from '@/lib/instagram-caption-rules';
 import { allocateBulkSlots, formatJst, nowJstParts, type BulkSlotAssignment } from '@/lib/jst-time';
 import { defaultPostTimes, sortPostTimes, validatePostTimes, evaluatePublishingQuota, type PublishingQuota } from '@/lib/instagram-post-times';
 import { planFixedPersonSchedule, templateSequenceForPerson, pastSlotIsos, type TemplatePlanRule } from '@/lib/instagram-template-plan';
+import { findPostedCombos, templatePostedAt, shortTemplateLabel, formatPostedDate, type TemplateHistory } from '@/lib/instagram-template-history';
 
 interface PostImage {
   /** 1から始まる並び順（Jは4枚） */
@@ -60,6 +61,12 @@ interface Props {
 /** 「1週間分を作成」モードの対象日数 */
 const WEEK_DAYS = 7;
 
+/** 配置プレビューの行に出す「投稿済み」警告（未投稿なら何も出さない） */
+function PostedNote({ at }: { at: string | null }) {
+  if (!at) return null;
+  return <span className="block text-[10px] font-semibold text-amber-700">⚠ 投稿済み {formatPostedDate(at)}</span>;
+}
+
 /** 配置プレビュー・一括生成の1行（両モード共通） */
 interface PlanRow {
   personName: string;
@@ -102,6 +109,8 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
 
   const [postedNames, setPostedNames] = useState<Set<string>>(new Set());
   const [lastPostedAt, setLastPostedAt] = useState<Map<string, string>>(new Map());
+  // 人物 × テンプレートの投稿履歴（投稿成功が記録されたものだけ）。警告表示にだけ使い、選択・配置は変えない
+  const [templateHistory, setTemplateHistory] = useState<TemplateHistory | null>(null);
   const [occupiedIsos, setOccupiedIsos] = useState<Set<string> | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Instagramの投稿上限（取得できなければ null ＋理由）。予約前の警告にだけ使う
@@ -118,12 +127,13 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
 
   const loadReferenceData = useCallback(() => {
     Promise.all([
-      safeFetchJson<{ personNames: string[]; lastPostedAt?: Record<string, string> }>('/api/admin/instagram-schedule/posted-persons'),
+      safeFetchJson<{ personNames: string[]; lastPostedAt?: Record<string, string>; templateHistory?: TemplateHistory }>('/api/admin/instagram-schedule/posted-persons'),
       safeFetchJson<{ occupied: string[] }>('/api/admin/instagram-schedule/occupied-slots?days=120'),
     ])
       .then(([posted, occ]) => {
         setPostedNames(new Set(posted.personNames));
         setLastPostedAt(new Map(Object.entries(posted.lastPostedAt ?? {})));
+        setTemplateHistory(posted.templateHistory ?? null);
         setOccupiedIsos(new Set(occ.occupied));
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)));
@@ -220,6 +230,22 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
   const planError: string | null = timesError ?? startDateError ?? (occupiedIsos && selectedNames.length > 0 && plan.length === 0 && (!fixedPerson || personTemplates.length > 0)
     ? '予約できる空き枠がありません（予約済み・過去の枠を除くと0件です）。開始日や投稿時刻を変更してください。'
     : null);
+
+  // 各行のテンプレート（人物固定＝行ごと、従来モード＝選んだテンプレート。「自動」は生成時に決まるため判定しない）
+  const rowTemplateId = useCallback(
+    (row: PlanRow): string | null => (fixedPerson ? row.templateId : templateId !== AUTO_TEMPLATE_ID ? templateId : null),
+    [fixedPerson, templateId],
+  );
+  // 配置プレビューに含まれる「投稿済みの人物 × テンプレート」（警告のみ。予定からは外さない）
+  const planPostedCombos = useMemo(
+    () => findPostedCombos(plan.map((a) => ({ personName: a.personName, templateId: rowTemplateId(a) })), templateHistory),
+    [plan, rowTemplateId, templateHistory],
+  );
+  // 人物一覧で投稿状況を出すテンプレート（今回使うもの）
+  const selectedTemplateIds = useMemo(
+    () => (fixedPerson ? [...new Set(personTemplates.filter((t): t is string => !!t))] : templateId !== AUTO_TEMPLATE_ID ? [templateId] : []),
+    [fixedPerson, personTemplates, templateId],
+  );
 
   // Instagramの投稿上限に近づく場合の警告（予約済み＋今回の予約）
   const quotaWarnings = useMemo(
@@ -352,6 +378,12 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
     [quota, occupiedIsos, includedRows],
   );
 
+  // 確認モーダル用: 予約する行に含まれる投稿済みの組み合わせ（生成で実際に決まったテンプレートで判定。予約は禁止しない）
+  const confirmPostedCombos = useMemo(
+    () => findPostedCombos(includedRows.map((r) => ({ personName: r.personName, templateId: r.prepared!.templateId })), templateHistory),
+    [includedRows, templateHistory],
+  );
+
   // 確認モーダル用: 日付ごとにグループ化した要約
   const groupedByDate = useMemo(() => {
     const map = new Map<string, { timeJst: string; personName: string; templateLabel?: string }[]>();
@@ -458,6 +490,9 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
           selected={selectedNames}
           onChange={setSelectedNames}
           maxSelected={maxSelectable}
+          templateHistory={templateHistory}
+          selectedTemplateIds={selectedTemplateIds}
+          showPersonPostedBadge={!fixedPerson}
         />
         {overLimitCount > 0 && (
           <p className="text-xs text-amber-600 mt-2">
@@ -508,15 +543,20 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
             <label className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
               <input type="checkbox" checked={adjustLastDay} onChange={(e) => setAdjustLastDay(e.target.checked)} className="mt-0.5 shrink-0" />
               <span>
-                <span className="font-semibold">最終日の投稿数を±1件調整してまとめる</span>
+                <span className="font-semibold">最終日が1投稿だけなら前日にまとめる</span>
                 <span className="block text-gray-500 mt-0.5">
-                  OFF：1日{perDayCount}件を厳守します（最終日は残りの件数）。
-                  ON：最終日が1件だけになる場合に限り、前日の最後の投稿の1時間後に入れて前日を{perDayCount + 1}件で終えます。
-                  最終日が{Math.max(perDayCount - 1, 0)}件以下になる場合はそのまま終えます。通常の日の件数は変えません。
-                  予約済み・過去の時刻や23時より後になる場合、「最大7日分まで予約」で打ち切った場合は調整しません。
+                  ONにすると、最終日が1投稿だけの場合に限り、前日の最後に1件追加して最終日をなくします。通常の1日あたり投稿数は変更しません。
                 </span>
               </span>
             </label>
+            <details className="mt-1.5 ml-5 text-[11px] text-gray-500">
+              <summary className="cursor-pointer select-none text-gray-400 hover:text-gray-600">詳細を見る</summary>
+              <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                <li>追加する時刻は、前日の最後の投稿の1時間後です（前日は{perDayCount + 1}件になります）。</li>
+                <li>最終日が2件以上残る場合は何もしません（最終日はそのままの件数で終わります）。</li>
+                <li>前日が設定どおりの件数で埋まっていない場合、追加する時刻が予約済み・過去・23時より後になる場合、「最大7日分まで予約」で打ち切った場合は調整しません。</li>
+              </ul>
+            </details>
             {adjustLastDay && fixedPlan?.adjustSkippedReason && (
               <p className="text-[11px] text-amber-700 mt-2">{fixedPlan.adjustSkippedReason}</p>
             )}
@@ -559,6 +599,15 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
             maxWeek={fixedMaxWeek}
             lastScheduledLabel={plan.length > 0 ? `${plan.at(-1)!.personName}・${getScheduleTemplateMeta(plan.at(-1)!.templateId ?? '')?.label ?? plan.at(-1)!.templateId}` : undefined}
           />
+        )}
+        {planPostedCombos.length > 0 && (
+          <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+            <p className="font-semibold">⚠ 投稿済みの組み合わせが{planPostedCombos.length}件含まれています（自動では除外しません。再投稿しない場合は人物・テンプレートの選択を変えてください）</p>
+            <p className="mt-0.5 break-words">
+              {planPostedCombos.slice(0, 8).map((c) => `${c.personName} × ${shortTemplateLabel(getScheduleTemplateMeta(c.templateId)?.label ?? c.templateId)}（${formatPostedDate(c.postedAt)}）`).join('、')}
+              {planPostedCombos.length > 8 && ` ほか${planPostedCombos.length - 8}件`}
+            </p>
+          </div>
         )}
         {plan.length > 0 && (
           <p className="text-xs text-gray-500 mb-1">配置プレビュー：{plan.length}件</p>
@@ -608,10 +657,12 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
                     {fixedPerson ? (
                       <td className={`py-1.5 pr-3 ${a.templateId ? 'text-violet-700' : 'text-red-500'}`}>
                         {a.templateId ? getScheduleTemplateMeta(a.templateId)?.label ?? a.templateId : '未指定'}
+                        <PostedNote at={templatePostedAt(templateHistory, a.personName, rowTemplateId(a))} />
                       </td>
                     ) : (
                       <td className="py-1.5 pr-3 text-slate-600">
                         {templateId === AUTO_TEMPLATE_ID ? '自動（生成時に決定）' : getScheduleTemplateMeta(templateId)?.label ?? templateId}
+                        <PostedNote at={templatePostedAt(templateHistory, a.personName, rowTemplateId(a))} />
                       </td>
                     )}
                     {fixedPerson && <td className="py-1.5 pr-3 whitespace-nowrap text-gray-500">{a.dayIndex}/{a.dayTotal}件目</td>}
@@ -769,6 +820,19 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
                   </ul>
                 </div>
               ))}
+              {confirmPostedCombos.length > 0 && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 text-xs text-amber-900">
+                  <p className="font-semibold">投稿済みの組み合わせが{confirmPostedCombos.length}件含まれています。</p>
+                  <ul className="mt-1 space-y-0.5 pl-1">
+                    {confirmPostedCombos.map((c) => (
+                      <li key={`${c.personName}-${c.templateId}`} className="break-words">
+                        ・{c.personName} × {shortTemplateLabel(getScheduleTemplateMeta(c.templateId)?.label ?? c.templateId)}（最終投稿 {formatPostedDate(c.postedAt)}）
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1">このまま予約しますか？（再投稿として予約されます）</p>
+                </div>
+              )}
               {confirmQuotaWarnings.map((w) => (
                 <div key={w} className="bg-amber-50 border border-amber-300 rounded-xl p-3 text-xs text-amber-900 font-semibold">⚠️ {w}</div>
               ))}
@@ -789,7 +853,7 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
                 disabled={submitting}
                 className="text-sm px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors disabled:opacity-50"
               >
-                {submitting ? '登録中...' : '一括予約'}
+                {submitting ? '登録中...' : confirmPostedCombos.length > 0 ? 'このまま予約' : '一括予約'}
               </button>
             </div>
           </div>

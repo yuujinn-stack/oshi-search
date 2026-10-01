@@ -1,6 +1,7 @@
 import { db } from '@/db/client';
-import { instagramPosts } from '@/db/schema';
+import { instagramPosts, instagramPostSchedules } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
+import { buildTemplateHistory, type TemplateHistory } from './instagram-template-history';
 
 export interface InstagramPostRecord {
   id: number;
@@ -70,4 +71,24 @@ export async function listPostedPersonsWithLastDate(): Promise<{ personName: str
     if (!seen.has(r.personName)) seen.set(r.personName, r.publishedAt);
   }
   return Array.from(seen, ([personName, lastPublishedAt]) => ({ personName, lastPublishedAt }));
+}
+
+/**
+ * 「人物 × テンプレート」の投稿履歴（読み取りのみ）。
+ * 予約のうち status='published' かつ media_id ありのものをテンプレート別に数え、
+ * 予約と media_id で結び付かない instagram_posts（手動投稿など）はテンプレ不明として人物ごとに持つ。
+ * 判定ルールは instagram-template-history.ts の buildTemplateHistory。
+ */
+export async function getTemplateHistory(): Promise<TemplateHistory> {
+  const [schedules, posts] = await Promise.all([
+    db.select({
+      personName: instagramPostSchedules.personName,
+      templateId: instagramPostSchedules.templateId,
+      status: instagramPostSchedules.status,
+      mediaId: instagramPostSchedules.mediaId,
+      publishedAt: instagramPostSchedules.publishedAt,
+    }).from(instagramPostSchedules).where(eq(instagramPostSchedules.status, 'published')),
+    db.select({ personName: instagramPosts.personName, mediaId: instagramPosts.mediaId, publishedAt: instagramPosts.publishedAt }).from(instagramPosts),
+  ]);
+  return buildTemplateHistory(schedules, posts);
 }
