@@ -18,6 +18,8 @@ interface Props {
   maxSelected?: number;
   /** 「表示中をすべて選択」「選択をすべて解除」を出すか（人物固定モード＝1人だけの場合は false） */
   allowBulkSelect?: boolean;
+  /** 一覧の上に出す案内（人物固定モードへ切り替えて先頭1人に絞ったとき等。呼び出し側で管理） */
+  notice?: string | null;
 }
 
 function formatShortDateJst(iso: string): string {
@@ -32,12 +34,18 @@ const MAX_RESULTS = 60;
  * 選択順がそのまま投稿枠への割り当て順になる（allocateBulkSlots参照）。
  * 絞り込みを変えても選択済みの人物は解除しない（右側の「選択中」には絞り込み外の人物も含めて全員を出す）。
  */
-export default function PersonMultiSelect({ persons, postedPersonNames, lastPostedAt, selected, onChange, maxSelected, allowBulkSelect = true }: Props) {
+export default function PersonMultiSelect({ persons, postedPersonNames, lastPostedAt, selected, onChange, maxSelected, allowBulkSelect = true, notice }: Props) {
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState(GROUP_ALL);
   // グループを選んだときは既定で現役メンバーだけ。ONで卒業・元メンバーも含める
   const [includeFormer, setIncludeFormer] = useState(false);
   const [bulkNote, setBulkNote] = useState<string | null>(null);
+  // モード（一括選択の可否）が切り替わったら、切替前の一括選択メッセージを消す
+  const [prevAllowBulkSelect, setPrevAllowBulkSelect] = useState(allowBulkSelect);
+  if (prevAllowBulkSelect !== allowBulkSelect) {
+    setPrevAllowBulkSelect(allowBulkSelect);
+    setBulkNote(null);
+  }
 
   const groupOptions = useMemo(() => buildGroupOptions(persons), [persons]);
   const isFiltered = group !== GROUP_ALL || query.trim() !== '';
@@ -49,6 +57,7 @@ export default function PersonMultiSelect({ persons, postedPersonNames, lastPost
   const groupLabel = group === GROUP_ALL ? null : group === GROUP_NONE ? 'グループなし' : group;
   const scopeLabel = isGroup ? (includeFormer ? '卒業・元メンバー含む' : '現役') : null;
   const notSelectedCount = matching.filter((p) => !selected.includes(p.name)).length;
+  const allMatchingSelected = matching.length > 0 && notSelectedCount === 0;
 
   function selectAllShown() {
     const { next, added, skipped } = selectAllMatching(selected, matching, maxSelected);
@@ -120,7 +129,9 @@ export default function PersonMultiSelect({ persons, postedPersonNames, lastPost
               disabled={!isFiltered || notSelectedCount === 0 || (maxSelected !== undefined && selected.length >= maxSelected)}
               className="text-xs px-3 py-1.5 rounded-md bg-violet-50 text-violet-700 font-semibold hover:bg-violet-100 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {groupLabel && !query.trim()
+              {isFiltered && allMatchingSelected
+                ? `全員選択済み（${matching.length}人）`
+                : groupLabel && !query.trim()
                 ? `${groupLabel}を全員選択（${scopeLabel === '現役' ? '現役' : ''}${matching.length}人）`
                 : `表示中をすべて選択（${matching.length}人）`}
             </button>
@@ -135,6 +146,7 @@ export default function PersonMultiSelect({ persons, postedPersonNames, lastPost
             {!isFiltered && <span className="text-[10px] text-gray-400">グループか検索で絞り込むと一括選択できます</span>}
           </div>
         )}
+        {notice && <p className="text-[11px] text-amber-700 mb-2">{notice}</p>}
         {bulkNote && <p className="text-[11px] text-emerald-700 mb-2">{bulkNote}</p>}
         <div className="border border-gray-200 rounded-lg overflow-y-auto" style={{ maxHeight: 280 }}>
           {filtered.length === 0 && (

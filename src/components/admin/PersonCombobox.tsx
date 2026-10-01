@@ -347,10 +347,10 @@ export default function PersonCombobox({
       {/* ── Dropdown ── */}
       {open && (
         <div
-          className="absolute top-full left-0 mt-2 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden"
+          // 最小幅はPC等（sm以上）では従来どおり max(100%, 360px)。スマホ（sm未満）は入力欄と同じ幅にして画面の右へはみ出さないようにする
+          className="absolute top-full left-0 mt-2 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden min-w-full sm:min-w-[max(100%,360px)]"
           style={{
             zIndex: 9999,
-            minWidth: 'max(100%, 360px)',
             maxWidth: 'calc(100vw - 32px)',
           }}
         >

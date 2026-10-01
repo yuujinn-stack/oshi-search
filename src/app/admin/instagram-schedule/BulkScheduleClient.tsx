@@ -61,6 +61,8 @@ const WEEK_DAYS = 7;
 
 export default function BulkScheduleClient({ persons, initialTemplateId, onBulkCreated }: Props) {
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
+  // 複数選択から人物固定モードへ切り替えて先頭1人に絞ったときの案内（選択を変えるか、モードを戻すと消える）
+  const [placementNote, setPlacementNote] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState(initialTemplateId ?? DEFAULT_INSTAGRAM_TEMPLATE_ID);
   const [startDate, setStartDate] = useState(nowJstParts().date);
 
@@ -124,6 +126,7 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
     setPlacement(next);
     // 人物固定モードは1人だけ（既に複数選んでいた場合は先頭の1人を残す）
     if (next === 'fixed-person') setSelectedNames((prev) => prev.slice(0, 1));
+    setPlacementNote(next === 'fixed-person' && selectedNames.length > 1 ? '人物固定モードのため、先頭の1人だけを選択しました。' : null);
   }
 
   function handleSelectWeekMode() {
@@ -292,6 +295,7 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
       setConfirmOpen(false);
       setRows(null);
       setSelectedNames([]);
+      setPlacementNote(null);
       loadReferenceData(); // 空き枠を最新化
       onBulkCreated();
     } catch (err) {
@@ -390,9 +394,10 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
           postedPersonNames={postedNames}
           lastPostedAt={lastPostedAt}
           selected={selectedNames}
-          onChange={setSelectedNames}
+          onChange={(next) => { setSelectedNames(next); setPlacementNote(null); }}
           maxSelected={maxSelectable}
           allowBulkSelect={!fixedPerson}
+          notice={placementNote}
         />
         {overLimitCount > 0 && (
           <p className="text-xs text-amber-600 mt-2">
