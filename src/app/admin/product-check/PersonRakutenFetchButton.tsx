@@ -266,7 +266,7 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
   }
 
   return (
-    <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap">
+    <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap max-w-full">
       <button
         onClick={handleClick}
         disabled={status === 'running'}
@@ -278,7 +278,7 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
 
       {/* 進捗表示（実行中のみ） */}
       {status === 'running' && progressLabel && (
-        <span className="text-xs text-teal-600 whitespace-nowrap">{progressLabel}</span>
+        <span className="text-xs text-teal-600">{progressLabel}</span>
       )}
 
       {/* API設定不足 — 専用表示 */}
@@ -290,14 +290,14 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
 
       {/* 429 レート制限 */}
       {status === 'rate_limited' && (
-        <span className="text-xs text-amber-600 whitespace-nowrap" title="HTTP 429 Too Many Requests — しばらく時間を置いてから再実行してください（成功済みカテゴリはスキップされます）">
+        <span className="text-xs text-amber-600" title="HTTP 429 Too Many Requests — しばらく時間を置いてから再実行してください（成功済みカテゴリはスキップされます）">
           ⏳ 利用制限中{errorCategory ? `（${errorCategory}）` : ''} — しばらく待ってから再実行してください
         </span>
       )}
 
       {/* サーバー側ロック（同一人物の同時実行） */}
       {status === 'locked' && (
-        <span className="text-xs text-amber-600 whitespace-nowrap">この人物の楽天再取得はすでに実行中です</span>
+        <span className="text-xs text-amber-600">この人物の楽天再取得はすでに実行中です</span>
       )}
 
       {/* 正常完了 */}
@@ -306,7 +306,7 @@ export default function PersonRakutenFetchButton({ personName }: { personName: s
           return <span className="text-xs text-gray-400 whitespace-nowrap">API正常・0件</span>;
         }
         return (
-          <span className="text-xs whitespace-nowrap flex items-center gap-1.5">
+          <span className="text-xs flex flex-wrap items-center gap-1.5">
             <span className="text-teal-600 font-medium">取得{aggregate.stored}</span>
             {aggregate.skipped > 0 && <span className="text-gray-400">判定済skip{aggregate.skipped}</span>}
             {aggregate.excluded > 0 && <span className="text-orange-500">除外KW{aggregate.excluded}</span>}

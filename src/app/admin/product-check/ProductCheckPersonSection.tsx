@@ -228,7 +228,7 @@ function PersonProductCard({ p, allPersons }: { p: PersonWithProductStats; allPe
             </span>
           )}
 
-          <div className="ml-auto flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+          <div className="ml-auto flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end max-w-full">
             {/* クイック導線 */}
             <a
               href={`/admin/work-check?person=${encodeURIComponent(p.name)}`}
