@@ -25,6 +25,8 @@ export default async function InstagramSchedulePage() {
     currentGroupName: metas[p.name]?.currentGroupName || undefined,
     activityStatus: metas[p.name]?.activityStatus,
     generation: metas[p.name]?.generation,
+    // グループ絞り込みの「卒業・元メンバーも含む」の判定に使う（src/lib/person-group-filter.ts）
+    formerGroupNames: metas[p.name]?.formerGroupNames,
   }));
 
   return (

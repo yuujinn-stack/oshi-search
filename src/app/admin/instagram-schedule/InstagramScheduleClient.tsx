@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import PersonCombobox, { type PersonOption } from '@/components/admin/PersonCombobox';
 import { safeFetchJson } from './safe-fetch-json';
 import ScheduleList from './ScheduleList';
 import BulkScheduleClient from './BulkScheduleClient';
 import CaptionEditor from './CaptionEditor';
+import GroupFilterSelect from './GroupFilterSelect';
+import { GROUP_ALL, buildGroupOptions, filterPersons } from '@/lib/person-group-filter';
 import { SCHEDULE_TEMPLATE_OPTIONS, DEFAULT_INSTAGRAM_TEMPLATE_ID, getScheduleTemplateMeta } from '@/lib/instagram-templates';
 import { jstWallClockToUtcDate, nowJstParts } from '@/lib/jst-time';
 import { validateCaption } from '@/lib/instagram-caption-rules';
@@ -47,6 +49,11 @@ export default function InstagramScheduleClient({ persons }: Props) {
 
   const [personName, setPersonName] = useState('');
   const [templateId, setTemplateId] = useState(DEFAULT_INSTAGRAM_TEMPLATE_ID);
+  // 人物選択のグループ絞り込み（選択肢は人物データから作る。選んだ人物は絞り込みを変えても解除しない）
+  const [personGroup, setPersonGroup] = useState(GROUP_ALL);
+  const [includeFormer, setIncludeFormer] = useState(false);
+  const groupOptions = useMemo(() => buildGroupOptions(persons), [persons]);
+  const groupFilteredPersons = useMemo(() => filterPersons(persons, personGroup, '', includeFormer), [persons, personGroup, includeFormer]);
   // ?template=… で指定されたテンプレートの初期選択（一括予約タブにも同じ値を渡す）。null=指定なし
   const [initialTemplateId, setInitialTemplateId] = useState<string | null>(null);
 
@@ -200,7 +207,17 @@ export default function InstagramScheduleClient({ persons }: Props) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1">人物</label>
-            <PersonCombobox persons={persons} value={personName} onChange={setPersonName} placeholder="人物名で検索..." />
+            <div className="mb-2">
+              <GroupFilterSelect
+                options={groupOptions}
+                value={personGroup}
+                onChange={setPersonGroup}
+                totalCount={persons.length}
+                includeFormer={includeFormer}
+                onIncludeFormerChange={setIncludeFormer}
+              />
+            </div>
+            <PersonCombobox persons={groupFilteredPersons} value={personName} onChange={setPersonName} placeholder="人物名で検索..." />
           </div>
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1">投稿テンプレート</label>

@@ -392,6 +392,7 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
           selected={selectedNames}
           onChange={setSelectedNames}
           maxSelected={maxSelectable}
+          allowBulkSelect={!fixedPerson}
         />
         {overLimitCount > 0 && (
           <p className="text-xs text-amber-600 mt-2">
