@@ -38,9 +38,10 @@ function TemplateSelect({ value, onChange, label }: { value: string; onChange: (
 }
 
 /**
- * 一括予約「人物固定・テンプレを変える」のテンプレート設定。
- * 自動ローテーション＝使うテンプレートを複数選び、選んだ順に空き枠へ繰り返す。
- * 手動で選択＝1日分は投稿時刻ごとに指定、1週間分は手動で並べたテンプレート列を空き枠順に繰り返す。
+ * 一括予約「人物固定・テンプレを変える」のテンプレート設定（1人の人物に使うテンプレートの並び）。
+ * 人物ごとにこの並びをすべて使ってから次の人物へ進む（instagram-template-plan.ts の planFixedPersonSchedule）。
+ * 自動ローテーション＝使うテンプレートを複数選び、選んだ順。
+ * 手動で選択＝1日分は投稿時刻ごとに指定（時刻順の並び）、1週間分は手動で並べたテンプレート列。
  * 選択肢は予約できる全テンプレート（既存4テンプレート＋H）。
  */
 export default function TemplatePlanSettings({
@@ -80,7 +81,7 @@ export default function TemplatePlanSettings({
       {method === 'rotation' && (
         <div>
           <p className="text-xs text-gray-500 mb-2">
-            使うテンプレートを選んでください（1個以上）。選んだ順番（番号）で、空き枠へ順番に繰り返します。
+            使うテンプレートを選んでください（1個以上）。人物ごとに、選んだ順番（番号）ですべて使ってから次の人物へ進みます。
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
             {TEMPLATES.map((t) => {
@@ -110,7 +111,9 @@ export default function TemplatePlanSettings({
 
       {method === 'manual' && !weekMode && (
         <div>
-          <p className="text-xs text-gray-500 mb-2">投稿時刻ごとにテンプレートを指定してください（すべての枠で必須）。</p>
+          <p className="text-xs text-gray-500 mb-2">
+            投稿時刻ごとにテンプレートを指定してください（すべての枠で必須）。人物ごとにこの並び（1日分）を使い、次の人物は次の空き枠から続けます（予約済み・過去の枠があると時刻は後ろへずれます）。
+          </p>
           <div className="space-y-1.5">
             {dailySlots.map((time) => (
               <div key={time} className="flex items-center gap-3">
@@ -125,7 +128,7 @@ export default function TemplatePlanSettings({
       {method === 'manual' && weekMode && (
         <div>
           <p className="text-xs text-gray-500 mb-2">
-            使うテンプレートを順番に並べてください。空き枠の順（{dailySlots.join(' → ')} → 翌日…）に、この並びを繰り返して割り当てます（同じテンプレートを複数回入れることもできます）。
+            使うテンプレートを順番に並べてください。人物ごとにこの並びをすべて使ってから次の人物へ進み、空き枠の順（{dailySlots.join(' → ')} → 翌日…）に割り当てます（同じテンプレートを複数回入れることもできます）。
           </p>
           <div className="space-y-1.5">
             {sequence.map((id, i) => (

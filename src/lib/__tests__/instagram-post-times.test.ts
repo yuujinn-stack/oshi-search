@@ -4,7 +4,7 @@ import { join } from 'path';
 import {
   defaultPostTimes, validatePostTimes, sortPostTimes, isHourlyTime, evaluatePublishingQuota, HOURLY_TIME_OPTIONS, MAX_POSTS_PER_DAY,
 } from '@/lib/instagram-post-times';
-import { assignTemplatesToSlots, pastSlotIsos } from '@/lib/instagram-template-plan';
+import { planFixedPersonSchedule, templateSequenceForPerson, pastSlotIsos } from '@/lib/instagram-template-plan';
 import { allocateBulkSlots, jstWallClockToUtcDate, DEFAULT_DAILY_SLOTS } from '@/lib/jst-time';
 
 const iso = (d: string, t: string) => jstWallClockToUtcDate(d, t).toISOString();
@@ -49,25 +49,31 @@ describe('1日1/2/3/5/10件 × 人物固定（自動ローテーション・手�
       const plan = allocateBulkSlots('2026-10-01', n, new Set(), times);
       expect(plan.map((a) => a.timeJst)).toEqual(times);
       expect(plan.every((a) => a.dateJst === '2026-10-01')).toBe(true);
-      // 人物固定・自動ローテーション（テンプレ2種）
-      expect(assignTemplatesToSlots(plan, { method: 'rotation', sequence: ['A', 'B'] })).toEqual(plan.map((_, i) => (i % 2 === 0 ? 'A' : 'B')));
-      // 人物固定・手動（時刻ごと）
+      const now = new Date(iso('2026-09-30', '12:00'));
+      // 人物固定・自動ローテーション（テンプレ2種）：人物ごとに A,B を使ってから次の人物へ。1日目は設定した時刻どおり
+      const rot = planFixedPersonSchedule({ startDateJst: '2026-10-01', personNames: ['P1', 'P2', 'P3', 'P4', 'P5'], templates: ['A', 'B'], dailySlots: times, skipIsos: new Set(), now });
+      expect(rot.items.slice(0, n).map((x) => `${x.timeJst} ${x.personName}-${x.templateId}`)).toEqual(
+        times.map((t, i) => `${t} P${Math.floor(i / 2) + 1}-${i % 2 === 0 ? 'A' : 'B'}`),
+      );
+      // 人物固定・手動（時刻ごと）：1人なら1日分の時刻どおり
       const bySlot = Object.fromEntries(times.map((t, i) => [t, `T${i}`]));
-      expect(assignTemplatesToSlots(plan, { method: 'manual-slot', bySlot })).toEqual(times.map((_, i) => `T${i}`));
+      const man = planFixedPersonSchedule({ startDateJst: '2026-10-01', personNames: ['P1'], templates: templateSequenceForPerson({ method: 'manual-slot', bySlot }, times), dailySlots: times, skipIsos: new Set(), now });
+      expect(man.items.map((x) => `${x.dateJst} ${x.timeJst} ${x.templateId}`)).toEqual(times.map((t, i) => `2026-10-01 ${t} T${i}`));
     });
   }
-  it('人物固定・自動ローテーション（H,作品,サブスク,出演作3選 × 1日5件）は日をまたいでも続き、毎日Hに戻らない', () => {
-    const plan = allocateBulkSlots('2026-10-01', 10, new Set(), defaultPostTimes(5));
-    const t = assignTemplatesToSlots(plan, { method: 'rotation', sequence: ['H', '作品', 'サブスク', '出演作3選'] });
-    expect(plan.map((a, i) => `${a.dateJst} ${a.timeJst} ${t[i]}`)).toEqual([
-      '2026-10-01 09:00 H', '2026-10-01 12:00 作品', '2026-10-01 15:00 サブスク', '2026-10-01 18:00 出演作3選', '2026-10-01 20:00 H',
-      '2026-10-02 09:00 作品', '2026-10-02 12:00 サブスク', '2026-10-02 15:00 出演作3選', '2026-10-02 18:00 H', '2026-10-02 20:00 作品',
+  it('人物固定・自動ローテーション（H,作品,サブスク,出演作3選 × 1日5件・2人）は日をまたいでも続き、毎日リセットしない', () => {
+    const p = planFixedPersonSchedule({
+      startDateJst: '2026-10-01', personNames: ['A', 'B'], templates: ['H', '作品', 'サブスク', '出演作3選'], dailySlots: defaultPostTimes(5),
+      skipIsos: new Set(), now: new Date(iso('2026-09-30', '12:00')),
+    });
+    expect(p.items.map((x) => `${x.dateJst} ${x.timeJst} ${x.personName}-${x.templateId}`)).toEqual([
+      '2026-10-01 09:00 A-H', '2026-10-01 12:00 A-作品', '2026-10-01 15:00 A-サブスク', '2026-10-01 18:00 A-出演作3選', '2026-10-01 20:00 B-H',
+      '2026-10-02 09:00 B-作品', '2026-10-02 12:00 B-サブスク', '2026-10-02 15:00 B-出演作3選',
     ]);
   });
   it('人物固定・手動（1日5件、同じテンプレを複数回）', () => {
-    const plan = allocateBulkSlots('2026-10-01', 5, new Set(), defaultPostTimes(5));
     const bySlot = { '09:00': 'H', '12:00': '作品', '15:00': 'H', '18:00': 'サブスク', '20:00': '出演作3選' };
-    expect(assignTemplatesToSlots(plan, { method: 'manual-slot', bySlot })).toEqual(['H', '作品', 'H', 'サブスク', '出演作3選']);
+    expect(templateSequenceForPerson({ method: 'manual-slot', bySlot }, defaultPostTimes(5))).toEqual(['H', '作品', 'H', 'サブスク', '出演作3選']);
   });
   it('人物を変える・テンプレ固定（5人 × 1日5件）：各時刻に1人ずつ。人物より枠が多くても同じ人物は繰り返さない', () => {
     const persons = ['目黒蓮', '梅澤美波', '久保史緒里', '松本若菜', '松村沙友理'];
@@ -97,8 +103,15 @@ describe('1週間分（1件・3件・10件＝70件）と予約済み枠のスキ
     expect(plan.some((a) => a.scheduledAtIso === iso('2026-10-01', '15:00'))).toBe(false);
     expect(plan).toHaveLength(70);
     expect(plan.at(-1)).toMatchObject({ dateJst: '2026-10-08', timeJst: '09:00' });
-    const t = assignTemplatesToSlots(plan, { method: 'rotation', sequence: ['A', 'B', 'C'] });
-    expect(t.slice(0, 6)).toEqual(['A', 'B', 'C', 'A', 'B', 'C']);
+    // 人物固定（10人×7テンプレ＝70件）でも、予約済み枠を飛ばしてキュー順を保つ
+    const p = planFixedPersonSchedule({
+      startDateJst: '2026-10-01', personNames: Array.from({ length: 10 }, (_, i) => `P${i + 1}`), templates: ['A', 'B', 'C', 'D', 'E', 'F', 'G'],
+      dailySlots: defaultPostTimes(10), skipIsos: occupied, maxCount: 70, now: new Date(iso('2026-09-30', '12:00')),
+    });
+    expect(p.items).toHaveLength(70);
+    expect(p.items.slice(0, 6).map((x) => `${x.timeJst} ${x.personName}-${x.templateId}`)).toEqual(
+      ['09:00 P1-A', '10:00 P1-B', '11:00 P1-C', '12:00 P1-D', '13:00 P1-E', '16:00 P1-F'],
+    );
   });
   it('過去の枠（今日の経過済みの時刻）は割り当てない', () => {
     const now = new Date(iso('2026-10-01', '12:30'));

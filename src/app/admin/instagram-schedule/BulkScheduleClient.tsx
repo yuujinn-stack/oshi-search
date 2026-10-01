@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import { safeFetchJson } from './safe-fetch-json';
 import PersonMultiSelect from './PersonMultiSelect';
@@ -11,7 +11,7 @@ import { SCHEDULE_TEMPLATE_OPTIONS, DEFAULT_INSTAGRAM_TEMPLATE_ID, AUTO_TEMPLATE
 import { validateCaption } from '@/lib/instagram-caption-rules';
 import { allocateBulkSlots, formatJst, nowJstParts, type BulkSlotAssignment } from '@/lib/jst-time';
 import { defaultPostTimes, sortPostTimes, validatePostTimes, evaluatePublishingQuota, type PublishingQuota } from '@/lib/instagram-post-times';
-import { assignTemplatesToSlots, pastSlotIsos, type TemplatePlanRule } from '@/lib/instagram-template-plan';
+import { planFixedPersonSchedule, templateSequenceForPerson, pastSlotIsos, type TemplatePlanRule } from '@/lib/instagram-template-plan';
 
 interface PostImage {
   /** 1から始まる並び順（Jは4枚） */
@@ -59,10 +59,22 @@ interface Props {
 /** 「1週間分を作成」モードの対象日数 */
 const WEEK_DAYS = 7;
 
+/** 配置プレビュー・一括生成の1行（両モード共通） */
+interface PlanRow {
+  personName: string;
+  /** 人物固定モードで割り当てたテンプレート（従来モードは null＝画面で選んだテンプレートを使う） */
+  templateId: string | null;
+  dateJst: string;
+  timeJst: string;
+  scheduledAtIso: string;
+  /** 人物固定モードのみ：その日の何件目か／その日の件数／最終日の調整で前日に寄せた投稿 */
+  dayIndex?: number;
+  dayTotal?: number;
+  adjusted?: boolean;
+}
+
 export default function BulkScheduleClient({ persons, initialTemplateId, onBulkCreated }: Props) {
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
-  // 複数選択から人物固定モードへ切り替えて先頭1人に絞ったときの案内（選択を変えるか、モードを戻すと消える）
-  const [placementNote, setPlacementNote] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState(initialTemplateId ?? DEFAULT_INSTAGRAM_TEMPLATE_ID);
   const [startDate, setStartDate] = useState(nowJstParts().date);
 
@@ -72,13 +84,15 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
   const [perDayCount, setPerDayCount] = useState(3);
   const [postTimes, setPostTimes] = useState<string[]>(() => defaultPostTimes(3));
 
-  // 配置方法：「人物を変える・テンプレ固定」（従来どおり）／「人物固定・テンプレを変える」（人物1人に複数テンプレートを割り当てる）
+  // 配置方法：「人物を変える・テンプレ固定」（従来どおり）／「人物固定・テンプレを変える」（人物ごとに選んだテンプレートをすべて使ってから次の人物へ）
   const [placement, setPlacement] = useState<'vary-person' | 'fixed-person'>('vary-person');
   const fixedPerson = placement === 'fixed-person';
   const [templateMethod, setTemplateMethod] = useState<TemplateMethod>('rotation');
   const [rotationTemplates, setRotationTemplates] = useState<string[]>([]);
   const [manualBySlot, setManualBySlot] = useState<Record<string, string>>({});
   const [manualSequence, setManualSequence] = useState<string[]>([]);
+  // 人物固定モード：最終日の投稿数を±1件調整してまとめる（既定 OFF＝1日あたり件数を厳守）
+  const [adjustLastDay, setAdjustLastDay] = useState(false);
 
   const [postedNames, setPostedNames] = useState<Set<string>>(new Set());
   const [lastPostedAt, setLastPostedAt] = useState<Map<string, string>>(new Map());
@@ -120,14 +134,7 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
   useEffect(() => {
     setRows(null);
     setSubmittedCount(null);
-  }, [selectedNames, startDate, templateId, bulkMode, perDayCount, postTimes, placement, templateMethod, rotationTemplates, manualBySlot, manualSequence]);
-
-  function handleSelectPlacement(next: 'vary-person' | 'fixed-person') {
-    setPlacement(next);
-    // 人物固定モードは1人だけ（既に複数選んでいた場合は先頭の1人を残す）
-    if (next === 'fixed-person') setSelectedNames((prev) => prev.slice(0, 1));
-    setPlacementNote(next === 'fixed-person' && selectedNames.length > 1 ? '人物固定モードのため、先頭の1人だけを選択しました。' : null);
-  }
+  }, [selectedNames, startDate, templateId, bulkMode, perDayCount, postTimes, placement, templateMethod, rotationTemplates, manualBySlot, manualSequence, adjustLastDay]);
 
   function handleSelectWeekMode() {
     setBulkMode('week');
@@ -143,27 +150,68 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
   const dailySlots = useMemo(() => sortPostTimes(postTimes), [postTimes]);
   const todayJst = nowJstParts().date;
   const startDateError = startDate < todayJst ? '開始日に過去の日付は指定できません（今日以降を選んでください）。' : null;
-  const maxSelectable = fixedPerson ? 1 : bulkMode === 'week' ? WEEK_DAYS * perDayCount : undefined;
+  // 従来モードの1週間分は「7日×1日あたり件数」人まで。人物固定モードは人数の上限なし（予約件数を1週間分の枠数で打ち切る）
+  const maxSelectable = !fixedPerson && bulkMode === 'week' ? WEEK_DAYS * perDayCount : undefined;
   const overLimitCount = maxSelectable !== undefined ? Math.max(0, selectedNames.length - maxSelectable) : 0;
 
-  const plan: BulkSlotAssignment[] = useMemo(() => {
-    if (!occupiedIsos || selectedNames.length === 0 || timesError || startDateError) return [];
-    // 予約済みの枠に加えて、現在時刻を過ぎた枠もスキップする（予約APIが過去日時を拒否するため）
-    const skip = new Set([...occupiedIsos, ...pastSlotIsos(startDate, todayJst, dailySlots, new Date())]);
-    // 人物固定モード：1日あたり投稿数 ×（通常=1日／1週間分=7日）の枠。
-    // 従来モード：選んだ人物の人数ぶん（1週間分は上限まで）。人物より枠が多くても同じ人物を繰り返し使うことはない。
-    const count = fixedPerson
-      ? perDayCount * (bulkMode === 'week' ? WEEK_DAYS : 1)
-      : maxSelectable !== undefined ? Math.min(selectedNames.length, maxSelectable) : selectedNames.length;
+  // 予約済みの枠に加えて、現在時刻を過ぎた枠もスキップする（予約APIが過去日時を拒否するため）
+  const skipIsos = useMemo(
+    () => (occupiedIsos && !timesError && !startDateError ? new Set([...occupiedIsos, ...pastSlotIsos(startDate, todayJst, dailySlots, new Date())]) : null),
+    [occupiedIsos, startDate, todayJst, dailySlots, timesError, startDateError],
+  );
+
+  // 従来モード：選んだ人物の人数ぶん（1週間分は上限まで）。人物より枠が多くても同じ人物を繰り返し使うことはない。
+  const varyPlan: BulkSlotAssignment[] = useMemo(() => {
+    if (fixedPerson || !skipIsos || selectedNames.length === 0) return [];
+    const count = maxSelectable !== undefined ? Math.min(selectedNames.length, maxSelectable) : selectedNames.length;
     try {
-      return allocateBulkSlots(startDate, count, skip, dailySlots);
+      return allocateBulkSlots(startDate, count, skipIsos, dailySlots);
     } catch {
       return [];
     }
-  }, [occupiedIsos, selectedNames.length, startDate, todayJst, dailySlots, maxSelectable, fixedPerson, perDayCount, bulkMode, timesError, startDateError]);
+  }, [fixedPerson, skipIsos, selectedNames.length, startDate, dailySlots, maxSelectable]);
 
-  // 人物・日時の入力チェック（両モード共通）
-  const planError: string | null = timesError ?? startDateError ?? (occupiedIsos && selectedNames.length > 0 && plan.length === 0
+  // 人物固定モード：1人の人物に使うテンプレートの並び（自動ローテーション＝選んだ順／手動＝時刻順・並べた順）
+  const personTemplates: (string | null)[] = useMemo(() => {
+    if (!fixedPerson) return [];
+    const rule: TemplatePlanRule =
+      templateMethod === 'rotation'
+        ? { method: 'rotation', sequence: rotationTemplates }
+        : bulkMode === 'week'
+          ? { method: 'manual-sequence', sequence: manualSequence }
+          : { method: 'manual-slot', bySlot: manualBySlot };
+    return templateSequenceForPerson(rule, dailySlots);
+  }, [fixedPerson, templateMethod, rotationTemplates, manualSequence, manualBySlot, bulkMode, dailySlots]);
+
+  // 人物固定モード：人物（選択順）×テンプレート（並び順）の投稿キューを、空き枠へ順番に割り当てる（日をまたいでも続きから）。
+  // 件数：通常＝キューすべて、1週間分＝7日×1日あたり件数まで（超えた分は予約しない）
+  const fixedPlan = useMemo(() => {
+    if (!fixedPerson || !skipIsos || selectedNames.length === 0 || personTemplates.length === 0) return null;
+    try {
+      return planFixedPersonSchedule({
+        startDateJst: startDate,
+        personNames: selectedNames,
+        templates: personTemplates,
+        dailySlots,
+        skipIsos,
+        maxCount: bulkMode === 'week' ? WEEK_DAYS * perDayCount : undefined,
+        adjustLastDay,
+        now: new Date(),
+      });
+    } catch {
+      return null;
+    }
+  }, [fixedPerson, skipIsos, selectedNames, personTemplates, startDate, dailySlots, bulkMode, perDayCount, adjustLastDay]);
+
+  const plan: PlanRow[] = useMemo(
+    () => (fixedPerson
+      ? fixedPlan?.items ?? []
+      : varyPlan.map((a) => ({ personName: selectedNames[a.index], templateId: null, dateJst: a.dateJst, timeJst: a.timeJst, scheduledAtIso: a.scheduledAtIso }))),
+    [fixedPerson, fixedPlan, varyPlan, selectedNames],
+  );
+
+  // 人物・日時の入力チェック（両モード共通。人物固定モードはテンプレートが決まっているのに枠が0件のときだけ）
+  const planError: string | null = timesError ?? startDateError ?? (occupiedIsos && selectedNames.length > 0 && plan.length === 0 && (!fixedPerson || personTemplates.length > 0)
     ? '予約できる空き枠がありません（予約済み・過去の枠を除くと0件です）。開始日や投稿時刻を変更してください。'
     : null);
 
@@ -173,30 +221,18 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
     [quota, occupiedIsos, plan],
   );
 
-  // 人物固定モード：各枠のテンプレート（自動ローテーション／手動）。従来モードでは空
-  const planTemplates: (string | null)[] = useMemo(() => {
-    if (!fixedPerson) return [];
-    const rule: TemplatePlanRule =
-      templateMethod === 'rotation'
-        ? { method: 'rotation', sequence: rotationTemplates }
-        : bulkMode === 'week'
-          ? { method: 'manual-sequence', sequence: manualSequence }
-          : { method: 'manual-slot', bySlot: manualBySlot };
-    return assignTemplatesToSlots(plan, rule);
-  }, [fixedPerson, templateMethod, rotationTemplates, manualSequence, manualBySlot, bulkMode, plan]);
-
   // 人物固定モードの入力チェック（問題があれば生成ボタンを押せない）
   const fixedPersonError: string | null = !fixedPerson
     ? null
     : selectedNames.length === 0
-      ? '人物を1人選択してください。'
+      ? '人物を1人以上選択してください。'
       : templateMethod === 'rotation' && rotationTemplates.length === 0
         ? '使うテンプレートを1つ以上選択してください。'
         : templateMethod === 'manual' && bulkMode === 'week' && (manualSequence.length === 0 || manualSequence.some((x) => !x))
           ? 'テンプレート列を1つ以上追加し、すべての行でテンプレートを選択してください。'
           : templateMethod === 'manual' && bulkMode !== 'week' && dailySlots.some((t) => !manualBySlot[t])
             ? 'すべての投稿枠にテンプレートを指定してください。'
-            : planTemplates.some((t) => !t)
+            : personTemplates.some((t) => !t)
                 ? 'テンプレートが決まっていない枠があります。'
                 : null;
 
@@ -225,10 +261,10 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
     if (plan.length === 0) return;
     setGenerating(true);
     setSubmittedCount(null);
-    const initial: BulkRow[] = plan.map((a, i) => ({
-      personName: fixedPerson ? selectedNames[0] : selectedNames[a.index],
+    const initial: BulkRow[] = plan.map((a) => ({
+      personName: a.personName,
       scheduledAtIso: a.scheduledAtIso,
-      templateId: fixedPerson ? planTemplates[i] ?? undefined : undefined,
+      templateId: a.templateId ?? undefined,
       genStatus: 'pending',
       excluded: false,
     }));
@@ -295,7 +331,6 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
       setConfirmOpen(false);
       setRows(null);
       setSelectedNames([]);
-      setPlacementNote(null);
       loadReferenceData(); // 空き枠を最新化
       onBulkCreated();
     } catch (err) {
@@ -369,7 +404,7 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
             <button
               key={v}
               type="button"
-              onClick={() => handleSelectPlacement(v)}
+              onClick={() => setPlacement(v)}
               className={`text-xs font-semibold px-4 py-1.5 rounded-md transition-colors ${
                 placement === v ? 'bg-white text-slate-800 shadow-sm' : 'text-gray-500 hover:text-slate-700'
               }`}
@@ -380,24 +415,23 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
         </div>
         {fixedPerson && (
           <p className="text-xs text-gray-500 mt-3">
-            1人の人物について、{bulkMode === 'week' ? `開始日から${WEEK_DAYS}日間` : '開始日の1日分'}、1日あたり{perDayCount}件
-            （計{perDayCount * (bulkMode === 'week' ? WEEK_DAYS : 1)}件）の投稿を、枠ごとにテンプレートを変えて準備します。
+            選んだ人物ごとに、選んだテンプレートを順番にすべて使ってから次の人物へ進みます（人物は選択した順）。
+            1日あたり{perDayCount}件ずつ割り当て、日付が変わっても前日の続きから進みます。
+            {bulkMode === 'week' && `1週間分は${WEEK_DAYS}日×${perDayCount}件＝最大${WEEK_DAYS * perDayCount}件まで（超えた分は予約しません）。`}
           </p>
         )}
       </section>
 
       {/* 2. 人物を複数選択 */}
       <section className="bg-white border border-gray-200 rounded-xl p-5">
-        <h2 className="text-sm font-bold text-slate-700 mb-3">{fixedPerson ? '2. 人物を1人選択' : '2. 人物を複数選択'}</h2>
+        <h2 className="text-sm font-bold text-slate-700 mb-3">2. 人物を複数選択</h2>
         <PersonMultiSelect
           persons={persons}
           postedPersonNames={postedNames}
           lastPostedAt={lastPostedAt}
           selected={selectedNames}
-          onChange={(next) => { setSelectedNames(next); setPlacementNote(null); }}
+          onChange={setSelectedNames}
           maxSelected={maxSelectable}
-          allowBulkSelect={!fixedPerson}
-          notice={placementNote}
         />
         {overLimitCount > 0 && (
           <p className="text-xs text-amber-600 mt-2">
@@ -444,6 +478,25 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
           />
         </div>
         {fixedPerson && (
+          <div className="border border-gray-200 rounded-lg p-4 mb-4">
+            <label className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
+              <input type="checkbox" checked={adjustLastDay} onChange={(e) => setAdjustLastDay(e.target.checked)} className="mt-0.5 shrink-0" />
+              <span>
+                <span className="font-semibold">最終日の投稿数を±1件調整してまとめる</span>
+                <span className="block text-gray-500 mt-0.5">
+                  OFF：1日{perDayCount}件を厳守します（最終日は残りの件数）。
+                  ON：最終日が1件だけになる場合に限り、前日の最後の投稿の1時間後に入れて前日を{perDayCount + 1}件で終えます。
+                  最終日が{Math.max(perDayCount - 1, 0)}件以下になる場合はそのまま終えます。通常の日の件数は変えません。
+                  予約済み・過去の時刻や23時より後になる場合、1週間分の上限で打ち切った場合は調整しません。
+                </span>
+              </span>
+            </label>
+            {adjustLastDay && fixedPlan?.adjustSkippedReason && (
+              <p className="text-[11px] text-amber-700 mt-2">{fixedPlan.adjustSkippedReason}</p>
+            )}
+          </div>
+        )}
+        {fixedPerson && (
           <TemplatePlanSettings
             method={templateMethod}
             onMethodChange={setTemplateMethod}
@@ -472,7 +525,15 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
           <p className="text-[11px] text-gray-400 mb-2">Instagramの投稿上限を確認できませんでした（{quotaError}）。</p>
         )}
         {plan.length > 0 && (
-          <p className="text-xs text-gray-500 mb-1">配置プレビュー：{plan.length}件</p>
+          <p className="text-xs text-gray-500 mb-1">
+            配置プレビュー：{plan.length}件
+            {fixedPerson && fixedPlan && `（${selectedNames.length}人 × テンプレート${personTemplates.length}個${fixedPlan.omittedCount > 0 ? `＝${fixedPlan.queueLength}件のうち` : ''}）`}
+          </p>
+        )}
+        {fixedPerson && fixedPlan && fixedPlan.omittedCount > 0 && (
+          <p className="text-xs text-amber-700 mb-2">
+            1週間分の上限（{WEEK_DAYS * perDayCount}件）に入りきらない{fixedPlan.omittedCount}件は予約しません（最後に予約されるのは {plan.at(-1)?.personName}・{getScheduleTemplateMeta(plan.at(-1)?.templateId ?? '')?.label ?? plan.at(-1)?.templateId}）。
+          </p>
         )}
 
         {selectedNames.length === 0 ? (
@@ -484,29 +545,52 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-gray-500 border-b border-gray-200">
-                  <th className="py-1.5 pr-3">日付</th>
+                  {!fixedPerson && <th className="py-1.5 pr-3">日付</th>}
                   <th className="py-1.5 pr-3">投稿予定時刻（JST）</th>
                   <th className="py-1.5 pr-3">人物</th>
                   <th className="py-1.5 pr-3">テンプレート</th>
+                  {fixedPerson && <th className="py-1.5 pr-3 whitespace-nowrap">その日</th>}
                 </tr>
               </thead>
               <tbody>
-                {plan.map((a, i) => (
-                  <tr key={a.scheduledAtIso} className={`border-b ${i > 0 && plan[i - 1].dateJst !== a.dateJst ? 'border-t border-t-gray-200' : ''} border-gray-50`}>
-                    <td className="py-1.5 pr-3 whitespace-nowrap text-slate-500">{i === 0 || plan[i - 1].dateJst !== a.dateJst ? a.dateJst : ''}</td>
-                    <td className="py-1.5 pr-3 whitespace-nowrap text-slate-700">{a.timeJst}</td>
-                    <td className="py-1.5 pr-3 font-medium text-slate-800">{fixedPerson ? selectedNames[0] : selectedNames[a.index]}</td>
+                {plan.map((a, i) => {
+                  const newDay = i === 0 || plan[i - 1].dateJst !== a.dateJst;
+                  // 前日の最後と同じ人物から始まる日は「前日の続き」と表示する（日をまたいだ続きが分かるように）
+                  const continued = fixedPerson && newDay && i > 0 && plan[i - 1].personName === a.personName;
+                  return (
+                  <Fragment key={a.scheduledAtIso}>
+                  {/* 人物固定モード：日付ごとの見出し行（何日目・その日の件数）。日をまたいだ続きが分かるように */}
+                  {fixedPerson && newDay && (
+                    <tr className="bg-gray-50">
+                      <td colSpan={4} className="py-1.5 px-2 text-[11px] font-semibold text-slate-600 border-t-2 border-gray-300">
+                        {a.dateJst}（{plan.slice(0, i + 1).filter((x, k) => k === 0 || plan[k - 1].dateJst !== x.dateJst).length}日目・{a.dayTotal}件）
+                      </td>
+                    </tr>
+                  )}
+                  <tr className={`border-b ${!fixedPerson && newDay && i > 0 ? 'border-t-2 border-t-gray-300' : ''} border-gray-50`}>
+                    {!fixedPerson && <td className="py-1.5 pr-3 whitespace-nowrap text-slate-500 align-top">{newDay ? a.dateJst : ''}</td>}
+                    <td className="py-1.5 pr-3 whitespace-nowrap text-slate-700">
+                      {a.timeJst}
+                      {a.adjusted && <span className="ml-1 text-[10px] text-amber-700 bg-amber-50 rounded px-1">最終日調整</span>}
+                    </td>
+                    <td className="py-1.5 pr-3 font-medium text-slate-800">
+                      {a.personName}
+                      {continued && <span className="ml-1 text-[10px] font-normal text-gray-400">（前日の続き）</span>}
+                    </td>
                     {fixedPerson ? (
-                      <td className={`py-1.5 pr-3 ${planTemplates[i] ? 'text-violet-700' : 'text-red-500'}`}>
-                        {planTemplates[i] ? getScheduleTemplateMeta(planTemplates[i]!)?.label ?? planTemplates[i] : '未指定'}
+                      <td className={`py-1.5 pr-3 ${a.templateId ? 'text-violet-700' : 'text-red-500'}`}>
+                        {a.templateId ? getScheduleTemplateMeta(a.templateId)?.label ?? a.templateId : '未指定'}
                       </td>
                     ) : (
                       <td className="py-1.5 pr-3 text-slate-600">
                         {templateId === AUTO_TEMPLATE_ID ? '自動（生成時に決定）' : getScheduleTemplateMeta(templateId)?.label ?? templateId}
                       </td>
                     )}
+                    {fixedPerson && <td className="py-1.5 pr-3 whitespace-nowrap text-gray-500">{a.dayIndex}/{a.dayTotal}件目</td>}
                   </tr>
-                ))}
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
