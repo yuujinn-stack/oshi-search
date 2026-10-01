@@ -176,3 +176,63 @@ describe('人物固定・テンプレを変える：過去の枠を除外', () =
     expect(p.map((a) => `${a.dateJst} ${a.timeJst}`)).toEqual(['2026-10-01 09:00', '2026-10-01 15:00']);
   });
 });
+
+describe('必要日数の自動計算（総投稿数＝人物数×テンプレ数、日数＝総投稿数÷1日あたり件数の切り上げ）', () => {
+  const sum = (over: Partial<FixedPersonPlanInput> & Pick<FixedPersonPlanInput, 'personNames' | 'templates' | 'dailySlots'>) => plan(over).summary;
+  it('ケース1：3人×3テンプレ・1日5件 → 9投稿・2日（10/01〜10/02）', () => {
+    expect(sum({ personNames: persons(3), templates: HGJ, dailySlots: defaultPostTimes(5) })).toMatchObject({
+      totalPosts: 9, scheduledCount: 9, omittedCount: 0, perDay: 5, baseDays: 2, days: 2, startDateJst: '2026-10-01', endDateJst: '2026-10-02', dayDiff: 0,
+    });
+  });
+  it('ケース2：6人×3テンプレ・1日5件 → 18投稿・4日（10/01〜10/04）', () => {
+    expect(sum({ personNames: persons(6), templates: HGJ, dailySlots: defaultPostTimes(5) })).toMatchObject({ totalPosts: 18, baseDays: 4, days: 4, endDateJst: '2026-10-04' });
+  });
+  it('ケース3：10人×3テンプレ・1日10件 → 30投稿・3日', () => {
+    expect(sum({ personNames: persons(10), templates: HGJ, dailySlots: defaultPostTimes(10) })).toMatchObject({ totalPosts: 30, baseDays: 3, days: 3 });
+  });
+  it('ケース4：33人×3テンプレ・1日5件 → 99投稿・20日（全件を予約）', () => {
+    expect(sum({ personNames: persons(33), templates: HGJ, dailySlots: defaultPostTimes(5) })).toMatchObject({
+      totalPosts: 99, scheduledCount: 99, omittedCount: 0, baseDays: 20, days: 20, endDateJst: '2026-10-20',
+    });
+  });
+  it('ケース5：同じく「最大7日分まで予約」ON → 予約予定35件・未予約64件・7日', () => {
+    expect(sum({ personNames: persons(33), templates: HGJ, dailySlots: defaultPostTimes(5), maxCount: 7 * 5 })).toMatchObject({
+      totalPosts: 99, scheduledCount: 35, omittedCount: 64, baseDays: 7, days: 7, endDateJst: '2026-10-07',
+    });
+  });
+  it('ケース6：途中の予約済み枠で4日以内に18枠取れない（20枠−3枠＝17枠）→ 投稿は飛ばさず、実際は5日（1日延長）', () => {
+    const skip = new Set([iso('2026-10-02', '12:00'), iso('2026-10-03', '18:00'), iso('2026-10-04', '09:00')]);
+    const p = plan({ personNames: persons(6), templates: HGJ, dailySlots: defaultPostTimes(5), skipIsos: skip });
+    expect(p.summary).toMatchObject({ totalPosts: 18, scheduledCount: 18, baseDays: 4, days: 5, endDateJst: '2026-10-05', dayDiff: 1 });
+    expect(p.items.map((x) => `${x.personName}-${x.templateId}`)).toEqual(buildPersonTemplateQueue(persons(6), HGJ).map((q) => `${q.personName}-${q.templateId}`));
+    expect(p.items.at(-1)).toMatchObject({ dateJst: '2026-10-05', dayNumber: 5 });
+  });
+  it('ケース6：予約済みが2枠だけなら4日（20枠）に収まり延長なし', () => {
+    const skip = new Set([iso('2026-10-02', '12:00'), iso('2026-10-03', '18:00')]);
+    expect(plan({ personNames: persons(6), templates: HGJ, dailySlots: defaultPostTimes(5), skipIsos: skip }).summary).toMatchObject({ baseDays: 4, days: 4, dayDiff: 0 });
+  });
+  it('ケース6：1日まるごと予約済みの日があっても通し日数で数える（その日は投稿0件）', () => {
+    const skip = new Set(defaultPostTimes(5).map((t) => iso('2026-10-02', t)));
+    const p = plan({ personNames: persons(3), templates: HGJ, dailySlots: defaultPostTimes(5), skipIsos: skip });
+    expect(p.summary).toMatchObject({ baseDays: 2, days: 3, startDateJst: '2026-10-01', endDateJst: '2026-10-03', dayDiff: 1 });
+    expect(p.items.filter((x) => x.dateJst === '2026-10-03').every((x) => x.dayNumber === 3)).toBe(true);
+  });
+  it('ケース7：11投稿・1日5件・最終日±1 OFF → 5/5/1・3日', () => {
+    const p = plan({ personNames: persons(11), templates: ['H'], dailySlots: defaultPostTimes(5) });
+    expect(dayCounts(p.items)).toEqual([5, 5, 1]);
+    expect(p.summary).toMatchObject({ totalPosts: 11, baseDays: 3, days: 3, dayDiff: 0, adjusted: false });
+  });
+  it('ケース8：11投稿・1日5件・最終日±1 ON → 5/6・2日（計算上3日から1日短縮）', () => {
+    const p = plan({ personNames: persons(11), templates: ['H'], dailySlots: defaultPostTimes(5), adjustLastDay: true });
+    expect(dayCounts(p.items)).toEqual([5, 6]);
+    expect(p.summary).toMatchObject({ totalPosts: 11, baseDays: 3, days: 2, dayDiff: -1, adjusted: true, endDateJst: '2026-10-02' });
+  });
+  it('ケース11：テンプレ4種類 → 人数×4で計算（5人×4＝20投稿・1日5件で4日）', () => {
+    const p = plan({ personNames: persons(5), templates: ['H', 'G', 'J', 'K'], dailySlots: defaultPostTimes(5) });
+    expect(p.summary).toMatchObject({ totalPosts: 20, baseDays: 4, days: 4 });
+    expect(p.items.slice(0, 5).map((x) => `${x.personName}-${x.templateId}`)).toEqual(['P1-H', 'P1-G', 'P1-J', 'P1-K', 'P2-H']);
+  });
+  it('人物・テンプレが0なら 0投稿・0日', () => {
+    expect(sum({ personNames: [], templates: HGJ, dailySlots: slots3 })).toMatchObject({ totalPosts: 0, scheduledCount: 0, days: 0, startDateJst: null, endDateJst: null });
+  });
+});

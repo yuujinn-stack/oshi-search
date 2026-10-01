@@ -39,6 +39,31 @@ export interface FixedPersonPlanItem extends QueueItem {
   dayTotal: number;
   /** 「最終日の投稿数を±1件調整」で前日に寄せた投稿（通常の投稿時刻の外） */
   adjusted?: boolean;
+  /** 最初の投稿日を1日目とした通し日数（投稿のない日も数える） */
+  dayNumber: number;
+}
+
+/** 画面の「総投稿数・予約予定・未予約・必要日数・予定期間」。配置結果（items）から計算するので、表示と予約内容は必ず一致する */
+export interface FixedPersonPlanSummary {
+  /** 総投稿数（人物数 × テンプレ数） */
+  totalPosts: number;
+  /** 予約予定数（「最大7日分まで予約」で打ち切った後） */
+  scheduledCount: number;
+  /** 未予約数（打ち切った件数） */
+  omittedCount: number;
+  /** 1日あたり投稿数 */
+  perDay: number;
+  /** 計算上の日数（予約予定数 ÷ 1日あたり投稿数 の切り上げ） */
+  baseDays: number;
+  /** 実際の日数（最初の投稿日〜最後の投稿日。予約済み・過去の枠や最終日調整を反映） */
+  days: number;
+  /** 予定期間（最初の投稿日・最後の投稿日。0件なら null） */
+  startDateJst: string | null;
+  endDateJst: string | null;
+  /** 実際の日数 − 計算上の日数（＋＝予約済み・過去の枠で延長、−＝最終日調整で短縮） */
+  dayDiff: number;
+  /** 最終日の調整を行ったか */
+  adjusted: boolean;
 }
 
 export interface FixedPersonPlan {
@@ -49,6 +74,13 @@ export interface FixedPersonPlan {
   omittedCount: number;
   /** 最終日の調整を行わなかった理由（ON で、最終日が1件だけになったのに寄せられなかったときだけ） */
   adjustSkippedReason: string | null;
+  summary: FixedPersonPlanSummary;
+}
+
+/** JSTの日付（YYYY-MM-DD）どうしの日数差 */
+function daysBetween(fromJst: string, toJst: string): number {
+  const [a, b] = [fromJst, toJst].map((d) => Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10))));
+  return Math.round((b - a) / 86_400_000);
 }
 
 export interface FixedPersonPlanInput {
@@ -86,7 +118,7 @@ export function planFixedPersonSchedule(input: FixedPersonPlanInput): FixedPerso
   const queue = buildPersonTemplateQueue(input.personNames, input.templates);
   const count = input.maxCount !== undefined ? Math.min(queue.length, input.maxCount) : queue.length;
   const slots = count > 0 ? allocateBulkSlots(input.startDateJst, count, input.skipIsos, input.dailySlots) : [];
-  const items: Omit<FixedPersonPlanItem, 'dayIndex' | 'dayTotal'>[] = slots.map((s, i) => ({
+  const items: Omit<FixedPersonPlanItem, 'dayIndex' | 'dayTotal' | 'dayNumber'>[] = slots.map((s, i) => ({
     ...queue[i],
     dateJst: s.dateJst,
     timeJst: s.timeJst,
@@ -116,15 +148,32 @@ export function planFixedPersonSchedule(input: FixedPersonPlanInput): FixedPerso
   const dayTotals = new Map<string, number>();
   for (const x of items) dayTotals.set(x.dateJst, (dayTotals.get(x.dateJst) ?? 0) + 1);
   const seen = new Map<string, number>();
+  const firstDate = items[0]?.dateJst ?? null;
+  const lastDate = items.at(-1)?.dateJst ?? null;
+  const perDay = input.dailySlots.length;
+  const baseDays = perDay > 0 ? Math.ceil(items.length / perDay) : 0;
+  const days = firstDate && lastDate ? daysBetween(firstDate, lastDate) + 1 : 0;
   return {
     items: items.map((x) => {
       const n = (seen.get(x.dateJst) ?? 0) + 1;
       seen.set(x.dateJst, n);
-      return { ...x, dayIndex: n, dayTotal: dayTotals.get(x.dateJst)! };
+      return { ...x, dayIndex: n, dayTotal: dayTotals.get(x.dateJst)!, dayNumber: daysBetween(firstDate!, x.dateJst) + 1 };
     }),
     queueLength: queue.length,
     omittedCount: queue.length - count,
     adjustSkippedReason,
+    summary: {
+      totalPosts: queue.length,
+      scheduledCount: items.length,
+      omittedCount: queue.length - count,
+      perDay,
+      baseDays,
+      days,
+      startDateJst: firstDate,
+      endDateJst: lastDate,
+      dayDiff: days - baseDays,
+      adjusted: items.some((x) => x.adjusted),
+    },
   };
 }
 

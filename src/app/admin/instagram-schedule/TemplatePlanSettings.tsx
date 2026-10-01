@@ -3,12 +3,15 @@
 import { SCHEDULABLE_TEMPLATES } from '@/lib/instagram-templates';
 
 export type TemplateMethod = 'rotation' | 'manual';
+/** 手動選択の入力方法：時刻ごとに指定（1日分の並び）／順番に並べる（テンプレ列。同じテンプレの重複も可） */
+export type ManualStyle = 'slot' | 'sequence';
 
 interface Props {
   method: TemplateMethod;
   onMethodChange: (m: TemplateMethod) => void;
-  /** 1週間分を作成モードか（手動選択のUIが「投稿時刻ごと」→「テンプレート列」に変わる） */
-  weekMode: boolean;
+  /** 手動選択の入力方法（「最大7日分まで予約」とは連動しない） */
+  manualStyle: ManualStyle;
+  onManualStyleChange: (s: ManualStyle) => void;
   /** 1日の投稿時刻（例: ['09:00', '15:00']） */
   dailySlots: readonly string[];
   rotation: string[];
@@ -41,11 +44,11 @@ function TemplateSelect({ value, onChange, label }: { value: string; onChange: (
  * 一括予約「人物固定・テンプレを変える」のテンプレート設定（1人の人物に使うテンプレートの並び）。
  * 人物ごとにこの並びをすべて使ってから次の人物へ進む（instagram-template-plan.ts の planFixedPersonSchedule）。
  * 自動ローテーション＝使うテンプレートを複数選び、選んだ順。
- * 手動で選択＝1日分は投稿時刻ごとに指定（時刻順の並び）、1週間分は手動で並べたテンプレート列。
+ * 手動で選択＝「時刻ごとに指定」（時刻順の並び）か「順番に並べる」（テンプレート列）を選ぶ。
  * 選択肢は予約できる全テンプレート（既存4テンプレート＋H）。
  */
 export default function TemplatePlanSettings({
-  method, onMethodChange, weekMode, dailySlots, rotation, onRotationChange, bySlot, onBySlotChange, sequence, onSequenceChange,
+  method, onMethodChange, manualStyle, onManualStyleChange, dailySlots, rotation, onRotationChange, bySlot, onBySlotChange, sequence, onSequenceChange,
 }: Props) {
   function toggleRotation(id: string) {
     onRotationChange(rotation.includes(id) ? rotation.filter((x) => x !== id) : [...rotation, id]);
@@ -109,7 +112,27 @@ export default function TemplatePlanSettings({
         </div>
       )}
 
-      {method === 'manual' && !weekMode && (
+      {method === 'manual' && (
+        <div>
+          <p className="text-xs font-semibold text-gray-500 mb-1.5">手動の指定方法</p>
+          <div className="flex flex-wrap gap-1.5 bg-gray-100 rounded-lg p-1 w-fit">
+            {([['slot', '時刻ごとに指定'], ['sequence', '順番に並べる']] as const).map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => onManualStyleChange(v)}
+                className={`text-xs font-semibold px-4 py-1.5 rounded-md transition-colors ${
+                  manualStyle === v ? 'bg-white text-slate-800 shadow-sm' : 'text-gray-500 hover:text-slate-700'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {method === 'manual' && manualStyle === 'slot' && (
         <div>
           <p className="text-xs text-gray-500 mb-2">
             投稿時刻ごとにテンプレートを指定してください（すべての枠で必須）。人物ごとにこの並び（1日分）を使い、次の人物は次の空き枠から続けます（予約済み・過去の枠があると時刻は後ろへずれます）。
@@ -125,7 +148,7 @@ export default function TemplatePlanSettings({
         </div>
       )}
 
-      {method === 'manual' && weekMode && (
+      {method === 'manual' && manualStyle === 'sequence' && (
         <div>
           <p className="text-xs text-gray-500 mb-2">
             使うテンプレートを順番に並べてください。人物ごとにこの並びをすべて使ってから次の人物へ進み、空き枠の順（{dailySlots.join(' → ')} → 翌日…）に割り当てます（同じテンプレートを複数回入れることもできます）。
