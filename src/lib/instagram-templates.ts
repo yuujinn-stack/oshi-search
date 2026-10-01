@@ -96,9 +96,8 @@ export const AUTO_TEMPLATE_META: InstagramTemplateMeta = {
 
 /**
  * H「観るもの・買うもの、まとめて」（生成処理は src/server/instagram-post/site-ui/builders.ts）。
- * 予約投稿画面・一括予約画面で、管理者が明示的に選んだ場合だけ使うテンプレート。
- * INSTAGRAM_TEMPLATES には含めないため、「自動（おすすめ）」の候補・ローテーション
- * （getEligibleTemplates / getMostRecentTemplateId）と手動投稿画面には現れない。
+ * 予約投稿画面・一括予約画面で選べるほか、「自動（おすすめ）」の候補にも入る（その人物で生成できる場合だけ）。
+ * INSTAGRAM_TEMPLATES（既存4テンプレート）には含めないため、手動投稿画面には現れない。
  */
 export const H_TEMPLATE_ID = 'watch-and-buy';
 
@@ -106,27 +105,73 @@ export const H_SCHEDULE_TEMPLATE_META: InstagramTemplateMeta = {
   id: H_TEMPLATE_ID,
   label: 'H 観るもの・買うもの、まとめて',
   requiresPersonPhoto: false,
-  autoRotation: false,
+  autoRotation: true,
   minWorks: 1,
   minVodServices: 1,
 };
 
 /**
- * 予約できるテンプレート（既存4テンプレート＋H）。予約・一括予約APIと予約内容の生成（prepare）の検証に使う。
- * 「自動」はここに含めない（prepareで実テンプレートへ解決してから保存するため）。
+ * G「推し活、検索しすぎ問題」・J「実際の画面で見せる」（生成処理は src/server/instagram-post/site-ui/builders.ts）。
+ * H と同じく、予約画面で選べるほか「自動（おすすめ）」の候補にも入る（その人物で生成できる場合だけ）。手動投稿画面には入らない。
+ * J は条件（配信サービス・関連商品・画像のある配信中の作品3件）を満たさない人物では H、H も無理なら G で作成される。
  */
-export const SCHEDULABLE_TEMPLATES: InstagramTemplateMeta[] = [...INSTAGRAM_TEMPLATES, H_SCHEDULE_TEMPLATE_META];
+export const G_TEMPLATE_ID = 'search-too-much';
+export const J_TEMPLATE_ID = 'real-screen';
+
+export const G_SCHEDULE_TEMPLATE_META: InstagramTemplateMeta = {
+  id: G_TEMPLATE_ID,
+  label: 'G 推し活、検索しすぎ問題',
+  requiresPersonPhoto: false,
+  autoRotation: true,
+  minWorks: 1,
+  minVodServices: 1,
+};
+
+export const J_SCHEDULE_TEMPLATE_META: InstagramTemplateMeta = {
+  id: J_TEMPLATE_ID,
+  label: 'J 実際の画面で見せる',
+  requiresPersonPhoto: false,
+  autoRotation: true,
+  minWorks: 3,
+  minVodServices: 1,
+};
+
+/**
+ * 予約できるテンプレート（既存4テンプレート＋H・G・J）。予約・一括予約APIと予約内容の生成（prepare）の検証、
+ * および「自動（おすすめ）」の候補（src/server/instagram-schedule/auto-template.ts）に使う。
+ * 「自動」自体はここに含めない（prepareで実テンプレートへ解決してから保存するため）。
+ */
+export const SCHEDULABLE_TEMPLATES: InstagramTemplateMeta[] = [
+  ...INSTAGRAM_TEMPLATES,
+  H_SCHEDULE_TEMPLATE_META,
+  G_SCHEDULE_TEMPLATE_META,
+  J_SCHEDULE_TEMPLATE_META,
+];
 
 export function getSchedulableTemplateMeta(templateId: string): InstagramTemplateMeta | undefined {
   return SCHEDULABLE_TEMPLATES.find((t) => t.id === templateId);
 }
 
 /**
- * Instagram予約投稿画面・一括予約画面のテンプレート選択肢（「自動」＋既存4テンプレート＋H）。
+ * Instagram予約投稿画面・一括予約画面のテンプレート選択肢（「自動」＋既存4テンプレート＋H・G・J）。
  * 手動投稿画面（/admin/instagram-post）は引き続き INSTAGRAM_TEMPLATES のみを使用し、
- * 「自動」とHは表示しない。
+ * 「自動」とH・G・Jは表示しない。
  */
 export const SCHEDULE_TEMPLATE_OPTIONS: InstagramTemplateMeta[] = [AUTO_TEMPLATE_META, ...SCHEDULABLE_TEMPLATES];
+
+/**
+ * 予約1件あたりの投稿画像（カルーセル）の枚数。既存テンプレート・H・G は3枚、J は4枚。
+ * Instagramのカルーセルは最大10枚。予約・一括予約APIと自動投稿（publish-schedule）で同じ範囲を使う。
+ */
+export const SCHEDULE_IMAGE_MIN = 3;
+export const SCHEDULE_IMAGE_MAX = 10;
+
+/** 枚数が範囲外なら日本語のエラー文（範囲内なら null） */
+export function scheduleImageCountError(count: number): string | null {
+  return count >= SCHEDULE_IMAGE_MIN && count <= SCHEDULE_IMAGE_MAX
+    ? null
+    : `投稿画像は${SCHEDULE_IMAGE_MIN}〜${SCHEDULE_IMAGE_MAX}枚である必要があります（${count}枚）`;
+}
 
 /** 予約のテンプレートIDから表示用のメタデータを返す（選択肢・予約一覧・通知・ハブの表示名用） */
 export function getScheduleTemplateMeta(templateId: string): InstagramTemplateMeta | undefined {
@@ -139,7 +184,7 @@ export function getScheduleTemplateMeta(templateId: string): InstagramTemplateMe
  * INSTAGRAM_TEMPLATESには含めないため、予約投稿・一括予約の選択肢、「自動（おすすめ）」の
  * 候補・ローテーション、予約APIのテンプレートID検証（getSchedulableTemplateMeta）の
  * いずれにも現れない（予約APIに直接このIDを送っても未知のテンプレートとして拒否される）。
- * 例外として watch-and-buy（H）は予約テンプレートとして正式採用済み（SCHEDULABLE_TEMPLATES）。
+ * 例外として watch-and-buy（H）・search-too-much（G）は予約テンプレートとして正式採用済み（SCHEDULABLE_TEMPLATES）。
  * 手動投稿画面でも生成・プレビューまでに限り、「Instagramに投稿」ボタンは表示しない。
  * 正式採用する際は、ここからINSTAGRAM_TEMPLATESへ移し、template-builders.tsへ登録する。
  */

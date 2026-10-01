@@ -68,8 +68,8 @@ describe('キャプションの上限チェック（予約画面の編集欄と�
 });
 
 describe('H は既存の予約画面のテンプレートの1つ（自動選択には入らない）', () => {
-  it('予約画面の選択肢に「H 観るもの・買うもの、まとめて」がある（自動＋既存4テンプレートの後ろ）', () => {
-    expect(SCHEDULE_TEMPLATE_OPTIONS.map((t) => t.id)).toEqual([AUTO_TEMPLATE_ID, ...INSTAGRAM_TEMPLATES.map((t) => t.id), H_TEMPLATE_ID]);
+  it('予約画面の選択肢に H・G・J がある（自動＋既存4テンプレートの後ろ）', () => {
+    expect(SCHEDULE_TEMPLATE_OPTIONS.map((t) => t.id)).toEqual([AUTO_TEMPLATE_ID, ...INSTAGRAM_TEMPLATES.map((t) => t.id), H_TEMPLATE_ID, 'search-too-much', 'real-screen']);
     expect(getScheduleTemplateMeta(H_TEMPLATE_ID)?.label).toBe('H 観るもの・買うもの、まとめて');
   });
   it('予約できるテンプレートに含まれるが、自動選択の候補（INSTAGRAM_TEMPLATES）と手動投稿には含まれない', () => {
@@ -105,6 +105,20 @@ describe('既存の予約API（通常・一括）でHを予約できる（DBは�
     const res = await postBulk(req('http://x/api/admin/instagram-schedule/bulk', { items }));
     expect(res.status).toBe(200);
     expect(createSchedulesBatchMock.mock.calls[0][0]).toHaveLength(70);
+  });
+  it('J（4枚）の予約：通常予約・一括予約とも4枚の画像URLをそのまま保存する', async () => {
+    const urls4 = [...urls, `${BLOB}/ig-posts/person_1_realscreen_04-XYZ.jpg`];
+    const j = { ...item, templateId: 'real-screen', imageUrls: urls4 };
+    expect((await postSchedule(req('http://x', j))).status).toBe(200);
+    expect(createScheduleMock).toHaveBeenLastCalledWith(expect.objectContaining({ templateId: 'real-screen', imageUrls: urls4 }));
+    expect((await postBulk(req('http://x', { items: [j] }))).status).toBe(200);
+    expect(createSchedulesBatchMock.mock.calls.at(-1)![0][0].imageUrls).toEqual(urls4);
+  });
+  it('画像は3〜10枚（2枚・11枚は拒否）', async () => {
+    createScheduleMock.mockClear();
+    expect((await postSchedule(req('http://x', { ...item, imageUrls: urls.slice(0, 2) }))).status).toBe(400);
+    expect((await postSchedule(req('http://x', { ...item, imageUrls: Array.from({ length: 11 }, (_, i) => `${BLOB}/ig-posts/x_${i}.jpg`) }))).status).toBe(400);
+    expect(createScheduleMock).not.toHaveBeenCalled();
   });
   it('未知のテンプレート・長すぎるキャプションは拒否（DBへ書き込まない）', async () => {
     expect((await postSchedule(req('http://x', { ...item, templateId: 'search-flow' }))).status).toBe(400);
@@ -153,6 +167,24 @@ describe('H 予約の自動投稿（既存の publishScheduleToInstagram をそ�
     expect(calls[4]).toEqual(['IGUSER/media_publish', { creation_id: 'ID4' }]);
     expect(result.mediaId).toBe('ID5');
     expect(recordMock).toHaveBeenCalledWith(expect.objectContaining({ personName: '松本若菜', imageUrls: urls }));
+  });
+
+  it('J（4枚）の予約：保存済みの4枚を1→2→3→4の順で子コンテナにし、カルーセルに4件入れる', async () => {
+    let n = 0;
+    postMock.mockImplementation(async () => ({ id: `ID${++n}` }));
+    const urls4 = [...urls, `${BLOB}/ig-posts/person_1_realscreen_04-XYZ.jpg`];
+    const result = await publishScheduleToInstagram({ ...schedule, templateId: 'real-screen', imageUrls: urls4 });
+    const calls = postMock.mock.calls;
+    expect(calls.slice(0, 4).map((c) => c[1].image_url)).toEqual(urls4);
+    expect(calls[4][1]).toMatchObject({ media_type: 'CAROUSEL', children: 'ID1,ID2,ID3,ID4' });
+    expect(calls[5][0]).toBe('IGUSER/media_publish');
+    expect(result.mediaId).toBe('ID6');
+    expect(recordMock).toHaveBeenCalledWith(expect.objectContaining({ imageUrls: urls4 }));
+  });
+
+  it('保存されている画像が3枚未満なら投稿しない（Instagram APIを呼ばない）', async () => {
+    await expect(publishScheduleToInstagram({ ...schedule, imageUrls: urls.slice(0, 2) })).rejects.toThrow(/画像URLが不正/);
+    expect(postMock).not.toHaveBeenCalled();
   });
 
   it('media_publish 自体の失敗は needs_review 扱い（AmbiguousPublishError）', async () => {

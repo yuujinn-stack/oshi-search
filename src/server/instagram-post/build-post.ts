@@ -12,7 +12,8 @@ export class InsufficientWorksError extends Error {}
 export class PersonPhotoMissingError extends Error {}
 
 export interface BuildPostImage {
-  order: 1 | 2 | 3;
+  /** 1から始まる並び順（既存テンプレート・H・Gは1〜3、Jは1〜4） */
+  order: number;
   url: string;
   fileName: string;
 }
@@ -20,10 +21,14 @@ export interface BuildPostImage {
 export interface BuildPostResult {
   personName: string;
   personPhotoUrl: string;
-  images: [BuildPostImage, BuildPostImage, BuildPostImage];
+  images: BuildPostImage[];
   works: CaptionWorkInput[];
   caption: string;
   hashtags: string;
+  /** 実際に作成したテンプレートID（J が条件を満たさず H・G に切り替えた場合だけ設定される） */
+  templateId?: string;
+  /** 切り替えた理由 */
+  fallbackReason?: string;
 }
 
 /**

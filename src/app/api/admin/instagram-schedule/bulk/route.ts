@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSchedulesBatch, SlotConflictError } from '@/server/instagram-schedule/schedule-store';
-import { getSchedulableTemplateMeta } from '@/lib/instagram-templates';
+import { getSchedulableTemplateMeta, scheduleImageCountError } from '@/lib/instagram-templates';
 import { validateCaption } from '@/lib/instagram-caption-rules';
 
 export const dynamic = 'force-dynamic';
@@ -41,8 +41,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `${i + 1}件目（${personName}）: 未知のテンプレートIDです` }, { status: 400 });
     }
     if (!scheduledAtIso) return NextResponse.json({ error: `${i + 1}件目（${personName}）: 予約日時が指定されていません` }, { status: 400 });
-    if (imageUrls.length !== 3) {
-      return NextResponse.json({ error: `${i + 1}件目（${personName}）: 投稿画像は3枚である必要があります` }, { status: 400 });
+    const imageCountError = scheduleImageCountError(imageUrls.length);
+    if (imageCountError) {
+      return NextResponse.json({ error: `${i + 1}件目（${personName}）: ${imageCountError}` }, { status: 400 });
     }
     const captionError = validateCaption(item.caption ?? '');
     if (captionError) {

@@ -11,7 +11,8 @@ import { jstWallClockToUtcDate, nowJstParts } from '@/lib/jst-time';
 import { validateCaption } from '@/lib/instagram-caption-rules';
 
 interface PostImage {
-  order: 1 | 2 | 3;
+  /** 1から始まる並び順（Jは4枚） */
+  order: number;
   url: string;
   fileName: string;
 }
@@ -24,11 +25,13 @@ interface PostWork {
 interface PrepareResult {
   personName: string;
   personPhotoUrl: string;
-  images: [PostImage, PostImage, PostImage];
+  images: PostImage[];
   works: PostWork[];
   caption: string;
   hashtags: string;
   templateId: string;
+  /** J が条件を満たさず H・G で作成した場合の理由 */
+  fallbackReason?: string;
 }
 
 interface Props {
@@ -262,8 +265,14 @@ export default function InstagramScheduleClient({ persons }: Props) {
       {prepared && (
         <section className="bg-white border border-gray-200 rounded-xl p-5 space-y-5">
           <h2 className="text-sm font-bold text-slate-700">3. プレビュー確認・予約日時の指定</h2>
+          {prepared.templateId !== templateId && prepared.fallbackReason && (
+            <p className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+              ⚠️ {prepared.fallbackReason}。このまま予約すると「{getScheduleTemplateMeta(prepared.templateId)?.label ?? prepared.templateId}」として保存されます。
+            </p>
+          )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* テンプレートにより枚数が異なる（J は4枚）。スマホでは2列、PCでは全枚数を横に並べる */}
+          <div className="grid grid-cols-2 sm:[grid-template-columns:repeat(var(--cols),minmax(0,1fr))] gap-4" style={{ ['--cols' as string]: prepared.images.length }}>
             {prepared.images.map((img) => (
               <div key={img.order} className="space-y-1">
                 <p className="text-xs font-semibold text-gray-500">{img.order}枚目</p>

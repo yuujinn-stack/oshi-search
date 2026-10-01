@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSchedule, listSchedules, getScheduleStatusCounts } from '@/server/instagram-schedule/schedule-store';
-import { getSchedulableTemplateMeta } from '@/lib/instagram-templates';
+import { getSchedulableTemplateMeta, scheduleImageCountError } from '@/lib/instagram-templates';
 import { maskSecrets } from '@/lib/mask-secrets';
 import { validateCaption } from '@/lib/instagram-caption-rules';
 
@@ -49,7 +49,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '未知のテンプレートIDです' }, { status: 400 });
   }
   if (!scheduledAtIso) return NextResponse.json({ error: '予約日時が指定されていません' }, { status: 400 });
-  if (imageUrls.length !== 3) return NextResponse.json({ error: '投稿画像は3枚である必要があります' }, { status: 400 });
+  const imageCountError = scheduleImageCountError(imageUrls.length);
+  if (imageCountError) return NextResponse.json({ error: imageCountError }, { status: 400 });
   // キャプションは予約画面で編集できるため、Instagramの上限（文字数・ハッシュタグ数）をサーバー側でも確認する
   const captionError = validateCaption(caption);
   if (captionError) return NextResponse.json({ error: captionError }, { status: 400 });

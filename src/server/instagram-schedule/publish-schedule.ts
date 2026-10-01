@@ -1,4 +1,5 @@
 import 'server-only';
+import { scheduleImageCountError } from '@/lib/instagram-templates';
 import { loadInstagramConfig } from '../instagram-post/config';
 import { InstagramGraphClient, GraphApiRequestError } from '../instagram-post/graph-client';
 import { recordInstagramPost } from '@/lib/instagram-post-store';
@@ -60,14 +61,16 @@ export async function publishScheduleToInstagram(schedule: ScheduleRecord): Prom
 
   const config = loadInstagramConfig();
   const client = new InstagramGraphClient(config);
-  const [img1, img2, img3] = schedule.imageUrls;
-  if (!img1 || !img2 || !img3) {
-    throw new Error(`保存されている画像URLが3枚未満です（${schedule.imageUrls.length}枚）`);
+  // 保存されている画像をすべて、保存順（1枚目→2枚目→…）にカルーセルへ入れる（既存テンプレート・H・Gは3枚、Jは4枚）
+  const imageUrls = schedule.imageUrls.filter((u) => typeof u === 'string' && u.length > 0);
+  const countError = scheduleImageCountError(imageUrls.length);
+  if (countError || imageUrls.length !== schedule.imageUrls.length) {
+    throw new Error(`保存されている画像URLが不正です：${countError ?? '空のURLがあります'}`);
   }
 
   // ── 1〜2. カルーセル子コンテナ作成・カルーセル本体作成（この段階の失敗は「未公開」と断定できる） ──
   const childIds: string[] = [];
-  for (const imageUrl of [img1, img2, img3]) {
+  for (const imageUrl of imageUrls) {
     const res = await client.post<MediaContainerResponse>(`${config.igUserId}/media`, {
       image_url: imageUrl,
       is_carousel_item: 'true',
@@ -107,7 +110,7 @@ export async function publishScheduleToInstagram(schedule: ScheduleRecord): Prom
     await recordInstagramPost({
       personName: schedule.personName,
       mediaId: publishedId,
-      imageUrls: [img1, img2, img3],
+      imageUrls,
       caption: schedule.caption,
     });
   } catch (err) {

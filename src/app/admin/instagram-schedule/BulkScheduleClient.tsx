@@ -14,7 +14,8 @@ import { defaultPostTimes, sortPostTimes, validatePostTimes, evaluatePublishingQ
 import { assignTemplatesToSlots, pastSlotIsos, type TemplatePlanRule } from '@/lib/instagram-template-plan';
 
 interface PostImage {
-  order: 1 | 2 | 3;
+  /** 1から始まる並び順（Jは4枚） */
+  order: number;
   url: string;
   fileName: string;
 }
@@ -25,11 +26,13 @@ interface PostWork {
 interface PrepareResult {
   personName: string;
   personPhotoUrl: string;
-  images: [PostImage, PostImage, PostImage];
+  images: PostImage[];
   works: PostWork[];
   caption: string;
   hashtags: string;
   templateId: string;
+  /** J が条件を満たさず H・G で作成した場合の理由 */
+  fallbackReason?: string;
 }
 
 interface BulkRow {
@@ -541,7 +544,12 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
                       )}
                       {fixedPerson && row.templateId && (
                         <span className="ml-2 text-xs font-semibold text-violet-600 bg-violet-50 rounded-full px-2 py-0.5 align-middle">
-                          {getScheduleTemplateMeta(row.templateId)?.label ?? row.templateId}
+                          {getScheduleTemplateMeta(row.prepared?.templateId ?? row.templateId)?.label ?? row.templateId}
+                        </span>
+                      )}
+                      {!fixedPerson && templateId !== AUTO_TEMPLATE_ID && row.prepared && row.prepared.templateId !== templateId && (
+                        <span className="ml-2 text-xs font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5 align-middle">
+                          {getScheduleTemplateMeta(row.prepared.templateId)?.label ?? row.prepared.templateId}
                         </span>
                       )}
                     </p>
@@ -571,6 +579,9 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
                 {row.genStatus === 'error' && (
                   <p className="text-xs text-red-600 mt-2">{row.error}</p>
                 )}
+                {row.genStatus === 'ready' && row.prepared?.fallbackReason && (
+                  <p className="text-xs text-amber-700 mt-2">⚠️ {row.prepared.fallbackReason}（予約は切り替えたテンプレートで保存されます）</p>
+                )}
 
                 {row.genStatus === 'ready' && row.prepared && (
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-4 gap-3">
@@ -578,7 +589,7 @@ export default function BulkScheduleClient({ persons, initialTemplateId, onBulkC
                       {row.prepared.images.map((img) => (
                         // テンプレートにより縦横比が異なる（Hは正方形）ため、切り抜かずにそのままの比率で表示する
                         // eslint-disable-next-line @next/next/no-img-element
-                        <a key={img.order} href={img.url} target="_blank" rel="noreferrer" className="w-1/3">
+                        <a key={img.order} href={img.url} target="_blank" rel="noreferrer" style={{ width: `${100 / row.prepared!.images.length}%` }}>
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={img.url} alt={`${row.personName} ${img.order}枚目`} className="w-full h-auto rounded border border-gray-200" />
                         </a>

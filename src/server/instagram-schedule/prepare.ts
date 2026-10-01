@@ -51,5 +51,7 @@ export async function prepareScheduleContent(
   }
 
   const result = await builder(personName);
-  return { ...result, templateId: template.id };
+  // J のように、条件を満たさず別のテンプレート（H・G）で作成した場合はそのIDで保存する（予約一覧にも実際のテンプレート名が出る）
+  const actualTemplateId = result.templateId && getSchedulableTemplateMeta(result.templateId) ? result.templateId : template.id;
+  return { ...result, templateId: actualTemplateId };
 }

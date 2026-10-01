@@ -4,7 +4,7 @@ import { buildInstagramPostWorksOnly } from './build-post-works-only';
 import { buildInstagramPostWorksPicks } from './build-post-works-picks';
 import { buildInstagramPostVodCompare } from './build-post-vod-compare';
 import { SITE_UI_BUILDERS } from './site-ui/builders';
-import { H_TEMPLATE_ID } from '@/lib/instagram-templates';
+import { H_TEMPLATE_ID, G_TEMPLATE_ID, J_TEMPLATE_ID } from '@/lib/instagram-templates';
 
 export type TemplateBuilder = (personName: string) => Promise<BuildPostResult>;
 
@@ -18,6 +18,9 @@ export const TEMPLATE_BUILDERS: Record<string, TemplateBuilder> = {
   'works-only': buildInstagramPostWorksOnly,
   'works-picks': buildInstagramPostWorksPicks,
   'vod-compare': buildInstagramPostVodCompare,
-  // H「観るもの・買うもの、まとめて」（予約画面で明示的に選んだ場合のみ。自動選択の候補には入らない）
+  // H・G・J（予約画面で明示的に選んだ場合のみ。自動選択の候補には入らない）
   [H_TEMPLATE_ID]: SITE_UI_BUILDERS[H_TEMPLATE_ID],
+  [G_TEMPLATE_ID]: SITE_UI_BUILDERS[G_TEMPLATE_ID],
+  // J は条件を満たさない人物では H・G で作成し、結果の templateId にそのIDを入れて返す
+  [J_TEMPLATE_ID]: SITE_UI_BUILDERS[J_TEMPLATE_ID],
 };
