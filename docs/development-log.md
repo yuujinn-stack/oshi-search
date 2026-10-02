@@ -3131,3 +3131,18 @@ Task 80 を本番で目視確認した際に見つかった3点を直す。人�
 - 同時に依頼した人物は選択順に1本ずつ処理されるよう created_at を1msずつずらして登録する。
 - 動画URLは Vercel Blob の公開URL（推測困難なランダムパス）。
 - 動作確認（ローカル next dev ＋ 自宅Mac Worker）：松村北斗×気になる人紹介×音声なし → completed（QA PASS・17.0秒・Blob再生/ダウンロード確認）。未対応人物の失敗が次のジョブを止めないこと、10並列claimで1件だけ取得、他Workerからの報告拒否、queuedキャンセル、既存管理画面・vitest全件成功を確認。
+
+---
+
+## Task 87：動画生成（/admin/video-maker）運用仕上げ — 人物選択の文言
+
+### 目的
+/admin/video-maker で再利用している人物選択（`instagram-schedule/PersonMultiSelect.tsx`）に、Instagram一括予約向けの「この順番で日時へ割り当てられます」が表示されていたため、動画生成画面でだけ適切な文言にする。
+
+### 変更ファイル
+- `src/app/admin/instagram-schedule/PersonMultiSelect.tsx`：選択中一覧の見出しの説明を `selectionOrderNote`（任意）で差し替え可能にした。省略時は従来の「この順番で日時へ割り当てられます」のままのため、Instagram予約画面の表示は変わらない。
+- `src/app/admin/video-maker/VideoMakerClient.tsx`：`selectionOrderNote="この順番で1本ずつ生成されます"` を渡す。
+
+### 注意点
+- 投稿済みバッジ・テンプレート投稿状況は、動画生成画面では従来どおり渡していないため表示されない（変更なし）。
+- 同時期に oshi-video-maker 側で Worker の launchd 自動起動・スリープ対策（caffeinate -i）・進捗報告の順序保証を追加（oshi-search 側の変更なし）。

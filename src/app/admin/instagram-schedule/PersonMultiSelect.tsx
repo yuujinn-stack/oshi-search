@@ -26,6 +26,8 @@ interface Props {
   templateHistory?: TemplateHistory | null;
   /** 今回の予約で使うテンプレート（投稿済みなら警告。選択の禁止・自動除外はしない） */
   selectedTemplateIds?: readonly string[];
+  /** 選択中一覧の見出しに添える説明。省略時はInstagram一括予約向けの「この順番で日時へ割り当てられます」（動画生成画面などから差し替える用） */
+  selectionOrderNote?: string;
   /** 人物単位の「投稿済み（日付）」バッジを出すか（人物固定モードはテンプレート別の表示に統一するため false） */
   showPersonPostedBadge?: boolean;
 }
@@ -75,7 +77,7 @@ const MAX_RESULTS = 60;
  * 選択順がそのまま投稿枠への割り当て順になる（allocateBulkSlots参照）。
  * 絞り込みを変えても選択済みの人物は解除しない（右側の「選択中」には絞り込み外の人物も含めて全員を出す）。
  */
-export default function PersonMultiSelect({ persons, postedPersonNames, lastPostedAt, selected, onChange, maxSelected, allowBulkSelect = true, notice, templateHistory, selectedTemplateIds = [], showPersonPostedBadge = true }: Props) {
+export default function PersonMultiSelect({ persons, postedPersonNames, lastPostedAt, selected, onChange, maxSelected, allowBulkSelect = true, notice, templateHistory, selectedTemplateIds = [], showPersonPostedBadge = true, selectionOrderNote = 'この順番で日時へ割り当てられます' }: Props) {
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState(GROUP_ALL);
   // グループを選んだときは既定で現役メンバーだけ。ONで卒業・元メンバーも含める
@@ -243,7 +245,7 @@ export default function PersonMultiSelect({ persons, postedPersonNames, lastPost
       {/* 選択済み一覧（並び替え可能） */}
       <div className="min-w-0">
         <p className="text-xs font-semibold text-gray-500 mb-2">
-          選択中（{selected.length}{maxSelected !== undefined ? ` / ${maxSelected}` : ''}人）— この順番で日時へ割り当てられます
+          選択中（{selected.length}{maxSelected !== undefined ? ` / ${maxSelected}` : ''}人）— {selectionOrderNote}
           {atMax && <span className="text-amber-600 ml-1">（上限に達しています）</span>}
         </p>
         <div className="border border-gray-200 rounded-lg overflow-y-auto" style={{ maxHeight: 280 }}>

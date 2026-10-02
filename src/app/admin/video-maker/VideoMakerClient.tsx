@@ -237,7 +237,14 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
 
         <section>
           <h2 className="text-sm font-bold text-slate-700 mb-2">3. 人物（複数選択可）</h2>
-          <PersonMultiSelect persons={persons} postedPersonNames={new Set()} selected={selectedNames} onChange={setSelectedNames} showPersonPostedBadge={false} />
+          <PersonMultiSelect
+            persons={persons}
+            postedPersonNames={new Set()}
+            selected={selectedNames}
+            onChange={setSelectedNames}
+            showPersonPostedBadge={false}
+            selectionOrderNote="この順番で1本ずつ生成されます"
+          />
           {unsupportedSelected.length > 0 && (
             <p className="text-xs text-amber-700 bg-amber-50 rounded p-2 mt-2">
               ⚠ Workerの人物対応表に未登録のため、生成時に失敗します: {unsupportedSelected.join('、')}
