@@ -10,6 +10,7 @@ import {
   index,
   uniqueIndex,
   serial,
+  doublePrecision,
 } from 'drizzle-orm/pg-core';
 
 // ── 人物 ──────────────────────────────────────────────────────────────────────
@@ -530,3 +531,66 @@ export const instagramAdminNotifications = pgTable('instagram_admin_notification
   index('ian_schedule_id_idx').on(t.scheduleId),
   index('ian_is_read_idx').on(t.isRead),
 ]);
+
+// ── 動画生成ジョブ（video_generation_jobs）────────────────────────────────────
+// /admin/video-maker から作成し、自宅Mac等で動く oshi-video-maker Worker が
+// /api/worker/video-jobs/* 経由で取得・進捗報告・完了報告する（WorkerはDBへ直接接続しない）。
+// 動画本体（final.mp4）はVercel Blobに保存し、ここにはURL・QA・投稿文等の小さい情報だけを持つ。
+//
+// status: queued(待機) | processing(Workerが実行中) | completed(完了) | failed(失敗) | cancelled(キャンセル)
+// Workerの取得は「1本の条件付きUPDATE（FOR UPDATE SKIP LOCKED）」で行い、同じジョブを二重に取得しない。
+// 再生成は既存ジョブを書き換えず、新しいジョブを作って retry_of_job_id で元ジョブを参照する（履歴を残すため）。
+export const videoGenerationJobs = pgTable('video_generation_jobs', {
+  id:              text('id').primaryKey(),
+  batchId:         text('batch_id'),
+  retryOfJobId:    text('retry_of_job_id'),
+  // 依頼内容（作成後は変更しない）。person_nameはpersons.name（このプロジェクトの人物ID）
+  personName:      text('person_name').notNull(),
+  // Workerが自身の人物対応表で解決したslug（取得時に記録）
+  personSlug:      text('person_slug'),
+  templateId:      text('template_id').notNull(),
+  templateVersion: integer('template_version'),
+  narrationMode:   text('narration_mode').notNull(), // 'none' | 'auto' | 'capcut'（作成時にWorker報告の対応方式で検証）
+  status:          text('status').notNull().default('queued'),
+  attempts:        integer('attempts').notNull().default(0),
+  progressStep:    integer('progress_step'),
+  progressTotal:   integer('progress_total'),
+  progressLabel:   text('progress_label'),
+  workerId:        text('worker_id'),
+  heartbeatAt:     timestamp('heartbeat_at', { withTimezone: true }),
+  createdAt:       timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  startedAt:       timestamp('started_at', { withTimezone: true }),
+  completedAt:     timestamp('completed_at', { withTimezone: true }),
+  updatedAt:       timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  errorStep:       text('error_step'),
+  errorMessage:    text('error_message'),
+  // 結果（completed時）
+  videoUrl:        text('video_url'),
+  videoPathname:   text('video_pathname'), // アップロード許可の発行時に確定させたBlobのパス
+  videoSizeBytes:  integer('video_size_bytes'),
+  durationSec:     doublePrecision('duration_sec'),
+  qaStatus:        text('qa_status'), // 'PASS' | 'FAIL'
+  qaWarnings:      jsonb('qa_warnings').$type<string[]>(),
+  qaReport:        jsonb('qa_report').$type<Record<string, unknown>>(),
+  postTexts:       jsonb('post_texts').$type<Record<string, string | null>>(),
+  narrationScript: text('narration_script'),
+  result:          jsonb('result').$type<Record<string, unknown>>(),
+  workerExportDir: text('worker_export_dir'),
+}, (t) => [
+  index('vgj_status_created_at_idx').on(t.status, t.createdAt),
+  index('vgj_batch_id_idx').on(t.batchId),
+  index('vgj_person_name_idx').on(t.personName),
+]);
+
+// ── 動画生成Worker（video_workers）─────────────────────────────────────────────
+// Workerが起動時・定期的に報告する生存情報と能力（テンプレート一覧・対応人物）。
+// テンプレート定義の正本はoshi-video-maker側のVIDEO_TEMPLATE_REGISTRYであり、
+// ここには「Workerが報告した最新の内容」だけを保存する（oshi-search側に定義をコピーしない）。
+export const videoWorkers = pgTable('video_workers', {
+  workerId:   text('worker_id').primaryKey(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull(),
+  version:    text('version'),
+  templates:  jsonb('templates').$type<unknown[]>().notNull().default([]),
+  persons:    jsonb('persons').$type<unknown[]>().notNull().default([]),
+  updatedAt:  timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});

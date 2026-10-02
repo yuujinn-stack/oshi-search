@@ -3097,3 +3097,37 @@ Task 80 を本番で目視確認した際に見つかった3点を直す。人�
 ### 注意点
 - 手動投稿（/admin/instagram-post）のテンプレートを今後も判定したい場合は、instagram_posts に template_id（null 可）を追加して手動投稿時に記録する案がある（未実施・別タスク。既存の手動投稿はテンプレ不明のまま）。
 - 投稿順・必要日数・最大7日・最終日調整・予約済み枠スキップのロジックは変更なし。
+
+---
+
+## Task 86：動画生成（/admin/video-maker）Phase A — ジョブ登録と oshi-video-maker Worker 連携
+
+### 目的
+推しサーチ管理画面から「人物（複数）→テンプレート→ナレーション方式→生成」を操作できるようにする。重い処理（Remotion/FFmpeg/Chromium）はVercelでは動かさず、自宅Macの oshi-video-maker Worker がジョブを取得して既存の生成処理（scripts/produce.ts）で生成し、final.mp4 を Vercel Blob へ直接アップロードする。
+
+### 構成
+- 管理画面 → `/api/admin/video-jobs`（既存の proxy.ts セッション認証＋Originチェック）→ Neon `video_generation_jobs` に queued で登録。
+- Worker → `/api/worker/*`（`Authorization: Bearer VIDEO_WORKER_SECRET`、CRON_SECRETとは別。proxy.tsの対象外のため各ハンドラで検証。SHA-256に揃えて timingSafeEqual で比較）。WorkerはNeonへ直接接続しない。
+- 取得は1本の条件付きUPDATE（`WHERE status='queued' AND id = (SELECT … FOR UPDATE SKIP LOCKED)`）。複数Workerでも二重取得しない。Workerは自分が取得したジョブ（worker_id一致・processing）にしか書けない。
+- 動画は `/api/worker/video-jobs/[id]/upload-token` が発行する client token（そのジョブ専用パス `video-jobs/{jobId}/final-{random}.mp4`・video/mp4のみ・200MBまで・30分・上書き不可）で Worker → Blob へ直接アップロード（Vercel関数の4.5MB上限を通さない）。BLOB_READ_WRITE_TOKEN自体はWorkerへ渡さない。完了報告時は `head()` で実在とパス一致を確認してから completed にする。
+- テンプレート・対応ナレーション方式は oshi-video-maker の VIDEO_TEMPLATE_REGISTRY が正本。Workerが起動時と30秒ごとに `/api/worker/heartbeat` で「Phase AのWorkerが実際に生成できる方式」だけを報告し、`video_workers` に保存。管理画面はそれだけを表示・選択可能にし、ジョブ作成時もこの能力で検証する（oshi-search側に定義をコピーしない）。
+- 人物はジョブに persons.name を入れ、Worker側で PERSON_REGISTRY に対応付ける（未登録なら推測せず failed）。管理画面では Worker が報告した対応人物以外を選ぶと警告を出す。
+
+### DB変更（新規テーブルのみ・既存テーブルは無変更）
+- `video_generation_jobs`：id / batch_id / retry_of_job_id / person_name / person_slug / template_id / template_version / narration_mode / status（queued・processing・completed・failed・cancelled）/ attempts / progress_step・progress_total・progress_label / worker_id / heartbeat_at / created_at・started_at・completed_at・updated_at / error_step・error_message / video_url・video_pathname・video_size_bytes・duration_sec / qa_status・qa_warnings・qa_report / post_texts / narration_script / result / worker_export_dir。索引：(status, created_at)、batch_id、person_name。
+  - 設計案の `cancel_requested`（実行中の中断はPhase Aでは行わない）と `claimed_at`（started_atと同値）は見送り。
+- `video_workers`：worker_id / last_seen_at / version / templates / persons / updated_at。
+- migration記録：`drizzle/0013_video_generation_jobs.sql`。既存運用どおり `/api/admin/db-init` の CREATE_STATEMENTS・TABLE_NAMES にも追加。
+- 適用：ローカル（`.env.local` 接続＝本番相当のNeon）へは 0013 の CREATE TABLE/INDEX IF NOT EXISTS だけを直接実行済み（db-init全体は実行していない）。Vercel本番で別DBを使っている場合は `/admin/db-init` からの適用が必要。
+
+### 変更ファイル
+- 新規：`src/server/video-jobs/job-store.ts`・`worker-auth.ts`・`worker-route.ts`、`src/app/api/admin/video-jobs/route.ts`・`[id]/cancel/route.ts`・`[id]/retry/route.ts`、`src/app/api/worker/heartbeat/route.ts`、`src/app/api/worker/video-jobs/claim/route.ts`・`[id]/progress`・`[id]/upload-token`・`[id]/complete`・`[id]/fail`、`src/app/admin/video-maker/page.tsx`・`VideoMakerClient.tsx`、`drizzle/0013_video_generation_jobs.sql`。
+- 変更：`src/db/schema.ts`（2テーブル追加・doublePrecision import）、`src/app/api/admin/db-init/route.ts`（CREATE文・テーブル名追加）、`src/app/admin/AdminLayoutClient.tsx`（ナビ「🎬 動画生成」1行）。
+- 環境変数：`VIDEO_WORKER_SECRET`（32文字以上。ローカルは `.env.local` に開発専用の値を追記済み。Production/Previewへは未設定）。
+
+### 注意点
+- 人物選択は既存の `instagram-schedule/PersonMultiSelect.tsx` を再利用（投稿済みバッジ等は渡さない）。同コンポーネントの「この順番で日時へ割り当てられます」はInstagram向けの文言のまま表示される。
+- 一覧取得時、15分以上進捗報告のない processing ジョブは failed（error_step=Worker応答なし）にする。
+- 同時に依頼した人物は選択順に1本ずつ処理されるよう created_at を1msずつずらして登録する。
+- 動画URLは Vercel Blob の公開URL（推測困難なランダムパス）。
+- 動作確認（ローカル next dev ＋ 自宅Mac Worker）：松村北斗×気になる人紹介×音声なし → completed（QA PASS・17.0秒・Blob再生/ダウンロード確認）。未対応人物の失敗が次のジョブを止めないこと、10並列claimで1件だけ取得、他Workerからの報告拒否、queuedキャンセル、既存管理画面・vitest全件成功を確認。

@@ -260,6 +260,52 @@ const CREATE_STATEMENTS = [
   sql`CREATE UNIQUE INDEX IF NOT EXISTS ian_event_key_idx ON instagram_admin_notifications (event_key)`,
   sql`CREATE INDEX IF NOT EXISTS ian_schedule_id_idx ON instagram_admin_notifications (schedule_id)`,
   sql`CREATE INDEX IF NOT EXISTS ian_is_read_idx ON instagram_admin_notifications (is_read)`,
+  // ── 動画生成（/admin/video-maker、drizzle/0013_video_generation_jobs.sql）──
+  sql`CREATE TABLE IF NOT EXISTS video_generation_jobs (
+  id                 TEXT PRIMARY KEY,
+  batch_id           TEXT,
+  retry_of_job_id    TEXT,
+  person_name        TEXT NOT NULL,
+  person_slug        TEXT,
+  template_id        TEXT NOT NULL,
+  template_version   INTEGER,
+  narration_mode     TEXT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'queued',
+  attempts           INTEGER NOT NULL DEFAULT 0,
+  progress_step      INTEGER,
+  progress_total     INTEGER,
+  progress_label     TEXT,
+  worker_id          TEXT,
+  heartbeat_at       TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at         TIMESTAMPTZ,
+  completed_at       TIMESTAMPTZ,
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  error_step         TEXT,
+  error_message      TEXT,
+  video_url          TEXT,
+  video_pathname     TEXT,
+  video_size_bytes   INTEGER,
+  duration_sec       DOUBLE PRECISION,
+  qa_status          TEXT,
+  qa_warnings        JSONB,
+  qa_report          JSONB,
+  post_texts         JSONB,
+  narration_script   TEXT,
+  result             JSONB,
+  worker_export_dir  TEXT
+)`,
+  sql`CREATE INDEX IF NOT EXISTS vgj_status_created_at_idx ON video_generation_jobs (status, created_at)`,
+  sql`CREATE INDEX IF NOT EXISTS vgj_batch_id_idx ON video_generation_jobs (batch_id)`,
+  sql`CREATE INDEX IF NOT EXISTS vgj_person_name_idx ON video_generation_jobs (person_name)`,
+  sql`CREATE TABLE IF NOT EXISTS video_workers (
+  worker_id     TEXT PRIMARY KEY,
+  last_seen_at  TIMESTAMPTZ NOT NULL,
+  version       TEXT,
+  templates     JSONB NOT NULL DEFAULT '[]',
+  persons       JSONB NOT NULL DEFAULT '[]',
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)`,
 ];
 
 // ── ALTER TABLE ADD COLUMN IF NOT EXISTS ─────────────────────────────────────
@@ -350,7 +396,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE verdicts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
 ];
 
-const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements', 'instagram_posts', 'instagram_post_schedules', 'instagram_admin_notifications'];
+const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements', 'instagram_posts', 'instagram_post_schedules', 'instagram_admin_notifications', 'video_generation_jobs', 'video_workers'];
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。

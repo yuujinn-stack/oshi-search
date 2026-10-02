@@ -11,6 +11,7 @@ export const NAV_ITEMS = [
   { href: '/admin/product-check',              label: '商品管理' },
   { href: '/admin/photobooks',                 label: '📷 写真集管理' },
   { href: '/admin/instagram',                  label: '📸 Instagram管理' },
+  { href: '/admin/video-maker',                label: '🎬 動画生成' },
   { href: '/admin/rakuten-search',             label: '楽天検索' },
   { href: '/admin/groups',                     label: 'グループ管理' },
   { href: '/admin/providers',                  label: '配信サービス' },
