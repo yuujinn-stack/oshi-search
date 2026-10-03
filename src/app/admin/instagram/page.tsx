@@ -9,7 +9,7 @@ import {
 } from '@/server/instagram-schedule/schedule-store';
 import { getStatusLabel, getStatusStyle } from '@/lib/instagram-schedule-status';
 import { formatJst, getJstDayRangeUtc } from '@/lib/jst-time';
-import { getScheduleTemplateMeta } from '@/lib/instagram-templates';
+import { getScheduleDisplayLabel } from '@/lib/instagram-templates';
 import { maskSecrets } from '@/lib/mask-secrets';
 import { isAutopublishEnabled } from '@/server/instagram-post/config';
 import { listUnreadAdminNotifications } from '@/server/instagram-schedule/admin-notifications';
@@ -108,7 +108,7 @@ export default async function InstagramHubPage() {
     status: n.status,
     personName: n.schedule.personName,
     scheduledAt: n.schedule.scheduledAt.toISOString(),
-    templateLabel: getScheduleTemplateMeta(n.schedule.templateId)?.label ?? n.schedule.templateId,
+    templateLabel: getScheduleDisplayLabel(n.schedule.templateId),
     attempts: n.schedule.attempts,
     errorMessage: maskSecrets(n.schedule.errorMessage),
     updatedAt: n.schedule.updatedAt.toISOString(),
@@ -188,7 +188,7 @@ export default async function InstagramHubPage() {
               <div className="text-sm">
                 <p className="text-slate-800 font-semibold">{formatJst(nextScheduled.scheduledAt)}</p>
                 <p className="text-slate-700">{nextScheduled.personName}</p>
-                <p className="text-xs text-gray-500">{getScheduleTemplateMeta(nextScheduled.templateId)?.label ?? nextScheduled.templateId}</p>
+                <p className="text-xs text-gray-500">{getScheduleDisplayLabel(nextScheduled.templateId)}</p>
               </div>
             ) : (
               <p className="text-xs text-gray-400">現在、次の予約投稿はありません</p>

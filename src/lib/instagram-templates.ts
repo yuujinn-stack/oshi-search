@@ -179,6 +179,18 @@ export function getScheduleTemplateMeta(templateId: string): InstagramTemplateMe
 }
 
 /**
+ * Reel予約（Phase R1b/R2、media_type='REEL'）のtemplate_idの接頭辞（例: reel:oshi-curious-v1）。
+ * 画像テンプレートの選択肢・自動ローテーションには含めない（getScheduleTemplateMeta等は変更しない）。
+ */
+export const REEL_TEMPLATE_ID_PREFIX = 'reel:';
+
+/** 予約一覧などの表示用ラベル。Reelは「リール」、それ以外は従来どおりテンプレート名（不明ならIDのまま） */
+export function getScheduleDisplayLabel(templateId: string): string {
+  if (templateId.startsWith(REEL_TEMPLATE_ID_PREFIX)) return 'リール';
+  return getScheduleTemplateMeta(templateId)?.label ?? templateId;
+}
+
+/**
  * 手動投稿画面（/admin/instagram-post）でのPreview確認専用テンプレート。
  *
  * INSTAGRAM_TEMPLATESには含めないため、予約投稿・一括予約の選択肢、「自動（おすすめ）」の

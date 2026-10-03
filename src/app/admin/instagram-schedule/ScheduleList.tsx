@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useState, useCallback, useMemo } from 'react';
 import { safeFetchJson } from './safe-fetch-json';
 import { formatJst } from '@/lib/jst-time';
-import { getScheduleTemplateMeta } from '@/lib/instagram-templates';
+import { getScheduleDisplayLabel } from '@/lib/instagram-templates';
 import {
   getStatusLabel,
   getStatusStyle,
@@ -25,6 +25,11 @@ interface ScheduleRow {
   errorMessage: string | null;
   attempts: number;
   updatedAt: string;
+  /** CAROUSEL（既存）| REEL（動画生成ジョブのig-reel.mp4）。古いAPI応答では無い場合がある */
+  mediaType?: 'CAROUSEL' | 'REEL';
+  videoUrl?: string | null;
+  videoTemplateName?: string | null;
+  permalink?: string | null;
 }
 
 interface Props {
@@ -187,7 +192,8 @@ export default function ScheduleList({ reloadToken }: Props) {
               <tbody>
                 {filteredSchedules.map((s) => {
                   const isExpanded = expandedId === s.id;
-                  const templateLabel = getScheduleTemplateMeta(s.templateId)?.label ?? s.templateId;
+                  const templateLabel = getScheduleDisplayLabel(s.templateId);
+                  const isReel = s.mediaType === 'REEL';
                   const canRetry = s.status === 'failed' || s.status === 'needs_review';
                   const canCancel = s.status === 'draft' || s.status === 'scheduled' || s.status === 'failed' || s.status === 'needs_review';
                   return (
@@ -195,7 +201,13 @@ export default function ScheduleList({ reloadToken }: Props) {
                       <tr className="border-b border-gray-100 align-top">
                         <td className="py-2 pr-3 whitespace-nowrap text-slate-700">{formatJst(s.scheduledAt)}</td>
                         <td className="py-2 pr-3 whitespace-nowrap font-medium text-slate-800">{s.personName}</td>
-                        <td className="py-2 pr-3 whitespace-nowrap text-gray-500">{templateLabel}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap text-gray-500">
+                          {isReel ? (
+                            <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-pink-50 text-pink-700">🎬 リール</span>
+                          ) : (
+                            templateLabel
+                          )}
+                        </td>
                         <td className="py-2 pr-3 whitespace-nowrap">
                           <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${getStatusStyle(s.status)}`}>
                             {getStatusLabel(s.status)}
@@ -245,16 +257,38 @@ export default function ScheduleList({ reloadToken }: Props) {
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs text-slate-600">
                               <p><span className="text-gray-400">人物名：</span>{s.personName}</p>
                               <p><span className="text-gray-400">予定日時（JST）：</span>{formatJst(s.scheduledAt)}</p>
-                              <p><span className="text-gray-400">使用テンプレート：</span>{templateLabel}</p>
+                              {isReel ? (
+                                <>
+                                  <p><span className="text-gray-400">種別：</span>リール</p>
+                                  <p><span className="text-gray-400">動画：</span>{s.personName} / {s.videoTemplateName ?? s.templateId}</p>
+                                </>
+                              ) : (
+                                <p><span className="text-gray-400">使用テンプレート：</span>{templateLabel}</p>
+                              )}
                               <p><span className="text-gray-400">状態：</span>{getStatusLabel(s.status)}</p>
                               <p><span className="text-gray-400">再試行回数：</span>{s.attempts} / {MAX_AUTO_RETRY_ATTEMPTS}</p>
                               <p><span className="text-gray-400">最終更新日時（JST）：</span>{formatJst(s.updatedAt)}</p>
                             </div>
 
+                            {isReel && s.videoUrl && (
+                              <p className="mt-3 text-xs">
+                                <a href={s.videoUrl} target="_blank" rel="noopener noreferrer" className="text-violet-600 hover:underline">
+                                  投稿する動画（ig-reel.mp4）を開く ↗
+                                </a>
+                              </p>
+                            )}
+
                             {s.status === 'published' && (
                               <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800 space-y-1">
                                 <p>Instagram投稿ID：<span className="font-mono">{s.mediaId ?? '（なし）'}</span></p>
                                 <p>投稿日時：{s.publishedAt ? formatJst(s.publishedAt) : '（不明）'}</p>
+                                {s.permalink && (
+                                  <p>
+                                    <a href={s.permalink} target="_blank" rel="noopener noreferrer" className="text-violet-700 hover:underline">
+                                      Instagramで開く ↗
+                                    </a>
+                                  </p>
+                                )}
                               </div>
                             )}
 

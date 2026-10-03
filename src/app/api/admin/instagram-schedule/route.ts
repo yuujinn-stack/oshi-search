@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSchedule, listSchedules, getScheduleStatusCounts } from '@/server/instagram-schedule/schedule-store';
 import { getSchedulableTemplateMeta, scheduleImageCountError } from '@/lib/instagram-templates';
 import { maskSecrets } from '@/lib/mask-secrets';
+import { REEL_TEMPLATE_ID_PREFIX } from '@/lib/instagram-templates';
 import { validateCaption } from '@/lib/instagram-caption-rules';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +15,18 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const [schedules, statusCounts] = await Promise.all([listSchedules(), getScheduleStatusCounts()]);
-    const maskedSchedules = schedules.map((s) => ({ ...s, errorMessage: maskSecrets(s.errorMessage) }));
+    // Reelの行には動画テンプレート名を添える（正本はWorkerが報告したVIDEO_TEMPLATE_REGISTRYの名前。Reelがなければ読まない）
+    const hasReel = schedules.some((s) => s.mediaType === 'REEL');
+    const videoTemplates = hasReel
+      ? ((await import('@/server/video-jobs/job-store').then((m) => m.getLatestWorker()).catch(() => null))?.templates ?? [])
+      : [];
+    const maskedSchedules = schedules.map((s) => ({
+      ...s,
+      errorMessage: maskSecrets(s.errorMessage),
+      ...(s.mediaType === 'REEL'
+        ? { videoTemplateName: videoTemplates.find((t) => `${REEL_TEMPLATE_ID_PREFIX}${t.templateId}` === s.templateId)?.name ?? null }
+        : {}),
+    }));
     return NextResponse.json({ schedules: maskedSchedules, statusCounts });
   } catch (err) {
     return NextResponse.json({ error: String(err instanceof Error ? err.message : err) }, { status: 500 });

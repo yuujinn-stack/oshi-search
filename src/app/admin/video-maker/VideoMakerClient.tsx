@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
+import { countHashtags, validateCaption, INSTAGRAM_CAPTION_MAX_LENGTH, INSTAGRAM_HASHTAG_MAX_COUNT } from '@/lib/instagram-caption-rules';
+import { HOURLY_TIME_OPTIONS } from '@/lib/instagram-post-times';
+import { addDaysJst, formatJst as formatJstDateTime, jstWallClockToUtcDate, nowJstParts } from '@/lib/jst-time';
+import { getStatusLabel, getStatusStyle } from '@/lib/instagram-schedule-status';
 
 /**
  * /admin/video-maker のクライアント部分。
@@ -52,6 +56,19 @@ interface CapcutStoreReport {
   reportedAt: string;
   entries: CapcutEntry[];
   prepareFailures?: Array<{ personName: string; message: string; at: string }>;
+}
+
+/** 動画のInstagramリール予約（instagram_post_schedules、media_type='REEL'）。statusは既存の予約投稿と同じ */
+interface ReelSchedule {
+  id: number;
+  status: string;
+  scheduledAt: string;
+  caption: string;
+  mediaId: string | null;
+  permalink: string | null;
+  publishedAt: string | null;
+  attempts: number;
+  errorMessage: string | null;
 }
 
 interface VideoJob {
@@ -146,15 +163,24 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [openJobId, setOpenJobId] = useState<string | null>(null);
+  const [reelSchedules, setReelSchedules] = useState<Record<string, ReelSchedule>>({});
+  const [reelAutopublishEnabled, setReelAutopublishEnabled] = useState(false);
   const [capcutFilter, setCapcutFilter] = useState<CapcutFilter>('all');
   const [capcutSelectedOnly, setCapcutSelectedOnly] = useState(false);
   const [preparing, setPreparing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const data = await fetchJson<{ jobs: VideoJob[]; worker: WorkerInfo | null }>('/api/admin/video-jobs');
+      const data = await fetchJson<{
+        jobs: VideoJob[];
+        worker: WorkerInfo | null;
+        reelSchedules?: Record<string, ReelSchedule>;
+        reelAutopublishEnabled?: boolean;
+      }>('/api/admin/video-jobs');
       setJobs(data.jobs);
       setWorker(data.worker);
+      setReelSchedules(data.reelSchedules ?? {});
+      setReelAutopublishEnabled(!!data.reelAutopublishEnabled);
       setLoadError(null);
     } catch (err) {
       setLoadError(String(err instanceof Error ? err.message : err));
@@ -530,7 +556,15 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
                       </button>
                     )}
                   </div>
-                  {open && job.status === 'completed' && <CompletedDetail job={job} onRetry={() => void jobAction(job.id, 'retry')} />}
+                  {open && job.status === 'completed' && (
+                    <CompletedDetail
+                      job={job}
+                      onRetry={() => void jobAction(job.id, 'retry')}
+                      reelSchedule={reelSchedules[job.id] ?? null}
+                      reelAutopublishEnabled={reelAutopublishEnabled}
+                      onReelChanged={() => void load()}
+                    />
+                  )}
                   {open && job.status === 'failed' && (
                     <div className="mt-3 text-sm bg-red-50 rounded-lg p-3 space-y-2">
                       <div>
@@ -605,11 +639,26 @@ function CapcutCard({ entry, templateName, isNext }: { entry: CapcutEntry; templ
   );
 }
 
-function CompletedDetail({ job, onRetry }: { job: VideoJob; onRetry: () => void }) {
+function CompletedDetail({
+  job,
+  onRetry,
+  reelSchedule,
+  reelAutopublishEnabled,
+  onReelChanged,
+}: {
+  job: VideoJob;
+  onRetry: () => void;
+  reelSchedule: ReelSchedule | null;
+  reelAutopublishEnabled: boolean;
+  onReelChanged: () => void;
+}) {
   const [tab, setTab] = useState('default');
   const text = job.postTexts?.[tab] ?? '';
   const result = job.result ?? {};
+  const igReel = result.instagramReelVideo as { url?: unknown; qaStatus?: unknown; durationSec?: unknown } | undefined;
+  const igReelUrl = igReel?.qaStatus === 'PASS' && typeof igReel.url === 'string' ? igReel.url : null;
   return (
+    <>
     <div className="mt-3 grid gap-4 md:grid-cols-[240px_1fr]">
       <div>
         {job.videoUrl && <video src={job.videoUrl} controls playsInline className="w-full rounded-lg bg-black aspect-[9/16]" />}
@@ -669,5 +718,236 @@ function CompletedDetail({ job, onRetry }: { job: VideoJob; onRetry: () => void 
         </div>
       </div>
     </div>
+    {igReelUrl && (
+      <InstagramReelSection
+        job={job}
+        videoUrl={igReelUrl}
+        schedule={reelSchedule}
+        autopublishEnabled={reelAutopublishEnabled}
+        onChanged={onReelChanged}
+      />
+    )}
+    </>
+  );
+}
+
+/** 未投稿のうちキャンセルできる状態（既存のInstagram予約のキャンセルと同じ条件） */
+const REEL_CANCELLABLE = new Set(['draft', 'scheduled', 'failed', 'needs_review']);
+
+/**
+ * Instagramリールの予約（Phase R2）。ig-reel.mp4（Instagram仕様QA PASS）をプレビューし、投稿文（post_texts.instagram）を
+ * 確認・編集して、既存の予約投稿と同じルール（未来・JSTの毎時0分・空き枠のみ）で予約する。
+ * 予約はサーバー側（/api/admin/video-jobs/[id]/instagram-reel）でジョブから動画URL等を取り直して検証・保存する。
+ * キャンセルは既存のInstagram予約のキャンセルAPIをそのまま使う。
+ */
+function InstagramReelSection({
+  job,
+  videoUrl,
+  schedule,
+  autopublishEnabled,
+  onChanged,
+}: {
+  job: VideoJob;
+  videoUrl: string;
+  schedule: ReelSchedule | null;
+  autopublishEnabled: boolean;
+  onChanged: () => void;
+}) {
+  const active = schedule && schedule.status !== 'cancelled' ? schedule : null;
+  const [caption, setCaption] = useState(job.postTexts?.instagram ?? '');
+  const [date, setDate] = useState(() => addDaysJst(nowJstParts().date, 1));
+  const [time, setTime] = useState('20:00');
+  const [confirmed, setConfirmed] = useState(false);
+  const [occupied, setOccupied] = useState<Set<string> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+  // 既存予約（カルーセル・リール）で埋まっている時間枠。予約フォームを表示するときだけ取得する
+  useEffect(() => {
+    if (active) return;
+    let cancelled = false;
+    void fetchJson<{ occupied: string[] }>('/api/admin/instagram-schedule/occupied-slots?days=120')
+      .then((d) => !cancelled && setOccupied(new Set(d.occupied)))
+      .catch(() => !cancelled && setOccupied(new Set()));
+    return () => {
+      cancelled = true;
+    };
+  }, [active]);
+
+  const scheduledAt = useMemo(() => {
+    try {
+      return jstWallClockToUtcDate(date, time);
+    } catch {
+      return null;
+    }
+  }, [date, time]);
+  const captionError = validateCaption(caption);
+  const isFuture = !!scheduledAt && scheduledAt.getTime() > Date.now();
+  const isTaken = !!scheduledAt && !!occupied?.has(scheduledAt.toISOString());
+  const timeError = !scheduledAt ? '日時を選んでください' : !isFuture ? '過去の日時は予約できません' : isTaken ? 'この時間には既に予約があります' : null;
+  const canSubmit = !busy && !captionError && !timeError && occupied !== null && confirmed;
+
+  async function submit() {
+    if (!scheduledAt || !canSubmit) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await fetchJson(`/api/admin/video-jobs/${job.id}/instagram-reel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caption, scheduledAt: scheduledAt.toISOString() }),
+      });
+      setMessage({ kind: 'ok', text: 'Instagramリールを予約しました。' });
+      setConfirmed(false);
+      onChanged();
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancel(id: number) {
+    if (!confirm('このリール予約をキャンセルしますか？')) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await fetchJson(`/api/admin/instagram-schedule/${id}/cancel`, { method: 'POST' });
+      setMessage({ kind: 'ok', text: '予約をキャンセルしました。' });
+      onChanged();
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="mt-4 border-t border-gray-200 pt-4">
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        <h3 className="text-sm font-bold text-slate-700">Instagramリール</h3>
+        <span
+          className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
+            active ? getStatusStyle(active.status) : 'bg-gray-100 text-gray-600'
+          }`}
+        >
+          {active ? getStatusLabel(active.status) : '未予約'}
+        </span>
+        <span className="text-xs text-emerald-700">✅ 動画準備完了</span>
+        <span className="text-xs text-emerald-700">✅ Instagram仕様 QA PASS</span>
+      </div>
+      {!autopublishEnabled && (
+        <p className="text-xs text-amber-700 bg-amber-50 rounded p-2 mb-3">
+          リールの自動投稿は現在OFFです。予約しても、予定日時になってもInstagramへは投稿されません。
+        </p>
+      )}
+      <div className="grid gap-4 md:grid-cols-[240px_1fr]">
+        <video src={videoUrl} controls playsInline className="w-full rounded-lg bg-black aspect-[9/16]" />
+        {active ? (
+          <div className="space-y-2 text-sm">
+            <p>
+              <span className="text-gray-500 mr-2">予約日時</span>
+              {formatJstDateTime(active.scheduledAt)}（JST）
+            </p>
+            {active.status === 'published' && (
+              <p className="text-emerald-700">
+                投稿済み{active.publishedAt ? `（${formatJstDateTime(active.publishedAt)}）` : ''}
+                {active.permalink && (
+                  <a href={active.permalink} target="_blank" rel="noopener noreferrer" className="ml-2 text-violet-600 hover:underline">
+                    Instagramで開く ↗
+                  </a>
+                )}
+              </p>
+            )}
+            {active.status === 'failed' && active.errorMessage && (
+              <p className="text-xs text-red-600">
+                {active.errorMessage}（試行{active.attempts}回）
+              </p>
+            )}
+            {active.status === 'needs_review' && (
+              <p className="text-xs text-orange-700">
+                ⚠️ Instagram側の状態確認が必要です（Instagram予約一覧で確認してください）。
+              </p>
+            )}
+            <div>
+              <span className="text-xs text-gray-500">投稿文</span>
+              <pre className="whitespace-pre-wrap text-xs bg-gray-50 rounded p-2 text-slate-700 max-h-40 overflow-auto">{active.caption}</pre>
+            </div>
+            {REEL_CANCELLABLE.has(active.status) && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void cancel(active.id)}
+                className="text-xs px-3 py-1 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 disabled:opacity-50"
+              >
+                予約をキャンセル
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3 text-sm">
+            {schedule?.status === 'cancelled' && <p className="text-xs text-gray-500">前回の予約はキャンセル済みです。</p>}
+            <div>
+              <label className="text-xs text-gray-500" htmlFor={`reel-caption-${job.id}`}>
+                投稿文（Instagram）
+              </label>
+              <textarea
+                id={`reel-caption-${job.id}`}
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                className="w-full h-36 text-xs border border-gray-200 rounded p-2"
+              />
+              <p className={`text-xs ${captionError ? 'text-red-600' : 'text-gray-500'}`}>
+                {caption.length}/{INSTAGRAM_CAPTION_MAX_LENGTH}文字・ハッシュタグ{countHashtags(caption)}/{INSTAGRAM_HASHTAG_MAX_COUNT}
+                {captionError ? `（${captionError}）` : ''}
+              </p>
+            </div>
+            <div>
+              <span className="text-xs text-gray-500 block mb-1">投稿日時（JST・1時間単位）</span>
+              <div className="flex gap-2 items-center flex-wrap">
+                <input
+                  type="date"
+                  value={date}
+                  min={nowJstParts().date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="border border-gray-200 rounded px-2 py-1 text-sm"
+                  aria-label="投稿日"
+                />
+                <select value={time} onChange={(e) => setTime(e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-sm" aria-label="投稿時刻">
+                  {HOURLY_TIME_OPTIONS.map((t) => {
+                    let taken = false;
+                    try {
+                      taken = !!occupied?.has(jstWallClockToUtcDate(date, t).toISOString());
+                    } catch {
+                      taken = false;
+                    }
+                    return (
+                      <option key={t} value={t}>
+                        {t}
+                        {taken ? '（予約あり）' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+              {timeError && <p className="text-xs text-red-600 mt-1">{timeError}</p>}
+            </div>
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <input type="checkbox" className="mt-1" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+              <span>動画・投稿文・投稿日時の内容を確認しました（予約するとInstagramで公開される予定になります）</span>
+            </label>
+            <button
+              type="button"
+              disabled={!canSubmit}
+              onClick={() => void submit()}
+              className="px-5 py-2 rounded-lg bg-violet-600 text-white text-sm font-bold disabled:bg-gray-300"
+            >
+              {busy ? '予約中...' : 'リールを予約'}
+            </button>
+          </div>
+        )}
+      </div>
+      {message && <p className={`text-sm mt-2 ${message.kind === 'ok' ? 'text-emerald-700' : 'text-red-600'}`}>{message.text}</p>}
+    </section>
   );
 }

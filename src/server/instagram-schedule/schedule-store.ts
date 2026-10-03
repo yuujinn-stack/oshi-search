@@ -437,6 +437,24 @@ export async function saveReelPermalink(id: number, permalink: string): Promise<
     .where(eq(instagramPostSchedules.id, id));
 }
 
+/**
+ * 動画生成ジョブごとのReel予約（/admin/video-maker の表示用）。キャンセル以外の予約があればそれを、
+ * なければ最新のキャンセル済み予約を返す（同じジョブのキャンセル以外の予約は部分ユニークインデックスで最大1件）。
+ */
+export async function listReelSchedulesForJobs(jobIds: string[]): Promise<Record<string, ScheduleRecord>> {
+  if (jobIds.length === 0) return {};
+  const rows = await db.select().from(instagramPostSchedules)
+    .where(and(eq(instagramPostSchedules.mediaType, 'REEL'), inArray(instagramPostSchedules.videoGenerationJobId, jobIds)))
+    .orderBy(desc(instagramPostSchedules.createdAt));
+  const result: Record<string, ScheduleRecord> = {};
+  for (const row of rows) {
+    const jobId = row.videoGenerationJobId!;
+    const current = result[jobId];
+    if (!current || (current.status === 'cancelled' && row.status !== 'cancelled')) result[jobId] = toRecord(row);
+  }
+  return result;
+}
+
 export class DuplicateReelScheduleError extends Error {}
 
 export interface CreateReelScheduleInput {

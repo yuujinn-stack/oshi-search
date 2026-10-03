@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { maskSecrets } from '@/lib/mask-secrets';
+import { listReelSchedulesForJobs } from '@/server/instagram-schedule/schedule-store';
+import { isAutopublishEnabled, isReelsAutopublishEnabled } from '@/server/instagram-post/config';
 import {
   createVideoJobs,
   failStaleProcessingJobs,
@@ -16,9 +18,30 @@ export async function GET() {
   try {
     await failStaleProcessingJobs();
     const [jobs, worker] = await Promise.all([listVideoJobs(), getLatestWorker()]);
+    // 完了した動画のInstagramリール予約（instagram_post_schedules、media_type='REEL'）の状態
+    const reels = await listReelSchedulesForJobs(jobs.filter((j) => j.status === 'completed').map((j) => j.id));
+    const reelSchedules = Object.fromEntries(
+      Object.entries(reels).map(([jobId, s]) => [
+        jobId,
+        {
+          id: s.id,
+          status: s.status,
+          scheduledAt: s.scheduledAt,
+          caption: s.caption,
+          mediaId: s.mediaId,
+          permalink: s.permalink,
+          publishedAt: s.publishedAt,
+          attempts: s.attempts,
+          errorMessage: maskSecrets(s.errorMessage),
+        },
+      ]),
+    );
     return NextResponse.json({
       jobs: jobs.map((j) => ({ ...j, errorMessage: maskSecrets(j.errorMessage) })),
       worker,
+      reelSchedules,
+      // リールが実際に自動投稿される状態か（スイッチの有効/無効だけ。値そのものは返さない）
+      reelAutopublishEnabled: isAutopublishEnabled() && isReelsAutopublishEnabled(),
     });
   } catch (err) {
     return NextResponse.json({ error: maskSecrets(String(err instanceof Error ? err.message : err)) }, { status: 500 });
