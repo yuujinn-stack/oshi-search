@@ -53,6 +53,12 @@ export async function POST(req: NextRequest) {
             status: e.status as CapcutStoreStatus,
             message: str(e.message, 500) ?? '',
             scriptText: str(e.scriptText, 3000),
+            speechScriptText: str(e.speechScriptText, 3000),
+            unresolvedReadings: (Array.isArray(e.unresolvedReadings) ? e.unresolvedReadings : [])
+              .slice(0, 20)
+              .map((u) => u as Record<string, unknown>)
+              .filter((u) => (u.kind === 'person' || u.kind === 'work' || u.kind === 'service') && typeof u.text === 'string')
+              .map((u) => ({ kind: u.kind as 'person' | 'work' | 'service', text: str(u.text, 200)! })),
             scriptHash: str(e.scriptHash, 64),
             savedScriptHash: str(e.savedScriptHash, 64),
             duration: num(e.duration),

@@ -44,6 +44,10 @@ interface CapcutEntry {
   status: CapcutStatus;
   message: string;
   scriptText: string | null;
+  /** CapCut音声生成用の読み台本（古いWorkerの報告には無い） */
+  speechScriptText?: string | null;
+  /** 読みが辞書に無く、正式表記のまま残した固有名詞 */
+  unresolvedReadings?: Array<{ kind: 'person' | 'work' | 'service'; text: string }>;
   scriptHash: string | null;
   savedScriptHash: string | null;
   duration: number | null;
@@ -456,7 +460,7 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
           <details className="text-xs text-gray-600">
             <summary className="cursor-pointer">作り方（CapCutでの作業は手動です）</summary>
             <ol className="list-decimal ml-5 mt-1 space-y-0.5">
-              <li>カードの台本をコピーし、CapCutでナレーション音声と字幕を作成する</li>
+              <li>カードの「音声用台本をコピー」で読み台本をコピーし、CapCutでナレーション音声と字幕を作成する</li>
               <li>音声（WAV）と字幕（SRT）を、カードのファイル名で書き出す（例: ファイル名.wav / ファイル名.srt）</li>
               <li>
                 Macの受信フォルダ（{worker?.capcutStore?.inboxDir ?? 'assets/audio-capcut/_inbox'}）に2つのファイルを置く
@@ -587,7 +591,7 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
   );
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+function CopyButton({ text, label, primary = false }: { text: string; label: string; primary?: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -598,7 +602,11 @@ function CopyButton({ text, label }: { text: string; label: string }) {
           setTimeout(() => setCopied(false), 1500);
         });
       }}
-      className="text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:border-violet-400 hover:text-violet-700"
+      className={
+        primary
+          ? 'text-xs px-2 py-0.5 rounded border border-violet-500 bg-violet-600 text-white font-bold hover:bg-violet-700'
+          : 'text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:border-violet-400 hover:text-violet-700'
+      }
     >
       {copied ? 'コピーしました' : label}
     </button>
@@ -622,11 +630,33 @@ function CapcutCard({ entry, templateName, isNext }: { entry: CapcutEntry; templ
       {entry.status !== 'ready' && entry.status !== 'missing' && <p className="text-xs text-gray-600">{entry.message}</p>}
       <div>
         <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-bold text-gray-600">台本</span>
-          {entry.scriptText && <CopyButton text={entry.scriptText} label="台本をコピー" />}
+          <span className="text-xs font-bold text-gray-600">正式台本（表示・字幕と同じ表記）</span>
+          {entry.scriptText && <CopyButton text={entry.scriptText} label="正式台本をコピー" />}
         </div>
         <pre className="whitespace-pre-wrap text-xs bg-gray-50 rounded p-2 text-slate-700">{entry.scriptText ?? '（台本を作成できませんでした）'}</pre>
       </div>
+      {entry.speechScriptText && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-bold text-violet-700">音声生成用台本（読み）← CapCutにはこちらを貼る</span>
+            <CopyButton text={entry.speechScriptText} label="音声用台本をコピー" primary />
+          </div>
+          <pre className="whitespace-pre-wrap text-xs bg-violet-50 rounded p-2 text-slate-700">{entry.speechScriptText}</pre>
+          {entry.unresolvedReadings && entry.unresolvedReadings.length > 0 && (
+            <div className="text-xs text-amber-800 bg-amber-50 rounded p-2 mt-1">
+              <p className="font-bold">⚠ 読み未登録（正式表記のまま入っています。CapCutで読みを確認してください）</p>
+              <ul className="list-disc ml-5">
+                {entry.unresolvedReadings.map((u) => (
+                  <li key={`${u.kind}:${u.text}`}>
+                    {u.text}
+                    <span className="text-amber-600">（{u.kind === 'person' ? '人物名' : u.kind === 'work' ? '作品名' : '配信サービス名'}）</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-2">
         <code className="text-xs bg-gray-50 rounded px-2 py-0.5 break-all">{entry.fileBaseName}</code>
         <CopyButton text={entry.fileBaseName} label="ファイル名をコピー" />

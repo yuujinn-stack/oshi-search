@@ -61,7 +61,12 @@ export interface CapcutStoreEntry {
   templateId: string;
   status: CapcutStoreStatus;
   message: string;
+  /** 正式台本（表示・字幕と同じ表記。scriptHashの基準） */
   scriptText: string | null;
+  /** CapCut音声生成用の読み台本（正式台本から作る。古いWorkerの報告には無い） */
+  speechScriptText?: string | null;
+  /** 読み辞書に無く、読み台本でも正式表記のまま残した人物名・作品名・配信サービス名 */
+  unresolvedReadings?: Array<{ kind: 'person' | 'work' | 'service'; text: string }>;
   scriptHash: string | null;
   savedScriptHash: string | null;
   duration: number | null;
