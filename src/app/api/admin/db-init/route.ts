@@ -394,6 +394,9 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE verdicts ADD COLUMN IF NOT EXISTS reason TEXT`),
   sql.raw(`ALTER TABLE verdicts ADD COLUMN IF NOT EXISTS prompt_version TEXT`),
   sql.raw(`ALTER TABLE verdicts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
+
+  // ── video_workers（drizzle/0014_video_workers_capcut_store.sql）────────────
+  sql.raw(`ALTER TABLE video_workers ADD COLUMN IF NOT EXISTS capcut_store JSONB`),
 ];
 
 const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements', 'instagram_posts', 'instagram_post_schedules', 'instagram_admin_notifications', 'video_generation_jobs', 'video_workers'];

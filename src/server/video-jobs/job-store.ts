@@ -33,6 +33,29 @@ export interface WorkerInfo {
   templates: WorkerTemplateInfo[];
   /** Workerが対応付けできる人物名（oshi-video-makerのPERSON_REGISTRY由来） */
   persons: string[];
+  /** CapCut保存済み音声の状態（Worker報告。未報告ならnull） */
+  capcutStore: CapcutStoreReport | null;
+}
+
+/** CapCut保存済み音声の状態（正本はoshi-video-makerのcapcutStore。ここでは報告された内容を保存・表示するだけ） */
+export type CapcutStoreStatus = 'ready' | 'stale' | 'missing' | 'check_failed';
+export interface CapcutStoreEntry {
+  personName: string;
+  personSlug: string;
+  templateId: string;
+  status: CapcutStoreStatus;
+  message: string;
+  scriptText: string | null;
+  scriptHash: string | null;
+  savedScriptHash: string | null;
+  duration: number | null;
+  updatedAt: string | null;
+  fileBaseName: string;
+}
+export interface CapcutStoreReport {
+  inboxDir: string;
+  reportedAt: string;
+  entries: CapcutStoreEntry[];
 }
 
 export class VideoJobError extends Error {
@@ -59,6 +82,7 @@ function toWorkerInfo(row: typeof videoWorkers.$inferSelect): WorkerInfo {
     version: row.version,
     templates: (row.templates ?? []) as WorkerTemplateInfo[],
     persons: (row.persons ?? []) as string[],
+    capcutStore: (row.capcutStore ?? null) as CapcutStoreReport | null,
   };
 }
 
@@ -73,15 +97,27 @@ export async function upsertWorkerHeartbeat(input: {
   version: string | null;
   templates: WorkerTemplateInfo[];
   persons: string[];
+  /** 送られてきた場合だけ更新する（省略時は前回の報告を維持） */
+  capcutStore?: CapcutStoreReport;
 }): Promise<void> {
   const now = new Date();
+  const capcut = input.capcutStore ? { capcutStore: input.capcutStore } : {};
   await db
     .insert(videoWorkers)
-    .values({ workerId: input.workerId, lastSeenAt: now, version: input.version, templates: input.templates, persons: input.persons, updatedAt: now })
+    .values({ workerId: input.workerId, lastSeenAt: now, version: input.version, templates: input.templates, persons: input.persons, updatedAt: now, ...capcut })
     .onConflictDoUpdate({
       target: videoWorkers.workerId,
-      set: { lastSeenAt: now, version: input.version, templates: input.templates, persons: input.persons, updatedAt: now },
+      set: { lastSeenAt: now, version: input.version, templates: input.templates, persons: input.persons, updatedAt: now, ...capcut },
     });
+}
+
+export function capcutStatusLabel(status: CapcutStoreStatus): string {
+  switch (status) {
+    case 'ready': return '使用可能';
+    case 'stale': return '台本変更あり・再作成が必要';
+    case 'missing': return '音声なし';
+    case 'check_failed': return '取り込みチェック失敗';
+  }
 }
 
 // ── 管理画面向け ──────────────────────────────────────────────────────────────
@@ -127,6 +163,19 @@ export async function createVideoJobs(input: {
   if (!template) throw new VideoJobError(`Workerが対応していないテンプレートです: ${input.templateId}`, 400);
   if (!template.narrationModes.includes(input.narrationMode)) {
     throw new VideoJobError(`「${template.name}」はこのナレーション方式に対応していません。`, 400);
+  }
+  // CapCut保存済み音声: Workerが報告した状態がreadyの人物だけ受け付ける（フロントだけに任せない）。
+  // 実際に生成する直前にもWorker側で再確認する。
+  if (input.narrationMode === 'capcut') {
+    const notReady = input.personNames
+      .map((name) => {
+        const entry = worker.capcutStore?.entries.find((e) => e.personName === name && e.templateId === template.templateId);
+        return entry?.status === 'ready' ? null : `${name}（${entry ? capcutStatusLabel(entry.status) : 'Worker未対応・状態不明'}）`;
+      })
+      .filter((x): x is string => x !== null);
+    if (notReady.length > 0) {
+      throw new VideoJobError(`CapCut保存済み音声がreadyではないため生成できません: ${notReady.join('、')}`, 400);
+    }
   }
 
   const [{ queued }] = await db

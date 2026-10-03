@@ -592,5 +592,8 @@ export const videoWorkers = pgTable('video_workers', {
   version:    text('version'),
   templates:  jsonb('templates').$type<unknown[]>().notNull().default([]),
   persons:    jsonb('persons').$type<unknown[]>().notNull().default([]),
+  // CapCut保存済み音声（Mac上の assets/audio-capcut）の人物×テンプレート別の状態・現在の台本。
+  // Workerが内容の変わったとき（＋10分ごと）だけ送ってくる。正本はoshi-video-maker側のcapcutStore。
+  capcutStore: jsonb('capcut_store').$type<unknown>(),
   updatedAt:  timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
