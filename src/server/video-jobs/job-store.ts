@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { and, desc, eq, lt, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { videoGenerationJobs, videoWorkers } from '@/db/schema';
+import { personVideoSlug } from './person-slug';
 
 /**
  * 動画生成ジョブ（video_generation_jobs）とWorker情報（video_workers）の読み書き。
@@ -35,7 +36,22 @@ export interface WorkerInfo {
   persons: string[];
   /** CapCut保存済み音声の状態（Worker報告。未報告ならnull） */
   capcutStore: CapcutStoreReport | null;
+  /** 管理画面から依頼した、Worker未取得人物のCapCut台本準備（Workerが処理すると消える） */
+  capcutPrepareRequests: CapcutPrepareRequest[];
 }
+
+/** CapCut台本の準備依頼（Workerが推しサーチの人物ページを取得し、台本を作れるようにする） */
+export interface CapcutPrepareRequest {
+  personName: string;
+  personSlug: string;
+  requestedAt: string;
+}
+export interface CapcutPrepareFailure {
+  personName: string;
+  message: string;
+  at: string;
+}
+export const MAX_CAPCUT_PREPARE_REQUESTS = 20;
 
 /** CapCut保存済み音声の状態（正本はoshi-video-makerのcapcutStore。ここでは報告された内容を保存・表示するだけ） */
 export type CapcutStoreStatus = 'ready' | 'stale' | 'missing' | 'check_failed';
@@ -56,6 +72,8 @@ export interface CapcutStoreReport {
   inboxDir: string;
   reportedAt: string;
   entries: CapcutStoreEntry[];
+  /** 台本準備に失敗した人物（理由を管理画面に表示する） */
+  prepareFailures?: CapcutPrepareFailure[];
 }
 
 export class VideoJobError extends Error {
@@ -83,6 +101,7 @@ function toWorkerInfo(row: typeof videoWorkers.$inferSelect): WorkerInfo {
     templates: (row.templates ?? []) as WorkerTemplateInfo[],
     persons: (row.persons ?? []) as string[],
     capcutStore: (row.capcutStore ?? null) as CapcutStoreReport | null,
+    capcutPrepareRequests: (Array.isArray(row.capcutPrepareRequests) ? row.capcutPrepareRequests : []) as CapcutPrepareRequest[],
   };
 }
 
@@ -99,16 +118,50 @@ export async function upsertWorkerHeartbeat(input: {
   persons: string[];
   /** 送られてきた場合だけ更新する（省略時は前回の報告を維持） */
   capcutStore?: CapcutStoreReport;
-}): Promise<void> {
+}): Promise<CapcutPrepareRequest[]> {
   const now = new Date();
   const capcut = input.capcutStore ? { capcutStore: input.capcutStore } : {};
-  await db
+  const [row] = await db
     .insert(videoWorkers)
     .values({ workerId: input.workerId, lastSeenAt: now, version: input.version, templates: input.templates, persons: input.persons, updatedAt: now, ...capcut })
     .onConflictDoUpdate({
       target: videoWorkers.workerId,
       set: { lastSeenAt: now, version: input.version, templates: input.templates, persons: input.persons, updatedAt: now, ...capcut },
-    });
+    })
+    .returning({ capcutPrepareRequests: videoWorkers.capcutPrepareRequests });
+  const requests = (Array.isArray(row?.capcutPrepareRequests) ? row.capcutPrepareRequests : []) as CapcutPrepareRequest[];
+  if (!input.capcutStore || requests.length === 0) return requests;
+  // 台本準備が済んだ（状態一覧に載った）人物と、依頼後に失敗が報告された人物の依頼を消す
+  const prepared = new Set(input.capcutStore.entries.map((e) => e.personName));
+  const failedAt = new Map((input.capcutStore.prepareFailures ?? []).map((f) => [f.personName, f.at]));
+  const remaining = requests.filter((r) => !prepared.has(r.personName) && !((failedAt.get(r.personName) ?? '') >= r.requestedAt));
+  if (remaining.length !== requests.length) {
+    await db.update(videoWorkers).set({ capcutPrepareRequests: remaining }).where(eq(videoWorkers.workerId, input.workerId));
+  }
+  return remaining;
+}
+
+/**
+ * CapCut台本の準備を依頼する（Workerがまだ素材を持っていない人物だけ）。人物は推しサーチの登録人物であることを
+ * 呼び出し側で確認済み。slugは人物名から決まる値を付け、Worker側でも検証する。
+ */
+export async function requestCapcutPrepare(personNames: string[]): Promise<CapcutPrepareRequest[]> {
+  const worker = await getLatestWorker();
+  if (!worker) throw new VideoJobError('動画生成Workerがまだ接続していません。', 409);
+  const known = new Set((worker.capcutStore?.entries ?? []).map((e) => e.personName));
+  const current = worker.capcutPrepareRequests;
+  const requestedAt = new Date().toISOString();
+  const added = personNames
+    .filter((name) => !known.has(name) && !current.some((r) => r.personName === name))
+    .map((personName) => ({ personName, personSlug: personVideoSlug(personName), requestedAt }));
+  // 失敗後の再依頼は、既存の依頼を新しい時刻で置き換える
+  const retried = current.map((r) => (personNames.includes(r.personName) && !known.has(r.personName) ? { ...r, requestedAt } : r));
+  const next = [...retried, ...added];
+  if (next.length > MAX_CAPCUT_PREPARE_REQUESTS) {
+    throw new VideoJobError(`台本準備の依頼は同時に${MAX_CAPCUT_PREPARE_REQUESTS}人までです。準備が終わってから追加してください。`, 429);
+  }
+  await db.update(videoWorkers).set({ capcutPrepareRequests: next }).where(eq(videoWorkers.workerId, worker.workerId));
+  return next;
 }
 
 export function capcutStatusLabel(status: CapcutStoreStatus): string {
@@ -194,6 +247,8 @@ export async function createVideoJobs(input: {
     batchId,
     retryOfJobId: input.retryOfJobId ?? null,
     personName,
+    // 推しサーチDBで確認済みの人物のslug（PERSON_REGISTRY登録済みの人物はWorker側でregistryのslugが優先される）
+    personSlug: personVideoSlug(personName),
     templateId: template.templateId,
     templateVersion: template.version,
     narrationMode: input.narrationMode,

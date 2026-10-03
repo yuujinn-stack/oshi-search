@@ -28,6 +28,7 @@ interface WorkerInfo {
   templates: WorkerTemplate[];
   persons: string[];
   capcutStore: CapcutStoreReport | null;
+  capcutPrepareRequests: Array<{ personName: string; personSlug: string; requestedAt: string }>;
 }
 
 type CapcutStatus = 'ready' | 'stale' | 'missing' | 'check_failed';
@@ -50,6 +51,7 @@ interface CapcutStoreReport {
   inboxDir: string;
   reportedAt: string;
   entries: CapcutEntry[];
+  prepareFailures?: Array<{ personName: string; message: string; at: string }>;
 }
 
 interface VideoJob {
@@ -145,6 +147,8 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [openJobId, setOpenJobId] = useState<string | null>(null);
   const [capcutFilter, setCapcutFilter] = useState<CapcutFilter>('all');
+  const [capcutSelectedOnly, setCapcutSelectedOnly] = useState(false);
+  const [preparing, setPreparing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -184,9 +188,46 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
     for (const e of capcutEntries) c[capcutFilterOf(e.status)]++;
     return c;
   }, [capcutEntries]);
-  // 次に作る1件: 録り直し（台本変更・チェック失敗）を優先し、次に音声なし
-  const nextCapcut = capcutEntries.find((e) => capcutFilterOf(e.status) === 'redo') ?? capcutEntries.find((e) => e.status === 'missing') ?? null;
-  const visibleCapcut = capcutEntries.filter((e) => capcutFilter === 'all' || capcutFilterOf(e.status) === capcutFilter);
+  // 管理画面で選択中の人物を先頭に（選択順）。続けてそれ以外の人物
+  const selectedSet = useMemo(() => new Set(selectedNames), [selectedNames]);
+  const orderedCapcut = useMemo(
+    () => [
+      ...selectedNames.map((n) => capcutByName.get(n)).filter((e): e is CapcutEntry => !!e),
+      ...capcutEntries.filter((e) => !selectedSet.has(e.personName)),
+    ],
+    [selectedNames, selectedSet, capcutByName, capcutEntries],
+  );
+  // 次に作る1件: 録り直し（台本変更・チェック失敗）を優先し、次に音声なし（選択中の人物があればその中から）
+  const nextPool = orderedCapcut.some((e) => selectedSet.has(e.personName) && e.status !== 'ready')
+    ? orderedCapcut.filter((e) => selectedSet.has(e.personName))
+    : orderedCapcut;
+  const nextCapcut = nextPool.find((e) => capcutFilterOf(e.status) === 'redo') ?? nextPool.find((e) => e.status === 'missing') ?? null;
+  const visibleCapcut = orderedCapcut.filter(
+    (e) => (capcutFilter === 'all' || capcutFilterOf(e.status) === capcutFilter) && (!capcutSelectedOnly || selectedSet.has(e.personName)),
+  );
+  // Workerがまだ素材（人物ページ）を持っておらず台本を作れない選択中の人物（PERSON_REGISTRY未登録の人物など）
+  const prepareRequested = new Set((worker?.capcutPrepareRequests ?? []).map((r) => r.personName));
+  const prepareFailure = new Map((worker?.capcutStore?.prepareFailures ?? []).map((f) => [f.personName, f.message]));
+  const unpreparedSelected = capcutSupported ? selectedNames.filter((n) => !capcutByName.has(n)) : [];
+  const unpreparedNotRequested = unpreparedSelected.filter((n) => !prepareRequested.has(n));
+  const unpreparedLabel = (n: string) =>
+    prepareRequested.has(n) ? '⏳ 台本を準備中（Workerが人物ページを取得しています）' : prepareFailure.has(n) ? `⚠️ 台本の準備に失敗: ${prepareFailure.get(n)}` : '台本未準備';
+
+  async function preparePersons(names: string[]) {
+    setPreparing(true);
+    try {
+      await fetchJson('/api/admin/video-jobs/capcut-prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personNames: names }),
+      });
+      await load();
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setPreparing(false);
+    }
+  }
 
   // CapCut対応テンプレートを開いている間は、MacでCapCut音声を受信フォルダに置いた結果が反映されるよう10秒ごとに更新する
   useEffect(() => {
@@ -206,8 +247,6 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
     }
   }, [template, narrationMode]);
 
-  const workerPersons = useMemo(() => new Set(worker?.persons ?? []), [worker]);
-  const unsupportedSelected = selectedNames.filter((n) => worker && !workerPersons.has(n));
   const templateName = (id: string) => templates.find((t) => t.templateId === id)?.name ?? id;
 
   // CapCut保存済み音声で生成するとき: 対象（選択中の人物。未選択ならこのテンプレートの全人物）のうちreadyだけを生成し、残りは理由付きで除外
@@ -217,7 +256,7 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
     .filter((n) => capcutByName.get(n)?.status !== 'ready')
     .map((n) => {
       const e = capcutByName.get(n);
-      return { name: n, reason: e ? `${CAPCUT_STATUS_VIEW[e.status].icon} ${CAPCUT_STATUS_VIEW[e.status].label}` : 'Workerの対応表に未登録（状態不明）' };
+      return { name: n, reason: e ? `${CAPCUT_STATUS_VIEW[e.status].icon} ${CAPCUT_STATUS_VIEW[e.status].label}` : unpreparedLabel(n) };
     });
   const capcutMode = narrationMode === 'capcut';
   const selectedNotReady = capcutMode ? selectedNames.filter((n) => capcutByName.get(n)?.status !== 'ready') : [];
@@ -323,11 +362,6 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
             showPersonPostedBadge={false}
             selectionOrderNote="この順番で1本ずつ生成されます"
           />
-          {unsupportedSelected.length > 0 && (
-            <p className="text-xs text-amber-700 bg-amber-50 rounded p-2 mt-2">
-              ⚠ Workerの人物対応表に未登録のため、生成時に失敗します: {unsupportedSelected.join('、')}
-            </p>
-          )}
           {selectedNotReady.length > 0 && (
             <p className="text-xs text-amber-700 bg-amber-50 rounded p-2 mt-2">
               ⚠ CapCut保存済み音声がreadyではない人物が含まれているため、このままでは生成できません:{' '}
@@ -404,7 +438,13 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
               <li>Workerが自動で取り込み・チェックし、数十秒後にこの画面が 🟢 使用可能 になります</li>
             </ol>
           </details>
-          <div className="flex gap-2 text-xs flex-wrap">
+          <div className="flex gap-2 text-xs flex-wrap items-center">
+            {selectedNames.length > 0 && (
+              <label className="mr-2 cursor-pointer text-gray-600">
+                <input type="checkbox" className="mr-1" checked={capcutSelectedOnly} onChange={(e) => setCapcutSelectedOnly(e.target.checked)} />
+                選択中の人物のみ
+              </label>
+            )}
             {CAPCUT_FILTERS.map((f) => (
               <button
                 key={f.key}
@@ -416,6 +456,31 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
               </button>
             ))}
           </div>
+          {unpreparedSelected.length > 0 && (
+            <div className="rounded-lg border border-dashed border-violet-300 bg-violet-50/40 p-3 space-y-2 text-sm">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-xs text-gray-600">選択中で、まだ台本を作れない人物（人物ページの取得が必要です）</span>
+                {unpreparedNotRequested.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={preparing}
+                    onClick={() => void preparePersons(unpreparedNotRequested)}
+                    className="text-xs px-3 py-1 rounded border border-violet-500 text-violet-700 font-bold disabled:opacity-50"
+                  >
+                    {preparing ? '依頼中...' : `台本を準備（${unpreparedNotRequested.length}人）`}
+                  </button>
+                )}
+              </div>
+              <ul className="space-y-1">
+                {unpreparedSelected.map((n) => (
+                  <li key={n} className="text-xs">
+                    <span className="font-bold text-slate-800 mr-2">{n}</span>
+                    <span className="text-gray-600">{unpreparedLabel(n)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {capcutEntries.length === 0 ? (
             <p className="text-sm text-gray-500">Workerからこのテンプレートの音声状態がまだ届いていません。</p>
           ) : visibleCapcut.length === 0 ? (

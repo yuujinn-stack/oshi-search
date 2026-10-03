@@ -59,12 +59,22 @@ export async function POST(req: NextRequest) {
             updatedAt: str(e.updatedAt, 40),
             fileBaseName: str(e.fileBaseName, 200) ?? '',
           })),
+        prepareFailures: (Array.isArray(rawCapcut.prepareFailures) ? rawCapcut.prepareFailures : [])
+          .slice(0, 100)
+          .map((f) => f as Record<string, unknown>)
+          .filter((f) => typeof f.personName === 'string')
+          .map((f) => ({
+            personName: str(f.personName, 100)!,
+            message: str(f.message, 500) ?? '',
+            at: str(f.at, 40) ?? new Date().toISOString(),
+          })),
       };
     }
-    await upsertWorkerHeartbeat({ workerId, version: str(body.version, 50), templates, persons, capcutStore });
+    const capcutPrepareRequests = await upsertWorkerHeartbeat({ workerId, version: str(body.version, 50), templates, persons, capcutStore });
     if (typeof body.currentJobId === 'string') {
       await touchVideoJobHeartbeat(parseJobId(body.currentJobId), workerId);
     }
-    return { ok: true };
+    // 管理画面から依頼されたCapCut台本の準備（Workerが人物ページを取得する）
+    return { ok: true, capcutPrepareRequests };
   });
 }
