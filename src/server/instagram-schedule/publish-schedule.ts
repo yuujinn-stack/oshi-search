@@ -59,6 +59,11 @@ export async function publishScheduleToInstagram(schedule: ScheduleRecord): Prom
     );
   }
 
+  // Reel（media_type='REEL'）はpublish-reel.tsで扱う。カルーセルの処理には絶対に流さない（多重の安全策）
+  if (schedule.mediaType !== undefined && schedule.mediaType !== 'CAROUSEL') {
+    throw new Error(`予約id=${schedule.id}はカルーセルではないため、カルーセルとしては投稿しません（media_type=${schedule.mediaType}）`);
+  }
+
   const config = loadInstagramConfig();
   const client = new InstagramGraphClient(config);
   // 保存されている画像をすべて、保存順（1枚目→2枚目→…）にカルーセルへ入れる（既存テンプレート・H・Gは3枚、Jは4枚）

@@ -36,7 +36,20 @@ export interface ScheduleRecord {
   processingStartedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  /** CAROUSEL（既存の画像カルーセル）| REEL（Phase R1b） */
+  mediaType: ScheduleMediaType;
+  /** REEL: ig-reel.mp4のBlob URL */
+  videoUrl: string | null;
+  /** REEL: 元の動画生成ジョブ（video_generation_jobs.id） */
+  videoGenerationJobId: string | null;
+  /** REEL: 作成済みのInstagramメディアコンテナ（次回のCronで再利用する） */
+  igContainerId: string | null;
+  containerCreatedAt: Date | null;
+  /** REEL: 公開後のInstagram投稿URL */
+  permalink: string | null;
 }
+
+export type ScheduleMediaType = 'CAROUSEL' | 'REEL';
 
 function toRecord(row: typeof instagramPostSchedules.$inferSelect): ScheduleRecord {
   return {
@@ -56,6 +69,12 @@ function toRecord(row: typeof instagramPostSchedules.$inferSelect): ScheduleReco
     processingStartedAt: row.processingStartedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    mediaType: row.mediaType === 'REEL' ? 'REEL' : 'CAROUSEL',
+    videoUrl: row.videoUrl,
+    videoGenerationJobId: row.videoGenerationJobId,
+    igContainerId: row.igContainerId,
+    containerCreatedAt: row.containerCreatedAt,
+    permalink: row.permalink,
   };
 }
 
@@ -215,9 +234,13 @@ export async function getMostRecentTemplateId(): Promise<string | null> {
  *
  * claimDueSchedule() のUPDATE文のWHERE句も必ずこれと同じ条件にすること
  * （ここでリストアップされたのに claim できない、という食い違いを防ぐため）。
+ *
+ * mediaType: 既存のカルーセル処理（listDueScheduleIds / claimDueSchedule）は 'CAROUSEL' の行だけを対象にする
+ * （既存行はすべてCAROUSELのため従来と同じ）。REELの行は専用の listDueReelScheduleIds / claimDueReelSchedule で扱う。
  */
-function dueCondition(now: Date) {
+function dueCondition(now: Date, mediaType: ScheduleMediaType = 'CAROUSEL') {
   return and(
+    eq(instagramPostSchedules.mediaType, mediaType),
     lte(instagramPostSchedules.scheduledAt, now),
     isNull(instagramPostSchedules.mediaId),
     or(
@@ -333,6 +356,137 @@ export async function retrySchedule(id: number): Promise<ScheduleRecord> {
     .where(eq(instagramPostSchedules.id, id))
     .returning();
   return toRecord(row);
+}
+
+// ─── Reel（Phase R1b）専用 ──────────────────────────────────────────────────────
+// status・due条件・atomic claim・markPublished/markFailed/markNeedsReview は既存のものをそのまま使い、
+// Reelに特有の「コンテナIDの保存・次回Cronへの持ち越し・コンテナ失敗時の作り直し」だけをここに足す。
+
+/** 現在時刻以前で処理対象となるREEL予約のID（予定日時の古い順。Reelは処理が重いため既定は1件） */
+export async function listDueReelScheduleIds(limit: number = 1): Promise<number[]> {
+  const rows = await db.select({ id: instagramPostSchedules.id })
+    .from(instagramPostSchedules)
+    .where(dueCondition(new Date(), 'REEL'))
+    .orderBy(asc(instagramPostSchedules.scheduledAt))
+    .limit(limit);
+  return rows.map((r) => r.id);
+}
+
+/** REEL予約のatomic claim（claimDueScheduleと同じ条件付きUPDATE。成功するのは1回だけ） */
+export async function claimDueReelSchedule(id: number): Promise<ScheduleRecord | null> {
+  const rows = await db.update(instagramPostSchedules)
+    .set({ status: 'processing', processingStartedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(instagramPostSchedules.id, id), dueCondition(new Date(), 'REEL')))
+    .returning();
+  return rows[0] ? toRecord(rows[0]) : null;
+}
+
+/**
+ * 作成したコンテナIDを、ポーリングより前にすぐ保存する（このCronが途中で止まっても、次回は同じコンテナを再利用し
+ * 新しいコンテナを作らない）。自分がclaim中（processing・未公開）の行にだけ書く。
+ */
+export async function saveReelContainer(id: number, containerId: string): Promise<boolean> {
+  const rows = await db.update(instagramPostSchedules)
+    .set({ igContainerId: containerId, containerCreatedAt: new Date(), updatedAt: new Date() })
+    .where(and(
+      eq(instagramPostSchedules.id, id),
+      eq(instagramPostSchedules.status, 'processing'),
+      isNull(instagramPostSchedules.mediaId),
+    ))
+    .returning({ id: instagramPostSchedules.id });
+  return rows.length === 1;
+}
+
+/** Instagram側の動画処理がまだ終わらない: コンテナIDを残したまま scheduled に戻し、次回のCronで続きから処理する */
+export async function releaseReelForNextRun(id: number): Promise<void> {
+  await db.update(instagramPostSchedules)
+    .set({ status: 'scheduled', processingStartedAt: null, updatedAt: new Date() })
+    .where(and(eq(instagramPostSchedules.id, id), eq(instagramPostSchedules.status, 'processing')));
+}
+
+/**
+ * media_publish直前の再確認: まだ自分がclaim中（processing）で、未公開（media_idなし）、かつ同じコンテナであること。
+ * 管理画面からのキャンセル等で状態が変わっていたら公開しない。
+ */
+export async function isReelStillPublishable(id: number, containerId: string): Promise<boolean> {
+  const current = await getScheduleById(id);
+  return !!current && current.status === 'processing' && current.mediaId === null && current.igContainerId === containerId;
+}
+
+/**
+ * コンテナがERROR/EXPIRED（Instagram側で公開されていないことが確定）: コンテナIDを消してfailedにする
+ * （自動再試行では新しいコンテナを作る）。
+ */
+export async function markReelContainerFailed(id: number, data: { errorMessage: string; attempts: number }): Promise<void> {
+  await db.update(instagramPostSchedules)
+    .set({
+      status: 'failed',
+      errorMessage: data.errorMessage,
+      attempts: data.attempts,
+      igContainerId: null,
+      containerCreatedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(instagramPostSchedules.id, id));
+}
+
+/** 公開後に取得したInstagram投稿URL（取得できなくても投稿自体は成功扱い） */
+export async function saveReelPermalink(id: number, permalink: string): Promise<void> {
+  await db.update(instagramPostSchedules)
+    .set({ permalink, updatedAt: new Date() })
+    .where(eq(instagramPostSchedules.id, id));
+}
+
+export class DuplicateReelScheduleError extends Error {}
+
+export interface CreateReelScheduleInput {
+  personName: string;
+  scheduledAt: Date;
+  caption: string;
+  videoUrl: string;
+  videoGenerationJobId: string;
+  /** 表示用（例: reel:oshi-curious-v1）。既存テンプレートの自動ローテーションの対象外 */
+  templateId: string;
+}
+
+/**
+ * REEL予約の保存（入力の検証は呼び出し側 reel-schedule.ts で済ませる）。
+ * 同じ動画生成ジョブの予約がキャンセル以外で既にある場合は DuplicateReelScheduleError
+ * （事前確認＋DBの部分ユニークインデックスの二重で防ぐ）。
+ */
+export async function createReelSchedule(input: CreateReelScheduleInput): Promise<ScheduleRecord> {
+  const existing = await db.select({ id: instagramPostSchedules.id, status: instagramPostSchedules.status })
+    .from(instagramPostSchedules)
+    .where(and(
+      eq(instagramPostSchedules.videoGenerationJobId, input.videoGenerationJobId),
+      ne(instagramPostSchedules.status, 'cancelled'),
+    ))
+    .limit(1);
+  if (existing[0]) {
+    throw new DuplicateReelScheduleError(`この動画は既にReel予約があります（予約id=${existing[0].id}、状態=${existing[0].status}）`);
+  }
+  try {
+    const [row] = await db.insert(instagramPostSchedules).values({
+      personId: input.personName,
+      personName: input.personName,
+      templateId: input.templateId,
+      scheduledAt: input.scheduledAt,
+      status: 'scheduled',
+      caption: input.caption,
+      hashtags: '',
+      imageUrls: [],
+      mediaType: 'REEL',
+      videoUrl: input.videoUrl,
+      videoGenerationJobId: input.videoGenerationJobId,
+    }).returning();
+    return toRecord(row);
+  } catch (err) {
+    // 同時に2件作ろうとした場合はDBの部分ユニークインデックス（ips_video_job_active_idx）が弾く
+    if (String((err as { code?: string })?.code ?? '') === '23505' || /ips_video_job_active_idx/.test(String(err))) {
+      throw new DuplicateReelScheduleError('この動画は既にReel予約があります（同時登録を拒否しました）');
+    }
+    throw err;
+  }
 }
 
 // ─── 一括予約（bulk）専用 ──────────────────────────────────────────────────────

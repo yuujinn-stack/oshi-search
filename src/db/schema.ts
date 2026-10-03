@@ -12,6 +12,7 @@ import {
   serial,
   doublePrecision,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 // ── 人物 ──────────────────────────────────────────────────────────────────────
 // imported:persons + persons:published + data/persons_master.json を統合
@@ -481,6 +482,11 @@ export const instagramPosts = pgTable('instagram_posts', {
 // status: draft(未予約の下書き・現状は未使用、将来の「予約せず保存」用に予約) |
 //         scheduled(予約済み・Cron実行待ち) | processing(Cron実行中・二重実行防止用) |
 //         published(投稿成功) | failed(投稿失敗) | cancelled(キャンセル済み)
+//
+// media_type: CAROUSEL（既存の画像カルーセル。既存行はすべてこれ）| REEL（動画生成ジョブのig-reel.mp4、Phase R1b）。
+// REELはimage_urlsを使わず video_url（ig-reel.mp4のBlob URL）を使い、Instagram側の動画処理を複数回のCronに
+// またがって待つため、作成したコンテナID（ig_container_id）を保存して次回のCronで再利用する。
+// 同じ動画生成ジョブのREELはキャンセル以外で1件まで（部分ユニークインデックス）。
 export const instagramPostSchedules = pgTable('instagram_post_schedules', {
   id:                  serial('id').primaryKey(),
   // persons.name（現状このプロジェクトに数値/UUIDの人物IDは存在しないため、
@@ -502,10 +508,20 @@ export const instagramPostSchedules = pgTable('instagram_post_schedules', {
   processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),
   createdAt:           timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt:           timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  // ── Reel（Phase R1b。CAROUSELの行では常にNULL） ──
+  mediaType:            text('media_type').notNull().default('CAROUSEL'),
+  videoUrl:             text('video_url'),
+  videoGenerationJobId: text('video_generation_job_id'),
+  igContainerId:        text('ig_container_id'),
+  containerCreatedAt:   timestamp('container_created_at', { withTimezone: true }),
+  permalink:            text('permalink'),
 }, (t) => [
   // Cronの「今すぐ公開すべき予約」抽出クエリ（status='scheduled' AND scheduled_at<=now()）に対応
   index('ips_status_scheduled_at_idx').on(t.status, t.scheduledAt),
   index('ips_person_id_idx').on(t.personId),
+  uniqueIndex('ips_video_job_active_idx')
+    .on(t.videoGenerationJobId)
+    .where(sql`video_generation_job_id IS NOT NULL AND status <> 'cancelled'`),
 ]);
 
 /**

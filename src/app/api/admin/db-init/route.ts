@@ -398,6 +398,15 @@ const ALTER_STATEMENTS = [
   // ── video_workers（drizzle/0014_video_workers_capcut_store.sql）────────────
   sql.raw(`ALTER TABLE video_workers ADD COLUMN IF NOT EXISTS capcut_store JSONB`),
   sql.raw(`ALTER TABLE video_workers ADD COLUMN IF NOT EXISTS capcut_prepare_requests JSONB`),
+
+  // ── instagram_post_schedules（drizzle/0016_instagram_post_schedules_reel.sql）─
+  sql.raw(`ALTER TABLE instagram_post_schedules ADD COLUMN IF NOT EXISTS media_type TEXT NOT NULL DEFAULT 'CAROUSEL'`),
+  sql.raw(`ALTER TABLE instagram_post_schedules ADD COLUMN IF NOT EXISTS video_url TEXT`),
+  sql.raw(`ALTER TABLE instagram_post_schedules ADD COLUMN IF NOT EXISTS video_generation_job_id TEXT`),
+  sql.raw(`ALTER TABLE instagram_post_schedules ADD COLUMN IF NOT EXISTS ig_container_id TEXT`),
+  sql.raw(`ALTER TABLE instagram_post_schedules ADD COLUMN IF NOT EXISTS container_created_at TIMESTAMPTZ`),
+  sql.raw(`ALTER TABLE instagram_post_schedules ADD COLUMN IF NOT EXISTS permalink TEXT`),
+  sql.raw(`CREATE UNIQUE INDEX IF NOT EXISTS ips_video_job_active_idx ON instagram_post_schedules (video_generation_job_id) WHERE video_generation_job_id IS NOT NULL AND status <> 'cancelled'`),
 ];
 
 const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements', 'instagram_posts', 'instagram_post_schedules', 'instagram_admin_notifications', 'video_generation_jobs', 'video_workers'];

@@ -24,6 +24,10 @@
 // Instagram APIは一切呼び出さず、確保した予約を即座にscheduledへ戻す
 // （= 二重実行防止ロジックの動作確認だけを、実際の投稿なしで行える）。
 // INSTAGRAM_AUTOPUBLISH_ENABLEDが無効でも常に利用できる（API書き込みをしないため）。
+//
+// Reel（Phase R1b、media_type='REEL'）: カルーセルの処理（上記1〜5。対象はCAROUSELの行だけ）が終わった後、
+// 残り時間の範囲で最大1件だけ処理する（src/server/instagram-schedule/reel-cron.ts）。Reelの書き込みは
+// INSTAGRAM_REELS_AUTOPUBLISH_ENABLED も "true" のときだけ行い、無効なら件数を数えるだけ（既定は無効）。
 import { NextRequest, NextResponse } from 'next/server';
 import {
   listDueScheduleIds,
@@ -37,6 +41,7 @@ import {
 import { publishScheduleToInstagram, AmbiguousPublishError, GraphApiRequestError } from '@/server/instagram-schedule/publish-schedule';
 import { isAutopublishEnabled } from '@/server/instagram-post/config';
 import { createAdminNotificationIfNeeded } from '@/server/instagram-schedule/admin-notifications';
+import type { ReelCronResult } from '@/server/instagram-schedule/reel-cron';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -50,7 +55,11 @@ interface ScheduleOutcome {
   mediaId?: string;
 }
 
+/** Reelの処理に使ってよい時刻の上限（maxDurationより手前で必ず終える） */
+const REEL_DEADLINE_MS = 240_000;
+
 export async function GET(req: NextRequest) {
+  const startedAt = Date.now();
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
     return NextResponse.json({ error: 'CRON_SECRET が設定されていません' }, { status: 503 });
@@ -128,10 +137,22 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Reel（カルーセルの後。スイッチ無効なら件数を数えるだけ）。Reel処理は読み込みも含めてここで隔離し、
+  // 読み込み・実行のどちらで失敗してもカルーセルの処理・結果には影響させない
+  let reels: ReelCronResult | { error: string };
+  try {
+    const { processDueReels } = await import('@/server/instagram-schedule/reel-cron');
+    reels = await processDueReels({ dryRun, deadlineMs: startedAt + REEL_DEADLINE_MS });
+  } catch (err) {
+    reels = { error: err instanceof Error ? err.message : String(err) };
+    console.error('[cron/instagram-publish] reel処理でエラー（カルーセルの結果には影響しません）:', reels.error);
+  }
+
   return NextResponse.json({
     dryRun,
     checkedAt: new Date().toISOString(),
     dueCount: dueIds.length,
     outcomes,
+    reels,
   });
 }

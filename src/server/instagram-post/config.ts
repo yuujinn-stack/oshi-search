@@ -50,3 +50,14 @@ export function isBlobUploadConfigured(): boolean {
 export function isAutopublishEnabled(): boolean {
   return process.env.INSTAGRAM_AUTOPUBLISH_ENABLED?.trim().toLowerCase() === 'true';
 }
+
+/**
+ * Reel（Phase R1b）の自動公開専用のハードガード。既定はOFF（未設定・"false"・その他の値はすべて無効）。
+ *
+ * Reelのコンテナ作成・media_publishは、INSTAGRAM_AUTOPUBLISH_ENABLED（既存の自動投稿全体のスイッチ）と
+ * このINSTAGRAM_REELS_AUTOPUBLISH_ENABLEDの両方が "true" のときだけ行う。
+ * このフラグは既存のカルーセル自動投稿には一切影響しない（カルーセルは従来どおりINSTAGRAM_AUTOPUBLISH_ENABLEDのみで判定）。
+ */
+export function isReelsAutopublishEnabled(): boolean {
+  return process.env.INSTAGRAM_REELS_AUTOPUBLISH_ENABLED?.trim().toLowerCase() === 'true';
+}

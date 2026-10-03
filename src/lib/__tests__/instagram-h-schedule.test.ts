@@ -147,6 +147,12 @@ describe('H 予約の自動投稿（既存の publishScheduleToInstagram をそ�
     processingStartedAt: new Date(),
     createdAt: new Date(),
     updatedAt: new Date(),
+    mediaType: 'CAROUSEL',
+    videoUrl: null,
+    videoGenerationJobId: null,
+    igContainerId: null,
+    containerCreatedAt: null,
+    permalink: null,
   };
 
   beforeEach(() => {
