@@ -47,7 +47,7 @@ interface CapcutEntry {
   /** CapCut音声生成用の読み台本（古いWorkerの報告には無い） */
   speechScriptText?: string | null;
   /** 読みが辞書に無く、正式表記のまま残した固有名詞 */
-  unresolvedReadings?: Array<{ kind: 'person' | 'work' | 'service'; text: string }>;
+  unresolvedReadings?: Array<{ kind: 'person' | 'work' | 'service' | 'other'; text: string }>;
   scriptHash: string | null;
   savedScriptHash: string | null;
   duration: number | null;
@@ -591,21 +591,38 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
   );
 }
 
-function CopyButton({ text, label, primary = false }: { text: string; label: string; primary?: boolean }) {
+function CopyButton({
+  text,
+  label,
+  primary = false,
+  disabled = false,
+  disabledTitle,
+}: {
+  text: string;
+  label: string;
+  primary?: boolean;
+  disabled?: boolean;
+  disabledTitle?: string;
+}) {
   const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
+      disabled={disabled}
+      title={disabled ? disabledTitle : undefined}
       onClick={() => {
+        if (disabled) return;
         void navigator.clipboard.writeText(text).then(() => {
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         });
       }}
       className={
-        primary
-          ? 'text-xs px-2 py-0.5 rounded border border-violet-500 bg-violet-600 text-white font-bold hover:bg-violet-700'
-          : 'text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:border-violet-400 hover:text-violet-700'
+        disabled
+          ? 'text-xs px-2 py-0.5 rounded border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed'
+          : primary
+            ? 'text-xs px-2 py-0.5 rounded border border-violet-500 bg-violet-600 text-white font-bold hover:bg-violet-700'
+            : 'text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:border-violet-400 hover:text-violet-700'
       }
     >
       {copied ? 'コピーしました' : label}
@@ -639,17 +656,26 @@ function CapcutCard({ entry, templateName, isNext }: { entry: CapcutEntry; templ
         <div>
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-bold text-violet-700">音声生成用台本（読み）← CapCutにはこちらを貼る</span>
-            <CopyButton text={entry.speechScriptText} label="音声用台本をコピー" primary />
+            {/* 読みが未登録の語が残っている間は、誤読を防ぐためコピーできない(辞書に1件追加すれば解消) */}
+            <CopyButton
+              text={entry.speechScriptText}
+              label="音声用台本をコピー"
+              primary
+              disabled={(entry.unresolvedReadings?.length ?? 0) > 0}
+              disabledTitle="読み未登録の語があるためコピーできません"
+            />
           </div>
           <pre className="whitespace-pre-wrap text-xs bg-violet-50 rounded p-2 text-slate-700">{entry.speechScriptText}</pre>
           {entry.unresolvedReadings && entry.unresolvedReadings.length > 0 && (
             <div className="text-xs text-amber-800 bg-amber-50 rounded p-2 mt-1">
-              <p className="font-bold">⚠ 読み未登録（正式表記のまま入っています。CapCutで読みを確認してください）</p>
+              <p className="font-bold">⚠ 読み未登録（読み辞書に登録するまで「音声用台本をコピー」は使えません）</p>
               <ul className="list-disc ml-5">
                 {entry.unresolvedReadings.map((u) => (
                   <li key={`${u.kind}:${u.text}`}>
-                    {u.text}
-                    <span className="text-amber-600">（{u.kind === 'person' ? '人物名' : u.kind === 'work' ? '作品名' : '配信サービス名'}）</span>
+                    ⚠ 読み未登録：{u.text}
+                    <span className="text-amber-600">
+                      （{u.kind === 'person' ? '人物名' : u.kind === 'work' ? '作品名' : u.kind === 'service' ? '配信サービス名' : 'その他'}）
+                    </span>
                   </li>
                 ))}
               </ul>

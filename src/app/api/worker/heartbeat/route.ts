@@ -57,8 +57,8 @@ export async function POST(req: NextRequest) {
             unresolvedReadings: (Array.isArray(e.unresolvedReadings) ? e.unresolvedReadings : [])
               .slice(0, 20)
               .map((u) => u as Record<string, unknown>)
-              .filter((u) => (u.kind === 'person' || u.kind === 'work' || u.kind === 'service') && typeof u.text === 'string')
-              .map((u) => ({ kind: u.kind as 'person' | 'work' | 'service', text: str(u.text, 200)! })),
+              .filter((u) => (u.kind === 'person' || u.kind === 'work' || u.kind === 'service' || u.kind === 'other') && typeof u.text === 'string')
+              .map((u) => ({ kind: u.kind as 'person' | 'work' | 'service' | 'other', text: str(u.text, 200)! })),
             scriptHash: str(e.scriptHash, 64),
             savedScriptHash: str(e.savedScriptHash, 64),
             duration: num(e.duration),
