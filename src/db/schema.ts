@@ -614,3 +614,28 @@ export const videoWorkers = pgTable('video_workers', {
   capcutPrepareRequests: jsonb('capcut_prepare_requests').$type<unknown>(),
   updatedAt:  timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ── 動画「まず見る3作 ショートV1」の台本準備（drizzle/0017_video_script_prep.sql）────────────────
+// 管理画面から登録した読み（CapCut音声生成用の読み台本）。正本はこのテーブル。oshi-video-makerの固定辞書
+// （pronunciationDictionary.ts）が優先され、ここは固定辞書に無い語にだけ使われる（Workerが生存報告の応答で受け取る）。
+export const pronunciationReadings = pgTable('pronunciation_readings', {
+  id:         serial('id').primaryKey(),
+  sourceText: text('source_text').notNull(),
+  reading:    text('reading').notNull(),
+  createdAt:  timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:  timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex('pronunciation_readings_source_text_idx').on(t.sourceText),
+]);
+
+// 管理画面からWorkerへの台本準備の依頼（全人物の台本準備・停止・再選定）。動画生成のジョブとは別。
+export const videoScriptRequests = pgTable('video_script_requests', {
+  id:          serial('id').primaryKey(),
+  templateId:  text('template_id').notNull(),
+  action:      text('action').notNull(), // 'prepare_all' | 'stop' | 'reselect'
+  personName:  text('person_name'),
+  requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+  handledAt:   timestamp('handled_at', { withTimezone: true }),
+}, (t) => [
+  index('video_script_requests_pending_idx').on(t.handledAt, t.requestedAt),
+]);

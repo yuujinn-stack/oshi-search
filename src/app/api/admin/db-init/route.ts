@@ -306,6 +306,24 @@ const CREATE_STATEMENTS = [
   persons       JSONB NOT NULL DEFAULT '[]',
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )`,
+  // ── 動画「まず見る3作」の台本準備（drizzle/0017_video_script_prep.sql）────────
+  sql`CREATE TABLE IF NOT EXISTS pronunciation_readings (
+    id           SERIAL PRIMARY KEY,
+    source_text  TEXT NOT NULL,
+    reading      TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS pronunciation_readings_source_text_idx ON pronunciation_readings (source_text)`,
+  sql`CREATE TABLE IF NOT EXISTS video_script_requests (
+    id            SERIAL PRIMARY KEY,
+    template_id   TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    person_name   TEXT,
+    requested_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    handled_at    TIMESTAMPTZ
+  )`,
+  sql`CREATE INDEX IF NOT EXISTS video_script_requests_pending_idx ON video_script_requests (handled_at, requested_at)`,
 ];
 
 // ── ALTER TABLE ADD COLUMN IF NOT EXISTS ─────────────────────────────────────
@@ -409,7 +427,7 @@ const ALTER_STATEMENTS = [
   sql.raw(`CREATE UNIQUE INDEX IF NOT EXISTS ips_video_job_active_idx ON instagram_post_schedules (video_generation_job_id) WHERE video_generation_job_id IS NOT NULL AND status <> 'cancelled'`),
 ];
 
-const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements', 'instagram_posts', 'instagram_post_schedules', 'instagram_admin_notifications', 'video_generation_jobs', 'video_workers'];
+const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements', 'instagram_posts', 'instagram_post_schedules', 'instagram_admin_notifications', 'video_generation_jobs', 'video_workers', 'pronunciation_readings', 'video_script_requests'];
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。

@@ -72,6 +72,27 @@ export interface CapcutStoreEntry {
   duration: number | null;
   updatedAt: string | null;
   fileBaseName: string;
+  /**
+   * まず見る3作 ショートV1だけ: 台本の準備状態（CapCut音声の状態 status とは別。台本完成でも音声が無ければ status は missing）
+   * ready_script=台本完成 / needs_reading=読み確認待ち / insufficient_works=作品不足 / pending=未準備 / error=エラー
+   */
+  scriptStatus?: First3ScriptStatus;
+  /** 台本を作れない理由（作品不足・エラー） */
+  scriptError?: string | null;
+  /** 3作品を選んだ日時 */
+  selectedAt?: string | null;
+}
+export type First3ScriptStatus = 'ready_script' | 'needs_reading' | 'insufficient_works' | 'pending' | 'error';
+/** まず見る3作: Workerの台本準備キュー（全人物の台本準備）の進捗 */
+export interface First3QueueProgress {
+  status: 'idle' | 'running' | 'done' | 'stopped' | 'failed';
+  requestedAt: string | null;
+  total: number;
+  processed: number;
+  reselectPending: number;
+  counts: { selected: number; insufficient: number; skipped: number; errors: number };
+  message: string | null;
+  updatedAt: string;
 }
 export interface CapcutStoreReport {
   inboxDir: string;
@@ -79,6 +100,12 @@ export interface CapcutStoreReport {
   entries: CapcutStoreEntry[];
   /** 台本準備に失敗した人物（理由を管理画面に表示する） */
   prepareFailures?: CapcutPrepareFailure[];
+  /**
+   * まず見る3作: 全人物の台本準備で3作品を選定した、entries に含まれない人物（台本だけの報告）。
+   * 他テンプレートの状態・「台本を準備」の依頼の判定には使わない（entries の意味は従来どおり）。
+   */
+  scriptOnlyEntries?: CapcutStoreEntry[];
+  first3Queue?: First3QueueProgress;
 }
 
 export class VideoJobError extends Error {
@@ -227,7 +254,8 @@ export async function createVideoJobs(input: {
   if (input.narrationMode === 'capcut') {
     const notReady = input.personNames
       .map((name) => {
-        const entry = worker.capcutStore?.entries.find((e) => e.personName === name && e.templateId === template.templateId);
+        const entry = [...(worker.capcutStore?.entries ?? []), ...(worker.capcutStore?.scriptOnlyEntries ?? [])]
+          .find((e) => e.personName === name && e.templateId === template.templateId);
         return entry?.status === 'ready' ? null : `${name}（${entry ? capcutStatusLabel(entry.status) : 'Worker未対応・状態不明'}）`;
       })
       .filter((x): x is string => x !== null);

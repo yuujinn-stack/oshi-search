@@ -4,6 +4,7 @@ import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import { LogoutButton } from '@/components/admin/LogoutButton';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import VideoMakerClient from './VideoMakerClient';
+import { listPersonReadingCandidates } from '@/server/video-jobs/script-prep-store';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,9 @@ export default async function VideoMakerPage() {
   } catch (err) {
     return <RedisErrorBanner detail={String(err)} />;
   }
+
+  // まず見る3作の読み未登録の人物名に、人物登録データの別名（ひらがな・カタカナ）を候補として表示する（自動では確定しない）
+  const readingCandidates = await listPersonReadingCandidates().catch(() => ({}));
 
   const personOptions: PersonOption[] = persons.map((p) => ({
     name: p.name,
@@ -41,7 +45,7 @@ export default async function VideoMakerPage() {
           <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
-      <VideoMakerClient persons={personOptions} />
+      <VideoMakerClient persons={personOptions} readingCandidates={readingCandidates} />
     </div>
   );
 }

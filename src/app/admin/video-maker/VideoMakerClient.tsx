@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { countScriptStatuses, groupUnresolvedReadings } from '@/lib/video-first3-script';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
 import { countHashtags, validateCaption, INSTAGRAM_CAPTION_MAX_LENGTH, INSTAGRAM_HASHTAG_MAX_COUNT } from '@/lib/instagram-caption-rules';
@@ -53,6 +54,10 @@ interface CapcutEntry {
   duration: number | null;
   updatedAt: string | null;
   fileBaseName: string;
+  /** まず見る3作だけ: 台本の準備状態（CapCut音声の状態 status とは別） */
+  scriptStatus?: ScriptStatus;
+  scriptError?: string | null;
+  selectedAt?: string | null;
 }
 
 interface CapcutStoreReport {
@@ -60,7 +65,39 @@ interface CapcutStoreReport {
   reportedAt: string;
   entries: CapcutEntry[];
   prepareFailures?: Array<{ personName: string; message: string; at: string }>;
+  /** まず見る3作: 全人物の台本準備で選定した、entries に含まれない人物（台本だけ） */
+  scriptOnlyEntries?: CapcutEntry[];
+  first3Queue?: {
+    status: 'idle' | 'running' | 'done' | 'stopped' | 'failed';
+    requestedAt: string | null;
+    total: number;
+    processed: number;
+    reselectPending: number;
+    counts: { selected: number; insufficient: number; skipped: number; errors: number };
+    message: string | null;
+    updatedAt: string;
+  };
 }
+
+// まず見る3作: 台本の準備状態（台本完成でも、CapCut音声が無ければCapCutの状態は「音声なし」のまま）
+type ScriptStatus = 'ready_script' | 'needs_reading' | 'insufficient_works' | 'pending' | 'error';
+const SCRIPT_STATUS_VIEW: Record<ScriptStatus, { icon: string; label: string; cls: string }> = {
+  ready_script: { icon: '🟢', label: '台本完成', cls: 'bg-emerald-50 text-emerald-700' },
+  needs_reading: { icon: '🟡', label: '読み確認待ち', cls: 'bg-amber-50 text-amber-700' },
+  insufficient_works: { icon: '⚪', label: '作品不足', cls: 'bg-gray-100 text-gray-600' },
+  error: { icon: '🔴', label: 'エラー', cls: 'bg-red-50 text-red-700' },
+  pending: { icon: '⏳', label: '未準備', cls: 'bg-gray-50 text-gray-500' },
+};
+type ScriptFilter = 'all' | ScriptStatus;
+const SCRIPT_FILTERS: Array<{ key: ScriptFilter; label: string }> = [
+  { key: 'all', label: 'すべて' },
+  { key: 'needs_reading', label: '読み未登録だけ' },
+  { key: 'ready_script', label: '台本完成だけ' },
+  { key: 'insufficient_works', label: '作品不足だけ' },
+  { key: 'error', label: 'エラーだけ' },
+];
+const READING_KIND_LABEL = { person: '人物名', work: '作品名', service: '配信サービス名', other: 'その他' } as const;
+const QUEUE_STATUS_LABEL = { idle: '未実行', running: '準備中', done: '完了', stopped: '停止', failed: '停止（エラー）' } as const;
 
 /** 動画のInstagramリール予約（instagram_post_schedules、media_type='REEL'）。statusは既存の予約投稿と同じ */
 interface ReelSchedule {
@@ -157,7 +194,14 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-export default function VideoMakerClient({ persons }: { persons: PersonOption[] }) {
+export default function VideoMakerClient({
+  persons,
+  readingCandidates = {},
+}: {
+  persons: PersonOption[];
+  /** まず見る3作: 人物名の読みの候補（人物登録データの別名。未確認のため自動では使わない） */
+  readingCandidates?: Record<string, string[]>;
+}) {
   const [worker, setWorker] = useState<WorkerInfo | null>(null);
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -172,6 +216,14 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
   const [capcutFilter, setCapcutFilter] = useState<CapcutFilter>('all');
   const [capcutSelectedOnly, setCapcutSelectedOnly] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  // まず見る3作: 台本準備・読みの登録
+  const [scriptFilter, setScriptFilter] = useState<ScriptFilter>('all');
+  const [readingInputs, setReadingInputs] = useState<Record<string, string>>({});
+  const [readingBusy, setReadingBusy] = useState<string | null>(null);
+  const [registeredTexts, setRegisteredTexts] = useState<Set<string>>(new Set());
+  const [scriptRequestBusy, setScriptRequestBusy] = useState(false);
+  // 読み未登録の一覧は使用人数の多い順に少しずつ表示する（多数あっても画面を埋めない）
+  const [readingLimit, setReadingLimit] = useState(20);
 
   const load = useCallback(async () => {
     try {
@@ -209,7 +261,10 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
   // CapCut保存済み音声: Workerが報告した状態（正本はMac上の保存音声と台本）。CapCut対応テンプレートでだけ表示する
   const capcutSupported = !!template?.narrationModes.includes('capcut');
   const capcutEntries = useMemo(
-    () => (capcutSupported && template ? (worker?.capcutStore?.entries ?? []).filter((e) => e.templateId === template.templateId) : []),
+    () =>
+      capcutSupported && template
+        ? [...(worker?.capcutStore?.entries ?? []), ...(worker?.capcutStore?.scriptOnlyEntries ?? [])].filter((e) => e.templateId === template.templateId)
+        : [],
     [capcutSupported, template, worker],
   );
   const capcutByName = useMemo(() => new Map(capcutEntries.map((e) => [e.personName, e])), [capcutEntries]);
@@ -233,8 +288,16 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
     : orderedCapcut;
   const nextCapcut = nextPool.find((e) => capcutFilterOf(e.status) === 'redo') ?? nextPool.find((e) => e.status === 'missing') ?? null;
   const visibleCapcut = orderedCapcut.filter(
-    (e) => (capcutFilter === 'all' || capcutFilterOf(e.status) === capcutFilter) && (!capcutSelectedOnly || selectedSet.has(e.personName)),
+    (e) =>
+      (capcutFilter === 'all' || capcutFilterOf(e.status) === capcutFilter) &&
+      (scriptFilter === 'all' || e.scriptStatus === scriptFilter) &&
+      (!capcutSelectedOnly || selectedSet.has(e.personName)),
   );
+  // まず見る3作: 台本の準備状態の集計と、読み未登録の語（人物ごとではなく語ごとに1件）
+  const hasScriptStatus = capcutEntries.some((e) => e.scriptStatus);
+  const scriptCounts = useMemo(() => countScriptStatuses(capcutEntries), [capcutEntries]);
+  const unresolvedGroups = useMemo(() => groupUnresolvedReadings(capcutEntries), [capcutEntries]);
+  const first3Queue = worker?.capcutStore?.first3Queue;
   // Workerがまだ素材（人物ページ）を持っておらず台本を作れない選択中の人物（PERSON_REGISTRY未登録の人物など）
   const prepareRequested = new Set((worker?.capcutPrepareRequests ?? []).map((r) => r.personName));
   const prepareFailure = new Map((worker?.capcutStore?.prepareFailures ?? []).map((f) => [f.personName, f.message]));
@@ -256,6 +319,53 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
       setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
     } finally {
       setPreparing(false);
+    }
+  }
+
+  // まず見る3作: 台本準備をWorkerへ依頼する（動画は生成しない）
+  async function requestScripts(action: 'prepare_all' | 'stop' | 'reselect', personNames: string[] = []) {
+    if (action === 'reselect' && !window.confirm(`${personNames.join('、')} の3作品を選び直します。CapCut音声を作成済みの場合は録り直しになることがあります。よろしいですか？`)) return;
+    setScriptRequestBusy(true);
+    try {
+      await fetchJson('/api/admin/video-jobs/first3-prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, personNames }),
+      });
+      setMessage({
+        kind: 'ok',
+        text:
+          action === 'prepare_all'
+            ? '全人物の台本準備をWorkerへ依頼しました（動画は生成しません。進捗はこの画面に表示されます）。'
+            : action === 'stop'
+              ? '台本準備の停止をWorkerへ依頼しました。'
+              : '再選定をWorkerへ依頼しました。',
+      });
+      await load();
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setScriptRequestBusy(false);
+    }
+  }
+
+  // まず見る3作: 読みを登録する（推定で自動確定はしない。入力して「登録」した読みだけを保存する）
+  async function registerReading(text: string) {
+    const reading = (readingInputs[text] ?? '').trim();
+    if (!reading) return;
+    setReadingBusy(text);
+    try {
+      await fetchJson('/api/admin/video-jobs/pronunciation-readings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceText: text, reading }),
+      });
+      setRegisteredTexts((prev) => new Set(prev).add(text));
+      setMessage({ kind: 'ok', text: `「${text}」の読みを登録しました。Workerが反映すると、この語を使う人物の読み台本が更新されます。` });
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setReadingBusy(null);
     }
   }
 
@@ -468,6 +578,126 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
               <li>Workerが自動で取り込み・チェックし、数十秒後にこの画面が 🟢 使用可能 になります</li>
             </ol>
           </details>
+          {hasScriptStatus && (
+            <div className="rounded-lg border border-sky-200 bg-sky-50/40 p-3 space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h3 className="text-sm font-bold text-slate-700">台本準備状況（CapCut音声の状態とは別）</h3>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={scriptRequestBusy || first3Queue?.status === 'running'}
+                    onClick={() => void requestScripts('prepare_all')}
+                    className="text-xs px-3 py-1 rounded border border-sky-600 text-sky-700 font-bold disabled:opacity-50"
+                  >
+                    全人物の台本を準備
+                  </button>
+                  {first3Queue?.status === 'running' && (
+                    <button
+                      type="button"
+                      disabled={scriptRequestBusy}
+                      onClick={() => void requestScripts('stop')}
+                      className="text-xs px-3 py-1 rounded border border-gray-400 text-gray-600 disabled:opacity-50"
+                    >
+                      停止
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2 text-sm flex-wrap">
+                {(['ready_script', 'needs_reading', 'insufficient_works', 'error', 'pending'] as ScriptStatus[]).map((k) => (
+                  <span key={k} className={`rounded-lg px-3 py-1 ${SCRIPT_STATUS_VIEW[k].cls}`}>
+                    {SCRIPT_STATUS_VIEW[k].icon} {SCRIPT_STATUS_VIEW[k].label} {scriptCounts[k]}人
+                  </span>
+                ))}
+              </div>
+              {first3Queue && first3Queue.status !== 'idle' && (
+                <p className="text-xs text-gray-600">
+                  全人物の台本準備: {QUEUE_STATUS_LABEL[first3Queue.status]}（{first3Queue.processed}/{first3Queue.total}人・選定{' '}
+                  {first3Queue.counts.selected}・作品不足 {first3Queue.counts.insufficient}・skip {first3Queue.counts.skipped}・エラー{' '}
+                  {first3Queue.counts.errors}
+                  {first3Queue.reselectPending > 0 ? `・再選定待ち ${first3Queue.reselectPending}` : ''}）
+                  {first3Queue.message ? ` ${first3Queue.message}` : ''}
+                </p>
+              )}
+              <details open={unresolvedGroups.length > 0} className="text-sm">
+                <summary className="cursor-pointer text-xs font-bold text-amber-800">読み未登録 {unresolvedGroups.length}件（語ごとにまとめて表示）</summary>
+                {unresolvedGroups.length === 0 ? (
+                  <p className="text-xs text-gray-500 mt-2">読み未登録の語はありません。</p>
+                ) : (
+                  <ul className="mt-2 space-y-2">
+                    {unresolvedGroups.slice(0, readingLimit).map((g) => (
+                      <li key={g.text} className="rounded border border-amber-200 bg-white p-2 space-y-1">
+                        <div className="text-xs">
+                          <span className="text-amber-700 mr-1">{READING_KIND_LABEL[g.kind]}：</span>
+                          <span className="font-bold text-slate-800">{g.text}</span>
+                          <span className="ml-2 text-gray-500">
+                            使用人物 {g.persons.length}人（{g.persons.slice(0, 3).join('、')}
+                            {g.persons.length > 3 ? ` ほか${g.persons.length - 3}人` : ''}）
+                          </span>
+                        </div>
+                        <div className="flex gap-2 items-center">
+                          <input
+                            type="text"
+                            value={readingInputs[g.text] ?? ''}
+                            onChange={(ev) => setReadingInputs((prev) => ({ ...prev, [g.text]: ev.target.value }))}
+                            placeholder="読みをひらがな・カタカナで入力（確認してから登録）"
+                            className="flex-1 text-xs border border-gray-300 rounded px-2 py-1"
+                          />
+                          <button
+                            type="button"
+                            disabled={readingBusy !== null || !(readingInputs[g.text] ?? '').trim()}
+                            onClick={() => void registerReading(g.text)}
+                            className="text-xs px-3 py-1 rounded bg-amber-600 text-white font-bold disabled:opacity-50"
+                          >
+                            {readingBusy === g.text ? '登録中...' : '登録'}
+                          </button>
+                        </div>
+                        {g.kind === 'person' && (readingCandidates[g.text]?.length ?? 0) > 0 && (
+                          <div className="flex gap-1 flex-wrap items-center text-xs">
+                            <span className="text-gray-500">候補（人物登録データの別名・未確認。選んで確認してから登録）:</span>
+                            {readingCandidates[g.text].map((c) => (
+                              <button
+                                key={c}
+                                type="button"
+                                onClick={() => setReadingInputs((prev) => ({ ...prev, [g.text]: c }))}
+                                className="px-2 py-0.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                              >
+                                {c}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {registeredTexts.has(g.text) && <p className="text-xs text-emerald-700">登録済み・Workerの反映待ち</p>}
+                      </li>
+                    ))}
+                    {unresolvedGroups.length > readingLimit && (
+                      <li>
+                        <button
+                          type="button"
+                          onClick={() => setReadingLimit((n) => n + 50)}
+                          className="text-xs px-3 py-1 rounded border border-gray-300 text-gray-600"
+                        >
+                          さらに表示（残り{unresolvedGroups.length - readingLimit}件）
+                        </button>
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </details>
+              <div className="flex gap-2 text-xs flex-wrap">
+                {SCRIPT_FILTERS.map((f) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    onClick={() => setScriptFilter(f.key)}
+                    className={`px-3 py-1 rounded-full border ${scriptFilter === f.key ? 'border-sky-600 bg-sky-50 text-sky-700' : 'border-gray-200 text-gray-600'}`}
+                  >
+                    {f.label}（{scriptCounts[f.key]}）
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex gap-2 text-xs flex-wrap items-center">
             {selectedNames.length > 0 && (
               <label className="mr-2 cursor-pointer text-gray-600">
@@ -518,7 +748,13 @@ export default function VideoMakerClient({ persons }: { persons: PersonOption[] 
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
               {visibleCapcut.map((e) => (
-                <CapcutCard key={`${e.personSlug}-${e.templateId}`} entry={e} templateName={template.name} isNext={nextCapcut === e} />
+                <CapcutCard
+                  key={`${e.personSlug}-${e.templateId}`}
+                  entry={e}
+                  templateName={template.name}
+                  isNext={nextCapcut === e}
+                  onReselect={e.scriptStatus ? () => void requestScripts('reselect', [e.personName]) : undefined}
+                />
               ))}
             </div>
           )}
@@ -630,8 +866,20 @@ function CopyButton({
   );
 }
 
-function CapcutCard({ entry, templateName, isNext }: { entry: CapcutEntry; templateName: string; isNext: boolean }) {
+function CapcutCard({
+  entry,
+  templateName,
+  isNext,
+  onReselect,
+}: {
+  entry: CapcutEntry;
+  templateName: string;
+  isNext: boolean;
+  /** まず見る3作: 3作品の再選定を依頼する */
+  onReselect?: () => void;
+}) {
   const view = CAPCUT_STATUS_VIEW[entry.status];
+  const scriptView = entry.scriptStatus ? SCRIPT_STATUS_VIEW[entry.scriptStatus] : null;
   return (
     <div className={`rounded-lg border p-3 space-y-2 text-sm ${isNext ? 'border-violet-500 ring-2 ring-violet-200' : 'border-gray-200'}`}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -645,12 +893,27 @@ function CapcutCard({ entry, templateName, isNext }: { entry: CapcutEntry; templ
         </span>
       </div>
       {entry.status !== 'ready' && entry.status !== 'missing' && <p className="text-xs text-gray-600">{entry.message}</p>}
+      {scriptView && (
+        <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+          <span className={`rounded px-2 py-0.5 ${scriptView.cls}`}>
+            台本: {scriptView.icon} {scriptView.label}
+            {entry.selectedAt ? `（3作品の選定 ${formatJst(entry.selectedAt)}）` : ''}
+          </span>
+          {onReselect && entry.scriptStatus !== 'pending' && (
+            <button type="button" onClick={onReselect} className="px-2 py-0.5 rounded border border-gray-300 text-gray-600">
+              再選定
+            </button>
+          )}
+        </div>
+      )}
       <div>
         <div className="flex items-center justify-between mb-1">
           <span className="text-xs font-bold text-gray-600">正式台本（表示・字幕と同じ表記）</span>
           {entry.scriptText && <CopyButton text={entry.scriptText} label="正式台本をコピー" />}
         </div>
-        <pre className="whitespace-pre-wrap text-xs bg-gray-50 rounded p-2 text-slate-700">{entry.scriptText ?? '（台本を作成できませんでした）'}</pre>
+        <pre className="whitespace-pre-wrap text-xs bg-gray-50 rounded p-2 text-slate-700">
+          {entry.scriptText ?? (entry.scriptError ? `（台本を作成できません: ${entry.scriptError}）` : '（台本を作成できませんでした）')}
+        </pre>
       </div>
       {entry.speechScriptText && (
         <div>
