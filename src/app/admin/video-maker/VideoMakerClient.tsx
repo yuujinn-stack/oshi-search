@@ -2,6 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { countScriptStatuses, groupUnresolvedReadings } from '@/lib/video-first3-script';
+import {
+  buildReadingChatGptPrompt,
+  buildUnregisteredReadingRows,
+  createStoredZip,
+  readingFileTimestamp,
+  readingRowsToCsv,
+  type ReadingImportRow,
+} from '@/lib/reading-csv';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
 import { countHashtags, validateCaption, INSTAGRAM_CAPTION_MAX_LENGTH, INSTAGRAM_HASHTAG_MAX_COUNT } from '@/lib/instagram-caption-rules';
@@ -226,6 +234,20 @@ export default function VideoMakerClient({
   const [scriptRequestBusy, setScriptRequestBusy] = useState(false);
   // 読み未登録の一覧は使用人数の多い順に少しずつ表示する（多数あっても画面を埋めない）
   const [readingLimit, setReadingLimit] = useState(20);
+  // まず見る3作: 読み未登録のCSV往復（書き出し → ChatGPT → 一括登録）
+  const [readingCsvName, setReadingCsvName] = useState<string | null>(null);
+  const [readingCsvNote, setReadingCsvNote] = useState<string | null>(null);
+  const [readingImport, setReadingImport] = useState<{
+    fileName: string;
+    csv: string;
+    counts: Record<'approved' | 'needs_review' | 'skip_duplicate' | 'error', number>;
+    approved: ReadingImportRow[];
+    needsReview: ReadingImportRow[];
+    skipped: ReadingImportRow[];
+    errors: ReadingImportRow[];
+    result?: { registered: number; skipped: number; needsReview: number; errors: number };
+  } | null>(null);
+  const [readingImportBusy, setReadingImportBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -354,6 +376,83 @@ export default function VideoMakerClient({
   }
 
   // まず見る3作: 読みを登録する（推定で自動確定はしない。入力して「登録」した読みだけを保存する）
+  // ── 読み未登録のCSV往復 ──
+  // 行・件数はWorkerの最新の報告から作る（サーバー側の取り込み検証と同じ関数）
+  const unregisteredRows = useMemo(() => buildUnregisteredReadingRows(worker?.capcutStore), [worker]);
+
+  function downloadFile(name: string, data: BlobPart, type: string) {
+    const url = URL.createObjectURL(new Blob([data], { type }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function exportReadingCsv() {
+    const name = `unregistered-readings-${readingFileTimestamp(new Date())}.csv`;
+    downloadFile(name, readingRowsToCsv(unregisteredRows), 'text/csv;charset=utf-8');
+    setReadingCsvName(name);
+    setReadingCsvNote(`${name}（${unregisteredRows.length}件）を書き出しました。`);
+  }
+
+  async function copyReadingPrompt() {
+    const name = readingCsvName ?? `unregistered-readings-${readingFileTimestamp(new Date())}.csv`;
+    try {
+      await navigator.clipboard.writeText(buildReadingChatGptPrompt(unregisteredRows, name));
+      setReadingCsvNote(`ChatGPT用プロンプトをコピーしました（対象CSV: ${name}・${unregisteredRows.length}件）。`);
+    } catch {
+      setReadingCsvNote('クリップボードへコピーできませんでした（ブラウザの許可を確認してください）。');
+    }
+  }
+
+  function exportReadingSet() {
+    const ts = readingFileTimestamp(new Date());
+    const enc = new TextEncoder();
+    const zip = createStoredZip([
+      { name: 'unregistered-readings.csv', data: enc.encode(readingRowsToCsv(unregisteredRows)) },
+      { name: 'chatgpt-prompt.txt', data: enc.encode(buildReadingChatGptPrompt(unregisteredRows, 'unregistered-readings.csv')) },
+    ]);
+    downloadFile(`reading-review-${ts}.zip`, zip.slice().buffer, 'application/zip');
+    setReadingCsvNote(`reading-review-${ts}.zip（CSV ${unregisteredRows.length}件＋ChatGPT用プロンプト）を書き出しました。`);
+  }
+
+  async function previewReadingCsv(file: File) {
+    setReadingImportBusy(true);
+    setReadingImport(null);
+    try {
+      const csv = await file.text();
+      const data = await fetchJson<NonNullable<typeof readingImport>>('/api/admin/video-jobs/pronunciation-readings/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv, commit: false }),
+      });
+      setReadingImport({ ...data, fileName: file.name, csv });
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setReadingImportBusy(false);
+    }
+  }
+
+  async function commitReadingCsv() {
+    if (!readingImport) return;
+    if (!window.confirm(`approvedの${readingImport.counts.approved}件を登録します（登録済みの語は上書きしません）。よろしいですか？`)) return;
+    setReadingImportBusy(true);
+    try {
+      const data = await fetchJson<NonNullable<typeof readingImport>>('/api/admin/video-jobs/pronunciation-readings/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv: readingImport.csv, commit: true }),
+      });
+      setReadingImport({ ...data, fileName: readingImport.fileName, csv: readingImport.csv });
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setReadingImportBusy(false);
+    }
+  }
+
   async function registerReading(text: string) {
     const reading = (readingInputs[text] ?? '').trim();
     if (!reading) return;
@@ -632,6 +731,90 @@ export default function VideoMakerClient({
               )}
               <details open={unresolvedGroups.length > 0} className="text-sm">
                 <summary className="cursor-pointer text-xs font-bold text-amber-800">読み未登録 {unresolvedGroups.length}件（語ごとにまとめて表示）</summary>
+                <div className="mt-2 rounded border border-amber-200 bg-white p-2 space-y-2 text-xs">
+                  <p className="text-gray-600">
+                    CSVでまとめて登録: 書き出したCSVとプロンプトをChatGPTへ渡し、読みを入れたCSVを「読みCSVを一括登録」で取り込みます（approvedの行だけ登録）。
+                  </p>
+                  <div className="flex gap-2 flex-wrap items-center">
+                    <button type="button" disabled={unregisteredRows.length === 0} onClick={exportReadingCsv} className="px-3 py-1 rounded border border-amber-600 text-amber-800 font-bold disabled:opacity-50">
+                      未登録読みCSVを書き出す
+                    </button>
+                    <button type="button" disabled={unregisteredRows.length === 0} onClick={() => void copyReadingPrompt()} className="px-3 py-1 rounded border border-amber-600 text-amber-800 font-bold disabled:opacity-50">
+                      ChatGPT用プロンプトをコピー
+                    </button>
+                    <button type="button" disabled={unregisteredRows.length === 0} onClick={exportReadingSet} className="px-3 py-1 rounded border border-amber-600 text-amber-800 font-bold disabled:opacity-50">
+                      ChatGPT用セットを書き出す
+                    </button>
+                    <label className={`px-3 py-1 rounded bg-amber-600 text-white font-bold ${readingImportBusy ? 'opacity-50' : 'cursor-pointer'}`}>
+                      読みCSVを一括登録
+                      <input
+                        type="file"
+                        accept=".csv,text/csv"
+                        className="hidden"
+                        disabled={readingImportBusy}
+                        onChange={(ev) => {
+                          const f = ev.target.files?.[0];
+                          ev.target.value = '';
+                          if (f) void previewReadingCsv(f);
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {readingCsvNote && <p className="text-emerald-700">{readingCsvNote}</p>}
+                  {readingImportBusy && <p className="text-gray-500">処理中...</p>}
+                  {readingImport && (
+                    <div className="rounded border border-gray-200 p-2 space-y-2">
+                      <p className="font-bold text-slate-700">
+                        {readingImport.result ? '一括登録の結果' : '取り込みプレビュー（まだ登録していません）'}：{readingImport.fileName}
+                      </p>
+                      <div className="flex gap-2 flex-wrap">
+                        <span className="rounded bg-emerald-50 text-emerald-700 px-2 py-0.5">登録予定 {readingImport.counts.approved}件</span>
+                        <span className="rounded bg-amber-50 text-amber-700 px-2 py-0.5">要確認 {readingImport.counts.needs_review}件</span>
+                        <span className="rounded bg-gray-100 text-gray-600 px-2 py-0.5">登録済みでskip {readingImport.counts.skip_duplicate}件</span>
+                        <span className="rounded bg-red-50 text-red-700 px-2 py-0.5">エラー {readingImport.counts.error}件</span>
+                      </div>
+                      {readingImport.result ? (
+                        <p className="text-emerald-700">
+                          登録 {readingImport.result.registered}件・skip {readingImport.result.skipped}件・要確認（未登録のまま）{readingImport.result.needsReview}件・エラー{' '}
+                          {readingImport.result.errors}件。Workerが反映すると読み台本が更新されます（未登録の人物の台本は「全人物の台本を準備」でも更新されます）。
+                        </p>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={readingImportBusy || readingImport.counts.approved === 0}
+                          onClick={() => void commitReadingCsv()}
+                          className="px-3 py-1 rounded bg-emerald-600 text-white font-bold disabled:opacity-50"
+                        >
+                          approvedのみ一括登録（{readingImport.counts.approved}件）
+                        </button>
+                      )}
+                      {(
+                        [
+                          ['登録予定（一部）', readingImport.approved],
+                          ['要確認（一部・登録しません）', readingImport.needsReview],
+                          ['登録済みでskip（一部）', readingImport.skipped],
+                          ['エラー（一部）', readingImport.errors],
+                        ] as Array<[string, ReadingImportRow[]]>
+                      )
+                        .filter(([, rows]) => rows.length > 0)
+                        .map(([label, rows]) => (
+                          <details key={label}>
+                            <summary className="cursor-pointer text-gray-700">{label}</summary>
+                            <ul className="ml-4 list-disc">
+                              {rows.map((r) => (
+                                <li key={`${r.line}-${r.id}`}>
+                                  {r.line}行目 {r.sourceText}
+                                  {r.reading ? ` → ${r.reading}` : ''}
+                                  {r.confidence ? `（${r.confidence}）` : ''}
+                                  {r.reason ? ` ※${r.reason}` : ''}
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        ))}
+                    </div>
+                  )}
+                </div>
                 {unresolvedGroups.length === 0 ? (
                   <p className="text-xs text-gray-500 mt-2">読み未登録の語はありません。</p>
                 ) : (

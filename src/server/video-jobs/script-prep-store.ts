@@ -127,3 +127,23 @@ export async function listPersonReadingCandidates(): Promise<Record<string, stri
   }
   return result;
 }
+
+/**
+ * 読みをまとめて登録する（CSV一括登録用）。既に登録済みの語は上書きしない（skip）。登録した語を返す。
+ * 呼び出し側で checkReadingInput 済みの値だけを渡す。
+ */
+export async function insertPronunciationReadingsIfAbsent(items: Array<{ sourceText: string; reading: string }>): Promise<string[]> {
+  if (items.length === 0) return [];
+  const values = items.map((i) => validateReading(i.sourceText, i.reading));
+  try {
+    const inserted = await db
+      .insert(pronunciationReadings)
+      .values(values)
+      .onConflictDoNothing({ target: pronunciationReadings.sourceText })
+      .returning({ sourceText: pronunciationReadings.sourceText });
+    return inserted.map((r) => r.sourceText);
+  } catch (err) {
+    if (isMissingTable(err)) throw new VideoJobError('読みの保存先（pronunciation_readings）が未作成です。/admin/db-init でテーブルを作成してください。', 503);
+    throw err;
+  }
+}
