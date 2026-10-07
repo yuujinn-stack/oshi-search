@@ -24,6 +24,11 @@ export interface WorkerTemplateInfo {
   aspectRatio?: string;
   /** このWorkerが今実際に生成できるナレーション方式（registryの対応方式のうち、Worker実装済みのもの） */
   narrationModes: string[];
+  /**
+   * テンプレート共通のCapCut音声を使うテンプレートだけ（推し活あるある等。ナレーションに人物名を含まない）。
+   * readyなら全人物でCapCut生成でき、人物ごとのCapCut保存済み音声は要求しない。
+   */
+  sharedCapcut?: { ready: boolean; durationSeconds: number | null; message: string };
 }
 
 export interface WorkerInfo {
@@ -251,7 +256,11 @@ export async function createVideoJobs(input: {
   }
   // CapCut保存済み音声: Workerが報告した状態がreadyの人物だけ受け付ける（フロントだけに任せない）。
   // 実際に生成する直前にもWorker側で再確認する。
-  if (input.narrationMode === 'capcut') {
+  // テンプレート共通のCapCut音声が使えるテンプレートは、人物ごとのready判定をしない（共通音声が無ければ生成しない）
+  if (input.narrationMode === 'capcut' && template.sharedCapcut && !template.sharedCapcut.ready) {
+    throw new VideoJobError(`テンプレート共通のCapCut音声が使えないため生成できません: ${template.sharedCapcut.message}`, 400);
+  }
+  if (input.narrationMode === 'capcut' && !template.sharedCapcut) {
     const notReady = input.personNames
       .map((name) => {
         const entry = [...(worker.capcutStore?.entries ?? []), ...(worker.capcutStore?.scriptOnlyEntries ?? [])]

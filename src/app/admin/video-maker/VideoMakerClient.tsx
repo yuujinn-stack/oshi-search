@@ -23,6 +23,8 @@ interface WorkerTemplate {
   description: string;
   version: number;
   narrationModes: string[];
+  /** テンプレート共通のCapCut音声を使うテンプレートだけ（readyなら全人物でCapCut生成できる） */
+  sharedCapcut?: { ready: boolean; durationSeconds: number | null; message: string };
 }
 
 interface WorkerInfo {
@@ -259,7 +261,9 @@ export default function VideoMakerClient({
   const template = templates.find((t) => t.templateId === templateId) ?? null;
 
   // CapCut保存済み音声: Workerが報告した状態（正本はMac上の保存音声と台本）。CapCut対応テンプレートでだけ表示する
-  const capcutSupported = !!template?.narrationModes.includes('capcut');
+  // テンプレート共通のCapCut音声を使うテンプレートは、人物ごとの音声状態（作成待ち・ready等）を扱わない
+  const sharedCapcut = template?.sharedCapcut ?? null;
+  const capcutSupported = !!template?.narrationModes.includes('capcut') && !sharedCapcut;
   const capcutEntries = useMemo(
     () =>
       capcutSupported && template
@@ -399,7 +403,8 @@ export default function VideoMakerClient({
       return { name: n, reason: e ? `${CAPCUT_STATUS_VIEW[e.status].icon} ${CAPCUT_STATUS_VIEW[e.status].label}` : unpreparedLabel(n) };
     });
   const capcutMode = narrationMode === 'capcut';
-  const selectedNotReady = capcutMode ? selectedNames.filter((n) => capcutByName.get(n)?.status !== 'ready') : [];
+  // 共通音声のテンプレートは、選択した人物全員を生成できる（人物ごとのready判定なし）
+  const selectedNotReady = capcutMode && !sharedCapcut ? selectedNames.filter((n) => capcutByName.get(n)?.status !== 'ready') : [];
 
   async function submit(names: string[] = selectedNames) {
     if (!template || !narrationMode || names.length === 0) return;
@@ -519,7 +524,7 @@ export default function VideoMakerClient({
           >
             {submitting ? '登録中...' : `生成する（${selectedNames.length}件）`}
           </button>
-          {capcutMode && (
+          {capcutMode && !sharedCapcut && (
             <button
               type="button"
               disabled={submitting || capcutReadyTargets.length === 0}
@@ -531,7 +536,13 @@ export default function VideoMakerClient({
           )}
           {message && <span className={`text-sm ${message.kind === 'ok' ? 'text-emerald-700' : 'text-red-600'}`}>{message.text}</span>}
         </div>
-        {capcutMode && (
+        {capcutMode && sharedCapcut && (
+          <p className="text-xs text-gray-600">
+            🎙 共通音声を使用（人物ごとの録音は不要
+            {sharedCapcut.durationSeconds ? `・${sharedCapcut.durationSeconds.toFixed(1)}秒` : ''}）
+          </p>
+        )}
+        {capcutMode && !sharedCapcut && (
           <div className="text-xs text-gray-600 space-y-1">
             <p>
               対象: {selectedNames.length > 0 ? '選択中の人物' : 'このテンプレートの全人物'}

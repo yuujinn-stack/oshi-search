@@ -84,6 +84,16 @@ export async function POST(req: NextRequest) {
         aspectRatio: str(t.aspectRatio, 20) ?? undefined,
         narrationModes: (Array.isArray(t.narrationModes) ? t.narrationModes : [])
           .filter((m): m is string => m === 'none' || m === 'auto' || m === 'capcut'),
+        // テンプレート共通のCapCut音声（送られてきたテンプレートだけ）
+        ...(t.sharedCapcut && typeof t.sharedCapcut === 'object'
+          ? {
+              sharedCapcut: {
+                ready: (t.sharedCapcut as Record<string, unknown>).ready === true,
+                durationSeconds: num((t.sharedCapcut as Record<string, unknown>).durationSeconds),
+                message: str((t.sharedCapcut as Record<string, unknown>).message, 300) ?? '',
+              },
+            }
+          : {}),
       }));
     const persons = (Array.isArray(body.persons) ? body.persons : [])
       .filter((p): p is string => typeof p === 'string')
