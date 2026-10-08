@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { countScriptStatuses, groupUnresolvedReadings } from '@/lib/video-first3-script';
 import {
   buildReadingChatGptPrompt,
@@ -11,6 +11,7 @@ import {
   type ReadingImportRow,
 } from '@/lib/reading-csv';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
+import { matchesQuery } from '@/lib/person-group-filter';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
 import { countHashtags, validateCaption, INSTAGRAM_CAPTION_MAX_LENGTH, INSTAGRAM_HASHTAG_MAX_COUNT } from '@/lib/instagram-caption-rules';
 import { HOURLY_TIME_OPTIONS } from '@/lib/instagram-post-times';
@@ -175,6 +176,22 @@ function capcutFilterOf(status: CapcutStatus): CapcutFilter {
   if (status === 'ready') return 'ready';
   return status === 'missing' ? 'todo' : 'redo';
 }
+/** 音声生成用台本をコピーできるか（読み未登録の語が残っている間は、誤読を防ぐためコピーできない） */
+function canCopySpeechScript(entry: CapcutEntry): boolean {
+  return !!entry.speechScriptText && (entry.unresolvedReadings?.length ?? 0) === 0;
+}
+/** まず見る3作「次の音声なし人物」の対象: 台本完成で音声用台本をコピーでき、CapCut音声がまだ無い人物 */
+function isNextRecordingTarget(entry: CapcutEntry): boolean {
+  return entry.status === 'missing' && entry.scriptStatus === 'ready_script' && canCopySpeechScript(entry);
+}
+// まず見る3作: 人物一覧の状態の絞り込み（既存の CapCut状態・台本状態の絞り込みを組み合わせて切り替える）
+const FIRST3_LIST_FILTERS: Array<{ key: string; label: string; capcut: CapcutFilter; script: ScriptFilter }> = [
+  { key: 'all', label: 'すべて', capcut: 'all', script: 'all' },
+  { key: 'todo', label: '音声なし', capcut: 'todo', script: 'all' },
+  { key: 'ready', label: '使用可能', capcut: 'ready', script: 'all' },
+  { key: 'needs_reading', label: '読み確認待ち', capcut: 'all', script: 'needs_reading' },
+  { key: 'insufficient_works', label: '作品不足', capcut: 'all', script: 'insufficient_works' },
+];
 
 const STATUS_VIEW: Record<VideoJob['status'], { label: string; cls: string }> = {
   queued: { label: '待機中', cls: 'bg-gray-100 text-gray-600' },
@@ -225,6 +242,10 @@ export default function VideoMakerClient({
   const [reelAutopublishEnabled, setReelAutopublishEnabled] = useState(false);
   const [capcutFilter, setCapcutFilter] = useState<CapcutFilter>('all');
   const [capcutSelectedOnly, setCapcutSelectedOnly] = useState(false);
+  // まず見る3作: 人物一覧の検索と、詳細を表示する人物（personSlug。URLの ?person= と同じ）
+  const [capcutQuery, setCapcutQuery] = useState('');
+  const [capcutPick, setCapcutPick] = useState<string | null>(null);
+  const capcutDetailRef = useRef<HTMLDivElement>(null);
   const [preparing, setPreparing] = useState(false);
   // まず見る3作: 台本準備・読みの登録
   const [scriptFilter, setScriptFilter] = useState<ScriptFilter>('all');
@@ -324,6 +345,34 @@ export default function VideoMakerClient({
   const scriptCounts = useMemo(() => countScriptStatuses(capcutEntries), [capcutEntries]);
   const unresolvedGroups = useMemo(() => groupUnresolvedReadings(capcutEntries), [capcutEntries]);
   const first3Queue = worker?.capcutStore?.first3Queue;
+  // まず見る3作: 人物一覧（上の絞り込み＋人物名・グループ名の検索）と、選択中の1人の詳細（詳細は1人分だけ描画する）
+  const personByName = useMemo(() => new Map(persons.map((p) => [p.name, p])), [persons]);
+  const capcutList = capcutQuery.trim()
+    ? visibleCapcut.filter((e) => matchesQuery(personByName.get(e.personName) ?? { name: e.personName }, capcutQuery))
+    : visibleCapcut;
+  const pickedCapcut = capcutEntries.find((e) => e.personSlug === capcutPick) ?? null;
+  const pickedIndex = pickedCapcut ? capcutList.indexOf(pickedCapcut) : -1;
+  const prevCapcut = pickedIndex > 0 ? capcutList[pickedIndex - 1] : null;
+  const nextTarget = capcutList.slice(pickedIndex + 1).find(isNextRecordingTarget) ?? null;
+  // 初期選択: URLの ?person= → 次に音声を作る人物（台本完成・音声なし） → 既存の「次に作成」 → 一覧の先頭
+  useEffect(() => {
+    if (!hasScriptStatus || capcutEntries.length === 0 || capcutEntries.some((e) => e.personSlug === capcutPick)) return;
+    const fromUrl = new URLSearchParams(window.location.search).get('person');
+    const initial =
+      capcutEntries.find((e) => e.personSlug === fromUrl) ??
+      orderedCapcut.find(isNextRecordingTarget) ??
+      nextCapcut ??
+      orderedCapcut[0];
+    if (initial) setCapcutPick(initial.personSlug);
+  }, [hasScriptStatus, capcutEntries, capcutPick, orderedCapcut, nextCapcut]);
+  const pickCapcut = (slug: string) => {
+    setCapcutPick(slug);
+    const url = new URL(window.location.href);
+    url.searchParams.set('person', slug);
+    window.history.replaceState(null, '', url);
+    // スマホ（1列表示）では一覧の下の詳細へ移動する
+    if (window.matchMedia('(max-width: 767px)').matches) capcutDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   // Workerがまだ素材（人物ページ）を持っておらず台本を作れない選択中の人物（PERSON_REGISTRY未登録の人物など）
   const prepareRequested = new Set((worker?.capcutPrepareRequests ?? []).map((r) => r.personName));
   const prepareFailure = new Map((worker?.capcutStore?.prepareFailures ?? []).map((f) => [f.personName, f.message]));
@@ -937,6 +986,106 @@ export default function VideoMakerClient({
           )}
           {capcutEntries.length === 0 ? (
             <p className="text-sm text-gray-500">Workerからこのテンプレートの音声状態がまだ届いていません。</p>
+          ) : hasScriptStatus ? (
+            <div className="grid gap-3 md:grid-cols-[minmax(220px,280px)_1fr] items-start">
+              <div className="rounded-lg border border-gray-200 p-2 space-y-2">
+                <input
+                  type="search"
+                  value={capcutQuery}
+                  onChange={(ev) => setCapcutQuery(ev.target.value)}
+                  placeholder="🔍 人物名・グループ名で検索"
+                  className="w-full text-sm border border-gray-300 rounded px-2 py-1"
+                />
+                <div className="flex gap-1 flex-wrap text-xs">
+                  {FIRST3_LIST_FILTERS.map((f) => {
+                    const active = capcutFilter === f.capcut && scriptFilter === f.script;
+                    const count = f.script !== 'all' ? scriptCounts[f.script] : capcutCounts[f.capcut];
+                    return (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => {
+                          setCapcutFilter(f.capcut);
+                          setScriptFilter(f.script);
+                        }}
+                        className={`px-2 py-0.5 rounded-full border ${active ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-gray-200 text-gray-600'}`}
+                      >
+                        {f.label} {count}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-gray-400">{capcutList.length}人を表示</p>
+                {capcutList.length === 0 ? (
+                  <p className="text-sm text-gray-500 px-1">該当する人物はいません。</p>
+                ) : (
+                  <ul className="max-h-[50vh] md:max-h-[calc(100vh-14rem)] overflow-y-auto space-y-1 pr-1">
+                    {capcutList.map((e) => {
+                      const sv = e.scriptStatus ? SCRIPT_STATUS_VIEW[e.scriptStatus] : null;
+                      const cv = CAPCUT_STATUS_VIEW[e.status];
+                      const p = personByName.get(e.personName);
+                      const picked = e.personSlug === capcutPick;
+                      return (
+                        <li key={`${e.personSlug}-${e.templateId}`}>
+                          <button
+                            type="button"
+                            aria-current={picked ? 'true' : undefined}
+                            onClick={() => pickCapcut(e.personSlug)}
+                            className={`w-full text-left rounded border px-2 py-1 ${picked ? 'border-violet-500 bg-violet-50' : 'border-transparent hover:bg-gray-50'}`}
+                          >
+                            <span className="block text-sm font-bold text-slate-800 truncate">
+                              {e.personName}
+                              {nextCapcut === e && <span className="ml-1 text-[10px] font-bold text-violet-700">次に作成</span>}
+                            </span>
+                            {(p?.currentGroupName || p?.group) && <span className="block text-[10px] text-gray-400 truncate">{p.currentGroupName || p.group}</span>}
+                            <span className="block text-[11px] text-gray-600">
+                              {sv && <>{sv.icon} {sv.label}　</>}
+                              {cv.icon} {cv.label}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+              <div ref={capcutDetailRef} className="md:sticky md:top-20 md:max-h-[calc(100vh-6rem)] md:overflow-y-auto space-y-2 scroll-mt-20">
+                {pickedCapcut ? (
+                  <>
+                    <CapcutCard
+                      entry={pickedCapcut}
+                      templateName={template.name}
+                      groupName={personByName.get(pickedCapcut.personName)?.currentGroupName || personByName.get(pickedCapcut.personName)?.group}
+                      isNext={nextCapcut === pickedCapcut}
+                      onReselect={pickedCapcut.scriptStatus ? () => void requestScripts('reselect', [pickedCapcut.personName]) : undefined}
+                    />
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <button
+                        type="button"
+                        disabled={!prevCapcut}
+                        onClick={() => prevCapcut && pickCapcut(prevCapcut.personSlug)}
+                        className="px-3 py-1 rounded border border-gray-300 text-gray-600 disabled:opacity-50"
+                      >
+                        ← 前の人物
+                      </button>
+                      {nextTarget ? (
+                        <button
+                          type="button"
+                          onClick={() => pickCapcut(nextTarget.personSlug)}
+                          className="px-3 py-1 rounded border border-violet-500 text-violet-700 font-bold"
+                        >
+                          次の音声なし人物（{nextTarget.personName}）→
+                        </button>
+                      ) : (
+                        <span className="text-gray-500">次の対象はいません（一覧のこの人物より後に、台本完成で音声なしの人物はいません）</span>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-500">一覧から人物を選んでください。</p>
+                )}
+              </div>
+            </div>
           ) : visibleCapcut.length === 0 ? (
             <p className="text-sm text-gray-500">該当する人物はいません。</p>
           ) : (
@@ -1063,11 +1212,14 @@ function CopyButton({
 function CapcutCard({
   entry,
   templateName,
+  groupName,
   isNext,
   onReselect,
 }: {
   entry: CapcutEntry;
   templateName: string;
+  /** まず見る3作の人物詳細だけ: グループ名 */
+  groupName?: string;
   isNext: boolean;
   /** まず見る3作: 3作品の再選定を依頼する */
   onReselect?: () => void;
@@ -1079,6 +1231,7 @@ function CapcutCard({
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
           <span className="font-bold text-slate-800">{entry.personName}</span>
+          {groupName && <span className="ml-2 text-xs text-gray-500">{groupName}</span>}
           <span className="ml-2 text-xs text-gray-500">{templateName}</span>
           {isNext && <span className="ml-2 text-xs font-bold text-violet-700">← 次に作成</span>}
         </div>
@@ -1118,7 +1271,7 @@ function CapcutCard({
               text={entry.speechScriptText}
               label="音声用台本をコピー"
               primary
-              disabled={(entry.unresolvedReadings?.length ?? 0) > 0}
+              disabled={!canCopySpeechScript(entry)}
               disabledTitle="読み未登録の語があるためコピーできません"
             />
           </div>
