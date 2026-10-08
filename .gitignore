@@ -25,3 +25,6 @@ tsconfig.tsbuildinfo
 # 一時レポート（dry-run 出力）
 tmp/
 .env*
+
+# 開発ツールの生成物（tools/canva-instagram の CSV・確認用画像の出力先）
+tools/canva-instagram/output/
