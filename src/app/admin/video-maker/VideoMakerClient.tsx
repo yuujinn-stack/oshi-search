@@ -242,6 +242,8 @@ export default function VideoMakerClient({
   const [reelAutopublishEnabled, setReelAutopublishEnabled] = useState(false);
   const [capcutFilter, setCapcutFilter] = useState<CapcutFilter>('all');
   const [capcutSelectedOnly, setCapcutSelectedOnly] = useState(false);
+  // 一括生成で除外される人物の一覧は、押したときだけ展開する（人数が多くてもページを縦長にしない）
+  const [showCapcutExcluded, setShowCapcutExcluded] = useState(false);
   // まず見る3作: 人物一覧の検索と、詳細を表示する人物（personSlug。URLの ?person= と同じ）
   const [capcutQuery, setCapcutQuery] = useState('');
   const [capcutPick, setCapcutPick] = useState<string | null>(null);
@@ -658,7 +660,7 @@ export default function VideoMakerClient({
           {selectedNotReady.length > 0 && (
             <p className="text-xs text-amber-700 bg-amber-50 rounded p-2 mt-2">
               ⚠ CapCut保存済み音声がreadyではない人物が含まれているため、このままでは生成できません:{' '}
-              {selectedNotReady.join('、')}（「readyの人物だけまとめて生成」を使うと除外して生成できます）
+              {selectedNotReady.join('、')}（「使用可能な人物だけまとめて生成」を使うと除外して生成できます）
             </p>
           )}
         </section>
@@ -679,7 +681,7 @@ export default function VideoMakerClient({
               onClick={() => void submit(capcutReadyTargets)}
               className="px-5 py-2 rounded-lg border border-violet-600 text-violet-700 text-sm font-bold disabled:border-gray-300 disabled:text-gray-400"
             >
-              {`readyの人物だけまとめて生成（${capcutReadyTargets.length}件）`}
+              {`使用可能な人物だけまとめて生成（${capcutReadyTargets.length}件）`}
             </button>
           )}
           {message && <span className={`text-sm ${message.kind === 'ok' ? 'text-emerald-700' : 'text-red-600'}`}>{message.text}</span>}
@@ -697,15 +699,25 @@ export default function VideoMakerClient({
               {capcutReadyTargets.length > 0 && <>／生成する人物: {capcutReadyTargets.join('、')}</>}
             </p>
             {capcutExcluded.length > 0 && (
-              <div>
-                <p className="font-bold text-gray-700">除外される人物（{capcutExcluded.length}人）</p>
-                <ul className="list-disc ml-5">
-                  {capcutExcluded.map((x) => (
-                    <li key={x.name}>
-                      {x.name}: {x.reason}
-                    </li>
-                  ))}
-                </ul>
+              <div className="space-y-1">
+                <p className="font-bold text-gray-700">除外される人物：{capcutExcluded.length}人</p>
+                <button
+                  type="button"
+                  aria-expanded={showCapcutExcluded}
+                  onClick={() => setShowCapcutExcluded((v) => !v)}
+                  className="px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+                >
+                  {showCapcutExcluded ? `除外人物を閉じる（${capcutExcluded.length}人）` : `除外人物を表示（${capcutExcluded.length}人）`}
+                </button>
+                {showCapcutExcluded && (
+                  <ul className="list-disc ml-5 max-h-[360px] overflow-y-auto rounded border border-gray-200 bg-gray-50/50 py-1 pr-2">
+                    {capcutExcluded.map((x) => (
+                      <li key={x.name}>
+                        {x.name}: {x.reason}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
           </div>
