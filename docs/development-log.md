@@ -3404,3 +3404,54 @@ Task 80 を本番で目視確認した際に見つかった3点を直す。人�
 
 ### テスト
 - `npx tsc --noEmit` エラーなし、`npx vitest run` 1765件全通過、`next build` 成功。
+
+---
+
+## Task 90：サブスク診断（/oshi-vod）のアフィリエイト導線とFOD・ABEMA・NHKオンデマンド・のぎ動画の料金比較対応
+
+### 目的
+1. 診断結果の各サービスCTAを、提携済みサービスでは確実にアフィリエイトリンクにする（同じ広告を診断用に二重登録しなくても済むようにする）。
+2. 「料金比較対象外」だったサービスの料金を公式サイトで再確認し、比較できるものは月額・コスパ比較に入れる。比較できないものは理由を出し分けて表示する。
+
+### 調査結果（本番DB・読み取りのみ）
+- `affiliate_programs` は Hulu（アクセストレード）1件のみ。素材は raw_html 1件（「Huluで今すぐ見る」）で、掲載位置は `work_provider` のみ。`oshi_vod_result` への掲載が無かったため、診断画面では Hulu も公式サイトリンクになっていた。
+
+### 変更ファイル
+- `src/components/oshi-vod/OshiVodServiceCta.tsx` — リンク先の優先順位を「`oshi_vod_result` の有効広告 → 同サービスの `work_provider` の有効広告 → 公式サイト（VodTrackLink）」に変更。`AffiliateSlot` の fallback を入れ子にするだけで、`AffiliateSlot`・`resolveAffiliateSlot` のロジックは無変更。詳しい比較用（compact）には `ov-cta--compact` クラスを付与。
+- `src/components/site/AffiliateSlot.tsx` — CTA配色（`.affiliate-slot--work-provider`）の適用対象に `oshi_vod_result` を追加（現在この掲載位置を使っているのは診断画面のみ。`work_provider` 等の既存表示は無変更）。
+- `src/app/oshi-vod/oshi-vod.css` — 詳しい比較（全サービスが並ぶ欄）では、アフィリエイト広告のリンクも公式サイトリンクと同じ中立の見た目にする（提携の有無で強調を変えない）。
+- `src/components/oshi-vod/OshiVodTracker.tsx` — `diagnosis_cta_click` に `link_type`（affiliate / official）を追加。アフィリエイト広告のクリックは VodTrackLink を通らないため、ここで `/api/track`（`{type:'vod', service}`）を送り、VODクリック数の計測を維持。
+- `src/lib/vod-plan-info.ts` — 2026-10-09 に公式サイトで確認した料金を登録し、比較対象にした：FOD（FODプレミアム スタンダードコース 1,320円税込・`fod.fujitv.co.jp/about/`。ライトコース976円は見放題本数が異なるため不使用）、ABEMA（広告つきABEMAプレミアム 680円税込・公式FAQで限定コンテンツが「すべて」見られると明記。広告なし1,180円と見放題範囲が同じ）、NHKオンデマンド（まるごと見放題パック 990円税込・`/share/enjoy/`・`/share/price/`）、のぎ動画（有料会員 WEB登録 1,320円税込・公式FAQ「支払いには何が使えますか？」。アプリ登録は1,700円）。Netflix は公式ヘルプが「地域によっては別途税金が課される場合があります」のみで税込を確定できないため比較対象外のまま。`notComparableReason`（price_unconfirmed / tax_unconfirmed）を追加。
+- `src/lib/oshi-vod/format.ts` — `priceExclusionLabel()`：比較対象外の理由を出し分け（「料金未確認のため比較対象外」「税込料金を公式で確認できないため比較対象外」「無料サービスのため月額比較なし」）。
+- `src/components/oshi-vod/OshiVodServiceLine.tsx`・`OshiVodPairs.tsx`・`OshiVodResultHero.tsx`・`OshiVodDetailCompare.tsx` — 一律の「料金比較対象外」「比較対象外」を上記の理由別文言に変更。追加チャンネル・料金未登録サービス（そのほかの配信）にも理由を表示。
+- テスト：`vod-plan-info.test.ts`（追加5件）、`oshi-vod-format.test.ts`（新規3件）。
+
+### 設計上の判断・注意点
+- アフィリエイトの有無はランキング計算に一切渡していない（`core.ts` 無変更）。変わるのはリンク先だけ。
+- `work_provider` の広告を診断で再利用した場合、ASP側では作品ページ経由と区別できない。診断経由を分けて計測したい場合は、管理画面で同じ素材に `oshi_vod_result` の掲載位置を追加すれば、そちらが優先される。
+- 作品数ランキングは同数の並び順の最終キーが「月額の安い順」のため、料金登録により同率内の表示順だけ変わる対象がある（順位・件数は不変）。
+- 実データ再計算：作品数ランキングの順位・件数は全378対象で不変。月額1位・コスパ1位・2サービス最適化・80%方法のいずれかが変わる対象は126（個人125・グループ1＝DISH//）。
+
+### 動作確認
+- `npx tsc --noEmit` エラーなし、`npx vitest run` 1774件全通過、`next build` 成功。
+- ローカル本番ビルド（外部通信はすべて遮断。ASPのクリック・インプレッションを発生させない）で、Hulu＝アフィリエイト（PR表記付き）、他サービス＝公式リンク、のぎ動画・FOD・NHKオンデマンドが月額・コスパに参加、Netflix は作品数ランキングのみ＋理由表示を確認。`diagnosis_cta_click`（service・placement・rank・link_type）と `/api/track` の送信を確認。`/oshi-vod` の index・canonical・OG画像・結果画像・sitemap・トップ／人物ページの導線、作品ページの既存Hulu広告表示に変化がないことを確認。
+
+---
+
+## Task 90 追記：料金のプラン名表示・料金確認日・CTAの見た目統一・診断キャッシュキー
+
+### 変更ファイル
+- `src/lib/vod-plan-info.ts` — `priceLabel`（料金表示の前置き。未指定は「月額」）を追加。のぎ動画「WEB月額」、FOD「スタンダードコース 月額」、NHKオンデマンド「まるごと見放題パック 月額」、ABEMA「広告つきABEMAプレミアム 月額」。のぎ動画の注記を「アプリから登録する場合は月額1,700円（税込）と料金が異なります」に。
+- `src/lib/oshi-vod/format.ts` — `formatMonthlyPrice()` が `priceLabel` を使う（ランキング・組み合わせ・詳細比較・結果画像で共通）。`formatIsoDateJa()`（「2026年10月9日」）を追加。
+- `src/components/oshi-vod/OshiVodResultHero.tsx` — 結論カードの料金に `priceLabel` を反映。
+- `src/components/oshi-vod/OshiVodPairs.tsx` — `priceLabel` があるサービスはプラン名の重複表示をしない。
+- `src/components/oshi-vod/OshiVodDetailCompare.tsx` — 料金確認日を「2026年10月9日（公式）」形式で表示。
+- `src/app/oshi-vod/oshi-vod.css` — 結論カード・組み合わせのCTAは公式リンクとアフィリエイト広告で同じ大きさ（高さ44px以上・14px）にする（提携の有無で見た目の優先度を変えない）。
+- `src/lib/oshi-vod/data.ts` — 診断結果キャッシュ（`unstable_cache`）のキーに料金情報の指紋 `PLAN_INFO_FINGERPRINT` を追加。キャッシュ値に料金・プラン名が含まれるため、料金表を更新したデプロイ直後に古い料金の結果（最大300秒＋再検証1回分）が表示されるのを防ぐ（Vercel の Data Cache はデプロイをまたいで残る。ローカルで実際に旧表示が出ることを確認して対応）。
+- テスト：`oshi-vod-affiliate.test.ts`（新規13件）— 診断の計算（core / data / image-data）からアフィリエイト関連モジュールへ到達しないこと、ランキング・組み合わせ・詳細比較の部品がアフィリエイトを直接参照しないこと、CTAのリンク先が「oshi_vod_result → work_provider → 公式」の順であること・広告時のみPR表記、計測用 data 属性。`oshi-vod-format.test.ts` に料金表示・日付の7件を追加。
+
+### 確認
+- `npx tsc --noEmit` エラーなし、`npx vitest run` 1794件全通過、`next build` 成功。
+- ローカル本番ビルドと Preview（`vercel deploy` で作業ツリーから作成。git push なし）で 390px・1280px を確認：横スクロールなし、「WEB月額」「広告つきABEMAプレミアム 月額680円（税込）」等の表示、料金確認日、アプリ料金の注記、既存の注意書き、Hulu＝アフィリエイト（PR）・他＝公式（PRなし）、CTA高さ（結論・組み合わせ44px以上／詳細比較40px）。
+- `diagnosis_cta_click` の link_type（affiliate / official）と `/api/track` の送信を確認（外部通信は遮断して実施）。
+- 実データ：作品数ランキングの順位・件数は全378対象で不変、月額・コスパ1位／2サービス／80%方法が変わる126対象（個人125・グループ1）はすべて新たに比較対象にしたサービスが関わる変化。

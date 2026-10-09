@@ -171,6 +171,21 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshivod { --g
   border: 1.5px solid var(--graphic-ink); text-decoration: none;
 }
 .ov-page .ov-cta-compact:hover { background: var(--graphic-ink); color: #FFFFFF; }
+/* 結論カード・組み合わせのCTAは、公式サイトリンクとアフィリエイト広告のリンクを同じ大きさにする
+   （提携の有無でボタンの大きさ・文字サイズを変えない。押しやすさのため高さ44px以上）。 */
+.ov-page .ov-cta:not(.ov-cta--compact) .vod-cta-btn,
+.ov-page .ov-cta:not(.ov-cta--compact) .affiliate-slot a { min-height: 44px; font-size: 14px; }
+/* 詳しい比較（全サービスが並ぶ欄）では、アフィリエイト広告（AffiliateSlot が描画するASPリンク）も
+   公式サイトリンクと同じ中立の見た目にする（提携の有無で強調を変えない）。
+   globals.css の .affiliate-slot--work-provider[data-vod-service] a のサービス別配色（!important）を
+   この欄だけ上書きする。ASP提供コード自体は変更しない。 */
+.ov-page .ov-cta.ov-cta--compact .affiliate-slot a {
+  display: inline-flex !important; width: auto !important; max-width: 100%; min-height: 40px;
+  padding: 6px 12px !important; font-size: 13px !important; font-weight: 700;
+  color: var(--graphic-ink) !important; background: #FFFFFF !important;
+  border: 1.5px solid var(--graphic-ink) !important; border-radius: 0 !important; box-shadow: none !important;
+}
+.ov-page .ov-cta.ov-cta--compact .affiliate-slot a:hover { background: var(--graphic-ink) !important; color: #FFFFFF !important; }
 
 /* ── 組み合わせ ── */
 .ov-page .ov-combo-services { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 4px; }

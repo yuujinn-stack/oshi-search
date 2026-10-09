@@ -70,3 +70,30 @@ describe('vod-plan-info', () => {
     expect(getVodPlanInfo('unknown-service')).toBeNull();
   });
 });
+
+describe('2026-10-09 公式確認で比較対象に追加したサービス', () => {
+  it.each([
+    ['fod', 1320, 'FODプレミアム スタンダードコース', 'https://fod.fujitv.co.jp/about/'],
+    ['abema', 680, '広告つきABEMAプレミアム', 'https://abema.tv/about/premium'],
+    ['nhkオンデマンド', 990, 'まるごと見放題パック', 'https://www.nhk-ondemand.jp/share/enjoy/'],
+    ['のぎ動画', 1320, '有料会員（WEB登録）', 'https://support.nogidoga.com/hc/ja/articles/42825275623705'],
+  ])('%s: 月額%i円（税込）・%s', (service, price, planName, sourceUrl) => {
+    const p = getVodPlanInfo(service)!;
+    expect(p.monthlyPrice).toBe(price);
+    expect(p.taxIncluded).toBe(true);
+    expect(p.planName).toBe(planName);
+    expect(p.sourceUrl).toBe(sourceUrl);
+    expect(p.checkedAt).toBe('2026-10-09');
+    expect(isPriceComparable(p)).toBe(true);
+  });
+
+  it('Netflix は税込表記を公式で確認できないため比較対象外のまま（理由: tax_unconfirmed）', () => {
+    const p = getVodPlanInfo('netflix')!;
+    expect(isPriceComparable(p)).toBe(false);
+    expect(p.notComparableReason).toBe('tax_unconfirmed');
+  });
+
+  it('比較対象外の有料サブスクは Netflix のみ', () => {
+    expect(VOD_PLAN_INFO.filter((p) => p.kind === 'subscription' && !isPriceComparable(p)).map((p) => p.service)).toEqual(['netflix']);
+  });
+});

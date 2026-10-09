@@ -2,7 +2,7 @@
 // どちらも和集合で数えるため、両方で配信されている作品を2重に数えない。
 import ProviderLogo from '@/components/ProviderLogo';
 import type { DiagnosisResult, ServiceCombo } from '@/lib/oshi-vod/types';
-import { formatCoverage, formatMonthlyPrice, formatWorkFraction, formatYen } from '@/lib/oshi-vod/format';
+import { formatCoverage, formatMonthlyPrice, formatWorkFraction, formatYen, priceExclusionLabel } from '@/lib/oshi-vod/format';
 import OshiVodServiceCta, { type OshiVodCtaPlacement } from './OshiVodServiceCta';
 import { secLabel } from './sec-label';
 
@@ -21,13 +21,13 @@ function ComboView({ combo, paidTotal, placement }: { combo: ServiceCombo; paidT
       <p className="ov-line-nums">
         <span className="ov-em">{formatWorkFraction(combo.unionCount, paidTotal)}</span>
         <span>カバー率{formatCoverage(combo.unionCount, paidTotal)}</span>
-        <span>{combo.totalPrice != null ? `合計 月額${formatYen(combo.totalPrice)}` : '合計月額は比較対象外のサービスを含みます'}</span>
+        <span>{combo.totalPrice != null ? `合計 月額${formatYen(combo.totalPrice)}` : '料金未確認のサービスを含むため合計月額は表示できません'}</span>
       </p>
       <ul className="ov-combo-breakdown">
         {combo.services.map((s) => (
           <li key={s.service}>
-            {s.displayName}：{s.paidKeys.length}作品・{formatMonthlyPrice(s.plan, s.priceComparable) ?? '料金比較対象外'}
-            {s.priceComparable && s.plan?.planName ? `（${s.plan.planName}）` : ''}
+            {s.displayName}：{s.paidKeys.length}作品・{formatMonthlyPrice(s.plan, s.priceComparable) ?? priceExclusionLabel(s.plan)}
+            {s.priceComparable && s.plan?.planName && !s.plan.priceLabel ? `（${s.plan.planName}）` : ''}
           </li>
         ))}
       </ul>

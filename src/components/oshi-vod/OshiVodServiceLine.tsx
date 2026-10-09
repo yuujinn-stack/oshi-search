@@ -2,7 +2,7 @@
 // 例: U-NEXT / 14 / 21作品・カバー率66.6%・月額2,189円（税込）
 import ProviderLogo from '@/components/ProviderLogo';
 import type { ServiceStat } from '@/lib/oshi-vod/types';
-import { formatCoverage, formatMonthlyPrice, formatWorkFraction, formatYen } from '@/lib/oshi-vod/format';
+import { formatCoverage, formatMonthlyPrice, formatWorkFraction, formatYen, priceExclusionLabel } from '@/lib/oshi-vod/format';
 import { costPerWork } from '@/lib/oshi-vod/core';
 
 interface Props {
@@ -29,7 +29,7 @@ export default function OshiVodServiceLine({ stat, paidTotal, rankLabel, emphasi
           <span>カバー率{formatCoverage(count, paidTotal)}</span>
           {price
             ? <span className={emphasis === 'price' ? 'ov-em' : undefined}>{price}</span>
-            : <span className="ov-muted">料金比較対象外</span>}
+            : <span className="ov-muted">{priceExclusionLabel(stat.plan)}</span>}
           {showCost && cost != null && (
             <span className={emphasis === 'cost' ? 'ov-em' : undefined}>1作品あたり約{formatYen(cost)}</span>
           )}

@@ -26,11 +26,12 @@ interface AffiliateSlotProps {
 }
 
 function AdWrapper({ children, slotKey, vodService }: { children: ReactNode; slotKey: string; vodService: string }) {
-  // work_provider のみ、配信サービス別のCTA配色（globals.css の
-  // .affiliate-slot--work-provider[data-vod-service] a）を適用する。
+  // work_provider と oshi_vod_result（サブスク診断の結果画面）は、配信サービス別のCTA配色
+  // （globals.css の .affiliate-slot--work-provider[data-vod-service] a）を適用する。
+  // どちらも「○○で今すぐ見る」型のボタンとして置かれる掲載位置のため。
   // ASP提供コード（rawCode内部のhref/計測img/rel/referrerpolicy等）は一切変更しない。
   // 他のslot（vod_hero/vod_mid/vod_bottom/person_vod）にはこの装飾を適用しない。
-  const isWorkProviderCta = slotKey === 'work_provider';
+  const isWorkProviderCta = slotKey === 'work_provider' || slotKey === 'oshi_vod_result';
   return (
     <div
       className={isWorkProviderCta ? 'affiliate-slot affiliate-slot--work-provider' : 'affiliate-slot'}

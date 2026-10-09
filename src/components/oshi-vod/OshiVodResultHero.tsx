@@ -1,7 +1,7 @@
 // 診断結果の最上部：結論（1文）＋作品数重視1位の数字の根拠＋CTA。詳細は下のセクションへ。
 import ProviderLogo from '@/components/ProviderLogo';
 import type { DiagnosisResult } from '@/lib/oshi-vod/types';
-import { formatCoverage, formatWorkFraction, formatYen } from '@/lib/oshi-vod/format';
+import { formatCoverage, formatWorkFraction, formatYen, priceExclusionLabel } from '@/lib/oshi-vod/format';
 import OshiVodServiceCta from './OshiVodServiceCta';
 import { secLabel } from './sec-label';
 
@@ -46,10 +46,10 @@ export default function OshiVodResultHero({ result }: { result: DiagnosisResult 
                     <dd>
                       {r.stat.priceComparable && r.stat.plan?.monthlyPrice != null ? (
                         <>
-                          月額{formatYen(r.stat.plan.monthlyPrice)}
+                          {r.stat.plan.priceLabel ?? '月額'}{formatYen(r.stat.plan.monthlyPrice)}
                           <span className="ov-hero-tax">{r.stat.plan.taxIncluded ? '税込' : '税抜'}</span>
                         </>
-                      ) : '比較対象外'}
+                      ) : priceExclusionLabel(r.stat.plan, 'short')}
                     </dd>
                   </div>
                 </dl>

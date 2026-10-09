@@ -18,6 +18,13 @@ export function formatIsoDate(iso: string | null): string | null {
   return iso.replace(/-/g, '/');
 }
 
+/** 'YYYY-MM-DD' → 'YYYY年M月D日'（日付の推測・補完はしない） */
+export function formatIsoDateJa(iso: string | null): string | null {
+  const m = iso?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return `${m[1]}年${Number(m[2])}月${Number(m[3])}日`;
+}
+
 /** epoch ms → 'YYYY/MM/DD'（日本時間） */
 export function formatEpochDate(ms: number | undefined | null): string | null {
   if (!ms) return null;
@@ -29,7 +36,19 @@ export function formatEpochDate(ms: number | undefined | null): string | null {
 /** 「月額2,189円（税込）」。価格比較不可の場合は null */
 export function formatMonthlyPrice(plan: VodPlanInfo | null, comparable: boolean): string | null {
   if (!plan || !comparable || plan.monthlyPrice == null) return null;
-  return `月額${formatYen(plan.monthlyPrice)}（${plan.taxIncluded ? '税込' : '税抜'}）`;
+  return `${plan.priceLabel ?? '月額'}${formatYen(plan.monthlyPrice)}（${plan.taxIncluded ? '税込' : '税抜'}）`;
+}
+
+/**
+ * 月額・コスパ比較の対象外である理由の表示文言（理由ごとに出し分ける）。
+ * long … ランキング行・組み合わせ内訳用 / short … 結論カード・詳細比較の月額欄用
+ */
+export function priceExclusionLabel(plan: VodPlanInfo | null, length: 'long' | 'short' = 'long'): string {
+  if (plan?.kind === 'free') return length === 'long' ? '無料サービスのため月額比較なし' : '無料サービス';
+  if (plan?.notComparableReason === 'tax_unconfirmed') {
+    return length === 'long' ? '税込料金を公式で確認できないため比較対象外' : '税込料金未確認';
+  }
+  return length === 'long' ? '料金未確認のため比較対象外' : '料金未確認';
 }
 
 /** 「14 / 21作品」 */

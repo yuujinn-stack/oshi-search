@@ -7,6 +7,7 @@ import { getAllPersonMetas } from '@/lib/person-meta';
 import { getPublishedWorksOrThrow, selectRepresentativeWorkRecord } from '@/lib/work-store';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import type { WorkRecord } from '@/types/work';
+import { VOD_PLAN_INFO } from '@/lib/vod-plan-info';
 import { computeOshiVodDiagnosis } from './core';
 import type { DiagnosisResult } from './types';
 import { buildPickerGroups, isCurrentMemberStatus, type OshiVodPickerGroup, type OshiVodPickerPerson } from './picker';
@@ -14,6 +15,18 @@ import { buildPickerGroups, isCurrentMemberStatus, type OshiVodPickerGroup, type
 /** 診断結果キャッシュの有効期間（秒）。共有リンクへのアクセス集中時のDB負荷対策 */
 const DIAGNOSIS_CACHE_SECONDS = 300;
 export const OSHI_VOD_CACHE_TAG = 'oshi-vod';
+
+/**
+ * 料金情報（vod-plan-info.ts）の指紋。診断結果のキャッシュ値には料金・プラン名が含まれるため、
+ * キャッシュキーに含めて「料金表を更新したデプロイ直後に古い料金の結果が表示される」ことを防ぐ
+ * （Vercel の Data Cache はデプロイをまたいで残る）。
+ */
+export const PLAN_INFO_FINGERPRINT = (() => {
+  const src = JSON.stringify(VOD_PLAN_INFO);
+  let h = 5381;
+  for (let i = 0; i < src.length; i++) h = (Math.imul(h, 33) ^ src.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+})();
 
 /** 公開人物（persons_master.json ＋ 公開済み persons）の名前一覧 */
 export async function getOshiVodKnownPersons(): Promise<Map<string, { name: string; group: string }>> {
@@ -87,7 +100,7 @@ async function computeUncached(names: string[]): Promise<DiagnosisResult> {
 export async function loadOshiVodDiagnosis(names: string[]): Promise<DiagnosisResult> {
   const cached = unstable_cache(
     () => computeUncached(names),
-    ['oshi-vod-diagnosis', ...names],
+    ['oshi-vod-diagnosis', `plans:${PLAN_INFO_FINGERPRINT}`, ...names],
     { revalidate: DIAGNOSIS_CACHE_SECONDS, tags: [OSHI_VOD_CACHE_TAG] },
   );
   return cached();

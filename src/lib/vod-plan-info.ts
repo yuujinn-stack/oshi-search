@@ -12,6 +12,10 @@
 //   isComparable=false とする（月額・コスパランキングから自動的に除外される）。
 // - アプリ内課金など割高な経路の料金は比較に使わない（Web等の通常決済の料金を使う）。
 //
+// notComparableReason について（isComparable=false のときの理由。結果画面の表示文言を出し分ける）:
+// - 'price_unconfirmed' … 公式サイトで現在の料金を確認できていない
+// - 'tax_unconfirmed'   … 料金は掲載されているが、税込かどうかを公式サイトで確認できない
+//
 // kind について:
 // - 'subscription' … 有料の月額プランがあるサービス。作品ごとの配信種別（flatrate / free / ads）で
 //   見放題対象か無料枠かを判定する（ABEMA・Lemino等の無料コンテンツは無料枠として扱われる）。
@@ -20,6 +24,7 @@
 // このファイルは DB に依存しない（'use client' からも import 可能）。
 
 export type VodPlanKind = 'subscription' | 'free';
+export type VodPlanNotComparableReason = 'price_unconfirmed' | 'tax_unconfirmed';
 
 export interface VodPlanInfo {
   /** normalizeProviderName() が返す正規化スラグ */
@@ -39,11 +44,20 @@ export interface VodPlanInfo {
   isComparable: boolean;
   /** 比較条件の補足（比較できない理由・決済方法による違い等。結果画面の詳細比較に表示） */
   note?: string;
+  /**
+   * 料金表示の前置き（未指定なら「月額」）。料金だけを見て別プランと誤認しないよう、
+   * 登録経路やコースで料金が変わるサービスはプラン名ごと表示する（例:「スタンダードコース 月額」）。
+   * ランキング・結論カード・組み合わせ・詳細比較・結果画像のすべてで使う。
+   */
+  priceLabel?: string;
+  /** isComparable=false の理由（未指定なら 'price_unconfirmed' として扱う） */
+  notComparableReason?: VodPlanNotComparableReason;
   /** 公式サイトURL（アフィリエイト未登録時のCTAリンク先） */
   officialUrl: string;
 }
 
 const CHECKED_2026_10_08 = '2026-10-08';
+const CHECKED_2026_10_09 = '2026-10-09';
 
 export const VOD_PLAN_INFO: VodPlanInfo[] = [
   {
@@ -78,7 +92,8 @@ export const VOD_PLAN_INFO: VodPlanInfo[] = [
     sourceUrl: 'https://help.netflix.com/ja/node/24926',
     checkedAt: CHECKED_2026_10_08,
     isComparable: false,
-    note: '広告つきスタンダード（月額890円）は一部作品が視聴できないため比較に使用しません。スタンダードの料金は公式ページで税込/税抜の表記を確認できなかったため、月額・コスパ比較の対象外としています。',
+    notComparableReason: 'tax_unconfirmed',
+    note: '広告つきスタンダード（月額890円）は一部作品が視聴できないため比較に使用しません。スタンダードの料金は公式ページで税込/税抜の表記を確認できなかったため（2026-10-09 再確認：公式ヘルプは「地域によっては別途税金が課される場合があります」との記載のみ）、月額・コスパ比較の対象外としています。',
     officialUrl: 'https://www.netflix.com/jp/',
   },
   {
@@ -131,13 +146,14 @@ export const VOD_PLAN_INFO: VodPlanInfo[] = [
   {
     service: 'fod',
     kind: 'subscription',
-    planName: 'FODプレミアム',
-    monthlyPrice: null,
-    taxIncluded: null,
-    sourceUrl: null,
-    checkedAt: null,
-    isComparable: false,
-    note: '公式サイトで料金を確認できなかったため、月額・コスパ比較の対象外としています。',
+    planName: 'FODプレミアム スタンダードコース',
+    priceLabel: 'スタンダードコース 月額',
+    monthlyPrice: 1320,
+    taxIncluded: true,
+    sourceUrl: 'https://fod.fujitv.co.jp/about/',
+    checkedAt: CHECKED_2026_10_09,
+    isComparable: true,
+    note: 'ライトコース（広告つき・月額976円）は見放題の対象作品数が少ない（公式表記：1万本以上／スタンダードは10万本以上）ため比較に使用しません。',
     officialUrl: 'https://fod.fujitv.co.jp/',
   },
   {
@@ -154,37 +170,40 @@ export const VOD_PLAN_INFO: VodPlanInfo[] = [
   {
     service: 'abema',
     kind: 'subscription',
-    planName: null,
-    monthlyPrice: null,
-    taxIncluded: null,
-    sourceUrl: null,
-    checkedAt: null,
-    isComparable: false,
-    note: '公式ページ間で料金表記が一致せず確定できなかったため、月額・コスパ比較の対象外としています。無料配信作品は「無料で見られる作品」として別に表示しています。',
+    planName: '広告つきABEMAプレミアム',
+    priceLabel: '広告つきABEMAプレミアム 月額',
+    monthlyPrice: 680,
+    taxIncluded: true,
+    sourceUrl: 'https://abema.tv/about/premium',
+    checkedAt: CHECKED_2026_10_09,
+    isComparable: true,
+    note: '公式FAQ「広告つきABEMAプレミアムとは？」で、月額680円（税込）でABEMAプレミアム限定コンテンツがすべて見られると確認（見放題範囲は広告なしのABEMAプレミアム 月額1,180円（税込）と同じ）。無料配信作品は「無料で見られる作品」として別に表示しています。',
     officialUrl: 'https://abema.tv/',
   },
   {
     service: 'nhkオンデマンド',
     kind: 'subscription',
-    planName: null,
-    monthlyPrice: null,
-    taxIncluded: null,
-    sourceUrl: null,
-    checkedAt: null,
-    isComparable: false,
-    note: '見放題パック以外に単品購入の作品があり、公式サイトで料金条件を確認できなかったため、月額・コスパ比較の対象外としています。',
+    planName: 'まるごと見放題パック',
+    priceLabel: 'まるごと見放題パック 月額',
+    monthlyPrice: 990,
+    taxIncluded: true,
+    sourceUrl: 'https://www.nhk-ondemand.jp/share/enjoy/',
+    checkedAt: CHECKED_2026_10_09,
+    isComparable: true,
+    note: '公式「初めての方へ」「基準料金表」で確認。月の1日〜末日を1か月とする契約で、日割りはありません。',
     officialUrl: 'https://www.nhk-ondemand.jp/',
   },
   {
     service: 'のぎ動画',
     kind: 'subscription',
-    planName: null,
-    monthlyPrice: null,
-    taxIncluded: null,
-    sourceUrl: null,
-    checkedAt: null,
-    isComparable: false,
-    note: '公式サイトで料金を確認できなかったため、月額・コスパ比較の対象外としています。',
+    planName: '有料会員（WEB登録）',
+    priceLabel: 'WEB月額',
+    monthlyPrice: 1320,
+    taxIncluded: true,
+    sourceUrl: 'https://support.nogidoga.com/hc/ja/articles/42825275623705',
+    checkedAt: CHECKED_2026_10_09,
+    isComparable: true,
+    note: 'WEB登録の料金です。iOS・Androidアプリから登録する場合は月額1,700円（税込）と料金が異なります。',
     officialUrl: 'https://nogidoga.com/',
   },
   {

@@ -4,7 +4,10 @@
 // - diagnosis_complete: 結果表示時に1回（同じ組み合わせの再表示は30分間送らない）
 // - diagnosis_cta_click: 子孫の [data-ov-cta] 内のリンククリックをイベントバブリングで検知する
 //   （OshiAdBanner と同じ方式。ASP広告コード自体には手を入れない）。
-//   公式サイトへの VodTrackLink クリックは、既存どおり VodTrackLink 自身が /api/track に記録する。
+//   link_type で「アフィリエイト広告（AffiliateSlot 内のリンク）」か「公式サイト」かを区別する。
+// - /api/track（VODクリック数）: 公式サイトへの VodTrackLink クリックは既存どおり VodTrackLink 自身が記録する。
+//   アフィリエイト広告のリンクは ASP コードのため VodTrackLink を通らないので、ここで同じ
+//   { type: 'vod', service } を送り、リンク先がアフィリエイトに変わってもクリック数の計測が途切れないようにする。
 import { useEffect, type ReactNode } from 'react';
 import { sendGaEvent } from '@/lib/ga-event';
 
@@ -35,15 +38,27 @@ export default function OshiVodTracker({ resultKey, personCount, topService, tar
 
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement | null;
-    if (!target?.closest('a')) return;
-    const cta = target.closest<HTMLElement>('[data-ov-cta]');
+    const link = target?.closest('a');
+    if (!link) return;
+    const cta = link.closest<HTMLElement>('[data-ov-cta]');
     if (!cta) return;
+    const service = cta.dataset.vodService ?? '';
+    const isAffiliate = !!link.closest('.affiliate-slot');
     sendGaEvent('diagnosis_cta_click', {
-      service: cta.dataset.vodService ?? '',
+      service,
       placement: cta.dataset.ovPlacement ?? '',
       rank: cta.dataset.ovRank ? Number(cta.dataset.ovRank) : undefined,
       person_count: personCount,
+      link_type: isAffiliate ? 'affiliate' : 'official',
     });
+    if (isAffiliate && service) {
+      fetch('/api/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'vod', service }),
+        keepalive: true,
+      }).catch(() => {});
+    }
   };
 
   return <div onClick={handleClick}>{children}</div>;
