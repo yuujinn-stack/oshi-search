@@ -398,3 +398,39 @@ describe('computeOshiVodDiagnosis', () => {
     expect(tied.headline).toBe('Aなら、作品数1位はHuluとU-NEXT（同率）');
   });
 });
+
+describe('Amazon Video（レンタル・購入）と Prime Video 本体の表示区別', () => {
+  const both = () => computeOshiVodDiagnosis(
+    [{ name: 'A', works: [
+      work('w1', 'A', [vp('Amazon Prime Video'), vp('Amazon Video', 'rent')]),
+      work('w2', 'A', [vp('Prime Video'), vp('Hulu')]),
+    ] }],
+    { terminatedSlugs: NO_TERMINATED },
+  );
+
+  it('同じ作品に Prime Video 見放題とレンタル・購入がある場合、サービス単位（詳しい比較）では別名で表示する', () => {
+    const r = both();
+    const w1 = r.works.find((w) => w.key === 'w1')!;
+    // 作品ごとの表示（チップ）は種別ラベルで区別できるため従来どおりの名前・種別
+    const names = w1.services.map((s) => `${s.service}:${s.displayName}:${s.type}:${s.bucket}`);
+    expect(names).toContain('primevideo:Prime Video:flatrate:paid');
+    expect(names).toContain('amazonvideo:Prime Video:rent:rental');
+    const stats = Object.fromEntries(r.stats.map((s) => [s.service, s]));
+    expect(stats.primevideo.displayName).toBe('Prime Video');
+    expect(stats.amazonvideo.displayName).toBe('Prime Video レンタル・購入');
+    // 詳しい比較のカード名が重複しない
+    const displayNames = r.stats.map((s) => s.displayName);
+    expect(new Set(displayNames).size).toBe(displayNames.length);
+  });
+
+  it('レンタル・購入はランキング（作品数・月額・コスパ・2サービス・80%）に入らない', () => {
+    const r = both();
+    for (const list of [r.byWorkCount, r.byMonthlyPrice, r.byCostPerWork]) {
+      expect(list.map((x) => x.stat.service)).not.toContain('amazonvideo');
+    }
+    expect(r.bestPair?.services.map((s) => s.service) ?? []).not.toContain('amazonvideo');
+    expect(r.over80.combo?.services.map((s) => s.service) ?? []).not.toContain('amazonvideo');
+    expect(r.stats.find((s) => s.service === 'primevideo')!.paidKeys).toEqual(['w1', 'w2']);
+    expect(r.stats.find((s) => s.service === 'amazonvideo')!.paidKeys).toEqual([]);
+  });
+});

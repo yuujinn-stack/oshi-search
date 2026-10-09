@@ -218,6 +218,10 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshivod { --g
 .ov-page .ov-detail-grid dd { margin: 0; font-weight: 700; color: var(--graphic-text); }
 .ov-page .ov-extra-list { margin: 8px 0 0; padding-left: 1.1em; font-size: 12px; list-style: disc; }
 .ov-page .ov-detail-list .ov-cta { margin-top: 8px; }
+/* 公式URLが無く広告も無いサービス（例: amazonvideo のレンタル・購入のみ）は CTA が何も描画されない。
+   リンク先を推測して作らず、空の CTA 枠（余白）だけを表示しないようにする。
+   AffiliateSlot の判定（oshi_vod_result → work_provider → 公式）は変更しない。 */
+.ov-page .ov-cta:empty { display: none; }
 
 /* ── シェア ── */
 .ov-page .ov-share-image {

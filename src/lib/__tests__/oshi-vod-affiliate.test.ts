@@ -135,11 +135,58 @@ describe('OshiVodServiceCta のリンク先（oshi_vod_result → work_provider 
     expect(await findLink(cta('のぎ動画', 'detail'))).toEqual({ kind: 'official', href: 'https://nogidoga.com/' });
   });
 
+  it('公式URLも広告も無いサービス（amazonvideo 等）はリンクを推測で作らない（空の枠は CSS :empty で非表示）', async () => {
+    expect(await findLink(cta('amazonvideo', 'detail'))).toBeNull();
+    // 広告があれば従来どおり広告を表示する（アフィリエイト判定は変えない）
+    ads['amazonvideo:work_provider'] = creative(5, 'Amazon');
+    expect(await findLink(cta('amazonvideo', 'detail'))).toEqual({ kind: 'affiliate', creativeId: 5, pr: true, slotKey: 'work_provider' });
+  });
+
   it('CTAの外枠に計測用の service・placement・rank が付く（diagnosis_cta_click の送信元）', () => {
     const el = cta('hulu') as ReactElement<Record<string, unknown>>;
     expect(el.props['data-vod-service']).toBe('hulu');
     expect(el.props['data-ov-placement']).toBe('hero');
     expect(el.props['data-ov-rank']).toBe(1);
     expect(el.props['data-ov-cta']).toBe('');
+  });
+});
+
+// ── 詳しい比較: レンタル・購入専用ストアの月額欄 ─────────────────────────────────
+describe('詳しい比較の月額欄（Prime Video レンタル・購入）', () => {
+  it('amazonvideo だけ「対象外（レンタル・購入）」。Prime Video 本体は料金表示のまま', async () => {
+    const { computeOshiVodDiagnosis } = await import('@/lib/oshi-vod/core');
+    const { default: OshiVodDetailCompare } = await import('@/components/oshi-vod/OshiVodDetailCompare');
+    const vp = (providerName: string, type: 'flatrate' | 'rent' = 'flatrate') => ({ providerId: 0, providerName, type, countryCode: 'JP', source: 'manual_csv' as const });
+    const work = (id: string, providers: ReturnType<typeof vp>[]) => ({
+      id, personName: 'A', title: id, normalizedTitle: id, type: 'tv' as const, source: 'tmdb' as const,
+      confidenceScore: 1, status: 'auto_published' as const, vodProviders: providers, createdAt: 0, updatedAt: 0,
+    });
+    const result = computeOshiVodDiagnosis(
+      [{ name: 'A', works: [work('w1', [vp('Amazon Prime Video'), vp('Amazon Video', 'rent')]), work('w2', [vp('Hulu'), vp('Netflix')])] }],
+      { terminatedSlugs: new Set() },
+    );
+    const tree = OshiVodDetailCompare({ result }) as ReactElement;
+    // カード（li）ごとに「カード名 → 月額欄の文字列」を取り出す
+    const json = JSON.stringify(tree, (_k, v) => (typeof v === 'function' ? undefined : v));
+    const cards = new Map<string, string>();
+    const walk = (n: unknown, card: string | null): void => {
+      if (Array.isArray(n)) { n.forEach((x) => walk(x, card)); return; }
+      if (!n || typeof n !== 'object') return;
+      const props = (n as { props?: Record<string, unknown> }).props;
+      if (!props) return;
+      const key = (n as { key?: string }).key;
+      const cur = typeof key === 'string' && ['amazonvideo', 'primevideo', 'hulu', 'netflix'].includes(key) ? key : card;
+      if (cur && Array.isArray(props.children) && props.children[0] && (props.children[0] as { props?: { children?: unknown } }).props?.children === '月額') {
+        const dd = props.children[1] as { props: { children: unknown } };
+        cards.set(cur, String(dd.props.children));
+      }
+      walk(props.children, cur);
+    };
+    walk(tree, null);
+    expect(json).toContain('Prime Video レンタル・購入');
+    expect(cards.get('amazonvideo')).toBe('対象外（レンタル・購入）');
+    expect(cards.get('primevideo')).toBe('月額600円（税込）');
+    expect(cards.get('hulu')).toBe('月額1,320円（税込）');
+    expect(cards.get('netflix')).toBe('比較対象外（税込料金未確認）');
   });
 });

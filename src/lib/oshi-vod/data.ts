@@ -17,6 +17,13 @@ const DIAGNOSIS_CACHE_SECONDS = 300;
 export const OSHI_VOD_CACHE_TAG = 'oshi-vod';
 
 /**
+ * 診断結果（キャッシュ値）の表示内容の版。表示名・結果の形など、料金以外でキャッシュ値の中身が
+ * 変わるコード変更をしたら上げる（デプロイ直後に旧コードで計算された結果が表示されるのを防ぐ）。
+ * 2: amazonvideo のサービス名を「Prime Video レンタル・購入」に区別（Task 90 追記3）
+ */
+const DIAGNOSIS_RESULT_VERSION = 2;
+
+/**
  * 料金情報（vod-plan-info.ts）の指紋。診断結果のキャッシュ値には料金・プラン名が含まれるため、
  * キャッシュキーに含めて「料金表を更新したデプロイ直後に古い料金の結果が表示される」ことを防ぐ
  * （Vercel の Data Cache はデプロイをまたいで残る）。
@@ -100,7 +107,7 @@ async function computeUncached(names: string[]): Promise<DiagnosisResult> {
 export async function loadOshiVodDiagnosis(names: string[]): Promise<DiagnosisResult> {
   const cached = unstable_cache(
     () => computeUncached(names),
-    ['oshi-vod-diagnosis', `plans:${PLAN_INFO_FINGERPRINT}`, ...names],
+    ['oshi-vod-diagnosis', `v${DIAGNOSIS_RESULT_VERSION}`, `plans:${PLAN_INFO_FINGERPRINT}`, ...names],
     { revalidate: DIAGNOSIS_CACHE_SECONDS, tags: [OSHI_VOD_CACHE_TAG] },
   );
   return cached();

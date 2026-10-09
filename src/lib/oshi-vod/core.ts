@@ -99,6 +99,26 @@ function serviceDisplayName(service: string, providerName: string): string {
   return VOD_PROVIDER_DISPLAY_NAMES[service] ?? getVodProviderDisplayInfo(providerName).displayName;
 }
 
+/**
+ * 診断画面の「サービス単位の表示名」（詳しい比較のカード名等）の上書き。
+ * 共通の表示名 getVodProviderDisplayInfo・作品ごとの表示（チップは「Prime Video ＋ 購入」のように
+ * 種別ラベルが付くため区別できる）は変更しない。
+ * amazonvideo は TMDb の「Amazon Video」＝レンタル・購入のストア（DB上は rent / buy のみ）。
+ * 共通表示名は「Prime Video」のため、詳しい比較で Prime Video 本体（見放題）のカードと
+ * 同名のカードが2つ並んでしまう。サービス単位では別物と分かる名前にする。
+ * サービス識別子（service）・分類（bucket）・ランキング計算は変えない（表示名のみ）。
+ */
+export const DIAGNOSIS_SERVICE_NAME_OVERRIDES: Readonly<Record<string, string>> = {
+  amazonvideo: 'Prime Video レンタル・購入',
+};
+
+/**
+ * レンタル・購入専用のストア（月額サブスクではない）。詳しい比較の「月額」欄に
+ * 「料金未確認」ではなく「対象外（レンタル・購入）」と表示するためだけに使う（表示のみ）。
+ * ランキング・2サービス最適化・80%判定には元々入らない（rent / buy は bucket='rental'）。
+ */
+export const DIAGNOSIS_RENTAL_STORE_SERVICES: ReadonlySet<string> = new Set(['amazonvideo']);
+
 /** 同一作品の全行の配信情報をまとめ、既存の共通判定を通したうえで分類する */
 export function buildDiagnosisWork(
   group: WorkGroup,
@@ -178,7 +198,7 @@ export function computeServiceStats(works: DiagnosisWork[], plans: VodPlanInfo[]
       const plan = planByService.get(ref.service) ?? null;
       s = {
         service: ref.service,
-        displayName: ref.displayName,
+        displayName: DIAGNOSIS_SERVICE_NAME_OVERRIDES[ref.service] ?? ref.displayName,
         logoPath: ref.logoPath,
         plan,
         priceComparable: isPriceComparable(plan),

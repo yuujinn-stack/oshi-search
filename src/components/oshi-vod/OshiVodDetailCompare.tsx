@@ -2,6 +2,7 @@
 // 見放題・無料・レンタル/購入を別々に数え、比較に使ったプラン・料金・確認日・出典を必ず表示する。
 import ProviderLogo from '@/components/ProviderLogo';
 import type { DiagnosisResult, WorkServiceRef } from '@/lib/oshi-vod/types';
+import { DIAGNOSIS_RENTAL_STORE_SERVICES } from '@/lib/oshi-vod/core';
 import { formatCoverage, formatIsoDateJa, formatMonthlyPrice, formatWorkFraction, priceExclusionLabel } from '@/lib/oshi-vod/format';
 import OshiVodServiceCta from './OshiVodServiceCta';
 import { secLabel } from './sec-label';
@@ -53,7 +54,15 @@ export default function OshiVodDetailCompare({ result }: { result: DiagnosisResu
                   <div><dt>無料</dt><dd>{s.freeKeys.length}作品</dd></div>
                   <div><dt>レンタル・購入</dt><dd>{s.rentalKeys.length}作品</dd></div>
                   <div><dt>比較プラン</dt><dd>{s.priceComparable && s.plan?.planName ? s.plan.planName : '—'}</dd></div>
-                  <div><dt>月額</dt><dd>{price ?? `比較対象外（${priceExclusionLabel(s.plan, 'short')}）`}</dd></div>
+                  <div>
+                    <dt>月額</dt>
+                    <dd>
+                      {price
+                        ?? (DIAGNOSIS_RENTAL_STORE_SERVICES.has(s.service)
+                          ? '対象外（レンタル・購入）'
+                          : `比較対象外（${priceExclusionLabel(s.plan, 'short')}）`)}
+                    </dd>
+                  </div>
                   <div>
                     <dt>料金確認日</dt>
                     <dd>

@@ -3455,3 +3455,37 @@ Task 80 を本番で目視確認した際に見つかった3点を直す。人�
 - ローカル本番ビルドと Preview（`vercel deploy` で作業ツリーから作成。git push なし）で 390px・1280px を確認：横スクロールなし、「WEB月額」「広告つきABEMAプレミアム 月額680円（税込）」等の表示、料金確認日、アプリ料金の注記、既存の注意書き、Hulu＝アフィリエイト（PR）・他＝公式（PRなし）、CTA高さ（結論・組み合わせ44px以上／詳細比較40px）。
 - `diagnosis_cta_click` の link_type（affiliate / official）と `/api/track` の送信を確認（外部通信は遮断して実施）。
 - 実データ：作品数ランキングの順位・件数は全378対象で不変、月額・コスパ1位／2サービス／80%方法が変わる126対象（個人125・グループ1）はすべて新たに比較対象にしたサービスが関わる変化。
+
+---
+
+## Task 90 追記2：公式URLが無いサービスの空CTA枠を非表示
+
+### 目的
+詳しい比較で、公式URLが無く広告も無いサービス（例: amazonvideo のレンタル・購入のみ）の CTA 枠が空のまま余白として表示されていたのを解消する。
+
+### 変更ファイル
+- `src/app/oshi-vod/oshi-vod.css` — `.ov-page .ov-cta:empty { display: none; }`。CTA は Server Component で、広告の有無は AffiliateSlot の解決後にしか分からないため、何も描画されなかった枠だけを CSS で非表示にする。リンク先は推測で作らない。
+- `src/lib/__tests__/oshi-vod-affiliate.test.ts` — 公式URLも広告も無いサービスはリンクを作らないこと、広告があれば従来どおり広告を表示することを追加（1件）。
+
+### 設計上の判断・注意点
+- ランキング計算・VOD判定・アフィリエイト判定（oshi_vod_result → work_provider → 公式）・DBは変更していない。URLがあるサービスの表示は従来どおり。
+
+---
+
+## Task 90 追記3：詳しい比較で「Prime Video」が2つ並ぶ問題（amazonvideo のレンタル・購入）
+
+### 背景
+TMDb の「Amazon Video」（正規化スラグ amazonvideo）はレンタル・購入のストアで、本番DBでは552件すべてが rent / buy。共通の表示名（`vod-dedup.ts` の `SLUG_DISPLAY_NAME`）が「Prime Video」のため、診断の詳しい比較で Prime Video 本体（見放題）のカードと同名のカードが2つ並んでいた（例: 中村倫也）。
+
+### 変更ファイル
+- `src/lib/oshi-vod/core.ts` — `DIAGNOSIS_SERVICE_NAME_OVERRIDES`（amazonvideo → 「Prime Video レンタル・購入」）を追加し、`computeServiceStats` のサービス単位の表示名（詳しい比較のカード名等）だけに適用。作品ごとのチップは「Prime Video ＋ 購入／レンタル」のように種別ラベルが付き区別できるため従来どおり。共通の表示名（作品ページ・人物ページ・グループ・Instagram・動画生成）、サービス識別子・分類・ランキング計算・DBは変更していない。
+- `src/lib/oshi-vod/data.ts` — 診断結果キャッシュのキーに結果の版 `DIAGNOSIS_RESULT_VERSION`（2）を追加。表示名がキャッシュ値に含まれるため、デプロイ直後に旧コードで計算された結果（最大300秒）が表示されないようにする。
+- `src/lib/__tests__/oshi-vod-core.test.ts` — 同じ作品に Prime Video 見放題とレンタルがある場合の表示区別、レンタル・購入がランキング（作品数・月額・コスパ・2サービス・80%）に入らないことを追加（2件）。
+
+---
+
+## Task 90 追記4：「Prime Video レンタル・購入」カードの月額欄の表示
+
+- `src/lib/oshi-vod/core.ts` — `DIAGNOSIS_RENTAL_STORE_SERVICES`（amazonvideo のみ）を追加（表示専用）。
+- `src/components/oshi-vod/OshiVodDetailCompare.tsx` — 上記サービスの月額欄を「比較対象外（料金未確認）」→「対象外（レンタル・購入）」に変更（料金情報が不足しているように見えるため）。Prime Video 本体・他サービスの表示、ランキング・2サービス最適化・80%判定（rent / buy は元々対象外）、アフィリエイト判定、DB、作品・人物・配信サービスページは変更なし。表示文言はコンポーネント側で決めるためキャッシュ値には影響しない。
+- `src/lib/__tests__/oshi-vod-affiliate.test.ts` — 詳しい比較の月額欄（amazonvideo＝対象外（レンタル・購入）、Prime Video 本体＝月額600円（税込）等）を検証（1件）。
