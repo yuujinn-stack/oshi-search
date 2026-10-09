@@ -13,6 +13,8 @@ export async function POST(req: NextRequest) {
       job: job && {
         id: job.id,
         personName: job.personName,
+        // 推しサーチDBで確認済みの人物のslug（PERSON_REGISTRY未登録の人物はWorkerがこれを検証して使う）
+        personSlug: job.personSlug,
         templateId: job.templateId,
         templateVersion: job.templateVersion,
         narrationMode: job.narrationMode,

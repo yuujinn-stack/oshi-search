@@ -3489,3 +3489,18 @@ TMDb の「Amazon Video」（正規化スラグ amazonvideo）はレンタル・
 - `src/lib/oshi-vod/core.ts` — `DIAGNOSIS_RENTAL_STORE_SERVICES`（amazonvideo のみ）を追加（表示専用）。
 - `src/components/oshi-vod/OshiVodDetailCompare.tsx` — 上記サービスの月額欄を「比較対象外（料金未確認）」→「対象外（レンタル・購入）」に変更（料金情報が不足しているように見えるため）。Prime Video 本体・他サービスの表示、ランキング・2サービス最適化・80%判定（rent / buy は元々対象外）、アフィリエイト判定、DB、作品・人物・配信サービスページは変更なし。表示文言はコンポーネント側で決めるためキャッシュ値には影響しない。
 - `src/lib/__tests__/oshi-vod-affiliate.test.ts` — 詳しい比較の月額欄（amazonvideo＝対象外（レンタル・購入）、Prime Video 本体＝月額600円（税込）等）を検証（1件）。
+
+---
+
+## Task 91：動画生成 — PERSON_REGISTRY未登録の推しサーチDB人物が「人物の対応付け」で失敗する問題
+
+### 背景
+本番 /admin/video-maker で 森本慎太郎 / まず見る3作 ショートV1 を生成すると「PERSON_REGISTRY未登録で、推しサーチDBで確認済みの人物slugも渡されていません」で失敗していた。ジョブ作成時（`createVideoJobs`）には `personVideoSlug(personName)` で人物slug（`p-3a6837bdcc7a`）を `video_generation_jobs.person_slug` に保存していたが、Workerがジョブを受け取る `/api/worker/video-jobs/claim` の応答に `personSlug` が含まれておらず、Worker（`resolveJobPerson`）には常に未指定で届いていた（4ce15ec で作成側だけ対応し、claim 応答への追加が漏れていた）。PERSON_REGISTRY 登録済みの人物は Worker が registry のslugを優先するため影響が無く、気づかれなかった。
+
+### 変更ファイル
+- `src/app/api/worker/video-jobs/claim/route.ts` — claim 応答に `personSlug: job.personSlug` を追加（ジョブ作成時に保存したDB人物のslugをそのまま渡す。推測・再計算はしない）。
+- `src/app/api/worker/video-jobs/claim/__tests__/route.test.ts` — claim 応答に personSlug が含まれることを検証（1件）。
+
+### 設計上の判断・注意点
+- oshi-video-maker・DB schema・migration は変更なし。Worker側は既に「PERSON_REGISTRY優先、未登録なら渡されたslugを人物名から計算し直して一致した場合だけ使う」「テーマは registry に設定があれば上書き、無ければ DEFAULT_VIDEO_THEME」の実装済み。
+- 登録済み人物（松村北斗・目黒蓮など）は Worker が渡されたslugを使わず registry のslugを使うため挙動は変わらない。
