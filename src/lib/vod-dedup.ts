@@ -40,18 +40,30 @@ const CANONICAL_SLUG_MAP: Record<string, string> = {
   // Leminoプレミアムは料金プランであり別サービスではない
   // ※ Amazon Prime Video（Leminoセレクト）は追加チャンネルなので統合しない
   'leminoプレミアム':          'lemino',
+  // FODプレミアム（英字表記 FOD Premium を含む）は FOD の有料プラン名であり別サービスではない
+  // ※ FOD Channel Amazon Channel / FODチャンネル for Prime Video は Prime Video 追加チャンネルなので統合しない
+  //   （追加チャンネル判定は正規化より前に行われるため、このエイリアスの影響を受けない）
+  'fodプレミアム':             'fod',
+  'fodpremium':               'fod',
 };
 
 // Prime Video 追加チャンネル判定
 // "Amazon Prime Video（○○）" 形式で括弧内が「本体を指す表記」でない場合は
 // 追加チャンネルとして独立スラグを返す。判定は括弧除去より前に行う。
+// 表記ゆれとして "Prime Video（○○）" / "Prime Video (○○)" / "Amazonプライム・ビデオ（○○）" /
+// "プライムビデオ（○○）" も同じ扱いにする（いずれも Prime Video 上の別料金チャンネルを指す記述）。
+// また "○○（Amazon Prime Videoチャンネル）" のように、チャンネル名の後ろに
+// 「Prime Videoチャンネル」と書かれた形式も追加チャンネルとして扱う。
 //
 // パススルー（本体として扱う括弧内表記）:
-//   "jp" / "withads" / "広告付き"
-// それ以外（例: "leminoせれくと"）:
-//   → "${channelSlug}amazonchannel" という独立スラグを返す
-const PRIME_VIDEO_CHANNEL_RE = /^amazon\s*prime\s*video\s*[（(]([^)）]+)[)）]/i;
-const PRIME_VIDEO_PASSTHROUGH_BRACKETS = new Set(['jp', 'withads', '広告付き']);
+//   "jp" / "withads" / "広告付き" / "見放題" / "プライム会員特典"
+// それ以外（例: "leminoせれくと" / "FODチャンネル経由"）:
+//   → "${channelSlug}amazonchannel" という独立スラグを返す（末尾の「経由」は除去して
+//     "Amazon Prime Video（FODチャンネル）" 等と同じスラグにそろえる）
+const PRIME_VIDEO_NAME_SRC = '(?:amazon\\s*)?(?:prime\\s*video|プライム[・･\\s]?ビデオ)';
+const PRIME_VIDEO_CHANNEL_RE = new RegExp(`^${PRIME_VIDEO_NAME_SRC}\\s*[（(]([^)）]+)[)）]`, 'i');
+const PRIME_VIDEO_CHANNEL_SUFFIX_RE = new RegExp(`^(.+?)\\s*[（(]\\s*${PRIME_VIDEO_NAME_SRC}\\s*チャンネル\\s*[)）]\\s*$`, 'i');
+const PRIME_VIDEO_PASSTHROUGH_BRACKETS = new Set(['jp', 'withads', '広告付き', '見放題', 'プライム会員特典']);
 
 function normalizeBracketContent(content: string): string {
   return content
@@ -62,13 +74,23 @@ function normalizeBracketContent(content: string): string {
     .trim();
 }
 
+/** 追加チャンネルの表記からチャンネル名部分を取り出す（該当しなければ null）。本体を指す括弧表記は null */
+function matchPrimeVideoChannelName(raw: string): string | null {
+  const s = raw.trim();
+  const m = s.match(PRIME_VIDEO_CHANNEL_RE);
+  if (m) {
+    if (PRIME_VIDEO_PASSTHROUGH_BRACKETS.has(normalizeBracketContent(m[1]))) return null;
+    return m[1].trim().replace(/\s*経由$/, '');
+  }
+  const s2 = s.match(PRIME_VIDEO_CHANNEL_SUFFIX_RE);
+  return s2 ? s2[1].trim() : null;
+}
+
 function detectPrimeVideoChannel(raw: string): string | null {
-  const m = raw.trim().match(PRIME_VIDEO_CHANNEL_RE);
-  if (!m) return null;
-  const contentSlug = normalizeBracketContent(m[1]);
-  if (PRIME_VIDEO_PASSTHROUGH_BRACKETS.has(contentSlug)) return null;
-  // 追加チャンネル: 括弧内を slug 化して amazonchannel サフィックスを付与
-  return `${contentSlug}amazonchannel`;
+  const name = matchPrimeVideoChannelName(raw);
+  if (name === null) return null;
+  // 追加チャンネル: チャンネル名を slug 化して amazonchannel サフィックスを付与
+  return `${normalizeBracketContent(name)}amazonchannel`;
 }
 
 /**
@@ -252,6 +274,10 @@ const AMAZON_CHANNEL_DISPLAY_NAMES: Record<string, string> = {
   'leminoセレクトamazonchannel':           'Leminoせれくと',
   'leminoせれくとamazonchannel':           'Leminoせれくと',
   'leminoselectamazonchannel':            'Leminoせれくと',
+  // Amazon Prime Video（FODチャンネル）/ Amazonプライム・ビデオ（FODチャンネル経由）
+  'fodチャンネルamazonchannel':             'FODチャンネル',
+  // アニメタイムズ（Amazon Prime Videoチャンネル）
+  'アニメタイムズamazonchannel':             'アニメタイムズ',
 };
 
 /**
@@ -290,9 +316,10 @@ function extractChannelName(providerName: string): string {
     if (!name.endsWith('チャンネル')) name += 'チャンネル';
     return name;
   }
-  // Pattern 2: "Amazon Prime Video（X）" or "Amazon Prime Video (X)"
-  const m2 = providerName.match(/^Amazon\s+Prime\s+Video\s*[（(]([^)）]+)[)）]/i);
-  if (m2) return m2[1].trim();
+  // Pattern 2: "Amazon Prime Video（X）" / "Prime Video（X）" / "Amazonプライム・ビデオ（X経由）" /
+  //            "X（Amazon Prime Videoチャンネル）"（正規化と同じ判定でチャンネル名を取り出す）
+  const m2 = matchPrimeVideoChannelName(providerName);
+  if (m2) return m2;
   // Pattern 3: "X for Prime Video"
   const m3 = providerName.match(/^(.+?)\s+for\s+Prime\s*Video\s*$/i);
   if (m3) return m3[1].trim();

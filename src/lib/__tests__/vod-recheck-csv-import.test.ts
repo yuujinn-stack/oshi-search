@@ -231,3 +231,48 @@ describe('runVodRecheckCsvImport — mode: chatgpt_full_sync（実行）', () =>
     }
   });
 });
+
+describe('runVodRecheckCsvImport — Prime Video 追加チャンネルの安全装置', () => {
+  const HELD_CSV = 'workId,vodService,availabilityType,confidence,sourceUrl,note\n' +
+    'work-1,Prime Video,flatrate,high,https://www.amazon.co.jp/dp/B0X,Prime Video内のNHKオンデマンドチャンネルで配信。別途チャンネル契約が必要。\n' +
+    'work-1,Netflix,flatrate,high,https://example.com,テスト';
+
+  it('merge: プレビューで警告し、保留行は取り込み対象に含めない（provider は書き換えない）', async () => {
+    const result = await runVodRecheckCsvImport(HELD_CSV, false);
+    if (result.status === 200 && result.body.commit === false) {
+      const entry = result.body.preview[0];
+      expect(entry.services).toEqual([{ providerName: 'Netflix', availabilityType: 'flatrate' }]);
+      expect(entry.warnings.join()).toContain('追加チャンネルの可能性があります');
+      expect(entry.heldRows).toHaveLength(1);
+      expect(result.body.heldRowCount).toBe(1);
+    } else throw new Error('preview expected');
+  });
+
+  it('merge: 実行時も保留行は保存せず、結果に保留行を返す', async () => {
+    const result = await runVodRecheckCsvImport(HELD_CSV, true);
+    expect(mockUpsertManualCsvVodProviders).toHaveBeenCalledWith('人物A', 'work-1', [expect.objectContaining({ providerName: 'Netflix' })]);
+    if (result.status === 200 && result.body.commit === true) expect(result.body.heldRows).toHaveLength(1);
+  });
+
+  it('merge: 保留行しかない作品は一切更新しない', async () => {
+    const only = HELD_CSV.split('\n').slice(0, 2).join('\n');
+    await runVodRecheckCsvImport(only, true);
+    expect(mockUpsertManualCsvVodProviders).not.toHaveBeenCalled();
+  });
+
+  it('chatgpt_full_sync: 保留行がある作品は既存の Prime Video を保持するオプション付きで同期する', async () => {
+    await runVodRecheckCsvImport(HELD_CSV, true, 'chatgpt_full_sync');
+    expect(mockChatgptFullSyncVodProviders).toHaveBeenCalledWith(
+      '人物A', 'work-1', [expect.objectContaining({ providerName: 'Netflix' })], { preserveSlugs: new Set(['primevideo']) },
+    );
+  });
+
+  it('chatgpt_full_sync プレビュー: 既存の Prime Video は削除予定に入らない', async () => {
+    const result = await runVodRecheckCsvImport(HELD_CSV, false, 'chatgpt_full_sync');
+    if (result.status === 200 && result.body.commit === false) {
+      const entry = result.body.preview[0];
+      expect(entry.diff?.removed).not.toContain('Amazon Prime Video');
+      expect(entry.warnings.join()).toContain('既存のPrime Video情報は変更しません');
+    } else throw new Error('preview expected');
+  });
+});

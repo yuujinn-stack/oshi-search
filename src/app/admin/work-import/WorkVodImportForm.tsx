@@ -7,6 +7,7 @@ const ACTION_BADGE: Record<WorkVodRowAction, { label: string; className: string 
   add_vod:        { label: '配信追加',          className: 'bg-teal-100 text-teal-700' },
   create_work:    { label: '新規作品＋配信',     className: 'bg-blue-100 text-blue-700' },
   ambiguous:      { label: '候補複数（要確認）', className: 'bg-amber-100 text-amber-700' },
+  suspected_channel: { label: '追加チャンネルの可能性（保留）', className: 'bg-amber-100 text-amber-700' },
   unknown_person: { label: '人物未一致',         className: 'bg-red-100 text-red-600' },
   error:          { label: 'エラー',             className: 'bg-red-100 text-red-600' },
 };
@@ -22,6 +23,7 @@ interface PreviewResult {
   addVodCount: number;
   createWorkCount: number;
   ambiguousCount: number;
+  suspectedChannelCount?: number;
   unknownPersonCount: number;
   errorCount: number;
 }
@@ -178,6 +180,7 @@ export default function WorkVodImportForm() {
             { label: '配信追加', value: preview.addVodCount, className: 'bg-teal-50 border-teal-200 text-teal-700' },
             { label: '新規作品＋配信', value: preview.createWorkCount, className: 'bg-blue-50 border-blue-200 text-blue-700' },
             { label: '候補複数（要確認）', value: preview.ambiguousCount, className: 'bg-amber-50 border-amber-200 text-amber-700' },
+            { label: '追加チャンネルの可能性（保留）', value: preview.suspectedChannelCount ?? 0, className: 'bg-amber-50 border-amber-200 text-amber-700' },
             { label: '人物未一致', value: preview.unknownPersonCount, className: 'bg-red-50 border-red-200 text-red-600' },
             { label: 'エラー', value: preview.errorCount, className: 'bg-gray-50 border-gray-200 text-gray-500' },
           ].map((item) => (
@@ -246,7 +249,7 @@ export default function WorkVodImportForm() {
                       className={
                         row.action === 'unknown_person' || row.action === 'error'
                           ? 'bg-red-50/40'
-                          : row.action === 'ambiguous'
+                          : row.action === 'ambiguous' || row.action === 'suspected_channel'
                           ? 'bg-amber-50/50'
                           : row.action === 'create_work'
                           ? 'bg-blue-50/30'

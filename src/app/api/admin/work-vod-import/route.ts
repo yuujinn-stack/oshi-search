@@ -14,6 +14,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, saveWorkIfAbsent, upsertManualCsvVodProviders } from '@/lib/work-store';
 import { saveImportHistory } from '@/lib/import-history';
 import { normalizeProviderName } from '@/lib/vod-dedup';
+import { isSuspectedPrimeChannelRow, PRIME_CHANNEL_SUSPECT_WARNING } from '@/lib/vod-channel-guard';
 import { matchWorksByTitle, resolveVodMatch, normalizeVodMatchTitle } from '@/lib/vod-work-match';
 import type { WorkRecord } from '@/types/work';
 import type { VodProvider, VodProviderType } from '@/types/vod';
@@ -115,7 +116,9 @@ function parseCSV(content: string): string[][] {
 
 // ── 型定義 ──────────────────────────────────────────────────────────────────
 
-export type WorkVodRowAction = 'add_vod' | 'create_work' | 'ambiguous' | 'unknown_person' | 'error';
+// suspected_channel: provider=Prime Video だが note/sourceUrl に追加チャンネル・別契約の記述がある行。
+// Prime Video 本体として取り込まず保留する（providerの自動書き換えはしない。正式なチャンネル名で再取り込みする）
+export type WorkVodRowAction = 'add_vod' | 'create_work' | 'ambiguous' | 'suspected_channel' | 'unknown_person' | 'error';
 
 export interface WorkVodPreviewRow {
   rowNum: number;
@@ -205,6 +208,7 @@ export async function POST(req: NextRequest) {
   let addVodCount = 0;
   let createWorkCount = 0;
   let ambiguousCount = 0;
+  let suspectedChannelCount = 0;
   let unknownPersonCount = 0;
   let errorCount = 0;
 
@@ -275,6 +279,18 @@ export async function POST(req: NextRequest) {
       createdAt:    Date.now(),
       updatedAt:    Date.now(),
     };
+
+    if (isSuspectedPrimeChannelRow({ providerName: vodService, note, sourceUrl })) {
+      previewRows.push({
+        rowNum, personName, workTitle, workType, releaseYear, roleName,
+        vodService, availabilityType: availType, confidence, sourceUrl, note,
+        action: 'suspected_channel',
+        reason: PRIME_CHANNEL_SUSPECT_WARNING,
+        isNewWork: false,
+      });
+      suspectedChannelCount++;
+      continue;
+    }
 
     const matchOutcome = resolveVodMatch(
       candidates.map((w) => ({ personName, workId: w.id, title: w.title, workType: w.type, releaseYear: w.releaseYear })),
@@ -367,6 +383,7 @@ export async function POST(req: NextRequest) {
       addVodCount,
       createWorkCount,
       ambiguousCount,
+      suspectedChannelCount,
       unknownPersonCount,
       errorCount,
     });

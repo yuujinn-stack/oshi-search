@@ -19,7 +19,7 @@ interface ImportPreviewRow {
   sourceUrl: string;
   checkedDate: string;
   note: string;
-  action: 'add' | 'update' | 'delete' | 'ignore' | 'skip' | 'error';
+  action: 'add' | 'update' | 'delete' | 'ignore' | 'skip' | 'suspected_channel' | 'error';
   reason: string;
 }
 
@@ -31,6 +31,7 @@ interface ImportPreviewResult {
   ignoreCount: number;
   skipCount: number;
   errorCount: number;
+  suspectedChannelCount?: number;
   previewRows: ImportPreviewRow[];
 }
 
@@ -39,6 +40,7 @@ interface ImportCommitResult {
   savedWorkCount: number;
   savedProviderCount: number;
   deletedProviderCount: number;
+  heldProviderCount?: number;
   errors: string[];
 }
 
@@ -58,6 +60,7 @@ const ACTION_BADGE: Record<ImportPreviewRow['action'], string> = {
   delete: 'bg-red-100 text-red-700',
   ignore: 'bg-gray-100 text-gray-500',
   skip:   'bg-sky-100 text-sky-700',
+  suspected_channel: 'bg-amber-100 text-amber-800',
   error:  'bg-orange-100 text-orange-700',
 };
 const ACTION_LABEL: Record<ImportPreviewRow['action'], string> = {
@@ -66,6 +69,7 @@ const ACTION_LABEL: Record<ImportPreviewRow['action'], string> = {
   delete: '削除',
   ignore: '無視',
   skip:   'スキップ',
+  suspected_channel: 'チャンネル疑い（保留）',
   error:  'エラー',
 };
 
@@ -323,6 +327,11 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
               <span className="text-red-600 ml-2">削除: {importCommitResult.deletedProviderCount}件</span>
             )}
           </p>
+          {(importCommitResult.heldProviderCount ?? 0) > 0 && (
+            <p className="text-amber-700">
+              追加チャンネルの可能性があるため保留（未登録）: {importCommitResult.heldProviderCount}件
+            </p>
+          )}
           {importCommitResult.errors.length > 0 && (
             <p className="text-orange-600">
               エラー {importCommitResult.errors.length}件: {importCommitResult.errors.slice(0, 2).join(' / ')}
@@ -353,6 +362,11 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
             {(importPreview.skipCount ?? 0) > 0 && (
               <span className="bg-sky-100 text-sky-700 px-2 py-1 rounded-lg font-medium">
                 重複スキップ {importPreview.skipCount}件
+              </span>
+            )}
+            {(importPreview.suspectedChannelCount ?? 0) > 0 && (
+              <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded-lg font-medium" title="Prime Video 名義ですが note / sourceUrl に追加チャンネル・別契約の記述があります。正式なチャンネル名に直して再取り込みしてください。">
+                チャンネル疑い（保留） {importPreview.suspectedChannelCount}件
               </span>
             )}
             <span className="bg-gray-100 text-gray-500 px-2 py-1 rounded-lg font-medium">
@@ -386,7 +400,8 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
                       className={`border-b border-gray-100 last:border-0 ${
                         row.action === 'delete' ? 'bg-red-50/60' :
                         row.action === 'error'  ? 'bg-orange-50' :
-                        row.action === 'ignore' ? 'opacity-50' : ''
+                        row.action === 'ignore' ? 'opacity-50' :
+                        row.action === 'suspected_channel' ? 'bg-amber-50' : ''
                       }`}
                     >
                       <td className="p-1.5 text-gray-400">

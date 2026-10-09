@@ -7,6 +7,7 @@ import OpenAI from 'openai';
 import type { VodProvider } from '@/types/vod';
 import type { WorkRecord } from '@/types/work';
 import { logOpenAIUsage } from '@/lib/openai-usage';
+import { partitionSuspectedPrimeChannelProviders } from '@/lib/vod-channel-guard';
 
 // 既知の日本向け配信サービスと TMDb provider_id の対応表
 const JP_PROVIDER_LOOKUP: Record<string, { id: number; logoPath?: string }> = {
@@ -145,6 +146,10 @@ ${overviewStr}
 Hulu, U-NEXT, DMM TV, Lemino, Netflix, Prime Video, ABEMA, TVer, FOD, TELASA, Disney+, WOWOWオンデマンド, Paravi系コンテンツ, NHKオンデマンド, バンダイチャンネル, dアニメストア
 
 【ルール】
+- providerName「Prime Video」は、Amazonプライム会員の料金だけで追加料金なしで視聴できる場合のみ使用してください
+- Prime Video 内の追加チャンネル（プライム会員費とは別料金）で配信されている場合は「Prime Video」とせず、
+  「NHK On Demand Amazon Channel」「FOD Channel Amazon Channel」「TELASA Amazon Channel」「Lemino Select Amazon Channel」等の
+  チャンネル正式名を providerName にしてください。チャンネル名を特定できない場合は回答に含めないでください
 - 2026年現在、実際に日本で配信中のサービスのみ回答してください
 - 過去に配信していたが現在は終了しているものは含めないでください
 - 見放題・レンタル・購入・見逃し配信・期間限定配信を含めてください
@@ -230,10 +235,18 @@ type の意味:
       };
     });
 
+    // Prime Video 本体名義だが追加チャンネルの可能性があるものは採用しない（保留。provider 名の自動書き換えはしない）
+    const { kept, held } = partitionSuspectedPrimeChannelProviders(providers);
+    if (held.length > 0) {
+      console.warn(
+        `[vod-ai] "${work.title}": 追加チャンネルの可能性があるため ${held.length}件を保留（未採用）: ${held.map((p) => `${p.providerName}（${(p.note ?? p.reason ?? '').slice(0, 40)}）`).join(', ')}`,
+      );
+    }
+
     console.log(
-      `[vod-ai] "${work.title}": ${providers.length}件取得 (${providers.map((p) => p.providerName).join(', ')})`,
+      `[vod-ai] "${work.title}": ${kept.length}件取得 (${kept.map((p) => p.providerName).join(', ')})`,
     );
-    return providers;
+    return kept;
   } catch (err) {
     await logOpenAIUsage({
       feature: 'vod_research',

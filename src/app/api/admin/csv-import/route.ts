@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getWorksForImport } from '@/lib/work-store';
 import { batchUpdateVodData } from '@/db/write';
 import { normalizeProviderName, VOD_SOURCE_PRIORITY, VOD_SOURCE_LABEL } from '@/lib/vod-dedup';
+import { isSuspectedPrimeChannelRow, PRIME_CHANNEL_SUSPECT_WARNING } from '@/lib/vod-channel-guard';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 
 // Vercel 実行時間上限（秒）。同期モードで大量作品を処理する場合のタイムアウト対策。
@@ -132,7 +133,8 @@ export interface ImportPreviewRow {
   checkedDate: string;
   note: string;
   // skip: 高優先度ソースが同名サービスを既に持つためCSV側をスキップ
-  action: 'add' | 'update' | 'delete' | 'skip' | 'ignore' | 'error';
+  // suspected_channel: Prime Video 本体名義だが note / sourceUrl に追加チャンネルの記述がある（保留・何も変更しない）
+  action: 'add' | 'update' | 'delete' | 'skip' | 'ignore' | 'suspected_channel' | 'error';
   reason: string;
 }
 
@@ -163,8 +165,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'normalizedRows が必要です' }, { status: 400 });
     }
 
+    // 追加チャンネル疑いの行はプレビュー結果に関係なくサーバー側でも保留する（登録しない）
+    const heldRows = (rawNormalizedRows as ImportPreviewRow[]).filter(
+      (r) => (r.action === 'add' || r.action === 'update') && isSuspectedPrimeChannelRow({ providerName: r.vodService, note: r.note, sourceUrl: r.sourceUrl }),
+    );
     const actionableRows = (rawNormalizedRows as ImportPreviewRow[]).filter(
-      (r) => r.action === 'add' || r.action === 'update' || r.action === 'delete',
+      (r) => (r.action === 'add' || r.action === 'update' || r.action === 'delete') && !heldRows.includes(r),
     );
 
     for (const r of actionableRows) {
@@ -284,6 +290,7 @@ export async function POST(req: NextRequest) {
       savedWorkCount,
       savedProviderCount,
       deletedProviderCount,
+      heldProviderCount: heldRows.length,
       errors,
       elapsedMs: elapsed,
     });
@@ -428,6 +435,21 @@ export async function POST(req: NextRequest) {
     seenInCsv.add(dedupeKey);
 
     const normalizedVodService = normalizeProviderName(r.vodService);
+
+    // Prime Video 追加チャンネルの可能性がある行は自動で書き換えず保留（既存データも変更しない）
+    if (isSuspectedPrimeChannelRow({ providerName: r.vodService, note: r.note, sourceUrl: r.sourceUrl })) {
+      // 同期モードで既存の同名 manual_csv が「CSVに記載なし」として削除されないよう、記載ありとして扱う
+      if (!csvServicesPerWork.has(mapKey)) csvServicesPerWork.set(mapKey, new Set());
+      csvServicesPerWork.get(mapKey)!.add(normalizedVodService);
+      previewRows.push({
+        rowNum: r.rowNum, workId: r.workId, personName: work.personName, title: work.title,
+        vodService: r.vodService, availabilityType: r.availabilityType, confidence: r.confidence,
+        sourceUrl: r.sourceUrl, checkedDate: r.checkedDate, note: r.note,
+        action: 'suspected_channel', reason: PRIME_CHANNEL_SUSPECT_WARNING,
+      });
+      continue;
+    }
+
     const existingProviders = (work.vodData.vodProviders ?? []) as VodProvider[];
     const existingByNorm = existingProviders.find(
       (p) => normalizeProviderName(p.providerName) === normalizedVodService,
@@ -502,6 +524,7 @@ export async function POST(req: NextRequest) {
   const skipCount   = previewRows.filter((r) => r.action === 'skip').length;
   const ignoreCount = previewRows.filter((r) => r.action === 'ignore').length;
   const errorCount  = previewRows.filter((r) => r.action === 'error').length;
+  const suspectedChannelCount = previewRows.filter((r) => r.action === 'suspected_channel').length;
 
   const elapsed = Date.now() - t0;
   console.log(
@@ -517,6 +540,7 @@ export async function POST(req: NextRequest) {
     skipCount,
     ignoreCount,
     errorCount,
+    suspectedChannelCount,
     previewRows,
     elapsedMs: elapsed,
   });

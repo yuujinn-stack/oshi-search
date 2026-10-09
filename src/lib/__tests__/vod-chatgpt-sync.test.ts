@@ -173,3 +173,51 @@ describe('isChatgptResearchStale — 30/60/90/180日フィルターの境界値'
     expect(isChatgptResearchStale(now - 180 * DAY_MS, 180, now)).toBe(true);
   });
 });
+
+describe('computeChatgptFullSync — Prime Video 追加チャンネル対策（保留・重複防止）', () => {
+  it('preserveSlugs に指定したサービスは既存のまま保持し、追加・更新・削除しない', () => {
+    const existing = [
+      provider({ providerName: 'Prime Video', type: 'flatrate', note: '既存' }),
+      provider({ providerName: 'Hulu', type: 'flatrate' }),
+    ];
+    // CSV側には Prime Video の行が無い（保留された）＝通常なら削除されるが、preserve で残す
+    const r = computeChatgptFullSync(existing, [{ providerName: 'Hulu', type: 'flatrate' }], 1000, { preserveSlugs: new Set(['primevideo']) });
+    expect(r.merged.find((p) => p.providerName === 'Prime Video')?.note).toBe('既存');
+    expect(r.diff.removed).toEqual([]);
+    expect(r.diff.unchanged).toContain('Prime Video');
+  });
+
+  it('preserveSlugs のサービスがCSVに含まれていても上書きしない', () => {
+    const existing = [provider({ providerName: 'Prime Video', type: 'flatrate', note: '既存' })];
+    const r = computeChatgptFullSync(existing, [{ providerName: 'Prime Video', type: 'rent' }], 1000, { preserveSlugs: new Set(['primevideo']) });
+    expect(r.merged).toHaveLength(1);
+    expect(r.merged[0].type).toBe('flatrate');
+  });
+
+  it('追加チャンネル名（scope外）を再取り込みしても同一作品×同一サービスが重複しない', () => {
+    const existing = [
+      provider({ providerName: 'NHK On Demand Amazon Channel', type: 'flatrate', source: 'manual_csv', note: '旧' }),
+      provider({ providerName: 'Hulu', type: 'flatrate' }),
+    ];
+    const r = computeChatgptFullSync(existing, [
+      { providerName: 'NHK On Demand Amazon Channel', type: 'flatrate', note: '新' },
+      { providerName: 'Hulu', type: 'flatrate' },
+    ], 1000);
+    const ch = r.merged.filter((p) => p.providerName === 'NHK On Demand Amazon Channel');
+    expect(ch).toHaveLength(1);
+    expect(ch[0].note).toBe('新');
+  });
+
+  it('TMDb等 manual_csv 以外の同名チャンネル情報は保持する（表示時に集約）', () => {
+    const existing = [provider({ providerName: 'NHK On Demand Amazon Channel', type: 'flatrate', source: 'tmdb_watch_provider' })];
+    const r = computeChatgptFullSync(existing, [{ providerName: 'NHK On Demand Amazon Channel', type: 'flatrate' }], 1000);
+    expect(r.merged.filter((p) => p.providerName === 'NHK On Demand Amazon Channel').map((p) => p.source).sort()).toEqual(['manual_csv', 'tmdb_watch_provider']);
+  });
+
+  it('オプション未指定時の既存動作は変わらない（scope内の欠落サービスは削除）', () => {
+    const existing = [provider({ providerName: 'Prime Video' }), provider({ providerName: 'Hulu' })];
+    const r = computeChatgptFullSync(existing, [{ providerName: 'Hulu', type: 'flatrate' }], 1000);
+    expect(r.diff.removed).toEqual(['Prime Video']);
+    expect(r.merged.map((p) => p.providerName)).toEqual(['Hulu']);
+  });
+});

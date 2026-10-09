@@ -37,6 +37,22 @@ export function buildVodResearchCsvRow(row: VodResearchCsvRow): string {
 
 // worksCsv: ヘッダー行込みの完成済みCSV文字列（VOD_RESEARCH_CSV_HEADER + buildVodResearchCsvRowの行群）
 // filenameLabel: csvDownloadSection が案内するダウンロードファイル名の接頭辞
+// Prime Video 本体と Prime Video 内の追加チャンネル（別料金）を区別するルール。
+// 調査対象が14サービスに限定されていたため、追加チャンネルで配信されている作品が「Prime Video」として
+// 登録され、Prime Video 本体の見放題として集計される誤りが多数発生した（2026-10 調査）。
+// 通常の追加調査・ChatGPT完全同期の両プロンプトで同じ文面を使う。
+export const PRIME_VIDEO_CHANNEL_RULE = `Prime Video と追加チャンネルの区別（重要）
+
+・vodService=Prime Video は「Amazonプライム会員の料金だけで、追加料金なしで視聴できる作品」だけに使うこと
+・Prime Video 内の追加チャンネル（プライム会員費とは別料金のチャンネル）で配信されている場合は、Prime Video と書かないこと
+  → 追加チャンネルの正式名を vodService に出力する（対象サービス一覧に無くても出力してよい）
+    例: NHK On Demand Amazon Channel / FOD Channel Amazon Channel / TELASA Amazon Channel / Lemino Select Amazon Channel /
+        dAnime Amazon Channel / Anime Times Amazon Channel / ABC On Demand Amazon Channel / Nihon Eiga Net Amazon Channel
+・Prime Video の作品ページの視聴ボタンが「○○で観る 今すぐ登録」「○○の無料体験」等、プライム以外のチャンネル登録を求めている場合は追加チャンネル
+・追加チャンネルであることは分かるがチャンネル名を特定できない場合は、Prime Video として出力せず、
+  vodService=unknown, availabilityType=unknown とし、noteに「Prime Video内の追加チャンネル（チャンネル名不明・要確認）」と記載する
+・Prime Video 本体と追加チャンネルを同じ vodService 名にしないこと`;
+
 export function buildBatchVodResearchPrompt(worksCsv: string, filenameLabel: string): string {
   return `以下のCSVに含まれる作品について、日本国内で現在視聴可能な配信サービスを調査してください。
 
@@ -53,6 +69,8 @@ export function buildBatchVodResearchPrompt(worksCsv: string, filenameLabel: str
 調査対象サービス
 
 Hulu / U-NEXT / Lemino / Netflix / Prime Video / DMM TV / TELASA / FOD / ABEMA / TVer / Disney+ / YouTube / NHKオンデマンド
+
+${PRIME_VIDEO_CHANNEL_RULE}
 
 availabilityType は以下を使用
 
@@ -131,6 +149,9 @@ export function buildChatgptFullSyncPrompt(worksCsv: string, filenameLabel: stri
 対象14サービス（完全同期の対象範囲）
 
 ${CHATGPT_FULL_SYNC_TARGET_SERVICES}
+
+${PRIME_VIDEO_CHANNEL_RULE}
+・追加チャンネルは対象14サービスの範囲外のため、完全同期で削除されることはありません（既存の同名チャンネル情報は今回の内容で更新されます）
 
 availabilityType は以下を使用
 

@@ -81,14 +81,33 @@ function buildScopedProvider(input: ChatgptSyncServiceInput, now: number): VodPr
 // existing: 同期前のwork.vodProviders全体（scope外のサービスも含む）
 // newServices: ChatGPTが今回「確認できた」として返した対象14サービス分のみ
 //              （vodService=unknownの行は含めない＝0件確認の意味）
+export interface ChatgptFullSyncOptions {
+  /**
+   * 今回の同期で変更しない（既存のまま保持する）正規化スラグ。
+   * CSV取り込み時の安全装置（vod-channel-guard.ts）で「追加チャンネルの可能性あり」として
+   * 保留した Prime Video 行がある作品では 'primevideo' を渡し、既存の Prime Video 情報を
+   * 追加・更新・削除のいずれもせずに残す（人間の確認後に正式名で再取り込みする）。
+   */
+  preserveSlugs?: ReadonlySet<string>;
+}
+
 export function computeChatgptFullSync(
   existing: VodProvider[],
   newServices: ChatgptSyncServiceInput[],
   now: number = Date.now(),
+  options: ChatgptFullSyncOptions = {},
 ): ChatgptSyncResult {
-  // scope外（対象14サービスに該当しない）のエントリは、sourceを問わず一切変更しない
-  const outsideScope = existing.filter((p) => !isChatgptScopeService(p.providerName));
-  const insideScope = existing.filter((p) => isChatgptScopeService(p.providerName));
+  const preserve = options.preserveSlugs ?? new Set<string>();
+  const newSlugs = new Set(newServices.map((s) => normalizeProviderName(s.providerName)));
+  // scope外（対象14サービスに該当しない）のエントリは、sourceを問わず原則変更しない。
+  // ただし今回のCSVに同じサービス（「○○ Amazon Channel」等の追加チャンネル名）が含まれる場合は、
+  // 同一作品×同一サービスの重複を防ぐため、既存の同名manual_csvエントリを今回の内容で置き換える
+  // （TMDb等の他ソースのエントリは従来どおり保持し、表示時は deduplicateProviders で1件に集約される）。
+  const outsideScope = existing.filter((p) => !isChatgptScopeService(p.providerName)
+    && !(p.source === 'manual_csv' && newSlugs.has(normalizeProviderName(p.providerName))));
+  // 保持対象スラグは scope 内でも今回の同期の対象外として、既存のまま残す
+  const preserved = existing.filter((p) => isChatgptScopeService(p.providerName) && preserve.has(normalizeProviderName(p.providerName)));
+  const insideScope = existing.filter((p) => isChatgptScopeService(p.providerName) && !preserve.has(normalizeProviderName(p.providerName)));
 
   const existingBySlug = new Map<string, VodProvider>();
   for (const p of insideScope) {
@@ -99,7 +118,9 @@ export function computeChatgptFullSync(
 
   const newBySlug = new Map<string, ChatgptSyncServiceInput>();
   for (const s of newServices) {
-    newBySlug.set(normalizeProviderName(s.providerName), s);
+    const slug = normalizeProviderName(s.providerName);
+    if (preserve.has(slug)) continue; // 保留中のサービスは今回の同期で追加・更新しない
+    newBySlug.set(slug, s);
   }
 
   const diff: ChatgptSyncDiff = { added: [], removed: [], updated: [], unchanged: [] };
@@ -120,11 +141,12 @@ export function computeChatgptFullSync(
   for (const [slug, before] of existingBySlug) {
     if (!newBySlug.has(slug)) diff.removed.push(before.providerName);
   }
+  for (const p of preserved) diff.unchanged.push(p.providerName);
 
   return {
-    merged: [...outsideScope, ...mergedScoped],
+    merged: [...outsideScope, ...preserved, ...mergedScoped],
     diff,
-    resultCount: mergedScoped.length,
+    resultCount: mergedScoped.length + preserved.length,
   };
 }
 

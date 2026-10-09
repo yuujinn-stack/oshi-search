@@ -3,6 +3,7 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllWorks, saveWork, upsertManualCsvVodProviders } from '@/lib/work-store';
 import { normalizeWorkTitle } from '@/lib/work-processor';
 import { normalizeProviderName } from '@/lib/vod-dedup';
+import { isSuspectedPrimeChannelRow, PRIME_CHANNEL_SUSPECT_WARNING } from '@/lib/vod-channel-guard';
 import type { WorkRecord, WorkType, DisplayWorkType } from '@/types/work';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 import { normalizeDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
@@ -47,7 +48,8 @@ export interface WorkImportPreviewRow {
   sourceUrl: string;
   confidence: string;
   note: string;
-  vodAction: 'add' | 'skip' | 'none';
+  // suspected_channel: Prime Video 本体名義だが note / sourceUrl に追加チャンネルの記述がある（VODは保留・未登録。作品登録は通常どおり）
+  vodAction: 'add' | 'skip' | 'suspected_channel' | 'none';
   vodSkipReason?: string;
 }
 
@@ -350,11 +352,15 @@ export async function POST(req: NextRequest) {
 
     // ── VOD 判定 ──
     const vodServiceTrimmed = vodService.trim();
-    let vodAction: 'add' | 'skip' | 'none';
+    let vodAction: WorkImportPreviewRow['vodAction'];
     let vodSkipReason: string | undefined;
 
     if (!vodServiceTrimmed || vodServiceTrimmed.toLowerCase() === 'unknown') {
       vodAction = 'none';
+    } else if (isSuspectedPrimeChannelRow({ providerName: vodServiceTrimmed, note: baseRow.note, sourceUrl: baseRow.sourceUrl })) {
+      // 追加チャンネルの可能性がある行は provider を自動で書き換えず保留する
+      vodAction = 'suspected_channel';
+      vodSkipReason = PRIME_CHANNEL_SUSPECT_WARNING;
     } else {
       const vodKey = `${effectivePersonName}:${normalizedTitle}:${vodServiceTrimmed.toLowerCase()}`;
       if (seenVodInCsv.has(vodKey)) {
@@ -386,9 +392,10 @@ export async function POST(req: NextRequest) {
   const errorCount    = previewRows.filter((r) => r.action === 'error').length;
   const vodAddCount   = previewRows.filter((r) => r.vodAction === 'add').length;
   const vodSkipCount  = previewRows.filter((r) => r.vodAction === 'skip').length;
+  const vodSuspectedChannelCount = previewRows.filter((r) => r.vodAction === 'suspected_channel').length;
 
   if (!commit) {
-    return NextResponse.json({ addCount, existingCount, errorCount, vodAddCount, vodSkipCount, previewRows });
+    return NextResponse.json({ addCount, existingCount, errorCount, vodAddCount, vodSkipCount, vodSuspectedChannelCount, previewRows });
   }
 
   // ── コミット ──

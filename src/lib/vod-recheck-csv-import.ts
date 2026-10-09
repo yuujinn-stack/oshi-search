@@ -6,7 +6,8 @@ import { MAX_CSV_FILE_BYTES } from '@/lib/csv-parse';
 import { parseAndValidateImportCsv, type ParsedImportRow } from '@/lib/vod-recheck-csv';
 import { resolveActiveWorkTargets } from '@/lib/vod-recheck-store';
 import { upsertManualCsvVodProviders, mergeManualCsvVodProviders, chatgptFullSyncVodProviders, getWork } from '@/lib/work-store';
-import { computeChatgptFullSync, type ChatgptSyncServiceInput, type ChatgptSyncDiff } from '@/lib/vod-chatgpt-sync';
+import { computeChatgptFullSync, type ChatgptSyncServiceInput, type ChatgptSyncDiff, type ChatgptFullSyncOptions } from '@/lib/vod-chatgpt-sync';
+import { isSuspectedPrimeChannelRow, describeSuspectedPrimeChannelRow, PRIME_CHANNEL_SUSPECT_WARNING } from '@/lib/vod-channel-guard';
 import { insertVodRecheckLog } from '@/db/write';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { detectRecheckReasons } from '@/lib/vod-recheck';
@@ -70,6 +71,8 @@ interface PreviewWorkEntry {
   diff?: ChatgptSyncDiff;
   /** chatgpt_full_sync モード限定: 同名作品等で対象作品を特定できなかった旨のnoteが含まれる */
   ambiguous?: boolean;
+  /** Prime Video 追加チャンネルの可能性があり取り込みを保留した行（vod-channel-guard.ts） */
+  heldRows?: string[];
 }
 
 interface PreviewResponse {
@@ -84,6 +87,8 @@ interface PreviewResponse {
   summary?: { added: number; updated: number; removed: number; unchanged: number; zeroVod: number };
   /** 直前に生成したChatGPTプロンプトの対象workIdのうち、今回のCSVに含まれていないもの */
   missingFromLastPrompt?: string[];
+  /** Prime Video 追加チャンネルの可能性があり取り込みを保留した行数 */
+  heldRowCount?: number;
 }
 
 interface ApplyResponse {
@@ -94,6 +99,8 @@ interface ApplyResponse {
   errors: string[];
   /** chatgpt_full_sync モード限定: 失敗した作品（部分失敗時は調査済みにされない） */
   failedWorkIds?: string[];
+  /** Prime Video 追加チャンネルの可能性があり取り込みを保留した行（人間の確認後、正式名で再取り込みする） */
+  heldRows?: string[];
 }
 
 export async function runVodRecheckCsvImport(
@@ -129,6 +136,15 @@ export async function runVodRecheckCsvImport(
   const chatgptServicesByCanonical = new Map<string, ChatgptSyncServiceInput[]>();
   const ambiguousWorkIds = new Set<string>();
   const allCanonicalWorkIds = new Set<string>();
+  // Prime Video 名義だが追加チャンネルの可能性がある行（取り込まず保留。providerの自動書き換えはしない）
+  const heldByCanonical = new Map<string, string[]>();
+  const holdRow = (canonicalWorkId: string, row: ParsedImportRow) => {
+    const list = heldByCanonical.get(canonicalWorkId) ?? [];
+    list.push(describeSuspectedPrimeChannelRow({ providerName: row.vodService, note: row.note, sourceUrl: row.sourceUrl, workId: row.workId }));
+    heldByCanonical.set(canonicalWorkId, list);
+  };
+  const isHeld = (row: ParsedImportRow) =>
+    !isUnknownServiceRow(row) && isSuspectedPrimeChannelRow({ providerName: row.vodService, note: row.note, sourceUrl: row.sourceUrl });
 
   for (const row of parsed) {
     const target = resolved.get(row.workId);
@@ -140,6 +156,12 @@ export async function runVodRecheckCsvImport(
     if (mode === 'chatgpt_full_sync') {
       if (row.note && row.note.includes(AMBIGUOUS_NOTE_MARKER)) {
         ambiguousWorkIds.add(target.canonicalWorkId);
+      }
+      if (isHeld(row)) {
+        // 保留: Prime Video として同期しない。既存の Prime Video 情報は同期時に保持する（preserveSlugs）
+        holdRow(target.canonicalWorkId, row);
+        if (!chatgptServicesByCanonical.has(target.canonicalWorkId)) chatgptServicesByCanonical.set(target.canonicalWorkId, []);
+        continue;
       }
       if (!isUnknownServiceRow(row)) {
         const list = chatgptServicesByCanonical.get(target.canonicalWorkId) ?? [];
@@ -156,6 +178,12 @@ export async function runVodRecheckCsvImport(
         // （0件配信済みとして記録するため、空配列を明示的に持たせる）
         chatgptServicesByCanonical.set(target.canonicalWorkId, []);
       }
+      continue;
+    }
+
+    if (isHeld(row)) {
+      holdRow(target.canonicalWorkId, row);
+      if (!providersByCanonical.has(target.canonicalWorkId)) providersByCanonical.set(target.canonicalWorkId, []);
       continue;
     }
 
@@ -188,10 +216,10 @@ export async function runVodRecheckCsvImport(
 
   if (mode === 'chatgpt_full_sync') {
     return commit
-      ? await applyChatgptFullSync(chatgptServicesByCanonical, personsByCanonical, ambiguousWorkIds, unresolvedWorkIds)
+      ? await applyChatgptFullSync(chatgptServicesByCanonical, personsByCanonical, ambiguousWorkIds, unresolvedWorkIds, heldByCanonical)
       : await previewChatgptFullSync(
           chatgptServicesByCanonical, personsByCanonical, canonicalByInput, ambiguousWorkIds,
-          unresolvedWorkIds, parsed.length, missingFromLastPrompt,
+          unresolvedWorkIds, parsed.length, missingFromLastPrompt, heldByCanonical,
         );
   }
 
@@ -233,6 +261,8 @@ export async function runVodRecheckCsvImport(
 
       const warnings: string[] = [];
       if (!current) warnings.push('現在のVOD情報を取得できませんでした（新規登録として扱われます）');
+      const held = heldByCanonical.get(canonicalWorkId);
+      if (held) warnings.push(`${PRIME_CHANNEL_SUSPECT_WARNING} 対象: ${held.join(' / ')}`);
 
       return {
         workId: canonicalWorkId,
@@ -240,6 +270,7 @@ export async function runVodRecheckCsvImport(
         title: current?.title ?? null,
         persons,
         services: providers.map((p) => ({ providerName: p.providerName, availabilityType: p.type })),
+        heldRows: held,
         currentVodCount: currentDetection.activeCount,
         afterVodCount: afterDetection.activeCount,
         currentUnknownCount: currentDetection.unknownCount,
@@ -258,6 +289,7 @@ export async function runVodRecheckCsvImport(
         commit: false,
         mode: 'merge',
         preview,
+        heldRowCount: [...heldByCanonical.values()].reduce((n, l) => n + l.length, 0),
         unresolvedWorkIds,
         hasFatalErrors,
         totalWorkIds: providersByCanonical.size,
@@ -273,6 +305,7 @@ export async function runVodRecheckCsvImport(
   const applyErrors: string[] = [];
 
   for (const [workId, providers] of providersByCanonical.entries()) {
+    if (providers.length === 0) continue; // 保留行のみの作品は何も変更しない
     const persons = personsByCanonical.get(workId) ?? [];
     for (const personName of persons) {
       try {
@@ -334,8 +367,14 @@ export async function runVodRecheckCsvImport(
       updatedWorks,
       unresolvedWorkIds,
       errors: applyErrors,
+      heldRows: heldByCanonical.size > 0 ? [...heldByCanonical.values()].flat() : undefined,
     },
   };
+}
+
+// 保留行がある作品では、既存の Prime Video 情報を同期で変更しない（追加・更新・削除しない）
+function syncOptionsFor(heldByCanonical: Map<string, string[]>, canonicalWorkId: string): ChatgptFullSyncOptions | undefined {
+  return heldByCanonical.has(canonicalWorkId) ? { preserveSlugs: new Set(['primevideo']) } : undefined;
 }
 
 // ── chatgpt_full_sync モード: プレビュー ────────────────────────────────────
@@ -347,6 +386,7 @@ async function previewChatgptFullSync(
   unresolvedWorkIds: string[],
   totalRows: number,
   missingFromLastPrompt: string[] | undefined,
+  heldByCanonical: Map<string, string[]>,
 ): Promise<RunCsvImportResult> {
   const preview: PreviewWorkEntry[] = await Promise.all(
     [...chatgptServicesByCanonical.entries()].map(async ([canonicalWorkId, services]) => {
@@ -356,7 +396,7 @@ async function previewChatgptFullSync(
       const currentProviders = current?.vodProviders ?? [];
 
       // DB書き込みなしでシミュレーション（実際の反映と同じcomputeChatgptFullSyncを再利用）
-      const { diff, resultCount } = computeChatgptFullSync(currentProviders, services);
+      const { diff, resultCount } = computeChatgptFullSync(currentProviders, services, undefined, syncOptionsFor(heldByCanonical, canonicalWorkId));
 
       const resolvedFrom = [...canonicalByInput.entries()]
         .filter(([, v]) => v.canonicalWorkId === canonicalWorkId && v.resolvedViaAlias)
@@ -366,6 +406,8 @@ async function previewChatgptFullSync(
       if (!current) warnings.push('現在のVOD情報を取得できませんでした（新規登録として扱われます）');
       const isAmbiguous = ambiguousWorkIds.has(canonicalWorkId);
       if (isAmbiguous) warnings.push('ChatGPTが同名作品等の理由で対象作品を特定できなかった旨のnoteが含まれています。内容を確認してください。');
+      const held = heldByCanonical.get(canonicalWorkId);
+      if (held) warnings.push(`${PRIME_CHANNEL_SUSPECT_WARNING} 既存のPrime Video情報は変更しません。対象: ${held.join(' / ')}`);
 
       return {
         workId: canonicalWorkId,
@@ -381,6 +423,7 @@ async function previewChatgptFullSync(
         errors: [] as string[],
         diff,
         ambiguous: isAmbiguous,
+        heldRows: held,
       };
     }),
   );
@@ -410,6 +453,7 @@ async function previewChatgptFullSync(
       totalRows,
       summary,
       missingFromLastPrompt,
+      heldRowCount: [...heldByCanonical.values()].reduce((n, l) => n + l.length, 0),
     },
   };
 }
@@ -426,6 +470,7 @@ async function applyChatgptFullSync(
   personsByCanonical: Map<string, string[]>,
   ambiguousWorkIds: Set<string>,
   unresolvedWorkIds: string[],
+  heldByCanonical: Map<string, string[]>,
 ): Promise<RunCsvImportResult> {
   let updatedWorks = 0;
   const applyErrors: string[] = [];
@@ -439,7 +484,11 @@ async function applyChatgptFullSync(
       try {
         const before = await getWork(personName, workId);
 
-        const result = await chatgptFullSyncVodProviders(personName, workId, services);
+        // 保留行が無い作品は従来どおりの呼び出し（オプションなし）
+        const syncOptions = syncOptionsFor(heldByCanonical, workId);
+        const result = syncOptions
+          ? await chatgptFullSyncVodProviders(personName, workId, services, syncOptions)
+          : await chatgptFullSyncVodProviders(personName, workId, services);
         if (!result) throw new Error('対象の作品行が見つかりません（非公開・削除済みの可能性）');
 
         try {
@@ -477,6 +526,7 @@ async function applyChatgptFullSync(
       unresolvedWorkIds,
       errors: applyErrors,
       failedWorkIds: failedWorkIds.length > 0 ? failedWorkIds : undefined,
+      heldRows: heldByCanonical.size > 0 ? [...heldByCanonical.values()].flat() : undefined,
     },
   };
 }

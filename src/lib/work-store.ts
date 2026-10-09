@@ -8,7 +8,7 @@ import { upsertWork } from '@/db/write';
 import { normalizeProviderName, deduplicateProviders } from '@/lib/vod-dedup';
 import {
   computeChatgptFullSync, CHATGPT_SERVICE_SCOPE, isChatgptProtectionActive, stripChatgptScopeServices,
-  type ChatgptSyncServiceInput, type ChatgptSyncDiff,
+  type ChatgptSyncServiceInput, type ChatgptSyncDiff, type ChatgptFullSyncOptions,
 } from '@/lib/vod-chatgpt-sync';
 import type { WorkRecord, WorkStatus } from '@/types/work';
 import type { VodProvider } from '@/types/vod';
@@ -370,11 +370,12 @@ export async function chatgptFullSyncVodProviders(
   personName: string,
   workId: string,
   newServices: ChatgptSyncServiceInput[],
+  options: ChatgptFullSyncOptions = {},
 ): Promise<{ diff: ChatgptSyncDiff; resultCount: number } | null> {
   let output: { diff: ChatgptSyncDiff; resultCount: number } | null = null;
   const now = Date.now();
   const ok = await withWorkFromDB(personName, workId, (work) => {
-    const { merged, diff, resultCount } = computeChatgptFullSync(work.vodProviders ?? [], newServices, now);
+    const { merged, diff, resultCount } = computeChatgptFullSync(work.vodProviders ?? [], newServices, now, options);
     work.vodProviders = merged;
     work.vodUpdatedAt = now;
     work.lastChatgptResearchAt = now;

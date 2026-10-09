@@ -3271,3 +3271,136 @@ Task 80 を本番で目視確認した際に見つかった3点を直す。人�
 - `src/components/oshi-vod/OshiVodResultHero.tsx` — 主指標のラベルを「対象43作品中、見放題で見られる作品」にし、数値の下に小さく「対象＝現在いずれかの有料サブスクで見放題確認できる43作品（登録出演作品154作品のうち）」を補足（登録出演作品との違いを明示）。
 - `src/components/oshi-vod/OshiVodEntryCta.tsx`・`src/app/page.tsx` — 導線カードに任意の小さな補足ラベル `note` を追加し、トップページのみ「無料・登録不要」を表示（説明文は「推しを選ぶだけで、一番多く見られるサービスがわかる」）。人物・グループページの導線は変更なし。
 - テスト（結論文の期待値）を更新。診断ロジック・ランキング・共有・SEO・結果画像は変更なし。
+
+---
+
+## Task 89：「FODプレミアム」を FOD として統合（provider名正規化のエイリアス追加）
+
+### 目的
+配信データに「FODプレミアム」（および英字表記「FOD Premium」）と登録された配信情報が、FOD とは別サービス（slug `fodプレミアム` / `fodpremium`）として扱われ、人物ページ・作品ページ・/vod/fod・推しに合うサブスク診断で FOD の件数が少なく出ていた。DBの配信データは書き換えず、既存の正規化処理で統合する。
+
+### 変更ファイル
+- `src/lib/vod-dedup.ts` — `normalizeProviderName()` の完全一致エイリアス表 `CANONICAL_SLUG_MAP` に `'fodプレミアム': 'fod'`・`'fodpremium': 'fod'` を追加（Leminoプレミアム → lemino と同じ扱い）。Prime Video 追加チャンネル（FOD Channel Amazon Channel 等）の判定は正規化より前に行われるため影響しない。
+- `src/lib/__tests__/vod-dedup.test.ts` — 正規化（FODプレミアム / FOD Premium → fod、追加チャンネルは統合しない、他サービス不変）と、同一作品に FOD・FODプレミアム・FOD Premium が並ぶ場合に1件へ集約されることを検証（4件追加）。
+
+### 設計上の判断
+- 人物ページ・作品ページ・StreamingNowSection・グループページ・/vod/[provider]・Instagram投稿・推しに合うサブスク診断はすべて `normalizeProviderName()` / `deduplicateProviders()`（`vod-availability.ts` 経由を含む）でサービスを識別しているため、エイリアス1か所の追加で全画面が FOD に統一される。同一作品に FOD と FODプレミアム が両方ある場合は `deduplicateProviders()` により1件（ソース優先度の高い方）に集約され、重複カウントしない。
+- 診断ランキングの計算にアフィリエイト情報を渡さない仕様は変更なし。
+
+### 実データでの確認（読み取り専用。全公開人物360人）
+- 生データ：FODプレミアム 見放題23件・レンタル3件、FOD Premium 見放題1件 → すべて slug `fod` として認識。
+- 人物ページ相当（全人物の「今すぐ見られる」件数合計）：FOD 1,436 → 1,446（+10）、fodプレミアム 23 → 0、fodpremium 1 → 0。+10 にとどまるのは、24件のうち14件が同じ作品に既に FOD があり1件に集約されたため（FOD と FODプレミアム 併記の作品行は17件）。
+- FOD 以外のサービス：全126サービス・全360人で件数の変化なし。
+- FOD件数が変わった人物は8人（例：山里亮太 4→7、バナナマン 4→5、広瀬アリス 11→12）。Snow Man・なにわ男子・目黒蓮の診断は FODプレミアムの作品を含まないため変化なし。
+- 診断（例：山里亮太）：FOD見放題 4→7、有料サブスク見放題の対象作品 19→20（FODプレミアムのみで配信されていた作品が新たに対象に入るため）。他サービスの作品数は不変だが、分母が増えるためカバー率は変わる（U-NEXT 11/19=57.8% → 11/20=55%）。詳しい比較の「そのほかの配信」から FODプレミアム が消えた。
+- 画面（本番＝修正前 と ローカル本番ビルド＝修正後 の比較）：人物ページ（山里亮太）の配信サービス比較が「FOD 4件・fodプレミアム 3件」→「FOD 7件」。作品ページ tmdb-movie-308186 は FODプレミアム と FOD の2カードが FOD 1カードに、FODプレミアムのみの tmdb-movie-55887 は「FODプレミアムで視聴可能（リンクなし）」→「FODで今すぐ見る →」（FODの公式リンク・配色）。/vod/fod は 1,378 → 1,383作品、271 → 272人。
+
+### 未対応（報告のみ）
+- 「Amazonプライム・ビデオ（FODチャンネル経由）」1件が Prime Video 本体として扱われている（全角表記のため追加チャンネル判定の正規表現に一致しない）。FOD以外（Prime Video）の集計に影響するため今回は変更していない。
+
+### テスト
+- `npx tsc --noEmit` エラーなし、`npx vitest run` 1718件全通過、`next build` 成功。
+
+---
+
+## Task 89 追記：Prime Video 追加チャンネルの表記ゆれ判定（本体見放題からの除外）
+
+### 目的
+「Prime Videoの追加チャンネル・別料金チャンネルは、Prime Video本体の見放題としてカウントしない」ルールが、一部の表記ゆれで効いていなかった（Prime Video本体の見放題として、人物ページ・作品ページ・推しに合うサブスク診断に数えられていた）。DBの配信データは書き換えず、既存の追加チャンネル判定（`detectPrimeVideoChannel` → `normalizeProviderName` / `isPrimeVideoChannel`）を拡張する。
+
+### 調査（読み取り専用・全配信データ）
+- 追加チャンネルなのに Prime Video 本体（slug `primevideo`）として扱われていた表記：
+  - 「Amazonプライム・ビデオ（FODチャンネル経由）」1件（日本語表記のため判定の正規表現に一致しなかった）
+  - 「Prime Video（Leminoセレクト）」3件・「Prime Video (Leminoセレクト)」1件（"Amazon" なしの "Prime Video（…）" 形式が判定対象外だった）
+- 本体扱いではないがチャンネルとして認識されていなかった表記：「アニメタイムズ（Amazon Prime Videoチャンネル）」1件（slug `アニメタイムズ`＝「その他」扱い。ランキングには元々数えていない）
+- 正しく追加チャンネル判定されていたもの：「○○ Amazon Channel」形式（TMDb由来、NHK On Demand / FOD Channel / dAnime / TELESA 等 34種）、「FODチャンネル for Prime Video」、「Amazon Prime Video（FODチャンネル）」「Amazon Prime Video（Leminoセレクト）」。FOD本体（slug `fod`）に追加チャンネルが混ざっているデータはなかった。
+- provider名では判定できず note にのみチャンネルである旨が書かれている行：
+  - providerName「Prime Video」・flatrate・note「Prime Video内のNHKオンデマンドチャンネルで現在配信中。別途チャンネル契約が必要。」1件
+  - providerName「NHKオンデマンド」・flatrate・note「Prime Video内のNHKオンデマンドチャンネルで本作を配信中…」1件
+  - （他に note「配信区分は見放題/チャンネル扱いとして記録」の Prime Video 1件は記述が曖昧）
+  自由記述の note からの自動判定は誤判定の恐れがあるため実装していない（データ側の修正を推奨、未実施）。
+- TBSチャンネル・バンダイチャンネル・YouTube（○○チャンネル）等は Prime Video とは無関係の名称で、追加チャンネル判定の対象外（変更なし）。
+
+### 変更ファイル
+- `src/lib/vod-dedup.ts`
+  - 追加チャンネル判定の正規表現を拡張：先頭が "Amazon Prime Video" / "Prime Video" / "Amazonプライム・ビデオ" / "プライムビデオ" の「（○○）」形式、および「○○（Amazon Prime Videoチャンネル）」の後置形式。括弧内の「…経由」は除去し「Amazon Prime Video（FODチャンネル）」と同じスラグにそろえる。
+  - 本体を指す括弧表記（パススルー）に「見放題」「プライム会員特典」を追加（既存の jp / withads / 広告付き はそのまま）。
+  - 追加チャンネル表示名（`extractChannelName`）も同じ判定でチャンネル名を取り出すよう変更。`AMAZON_CHANNEL_DISPLAY_NAMES` に `fodチャンネルamazonchannel`（FODチャンネル）・`アニメタイムズamazonchannel`（アニメタイムズ）を追加。
+- `src/lib/__tests__/vod-dedup.test.ts` — 表記ゆれの追加チャンネル判定、本体表記は追加チャンネルにしない、Prime Video 以外の「チャンネル」名は対象外、表示名の検証を追加（15件）。
+- FODプレミアム → FOD の正規化（Task 89 本編）はそのまま維持。
+
+### 実データでの確認（読み取り専用。同じデータに対して修正前後を連続で計測）
+- 全360人の「今すぐ見られる」件数：Prime Video 1,401 → 1,396（-5）。移動先は Leminoせれくと +4・FODチャンネル +1（追加チャンネル）。アニメタイムズ1件は「その他」→ 追加チャンネル表示に変わるのみ。FOD（1,446）を含む他サービスは不変。影響する人物は6人（篠塚大輝・正源司陽子・宮地すみれ・石塚瑶季・清水理央・上村ひなの）。
+- 診断：篠塚大輝 Prime Video 1→0（月額1位 Prime Video → TELASA、コスパ3位 Prime Video → U-NEXT）、timelesz Prime Video 16→15（順位不変、1作品あたり38円→40円）、日向坂4人（宮地・正源司・清水・石塚）Prime Video 1→0（月額1位 Prime Video → TELASA）。2サービス最適化・80%以上を最安で見る方法はいずれも変化なし。Snow Man・なにわ男子・目黒蓮は変化なし。
+- 画面（本番＝修正前 と ローカル本番ビルド＝修正後）：作品ページ tmdb-tv-289474 / tmdb-tv-290464 で、追加チャンネルのカードと並んで誤って表示されていた「Prime Videoで今すぐ見る →」（本体扱い）が消え、「Prime Video内 FODチャンネル」「Prime Video内 Leminoせれくと」（追加チャンネル・別途チャンネル登録が必要）のみに。人物ページ（篠塚大輝）の配信サービス比較は「Prime Video 1件」→「Prime Video内 FODチャンネル 追加チャンネル 1件」。診断の詳しい比較「そのほかの配信」に追加チャンネルとして表示され続ける（作品自体は消えない）。
+- 計測中、本番DBの配信データが自動更新等で変化していたため（約1〜2時間で無関係な件数差が発生）、比較は同一データに対して修正前後のコードを連続実行して行った。
+
+### テスト
+- `npx tsc --noEmit` エラーなし、`npx vitest run` 1733件全通過、`next build` 成功。
+
+---
+
+## Task 89 追記2：Prime Video 追加チャンネル誤登録（157行）の公式確認・再発防止（DB未反映）
+
+### 公式確認（読み取りのみ・DB変更なし）
+- 対象：Prime Video 本体の見放題として集計中で note 等に追加チャンネル・別契約の可能性がある157行（122作品・76人）。
+- 方法：Amazon / Prime Video の公式作品ページを取得し（Amazon検索・primevideo.com検索でタイトルから特定したページを含む）、視聴ボタンで判定。
+  - 追加チャンネル＝「○○で観る 今すぐ登録」「○○の無料体験を開始する」（benefitId=nhkondemandjp 等）
+  - Prime Video 本体＝「30日間の無料体験／プライムに登録」のみ
+  - 「PrimeまたはNHKオンデマンドに登録」＝プライム会員でも視聴可（本体扱い・要確認）
+  - 「お住まいの地域ではPrime Videoでの配信は終了しました」＝本体での配信なし（チャンネル登録ボタンがあればチャンネル）
+  JustWatch等の第三者情報のみでは確定していない。
+- 結果（同一作品の他人物行1件を追加した158行）：A Prime Video本体 17行/16作品、B 追加チャンネル 132行/97作品、C 別サービス本体 0、D 公式確認できず 9行/9作品（配信終了7・レンタルのみ1・特定不可1）。初回分類でA1（確認不要）とした中にも「PrimeまたはNHKオンデマンド」（本体でも視聴可）の作品があり、公式ページの再確認で本体へ戻した。
+- 出力：`tmp/prime-channel-review/prime_video_review37_final.csv`（個別確認37行）、`tmp/prime-channel-review/prime_video_final_fix.csv`（最終修正CSV・158行：rename 132 / set_unknown 8 / set_rent 1 / keep 17）。
+- 最終シミュレーション（メモリ上）：Prime Video本体の見放題 1,385→1,244（人物×作品）、ユニーク作品 946→840、FODは不変。順位（作品数/月額/コスパの1位・2サービス最適化・80%方法）が変わる対象 39（個人37・グループ2：Snow Man＝コスパ1位 Prime Video→U-NEXT、THE ORAL CIGARETTES）。
+
+### 再発防止（コード変更・DBは未変更）
+- `src/lib/vod-research-prompt.ts` — `PRIME_VIDEO_CHANNEL_RULE` を追加し、通常調査・ChatGPT完全同期の両プロンプトに挿入（Prime Video は追加料金なしで視聴できる場合のみ、追加チャンネルは「○○ Amazon Channel」の正式名、チャンネル名不明は unknown＋要確認、本体と追加チャンネルを同じ名前にしない）。
+- `src/lib/vod-supplement.ts` — OpenAI Web検索補完プロンプトに同じルールを追加。
+- `src/lib/vod-channel-guard.ts`（新規） — `isSuspectedPrimeChannelRow()`：provider が Prime Video 本体なのに note に「チャンネル／別途／追加契約／別料金／追加登録／for Prime Video／会員特典単体ではない」等、または sourceUrl が Prime Video のチャンネルページの行を検出。provider は書き換えない。
+- `src/lib/vod-recheck-csv-import.ts` — 上記の行は取り込まず保留。プレビューに「追加チャンネルの可能性があります」警告、結果に保留行一覧。merge では保留行のみの作品は更新しない。ChatGPT完全同期では保留行がある作品の既存 Prime Video 情報を変更しない（`preserveSlugs`）。
+- `src/lib/vod-chatgpt-sync.ts` / `src/lib/work-store.ts` — `computeChatgptFullSync` に `preserveSlugs` オプション。scope外（追加チャンネル名）を再取り込みした際、既存の同名 manual_csv エントリを置き換えて同一作品×同一サービスの重複を防止（TMDb等の他ソースは従来どおり保持し表示時に集約）。
+- `src/app/api/admin/work-vod-import/route.ts` / `src/app/admin/work-import/WorkVodImportForm.tsx` — 行アクション `suspected_channel`（追加チャンネルの可能性・保留）を追加し、登録しない。
+- `src/app/admin/vod-recheck/VodRecheckClient.tsx` — 反映結果に保留行を表示。
+- テスト：`vod-channel-guard.test.ts`（新規）、`vod-chatgpt-sync.test.ts`・`vod-recheck-csv-import.test.ts` に追加。`npx tsc --noEmit` エラーなし、`npx vitest run` 1754件全通過、`next build` 成功。
+
+---
+
+## Task 89 追記3：Prime Video 追加チャンネル誤登録の反映用スクリプト（dry-run のみ実行・DB未反映）・再発防止の抜け漏れ対応
+
+### 目的
+- 最終確認済みCSV（158行）の変更だけを本番DBへ安全に反映する専用スクリプトを用意する。通常のVOD CSV取り込み（同名providerの上書き）は使わない。
+- CSV取り込み・AI補完など、Prime Video 本体名義で追加チャンネルが登録され得る経路をすべて「保留」で塞ぐ。
+
+### 反映用スクリプト（新規）
+- `scripts/data/prime-video-channel-fix-2026-10.csv` — 最終修正CSV（`tmp/prime-channel-review/prime_video_final_fix.csv` と同一内容。tmp/ は gitignore のためスクリプトと一緒に管理）。
+- `scripts/prime-video-channel-fix/plan.ts` — 判定ロジック（純粋関数）。
+  - personName / workId / canonicalWorkId（work_aliases で解決）/ provider名 / 種別 / source / note が DB と完全一致する provider だけを変更対象にする。同じ条件の provider が2件以上・作品行なし・削除済み・hidden・canonical不一致などはすべて error（変更しない）。
+  - 修正後状態に一致する行は already_applied（冪等）。
+  - 件数検査（総158・変更141・ユニーク106作品・rename 132 / set_unknown 8 / set_rent 1 / keep 17）が1件でも違えば apply 不可。
+  - rename 時は Prime Video の TMDb `logoPath`・`providerId`（9 等）を外し `providerId=-1` にする（チャンネルなのに Prime のロゴが表示されるのを防ぐ。ChatGPT一括同期の手動エントリと同じ形）。set_unknown / set_rent は配信種別のみ変更。削除はしない。
+  - `evaluateRollbackEntry()` — バックアップから今回の変更だけを戻す判定。
+- `scripts/prime-video-channel-fix/run.ts` — 実行本体。
+  - デフォルトは dry-run（SELECT のみ）。`--apply` のときだけ書き込み。`--rollback <backup.json>` で復元（これも `--apply` なしは dry-run）。
+  - apply は `neonSql.transaction()` の1トランザクション。各作品行は「読み込んだ時点の vod_data と jsonb で同一」の場合だけ UPDATE し、0行なら `1/0` でエラーにして全体をロールバック（部分反映なし）。`vod_recheck_logs` に作品行ごとの監査ログ（performed_by=`script:prime-video-channel-fix-2026-10`）。反映後に再読込して全行 already_applied を検証。
+  - 毎回 `tmp/prime-channel-fix/<日時>-<mode>/` に result.csv・backup.csv・backup.json（変更対象の provider 修正前JSON＋作品行の vod_data 全体）を出力。
+  - 実行：`npx dotenv -e .env.local -- npx tsx scripts/prime-video-channel-fix/run.ts`（`--apply` は本番デプロイ完了後に実行する）。
+- `scripts/prime-video-channel-fix/plan.test.ts` — 一致判定・冪等・rename時のロゴ除去・復元判定・同梱CSVの件数検査。
+
+### dry-run 結果（2026-10-09・本番DB・書き込みなし）
+- 変更予定 141（rename 132 / unknown 8 / rent 1）・適用済み 0・維持 17・エラー 0・ユニーク106作品・作品行141。楽観ロック条件の事前確認 141/141。
+- rename の内訳：NHK On Demand 63 / FOD Channel 26 / TELASA 19 / Lemino Select 7 / Nihon Eiga Net 5 / スペシャオンデマンド 5 / Anime Times 2 / KANTELE DOGA 2 / FANY 1 / 中京テレビ セレクト！ 1 / Channel Kyofu 1。rename 対象のうち131件は Prime の logoPath・providerId を保持していた。
+- dry-run の変更内容で診断をメモリ上シミュレーション：Prime Video本体の見放題 1,385→1,244（人物×作品）・ユニーク 946→840、FOD 1,423 不変、順位が変わる39対象は前回の最終シミュレーションと完全一致。
+- 注意：rename 先と同じチャンネルの TMDb エントリが既に同じ作品行にあるものが8件（表示・集計は `deduplicateProviders` で1件に集約。削除はしない方針のため残す）。
+
+### 再発防止の抜け漏れ対応（保留方式・provider の自動書き換えなし）
+- `src/app/api/admin/vod-title-import/route.ts` / `src/app/admin/people/import/VodImportForm.tsx` — 行アクション `suspected_channel`（保留・未登録）、件数・注意文・完了画面の保留タイトル一覧。
+- `src/app/api/admin/csv-import/route.ts` / `src/app/admin/work-check/VodImportSection.tsx` — プレビューで `suspected_channel`。保存時もサーバー側で再判定して登録しない（`heldProviderCount`）。同期モードでは保留行のサービスを「CSVに記載あり」として扱い、既存の同名 manual_csv を削除しない。
+- `src/app/api/admin/work-csv-import/route.ts` / `src/app/admin/work-check/WorksImportSection.tsx` — `vodAction: 'suspected_channel'`（作品登録は通常どおり、VODのみ保留）。
+- `src/lib/vod-channel-guard.ts` — `partitionSuspectedPrimeChannelProviders()`：AI結果の note / reason / officialUrl / sourceUrl で判定。
+- `src/lib/vod-supplement.ts` — AI Web検索補完の結果から該当 provider を採用しない（警告ログ）。vod-fetch / vod-recheck / cron vod-recheck / cron vod-refresh / vod-person-recheck / work-processor はすべて `supplementVodWithAI` 経由のためこれで塞がる。
+- 対象外：`/api/admin/vod-add`（管理者が名前を選んで手動追加。note・URL を持たないため判定材料がない）、`work-manual`（VOD登録なし）、TMDb取得（TMDb側でチャンネルは別名で返る）。
+- 既知の注意：今回修正する行のうち source=ai_recheck 2件・openai_web_search 1件は、今後のAI再確認／TMDb更新で置き換わる（置き換え時はAI結果に上記ガードが効く）。
+
+### テスト
+- `npx tsc --noEmit` エラーなし、`npx vitest run` 1765件全通過、`next build` 成功。

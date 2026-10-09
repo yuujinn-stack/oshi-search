@@ -8,6 +8,7 @@ import { getAllWorks, upsertManualCsvVodProviders } from '@/lib/work-store';
 import { saveImportHistory } from '@/lib/import-history';
 import { normalizeProviderName } from '@/lib/vod-dedup';
 import { normalizeVodMatchTitle, resolveVodMatch, type VodMatchCandidate } from '@/lib/vod-work-match';
+import { isSuspectedPrimeChannelRow, PRIME_CHANNEL_SUSPECT_WARNING } from '@/lib/vod-channel-guard';
 import type { VodProvider, VodProviderType } from '@/types/vod';
 
 export const dynamic = 'force-dynamic';
@@ -117,7 +118,8 @@ export interface VodTitlePreviewRow {
   personName: string;
   matchedWorkId: string;
   matchedWorkTitle: string;
-  action: 'add' | 'update' | 'unmatched' | 'ambiguous' | 'error';
+  // suspected_channel: Prime Video 本体名義だが note / sourceUrl に追加チャンネルの記述がある（保留・未登録）
+  action: 'add' | 'update' | 'unmatched' | 'ambiguous' | 'suspected_channel' | 'error';
   reason: string;
 }
 
@@ -198,6 +200,7 @@ export async function POST(req: NextRequest) {
   let ambiguousTitleCount = 0;
   let addCount = 0;
   let errorCount = 0;
+  let suspectedChannelCount = 0;
 
   // コミット用: (personName, workId) → VodProvider[]
   const commitMap = new Map<string, { personName: string; workId: string; providers: VodProvider[] }>();
@@ -221,6 +224,18 @@ export async function POST(req: NextRequest) {
         reason: !workTitle ? 'workTitle が空です' : 'vodService が空です',
       });
       errorCount++;
+      continue;
+    }
+
+    // Prime Video 追加チャンネルの可能性がある行は自動で書き換えず、保留して登録しない
+    if (isSuspectedPrimeChannelRow({ providerName: vodService, note, sourceUrl })) {
+      previewRows.push({
+        rowNum: i + 1, workTitle, vodService, availabilityType, confidence, sourceUrl, note,
+        personName: '', matchedWorkId: '', matchedWorkTitle: '',
+        action: 'suspected_channel',
+        reason: PRIME_CHANNEL_SUSPECT_WARNING,
+      });
+      suspectedChannelCount++;
       continue;
     }
 
@@ -313,6 +328,7 @@ export async function POST(req: NextRequest) {
       matchedTitleCount,
       unmatchedTitleCount,
       ambiguousTitleCount,
+      suspectedChannelCount,
       addCount,
       errorCount,
     });
@@ -334,7 +350,7 @@ export async function POST(req: NextRequest) {
   }
 
   const successRows = previewRows.filter((r) => r.action === 'add' || r.action === 'update');
-  const skipRows    = previewRows.filter((r) => r.action === 'unmatched');
+  const skipRows    = previewRows.filter((r) => r.action === 'unmatched' || r.action === 'suspected_channel');
   const errRows     = previewRows.filter((r) => r.action === 'error');
 
   await saveImportHistory({
@@ -352,7 +368,7 @@ export async function POST(req: NextRequest) {
     rows: previewRows.map((r) => ({
       label: `${r.workTitle}（${r.personName}）`,
       action: (r.action === 'add' || r.action === 'update') ? 'success'
-            : r.action === 'unmatched' ? 'skip'
+            : (r.action === 'unmatched' || r.action === 'suspected_channel') ? 'skip'
             : 'error',
       reason: r.reason,
     })),
@@ -364,6 +380,9 @@ export async function POST(req: NextRequest) {
     savedProviderCount,
     unmatchedTitles: [...new Set(
       previewRows.filter((r) => r.action === 'unmatched').map((r) => r.workTitle),
+    )],
+    suspectedChannelTitles: [...new Set(
+      previewRows.filter((r) => r.action === 'suspected_channel').map((r) => r.workTitle),
     )],
     errors,
   });

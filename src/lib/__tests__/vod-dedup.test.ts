@@ -313,6 +313,27 @@ describe('normalizeProviderName', () => {
     expect(result).toContain('amazonchannel');
   });
 
+  // ── FODプレミアム ─────────────────────────────────────────────────────────
+  it('"FODプレミアム" / "FOD Premium" → "fod"（料金プラン名は本体へ統一）', () => {
+    expect(normalizeProviderName('FODプレミアム')).toBe('fod');
+    expect(normalizeProviderName('FOD Premium')).toBe('fod');
+    expect(normalizeProviderName('FOD')).toBe('fod');
+  });
+
+  it('FODの Prime Video 追加チャンネルは "fod" にならない（追加チャンネルのまま）', () => {
+    expect(normalizeProviderName('FOD Channel Amazon Channel')).not.toBe('fod');
+    expect(normalizeProviderName('Amazon Prime Video（FODチャンネル）')).toContain('amazonchannel');
+    expect(isPrimeVideoChannel('FODチャンネル for Prime Video')).toBe(true);
+  });
+
+  it('FODプレミアムのエイリアス追加で他サービスの正規化は変わらない', () => {
+    expect(normalizeProviderName('Hulu')).toBe('hulu');
+    expect(normalizeProviderName('U-NEXT')).toBe('unext');
+    expect(normalizeProviderName('TELASA')).toBe('telasa');
+    expect(normalizeProviderName('Leminoプレミアム')).toBe('lemino');
+    expect(normalizeProviderName('FOD SHORT')).toBe('fodshort');
+  });
+
   // ── 独立slug維持：購入・レンタルストア ────────────────────────────────────
   it('"Amazon Video" は "primevideo" にならない（独立slug維持）', () => {
     expect(normalizeProviderName('Amazon Video')).toBe('amazonvideo');
@@ -390,6 +411,17 @@ describe('deduplicateProviders', () => {
     expect(result[0].providerName).toBe('Lemino');
   });
 
+  it('"FOD" と "FODプレミアム" が同一作品にある場合、1件に集約される（重複カウントしない）', () => {
+    const providers: VodProvider[] = [
+      provider({ providerId: 1, providerName: 'FODプレミアム', source: 'manual_csv' }),
+      provider({ providerId: 2, providerName: 'FOD', source: 'tmdb_watch_provider' }),
+      provider({ providerId: 3, providerName: 'FOD Premium', source: 'openai_web_search' }),
+    ];
+    const result = deduplicateProviders(providers);
+    expect(result).toHaveLength(1);
+    expect(result[0].providerName).toBe('FOD');
+  });
+
   it('"Amazon Video" と "Amazon Prime Video" は統合されない（独立slug）', () => {
     const providers: VodProvider[] = [
       provider({ providerId: 1, providerName: 'Amazon Video', source: 'tmdb_watch_provider' }),
@@ -450,6 +482,44 @@ describe('filterPublicVodProviders', () => {
 // ─── isPrimeVideoChannel ──────────────────────────────────────────────────────
 
 describe('isPrimeVideoChannel', () => {
+  // ── 表記ゆれ（日本語名・"Prime Video（…）"・後置形式）も追加チャンネルとして判定 ──
+  it.each([
+    ['Amazonプライム・ビデオ（FODチャンネル経由）', 'fodチャンネルamazonchannel'],
+    ['Prime Video（Leminoセレクト）', 'leminoセレクトamazonchannel'],
+    ['Prime Video (Leminoセレクト)', 'leminoセレクトamazonchannel'],
+    ['アニメタイムズ（Amazon Prime Videoチャンネル）', 'アニメタイムズamazonchannel'],
+  ])('%s は追加チャンネル（Prime Video本体に数えない）', (name, slug) => {
+    expect(isPrimeVideoChannel(name)).toBe(true);
+    expect(normalizeProviderName(name)).toBe(slug);
+    expect(normalizeProviderName(name)).not.toBe('primevideo');
+  });
+
+  it('正規化スラグからの表示名も正式表記（人物ページの配信サービス比較はスラグで表示するため）', () => {
+    expect(getVodProviderDisplayInfo('fodチャンネルamazonchannel').displayName).toBe('Prime Video内 FODチャンネル');
+    expect(getVodProviderDisplayInfo('leminoセレクトamazonchannel').displayName).toBe('Prime Video内 Leminoせれくと');
+    expect(getVodProviderDisplayInfo('アニメタイムズamazonchannel').displayName).toBe('Prime Video内 アニメタイムズ');
+  });
+
+  it('「…経由」は除去して「Amazon Prime Video（FODチャンネル）」と同じチャンネルにそろえる', () => {
+    expect(normalizeProviderName('Amazonプライム・ビデオ（FODチャンネル経由）')).toBe(normalizeProviderName('Amazon Prime Video（FODチャンネル）'));
+    expect(getVodProviderDisplayInfo('Amazonプライム・ビデオ（FODチャンネル経由）').displayName).toBe('Prime Video内 FODチャンネル');
+  });
+
+  it.each(['Amazon Prime Video', 'Prime Video', 'Amazonプライム・ビデオ', 'Amazon Prime Video with Ads', 'Amazon Prime Video (JP)', 'Amazon Prime Video（広告付き）', 'Prime Video（見放題）', 'Amazonプライム・ビデオ（プライム会員特典）'])(
+    'Prime Video本体の表記 %s は追加チャンネルにしない',
+    (name) => {
+      expect(isPrimeVideoChannel(name)).toBe(false);
+      expect(normalizeProviderName(name)).toBe('primevideo');
+    },
+  );
+
+  it('Prime Video以外の「チャンネル」表記は追加チャンネルにしない', () => {
+    for (const n of ['TBSチャンネル', 'バンダイチャンネル', 'YouTube（乃木坂配信中チャンネル）', 'ニコニコチャンネル', 'dTVチャンネル']) {
+      expect(isPrimeVideoChannel(n)).toBe(false);
+    }
+    expect(normalizeProviderName('Amazon Video')).toBe('amazonvideo');
+  });
+
   // 追加チャンネル（true）
   it('"TELASA Amazon Channel" → true', () => {
     expect(isPrimeVideoChannel('TELASA Amazon Channel')).toBe(true);

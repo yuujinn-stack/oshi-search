@@ -27,7 +27,7 @@ interface WorkImportPreviewRow {
   sourceUrl: string;
   confidence: string;
   note: string;
-  vodAction: 'add' | 'skip' | 'none';
+  vodAction: 'add' | 'skip' | 'suspected_channel' | 'none';
   vodSkipReason?: string;
 }
 
@@ -37,6 +37,7 @@ interface WorkImportPreviewResult {
   errorCount: number;
   vodAddCount: number;
   vodSkipCount: number;
+  vodSuspectedChannelCount?: number;
   previewRows: WorkImportPreviewRow[];
 }
 
@@ -316,6 +317,11 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
                 VOD重複スキップ {workImportPreview.vodSkipCount}件
               </span>
             )}
+            {(workImportPreview.vodSuspectedChannelCount ?? 0) > 0 && (
+              <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded-lg font-medium" title="Prime Video 名義ですが note / sourceUrl に追加チャンネル・別契約の記述があるため、VOD情報は登録しません（作品は通常どおり登録）。正式なチャンネル名に直して再取り込みしてください。">
+                VODチャンネル疑い（保留） {workImportPreview.vodSuspectedChannelCount}件
+              </span>
+            )}
             {workImportPreview.errorCount > 0 && (
               <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded-lg font-medium">
                 エラー {workImportPreview.errorCount}件
@@ -388,10 +394,15 @@ export default function WorksImportSection({ persons }: { persons: PersonInfo[] 
                         {row.vodAction === 'none' ? (
                           <span className="text-gray-300 text-[9px]">—</span>
                         ) : (
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
-                            row.vodAction === 'add' ? 'bg-teal-100 text-teal-700' : 'bg-gray-100 text-gray-400'
-                          }`}>
-                            {row.vodAction === 'add' ? 'VOD' : 'dup'}
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                              row.vodAction === 'add' ? 'bg-teal-100 text-teal-700'
+                              : row.vodAction === 'suspected_channel' ? 'bg-amber-100 text-amber-800'
+                              : 'bg-gray-100 text-gray-400'
+                            }`}
+                            title={row.vodSkipReason}
+                          >
+                            {row.vodAction === 'add' ? 'VOD' : row.vodAction === 'suspected_channel' ? '保留' : 'dup'}
                           </span>
                         )}
                       </td>

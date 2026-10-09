@@ -516,7 +516,11 @@ export default function VodRecheckClient({ initial }: { initial: RecheckListResu
       const failedNote = Array.isArray(json.failedWorkIds) && json.failedWorkIds.length > 0
         ? `（失敗: ${json.failedWorkIds.join(', ')} は調査済みにしていません）`
         : '';
-      setActionMsg(`${json.updatedWorks}件のVOD情報を反映しました。同じCSVを再度反映しないようご注意ください。${failedNote}`);
+      // Prime Video 追加チャンネルの可能性があり取り込みを保留した行（vod-channel-guard.ts）
+      const heldNote = Array.isArray(json.heldRows) && json.heldRows.length > 0
+        ? `【要確認】Prime Video追加チャンネルの可能性があるため${json.heldRows.length}行を取り込まず保留しました（既存のPrime Video情報は変更していません）。正式なチャンネル名（例: NHK On Demand Amazon Channel）でCSVを修正して再取り込みしてください: ${json.heldRows.join(' / ')}`
+        : '';
+      setActionMsg(`${json.updatedWorks}件のVOD情報を反映しました。同じCSVを再度反映しないようご注意ください。${failedNote}${heldNote}`);
       // 成功後は状態をリセット（同じCSVを誤って再反映することを防ぐ）
       clearFile();
       // 「未調査」フィルター等を使用している場合、今回調査済みになった作品は次回取得時に
