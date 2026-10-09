@@ -1,0 +1,232 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   推しに合うサブスク診断（/oshi-vod）専用スタイル。
+   公開ページ共通の C案「Graphic Pop」（graphic-site.css・GraphicPageStyles）を前提に、
+   診断固有の部品（.ov-*）だけをここで定義する。スコープは .ov-page 配下のみ。
+   スマホ最優先（基準 360〜430px）。PC は max-w-3xl の1カラム。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshivod { --graphic-page-label: 'DIAGNOSIS / SUBSCRIPTION'; }
+
+.ov-page { overflow-wrap: anywhere; }
+.ov-page .ov-h1 { font-size: clamp(26px, 6.4vw, 36px); line-height: 1.25; margin: 0 0 12px; }
+.ov-page .ov-h2 { font-size: 18px; line-height: 1.4; margin: 0 0 12px; }
+.ov-page .ov-sections { display: flex; flex-direction: column; gap: 32px; }
+.ov-page .ov-sections > section { border-top: 1.5px solid var(--graphic-rule); padding-top: 18px; }
+.ov-page .ov-lead { font-size: 14px; line-height: 1.8; color: var(--graphic-body); margin: 0; }
+.ov-page .ov-note { font-size: 12px; line-height: 1.7; color: var(--graphic-muted); margin: 6px 0 0; }
+.ov-page .ov-muted { color: var(--graphic-muted); }
+.ov-page .ov-notice {
+  font-size: 13px; line-height: 1.6; margin: 8px 0;
+  padding: 8px 12px; background: var(--graphic-orange-soft);
+  border-left: 3px solid var(--graphic-orange); color: var(--graphic-text);
+}
+.ov-page .ov-em { font-weight: 800; color: var(--graphic-ink); }
+.ov-page .ov-badge {
+  display: inline-block; margin-left: 6px; padding: 0 6px; font-size: 10px; font-weight: 700;
+  background: #FEF3C7; color: #92400E; border: 1px solid #FCD34D;
+}
+
+/* ── ボタン ── */
+.ov-page .ov-btn-main {
+  display: flex; align-items: center; justify-content: center; width: 100%;
+  min-height: 52px; margin-top: 16px; padding: 12px 16px;
+  font-family: var(--graphic-font-jp); font-weight: 900; font-size: 17px;
+  background: var(--graphic-ink); color: #FFFFFF; border: 0;
+  box-shadow: 4px 4px 0 var(--graphic-orange); cursor: pointer;
+}
+.ov-page .ov-btn-main:disabled { background: #9A9993; box-shadow: none; cursor: not-allowed; }
+/* 人物を選び始めたら「診断する」をスマホ画面下に固定して、選択リストが長くても押しやすくする */
+.ov-page .ov-btn-main.is-sticky { position: sticky; bottom: 12px; z-index: 20; }
+.ov-page .ov-btn-main:not(:disabled):active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--graphic-orange); }
+.ov-page .ov-btn-sub {
+  min-height: 36px; padding: 6px 12px; font-size: 13px; font-weight: 700;
+  background: #FFFFFF; color: var(--graphic-ink); border: 1.5px solid var(--graphic-ink); cursor: pointer;
+}
+.ov-page .ov-btn-sub:hover:not(:disabled) { background: var(--graphic-ink); color: #FFFFFF; }
+.ov-page .ov-btn-sub:disabled { border-color: var(--graphic-green); color: var(--graphic-green-text); background: var(--graphic-green-soft); cursor: default; }
+
+/* ── 人物選択 ── */
+.ov-page .ov-picker { background: #FFFFFF; border: 1.5px solid var(--graphic-ink); padding: 14px; }
+.ov-page .ov-picker-label { display: block; font-size: 12px; font-weight: 700; color: var(--graphic-body); margin: 0 0 6px; }
+.ov-page .ov-picker-input {
+  width: 100%; min-height: 48px; padding: 10px 12px;
+  border: 2px solid var(--graphic-ink); border-radius: 0 !important; background: #FFFFFF; color: var(--graphic-text);
+}
+.ov-page .ov-picker-input:focus { outline: 2px solid var(--graphic-orange); outline-offset: 1px; }
+.ov-page .ov-picker-input:disabled { background: var(--graphic-panel); }
+.ov-page .ov-picker-dropdown {
+  position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; z-index: 50;
+  background: #FFFFFF; border: 1.5px solid var(--graphic-ink); box-shadow: 4px 4px 0 var(--graphic-ink);
+  max-height: 320px; overflow-y: auto;
+}
+.ov-page .ov-picker-option {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 8px 12px;
+  text-align: left; background: #FFFFFF; border: 0; border-bottom: 1px solid var(--graphic-border); cursor: pointer;
+}
+.ov-page .ov-picker-option.is-active { background: var(--graphic-orange-soft); }
+.ov-page .ov-picker-option-kind {
+  flex-shrink: 0; min-width: 22px; text-align: center; font-family: var(--graphic-font-mono);
+  font-size: 10px; font-weight: 700; color: var(--graphic-orange-text);
+}
+.ov-page .ov-picker-option-label { display: block; font-size: 14px; font-weight: 700; color: var(--graphic-text); }
+.ov-page .ov-picker-option-sub { display: block; font-size: 11px; color: var(--graphic-muted); }
+.ov-page .ov-picker-groups { margin-top: 12px; border: 1px solid var(--graphic-border); background: var(--graphic-panel); }
+.ov-page .ov-picker-groups > summary { padding: 10px 12px; font-size: 13px; font-weight: 700; cursor: pointer; list-style: none; min-height: 44px; display: flex; align-items: center; }
+.ov-page .ov-picker-groups > summary::-webkit-details-marker { display: none; }
+.ov-page .ov-picker-groups > summary::after { content: '＋'; margin-left: auto; color: var(--graphic-orange-text); }
+.ov-page .ov-picker-groups[open] > summary::after { content: '－'; }
+.ov-page .ov-picker-group-chips,
+.ov-page .ov-picker-member-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px; }
+.ov-page .ov-picker-member-chips { padding: 8px 0 0; }
+.ov-page .ov-chip {
+  min-height: 36px; padding: 6px 10px; font-size: 13px; font-weight: 600;
+  background: #FFFFFF; color: var(--graphic-text); border: 1px solid var(--graphic-border-strong); cursor: pointer;
+}
+.ov-page .ov-chip.is-on { background: var(--graphic-ink); color: #FFFFFF; border-color: var(--graphic-ink); }
+.ov-page .ov-chip--sub { color: var(--graphic-muted); }
+.ov-page .ov-group-panel { margin: 0 12px 12px; padding: 12px; background: #FFFFFF; border: 1.5px solid var(--graphic-ink); }
+.ov-page .ov-group-panel-title { margin: 0; font-weight: 900; font-family: var(--graphic-font-jp); }
+.ov-page .ov-picker-selected { margin-top: 14px; }
+.ov-page .ov-picker-count { margin: 0; font-size: 12px; color: var(--graphic-muted); }
+.ov-page .ov-picker-count strong { font-family: var(--graphic-font-display); font-size: 18px; color: var(--graphic-ink); }
+.ov-page .ov-selected-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.ov-page .ov-selected-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 4px 4px 4px 10px; background: var(--graphic-orange-soft); border: 1.5px solid var(--graphic-orange);
+  font-size: 13px; font-weight: 700; color: var(--graphic-text);
+}
+.ov-page .ov-selected-chip-sub { font-size: 10px; font-weight: 500; color: var(--graphic-muted); white-space: nowrap; }
+.ov-page .ov-selected-chip-x {
+  width: 32px; height: 32px; flex-shrink: 0; border: 0; background: transparent;
+  font-size: 18px; line-height: 1; color: var(--graphic-ink); cursor: pointer;
+}
+
+/* ── 結果：結論 ── */
+.ov-page .ov-hero { border-top: 0 !important; padding-top: 0 !important; }
+.ov-page .ov-hero-headline { font-size: clamp(20px, 5.4vw, 26px) !important; line-height: 1.45 !important; margin: 0 0 12px; }
+.ov-page .ov-person-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; padding: 0; list-style: none; }
+.ov-page .ov-person-tag { display: inline-block; padding: 2px 8px; font-size: 12px; font-weight: 700; background: #FFFFFF; border: 1px solid var(--graphic-ink); }
+.ov-page .ov-hero-cards { display: grid; gap: 12px; }
+.ov-page .ov-hero-card { background: #FFFFFF; border: 2px solid var(--graphic-ink); box-shadow: 5px 5px 0 var(--graphic-orange); padding: 16px; }
+.ov-page .ov-hero-badge { margin: 0; font-family: var(--graphic-font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--graphic-orange-text); }
+.ov-page .ov-hero-service { margin: 2px 0 0; font-family: var(--graphic-font-jp); font-weight: 900; font-size: 26px; line-height: 1.2; color: var(--graphic-ink); }
+.ov-page .ov-hero-main-num { display: flex; flex-direction: column; margin: 14px 0 0; }
+.ov-page .ov-hero-main-label { font-size: 12px; color: var(--graphic-muted); }
+.ov-page .ov-hero-main-value { font-family: var(--graphic-font-display); font-weight: 700; font-size: 34px; line-height: 1.15; color: var(--graphic-ink); }
+.ov-page .ov-hero-nums { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0 6px; }
+.ov-page .ov-hero-tax { display: block; font-family: var(--graphic-font-jp); font-size: 10px; font-weight: 700; color: var(--graphic-muted); }
+.ov-page .ov-hero-links { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 14px 0 0; font-size: 13px; font-weight: 700; }
+.ov-page .ov-hero-nums > div { background: var(--graphic-panel); border: 1px solid var(--graphic-border); padding: 8px; }
+.ov-page .ov-hero-nums dt { font-size: 11px; color: var(--graphic-muted); line-height: 1.4; }
+.ov-page .ov-hero-nums dd { margin: 2px 0 0; font-family: var(--graphic-font-display); font-weight: 700; font-size: 16px; line-height: 1.3; color: var(--graphic-ink); }
+.ov-page .ov-hero-card .ov-cta { margin-top: 12px; }
+.ov-page .ov-totals { display: grid; gap: 4px; margin: 16px 0 0; }
+.ov-page .ov-totals > div { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; border-bottom: 1px dashed var(--graphic-border); padding: 4px 0; }
+.ov-page .ov-totals dt { color: var(--graphic-body); }
+.ov-page .ov-totals dd { margin: 0; font-weight: 800; white-space: nowrap; }
+
+/* ── パネル・ランキング ── */
+.ov-page .ov-panels { display: grid; gap: 14px; }
+.ov-page .ov-panel { background: #FFFFFF; border: 1px solid #D2D1CA; padding: 14px; }
+.ov-page .ov-panel-title { margin: 0 0 4px; font-family: var(--graphic-font-jp); font-weight: 900; font-size: 16px; color: var(--graphic-ink); }
+.ov-page .ov-rank-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ov-page .ov-rank-item { border-top: 1px solid var(--graphic-border); padding-top: 10px; }
+.ov-page .ov-rank-item .ov-cta { margin-top: 8px; }
+.ov-page .ov-line { display: flex; align-items: center; gap: 10px; }
+.ov-page .ov-rank {
+  flex-shrink: 0; min-width: 44px; text-align: center; padding: 2px 4px;
+  font-size: 11px; font-weight: 800; background: var(--graphic-ink); color: #FFFFFF;
+}
+.ov-page .ov-line-name { margin: 0; font-weight: 800; font-size: 15px; color: var(--graphic-text); }
+.ov-page .ov-line-nums { display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 2px 0 0; font-size: 12px; color: var(--graphic-body); }
+.ov-page .ov-more { margin-top: 10px; border: 1px solid var(--graphic-border); background: #FFFFFF; }
+.ov-page .ov-more > summary {
+  display: flex; align-items: center; min-height: 44px; padding: 8px 12px;
+  font-size: 13px; font-weight: 700; cursor: pointer; list-style: none;
+}
+.ov-page .ov-more > summary::-webkit-details-marker { display: none; }
+.ov-page .ov-more > summary::after { content: '＋'; margin-left: auto; padding-left: 8px; color: var(--graphic-orange-text); }
+.ov-page .ov-more[open] > summary::after { content: '－'; }
+.ov-page .ov-more > :not(summary) { margin-left: 12px; margin-right: 12px; }
+.ov-page .ov-more > :last-child:not(summary) { margin-bottom: 12px; }
+
+/* ── ランキングのタブ ── */
+.ov-page .ov-tablist { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1.5px solid var(--graphic-ink); }
+.ov-page .ov-tab {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  min-height: 56px; padding: 6px 4px; background: #FFFFFF; color: var(--graphic-ink);
+  border: 0; border-left: 1px solid var(--graphic-border); cursor: pointer;
+}
+.ov-page .ov-tab:first-child { border-left: 0; }
+.ov-page .ov-tab.is-active { background: var(--graphic-ink); color: #FFFFFF; }
+.ov-page .ov-tab-label { font-size: 13px; font-weight: 800; }
+.ov-page .ov-tab-leader { font-size: 10.5px; opacity: 0.8; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-page .ov-tabpanel > .ov-panel { border-top: 0; }
+
+/* ── 詳しい比較用の控えめなCTA ── */
+.ov-page .ov-cta-compact {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 40px; padding: 6px 12px 6px 6px;
+  font-size: 13px; font-weight: 700; color: var(--graphic-ink); background: #FFFFFF;
+  border: 1.5px solid var(--graphic-ink); text-decoration: none;
+}
+.ov-page .ov-cta-compact:hover { background: var(--graphic-ink); color: #FFFFFF; }
+
+/* ── 組み合わせ ── */
+.ov-page .ov-combo-services { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 4px; }
+.ov-page .ov-combo-service { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; }
+.ov-page .ov-combo-plus { font-weight: 900; color: var(--graphic-orange-text); margin-right: 2px; }
+.ov-page .ov-combo-breakdown { margin: 6px 0 0; padding-left: 1.1em; font-size: 12px; color: var(--graphic-muted); list-style: disc; }
+.ov-page .ov-combo-ctas { display: grid; gap: 8px; margin-top: 10px; }
+
+/* ── 作品リスト ── */
+.ov-page .ov-work-rows { list-style: none; padding: 0; margin: 4px 12px 12px; }
+.ov-page .ov-work-row { display: flex; flex-direction: column; gap: 3px; padding: 10px 0; border-top: 1px solid var(--graphic-border); }
+.ov-page .ov-work-row-title { font-weight: 700; font-size: 14px; color: var(--graphic-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--graphic-border-strong); }
+.ov-page .ov-work-row-meta { font-size: 11px; color: var(--graphic-muted); }
+.ov-page .ov-work-row-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ov-page .ov-svc-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px 2px 2px;
+  font-size: 11px; font-weight: 600; background: #FFFFFF; border: 1px solid var(--graphic-border); color: var(--graphic-body);
+}
+.ov-page .ov-svc-chip-type { font-size: 10px; color: var(--graphic-muted); }
+.ov-page .ov-svc-chip--paid { border-left: 2px solid var(--graphic-ink); }
+.ov-page .ov-svc-chip--free { border-left: 2px solid var(--graphic-green); }
+.ov-page .ov-svc-chip--channel { border-left: 2px solid #D97706; }
+.ov-page .ov-free-groups { display: flex; flex-direction: column; gap: 0; }
+
+/* ── 内訳・詳細比較 ── */
+.ov-page .ov-person-breakdown,
+.ov-page .ov-detail-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ov-page .ov-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; margin: 10px 0 8px; font-size: 12px; }
+.ov-page .ov-detail-grid dt { color: var(--graphic-muted); font-size: 11px; }
+.ov-page .ov-detail-grid dd { margin: 0; font-weight: 700; color: var(--graphic-text); }
+.ov-page .ov-extra-list { margin: 8px 0 0; padding-left: 1.1em; font-size: 12px; list-style: disc; }
+.ov-page .ov-detail-list .ov-cta { margin-top: 8px; }
+
+/* ── シェア ── */
+.ov-page .ov-share-image {
+  display: block; width: 100%; max-width: 360px; height: auto; margin: 0 auto 14px;
+  border: 1.5px solid var(--graphic-ink); background: #FFFFFF;
+}
+.ov-page .ov-share-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ov-page .ov-share-btn {
+  display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 8px;
+  font-size: 14px; font-weight: 800; text-align: center; background: #FFFFFF; color: var(--graphic-ink);
+  border: 1.5px solid var(--graphic-ink); cursor: pointer; text-decoration: none;
+}
+.ov-page .ov-share-btn--main { grid-column: 1 / -1; background: var(--graphic-orange); border-color: var(--graphic-orange); color: #FFFFFF; }
+.ov-page .ov-share-btn--x { background: #0A0A0A; color: #FFFFFF; }
+.ov-page .ov-share-btn--line { background: #06C755; border-color: #06C755; color: #FFFFFF; }
+.ov-page .ov-share-downloads { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 16px; margin-top: 12px; font-size: 13px; }
+
+/* ── 説明・FAQ・注意 ── */
+.ov-page .ov-about-list,
+.ov-page .ov-disclaimer { margin: 0; padding-left: 1.2em; list-style: disc; font-size: 13px; line-height: 1.9; color: var(--graphic-body); }
+.ov-page .ov-faq { display: flex; flex-direction: column; }
+.ov-page .ov-faq-a { font-size: 13px; line-height: 1.8; color: var(--graphic-body); margin: 0 12px 12px; }
+
+@media (min-width: 640px) {
+  .ov-page .ov-hero-cards:has(> :nth-child(2)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov-page .ov-share-buttons { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ov-page .ov-detail-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

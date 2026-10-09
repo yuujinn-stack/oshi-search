@@ -7,7 +7,8 @@
 //  （work.vodUpdatedAt）はそのまま再利用し、新しい判定・推測は一切行わない。
 import Link from 'next/link';
 import type { WorkRecord } from '@/types/work';
-import { deduplicateProviders, isConfirmedVodAvailability, getVodProviderDisplayInfo, normalizeProviderName } from '@/lib/vod-dedup';
+import { getVodProviderDisplayInfo, normalizeProviderName } from '@/lib/vod-dedup';
+import { getStreamingProviders } from '@/lib/vod-availability';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
 import { VOD_TYPE_CONFIG, getVodLink, getVodServiceStyle } from '@/lib/vod-cta';
@@ -15,15 +16,8 @@ import AffiliateSlot from '@/components/site/AffiliateSlot';
 import VodTrackLink from '@/components/site/VodTrackLink';
 import ProviderLogo from '@/components/ProviderLogo';
 
-const STREAMING_TYPES = ['flatrate', 'free', 'ads'];
 const MAX_WORKS = 6;
 const MAX_PROVIDERS_PER_WORK = 3;
-
-function getStreamingProviders(work: WorkRecord, terminatedSlugs: Set<string>) {
-  return deduplicateProviders(
-    (work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p, terminatedSlugs)),
-  ).filter((p) => STREAMING_TYPES.includes(p.type));
-}
 
 function formatCheckedDate(vodUpdatedAt?: number): string | null {
   if (!vodUpdatedAt) return null;

@@ -10,9 +10,11 @@ import { getDisplayWorkType } from '@/lib/work-display-type';
 import { getPersonMeta } from '@/lib/person-meta';
 import { getGroupMeta } from '@/lib/group-meta';
 import { groupHref } from '@/lib/group-slug';
-import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
+import { isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
+// VOD フィルタ（「今すぐ見られる」判定）は src/lib/vod-availability.ts の共通関数を使う
+import { getStreamingProviders } from '@/lib/vod-availability';
 import ProductTabList, { type ProductWithSection } from '@/components/ProductTabList';
 import PersonCard from '@/components/PersonCard';
 import WorksSection from '@/components/WorksSection';
@@ -24,6 +26,8 @@ import PersonHero from '@/components/site/PersonHero';
 import PersonQuickNav from '@/components/site/PersonQuickNav';
 import StreamingNowSection from '@/components/site/StreamingNowSection';
 import FeaturedProductsSection from '@/components/site/FeaturedProductsSection';
+import OshiVodEntryCta from '@/components/oshi-vod/OshiVodEntryCta';
+import { buildOshiVodWithPath } from '@/lib/oshi-vod/params';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
@@ -35,7 +39,6 @@ import {
   type PersonDisplayContext,
 } from '@/lib/product-display-score';
 import type { WorkRecord } from '@/types/work';
-import type { VodProvider } from '@/types/vod';
 import { buildHeroBadgeTitles, buildInfoGenreList, normalizeTag } from '@/lib/person-display-tags';
 import { ACTIVITY_LABEL } from '@/lib/person-badges';
 import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
@@ -177,13 +180,6 @@ const DISPLAY_SECTIONS: Array<{
     ],
   },
 ];
-
-// ─── VOD フィルタ（WorkCard と同一ロジック） ──────────────────────────────────
-function getStreamingProviders(work: WorkRecord, terminatedSlugs: Set<string>): VodProvider[] {
-  return deduplicateProviders(
-    (work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p, terminatedSlugs)),
-  ).filter((p) => ['flatrate', 'free', 'ads'].includes(p.type));
-}
 
 interface Props { params: Promise<{ slug: string }> }
 
@@ -753,6 +749,14 @@ export default async function PersonPage({ params }: Props) {
                   );
                 })}
               </div>
+              {/* 推しに合うサブスク診断への導線（現在確認できる配信作品がある人物のみ＝このセクション内に置く）。
+                  この人物を選択済みの状態で /oshi-vod を開く。 */}
+              <OshiVodEntryCta
+                href={buildOshiVodWithPath([person.name])}
+                title="この人を含めてサブスク診断"
+                description={`${person.name}と他の推しの出演作品が一番見られるサービスは？`}
+                style={{ marginTop: '16px' }}
+              />
             </section>
           )}
 

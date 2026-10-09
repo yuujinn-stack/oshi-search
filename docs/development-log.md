@@ -3146,3 +3146,118 @@ Task 80 を本番で目視確認した際に見つかった3点を直す。人�
 ### 注意点
 - 投稿済みバッジ・テンプレート投稿状況は、動画生成画面では従来どおり渡していないため表示されない（変更なし）。
 - 同時期に oshi-video-maker 側で Worker の launchd 自動起動・スリープ対策（caffeinate -i）・進捗報告の順序保証を追加（oshi-search 側の変更なし）。
+
+---
+
+## Task 88：推しに合うサブスク診断（/oshi-vod）高機能版
+
+### 目的
+推しを選ぶだけで「出演作品を一番多く見放題で見られる動画配信サービス」を診断する公開機能を追加する。作品数重視・月額重視・コスパ重視の3ランキング、2サービス最適化（一番多く見られる2サービス／80%以上を最安で見る方法）、無料作品、見られる作品一覧、見られない作品＋代替手段、人物別内訳、詳しい比較、共有URL・SNS共有・診断結果画像（feed 1080×1350／story 1080×1920）までを初期実装で揃えた。ユーザー操作は「推しを選ぶ → 診断する」のみ。
+
+### DB変更
+なし（テーブル・カラム・migration・db-init いずれも変更なし）。新規の外部API・AI APIも導入していない。
+
+### 新規ファイル
+- `src/lib/vod-availability.ts` — 「確認済み」「今すぐ見られる」判定の共通関数（`getConfirmedProviders` / `getStreamingProviders` / `STREAMING_TYPES`）。中身は既存の `isConfirmedVodAvailability` + `deduplicateProviders` の組み合わせのみ。
+- `src/lib/vod-plan-info.ts` — 料金比較情報の一元管理（service / kind / planName / monthlyPrice / taxIncluded / sourceUrl / checkedAt / isComparable / note / officialUrl）と `isPriceComparable()`。
+- `src/lib/oshi-vod/`：`types.ts`・`core.ts`（計算の純粋関数）・`params.ts`（URL解析・組み立て、最大12人）・`picker.ts`（人物選択用データ・検索）・`data.ts`（server-only。既存取得関数の組み合わせ＋`unstable_cache` 300秒）・`format.ts`・`share.ts`・`image-data.ts`。
+- `src/lib/ga-event.ts` — GA4 イベント送信ラッパー（window.gtag がある場合のみ）。
+- `src/app/oshi-vod/page.tsx`・`oshi-vod.css`・`opengraph-image.tsx`（静的OG）。
+- `src/app/api/oshi-vod/image/route.tsx` — 診断結果画像（`?p=...&size=feed|story`）。
+- `src/server/oshi-vod/result-image.tsx` — 結果画像テンプレート（Satori。人物写真なし・外部ロゴ画像なし）。
+- `src/components/oshi-vod/`：`OshiVodPersonPicker`（診断専用の複数選択UI）・`OshiVodResultHero`・`OshiVodRankings`・`OshiVodPairs`・`OshiVodWorkLists`・`OshiVodPersonBreakdown`・`OshiVodDetailCompare`・`OshiVodServiceCta`・`OshiVodServiceLine`・`OshiVodShare`・`OshiVodTracker`・`OshiVodEntryCta`・`sec-label.ts`。
+- テスト：`vod-availability.test.ts`（旧ローカル実装との完全一致を2000ケース×3パターンで検証）・`vod-plan-info.test.ts`・`oshi-vod-core.test.ts`・`oshi-vod-params.test.ts`・`oshi-vod-picker.test.ts`・`oshi-vod-share.test.ts`。
+
+### 変更ファイル
+- `src/app/person/[slug]/page.tsx` — ローカル `getStreamingProviders` を共通関数へ置き換え（同一実装）。`#vod` セクション末尾に「この人を含めてサブスク診断」（`/oshi-vod?with=人物名`）を追加（配信中作品がある人物のみ＝同セクション表示時のみ）。
+- `src/components/site/StreamingNowSection.tsx`・`src/server/instagram-post/site-ui/data.ts` — ローカル `getStreamingProviders` を共通関数へ置き換え。
+- `src/app/groups/[groupSlug]/page.tsx` — ローカル `getPublicProviders` の中身を `getConfirmedProviders` に置き換え。メンバー欄の直前に診断導線を追加（現役メンバー1〜12人：全員選択済みで開く／それ以外：`?group=` でメンバー選択を開く）。
+- `src/app/page.tsx` — 「グループで探す」の直後に「推しに合うサブスクを診断」導線（`<aside>`。既存の `section:nth-of-type` による見出し番号CSSに影響しない）。
+- `src/app/sitemap.ts` — `/oshi-vod` 本体のみ追加。
+- `src/lib/affiliate-constants.ts`・`src/app/admin/affiliates/AffiliateManager.tsx` — slotKey `oshi_vod_result`（表示名「サブスク診断 結果画面」）を追加。
+- `next.config.ts` — `outputFileTracingIncludes` に `/api/oshi-vod/image`・`/oshi-vod/opengraph-image`（既存の日本語フォントを同梱）。
+- `CLAUDE.md` — 現在の構成説明を「DB正本＝Neon PostgreSQL／Redis＝補助用途」に修正し、VOD判定・料金情報のルールを追記（本開発ログの過去エントリ・アーキテクチャメモは当時の記録として書き換えていない）。
+
+### 設計上の判断・注意点
+- **判定の一致**：診断は `getConfirmedProviders`（人物ページ等と同一）を通した後に配信種別で分類するだけ。1人診断の「今すぐ見られる」件数が人物ページの配信中件数と一致することを本番データ（目黒蓮31・ラウール26・宮舘涼太19）とテストで確認。
+- **分類**：作品ごとの配信種別を優先。flatrate かつ料金情報に `kind:'subscription'` があるサービス→有料見放題（ランキング対象）、free/ads→無料枠（ABEMA・Lemino等も作品単位で判定）、rent/buy→詳細比較のみ、Prime Video追加チャンネル（`isPrimeVideoChannel`）→Prime Video本体に数えない、料金情報にないサービスの見放題→「その他」（推測で分類しない）。TVer・YouTube（`kind:'free'`）は有料ランキングに入れない。
+- **重複排除**：キーは `canonicalWorkId ?? id`。同一作品の複数行の配信情報は全行を合算してから判定（作品詳細ページの合算方針と同じ）。人物別内訳では各人物側に表示。
+- **カバー率の分母**：選択人物の作品のうち、いずれかの有料サブスクで見放題が確認できるユニーク作品数。表示は小数1桁切り捨て、80%判定は整数演算（`count*5 >= total*4`）で表示と判定が食い違わないようにした。
+- **ランキング**：作品数（料金未登録も含む）・月額・コスパ（交差乗算で比較）の3種。同率は 1,1,3 方式で「同率」表示。並びの最終キーは `vod-plan-info.ts` の定義順。アフィリエイト情報は計算関数に一切渡さない。
+- **80%以上を最安で見る方法**：価格比較可能なサービスのみ。1サービスで達成できるものがあれば1サービスを優先、無ければ2サービスの最安。未達時は「見つからなかった」旨と最大カバー構成を表示。
+- **料金**：2026-10-08 に各サービスの日本向け公式ページを確認して入力（Hulu 1,320円＝2026/10/1改定後の通常決済、U-NEXT 2,189円、Prime Video（Amazonプライム月額）600円、Disney+ スタンダード 1,250円、DMMプレミアム 550円、Leminoプレミアム 1,540円（Web）、TELASA 990円、いずれも税込）。Netflix は広告つきプランで一部作品が見られず、スタンダードの税込表記を公式で確認できないため `isComparable=false`。ABEMA（公式ページ間で料金表記が不一致）・FOD・NHKオンデマンド・のぎ動画（公式ページを取得・確認できず）も `isComparable=false`。料金改定時は `vod-plan-info.ts` の値と `checkedAt` を更新する。
+- **SEO**：`/oshi-vod`（クエリなし）のみ index・sitemap 掲載。`?p=`・`?with=`・`?group=` 付きは `noindex, follow`＋canonical を本体へ。JSON-LD は BreadcrumbList・WebPage（入口のみ FAQPage）。人物・グループ単位のSEO固定ページは作っていない（`core.ts`・`data.ts` を呼べば将来作れる構成）。
+- **アフィリエイト**：CTA は `AffiliateSlot`（slotKey `oshi_vod_result`）＋未登録時は `VodTrackLink`（公式URL・既存 /api/track 計測）。表示ルール（結論カード・各ランキング1位・組み合わせ・詳細比較の全サービス）で一律に付け、提携の有無で位置・順位は変えない。広告表示時のみ既存どおり「PR」。
+- **Analytics**：GA4 `diagnosis_start`（person_count・source）・`diagnosis_complete`（person_count・top_service・target_work_count。同一組み合わせは30分重複送信しない）・`diagnosis_cta_click`（service・placement・rank）・`diagnosis_share`（method）。人物名は送らない。
+- **結果画像**：結果ページと同じ計算結果から生成。CDNキャッシュ `s-maxage=3600`。入力は公開人物のみ・最大12人。
+- **キャッシュ**：診断結果は `unstable_cache`（300秒、tag `oshi-vod`）。キャッシュ値を小さく保つため代表作品行は表示に必要なフィールドのみに絞り、無料作品・代替手段は作品キーで参照（Snow Man 9人で約430KB）。
+
+### 動作確認
+- `npx tsc --noEmit` エラーなし、`npx vitest run` 1712件全通過、`next build` 成功（`/` はISR 1分のまま、`/oshi-vod/opengraph-image` は静的、フォントのトレース確認済み）。
+- Playwright（ローカル next dev / next start、360・390・1280px）：入口・結果（1人・3人・12人）・`?with=`・`?group=乃木坂46`・トップ／人物／グループの導線、横スクロールなし・コンソールエラーなし、robots/canonical、GA4 4イベントと /api/track の送信内容（GA通信はブロックして dataLayer で確認）、結果画像2サイズ、sitemap を確認。
+
+---
+
+## Task 88 追記：/oshi-vod 実画面（390px優先）のUI/UX確認と修正
+
+### 目的
+実データ（Snow Man 9人ほか）でスマホ幅390pxを中心に全18状態を確認し、「初見で使い方が分かるか・情報量・結論の見え方・CTAの自然さ・C案との統一・ランキングが広告順位に見えないか」の観点で見つかった問題を修正する。
+
+### 変更ファイル
+- `src/components/oshi-vod/OshiVodResultHero.tsx` — 主指標「見放題で見られる推しの作品 64 / 139作品」を大きく1行で表示し、カバー率・料金は2タイルに整理（390pxで数値が折り返していた）。料金の「税込」を別行の小さな表記にして「（税／込）」の不自然な折り返しを解消。「ランキングを見る↓」「結果をシェア↓」のページ内リンクを追加。
+- `src/components/oshi-vod/OshiVodRankings.tsx`・新規 `OshiVodRankingTabs.tsx`（client） — 3ランキングを縦積みからタブ切替（各タブに1位を表示）に変更。ランキング内のサービス別配色CTAを撤去し、「順位は作品数・料金・配信データだけで決めています。広告の有無は順位に関係ありません」を明記（1位だけにブランド色ボタンがあり広告枠のように見えたため）。
+- `src/components/oshi-vod/OshiVodServiceCta.tsx` — `variant="compact"`（中立色の小さな公式サイトリンク）を追加。詳しい比較では全サービス分の大きなブランド色ボタンが並んでいたため compact に変更。
+- `src/components/oshi-vod/OshiVodDetailCompare.tsx` — 無料サービス（TVer・YouTube）の見放題欄を「0 / N作品（0%）」ではなく「対象外（無料サービス）」と表示。
+- `src/components/oshi-vod/OshiVodWorkLists.tsx` — 見放題作品カードの初期表示を6→4件。代替手段リストを有用度順（有料見放題→無料→レンタル→追加チャンネル→その他）に並べ替え30件まで、無料作品はサービスごと20件までに制限。
+- `src/components/oshi-vod/OshiVodPersonPicker.tsx` — 選択タグのグループ名は複数グループにまたがる場合のみ表示。グループ全員選択後はボタンを「✓ 全員選択済み」に。人物を1人以上選ぶと「診断する」ボタンを画面下に固定（sticky）。
+- `src/components/oshi-vod/OshiVodEntryCta.tsx`・人物ページ・グループページ — 導線ボタンの文言を短縮（「診断 →」）し、説明文を短くして390pxでタイトルが1文字だけ折り返す問題を解消。絵文字アイコンは削除。
+- `src/app/oshi-vod/oshi-vod.css` — 上記に対応するスタイル（タブ・compact CTA・sticky・料金表記）。
+
+### 注意点
+- 確認用スクリプトはGA4への送信をすべて遮断して実行する（`AnalyticsGate` は /admin 以外で常にGAを読み込むため、ローカル確認でも本番プロパティへ送信される）。今回の確認の初回実行分ではローカル（localhost）からのページビュー・診断イベントが送信されていた。
+- VODロゴは管理画面登録ロゴ（/api/providers）取得後に差し替わる既存仕様のため、開発サーバー初回コンパイル直後のスクリーンショットでは空白に写ることがある（実表示は正常）。一部TMDbロゴURLは404で既存のフォールバック動作になる（既存ページと同じ）。
+- 確認用スクリーンショットと再撮影スクリプトは `tmp/oshi-vod-review/`（gitignore対象）に保存。
+- `npx tsc --noEmit` エラーなし、`npx vitest run` 1712件全通過。
+
+---
+
+## Task 88 追記2：localhost からの GA4 送信停止・VODロゴ再確認
+
+### 目的
+ローカル開発・動作確認から本番 GA4 プロパティへ page_view・diagnosis_* 等のイベントが送信されないようにする。あわせて、完全に読み込まれた状態の本番ビルドで診断結果のVODロゴを再確認する。
+
+### 変更ファイル
+- `src/lib/analytics-host.ts`（新規）— `isLocalAnalyticsHost(hostname)`：localhost・127.0.0.1・::1・*.localhost を判定する純粋関数。
+- `src/components/site/AnalyticsGate.tsx` — マウント後に hostname を判定し、ローカルホストでは `GoogleAnalytics` 自体を描画しない（GA未読込のため自動 page_view も `window.gtag` も発生せず、OshiAdBanner の affiliate_click を含む全カスタムイベントも送信されない）。/admin 除外は従来どおり。
+- `src/lib/ga-event.ts` — 念のため `sendGaEvent` でもローカルホストでは送信しない。
+- `src/lib/__tests__/analytics-host.test.ts`（新規）— ローカル判定と、本番・Preview・LAN IP 等では従来どおり計測することを検証。
+
+### 確認結果
+- 本番ビルド（`next start`）で、localhost・127.0.0.1 は GA リクエスト0件・`window.gtag` 未定義。ローカル以外のホスト名（ブラウザのホスト解決で 127.0.0.1 へ割り当てたテスト用ドメイン）では従来どおり gtag.js が読み込まれることを確認（確認時のGA通信は遮断し、実際には送信していない）。
+- `next dev` は `allowedDevOrigins` 未設定の別オリジン（LAN IP 等）からのクライアントJSをブロックするため、GA読み込み確認は本番ビルドで行う必要がある。
+- VODロゴ：Snow Man 9人の診断結果で、U-NEXT・FOD・Hulu・TELASA・Netflix・Prime Video・DMM TV・Lemino・ABEMA・NHKオンデマンド・TVer・YouTube はすべて正常表示。**Disney+ のみロゴ未表示（グレーの再生アイコン）**。原因は既存データ側で、管理画面の配信サービス（vod_providers）に Disney+ のロゴ未登録・配信データに TMDb ロゴパスなし・`public/providers/` にローカル画像なし。既存の作品詳細ページ（例 /work/tmdb-tv-295597）でも同じ表示であり、診断機能固有の問題ではない。解消するには /admin/providers で Disney+ のロゴURLを登録する（データ変更のため未実施）。
+- 主要画面のスクリーンショット（本番ビルド・フォント／画像読み込み完了後に撮影）と撮影スクリプトを `tmp/oshi-vod-screens/`（gitignore対象）に保存。
+- `npx tsc --noEmit` エラーなし、`npx vitest run` 1714件全通過、`next build` 成功。
+
+---
+
+## Task 88 追記3：Disney+ロゴの登録・GA4を本番ホストのみに限定
+
+### 1. Disney+ロゴ
+- **調査**：`public/providers/`（.gitkeepのみ。`AVAILABLE_LOCAL_LOGO_SLUGS` も空）・リポジトリ内／git履歴の画像（Disney+素材なし）・管理画面の配信サービス（`vod_providers`：Disney+の行なし）・既存の配信データを確認。既存配信データ（`works.vod_data`）の Disney+ エントリに、TMDb watch provider（source=tmdb_watch_provider）由来のロゴパス `/5eZ872CghnHFLB1j8grszbrx0dx.png`（19件）・`/97yvRBw1GzX7fXprcF80er19ot.jpg`（3件）が既に保持されており、いずれも現在も有効（200）な Disney+ 公式ロゴだった。一方、最多の `/7rwgEs15tFwyR9NPQ5jpqxXEUAu.jpg`（manual_csv 等101件）は TMDb 側で404になっており、重複集約でこの行が選ばれる作品ではロゴがグレーの代替アイコンになっていた。
+- **対応**：新しい外部画像は取得・追加せず、既存データが保持していた TMDb ロゴ（ProviderLogo が Netflix・Prime Video 等で既に使っている TMDb ロゴ配信と同じ）を、既存の ProviderLogo 管理方式＝管理画面の配信サービス登録（`vod_providers`）へ登録した。管理画面 `/api/admin/providers` POST と同じ処理（`normalizeProviderName` で slug 正規化 → `saveProvider`）を使い、`slug=disneyplus`・`name=Disney+`・`logoUrl=https://image.tmdb.org/t/p/w92/5eZ872CghnHFLB1j8grszbrx0dx.png`・`isActive=true` を1行追加（本番DBへの書き込みはこの1行のみ。コード変更なし）。以後は /admin/providers から通常どおり変更・削除できる。
+- **確認**：診断結果（Snow Man 9人）の全ProviderLogoで代替アイコン0件、Disney+ 7箇所すべて表示。既存の作品詳細ページ（/work/tmdb-tv-295597）でも Disney+ ロゴが表示されることを確認（診断機能だけの特殊対応ではない）。
+
+### 2. GA4 を本番ホストのみに限定
+- `src/lib/analytics-host.ts` — ローカル判定（ブラックリスト）を廃止し、`GA_ALLOWED_HOSTS = ['oshi-search.jp']` のホワイトリスト方式 `isGaAllowedHost()` に変更。localhost・127.0.0.1・*.vercel.app（Preview）・LAN IP・その他すべてのホストでは送信しない。www.oshi-search.jp は DNS 未設定（名前解決不可）のため含めていない。
+- `src/components/site/AnalyticsGate.tsx` — 許可ホストでのみ GoogleAnalytics を読み込む（自動 page_view を含む）。
+- `src/lib/ga-event.ts` — `sendGaEvent` も同じ判定を使う（diagnosis_start / complete / cta_click / share）。
+- `src/components/affiliate/OshiAdBanner.tsx` — 既存の affiliate_click を `window.gtag` 直接呼び出しから `sendGaEvent` 経由に変更（イベント名・パラメータは同一）。これでサイト内のGA4送信はすべて同じ判定を通る。
+- `src/lib/__tests__/analytics-host.test.ts` — 本番ホストのみ許可・Preview/ローカル/www/類似ドメインは拒否を検証。
+- **確認（本番ビルド `next start`。ブラウザ内のホスト解決で各ホスト名をローカルへ向け、GA通信は遮断）**：localhost・127.0.0.1・Preview相当のホスト・www.oshi-search.jp は gtag.js 読込0件・カスタムイベント0件（gtag をスタブしても sendGaEvent が送らない）。oshi-search.jp のみ gtag.js が読み込まれ diagnosis_start / diagnosis_complete が記録される。*.vercel.app は .app がHSTSプリロード対象でhttp確認ができないため単体テストで検証。
+
+### テスト
+- `npx tsc --noEmit` エラーなし（`.next/types` に生成物の重複ファイル「* 2.ts」があり型エラーになったため削除して再実行。ソースコードの問題ではない）
+- `npx vitest run` 1714件全通過
+- `next build` 成功（`/` ISR 1分・`/oshi-vod/opengraph-image` 静的は変わらず）
+- スクリーンショットは Disney+ ロゴが写る `tmp/oshi-vod-screens/05_詳しい比較_390px.png` のみ撮り直し（`capture-05.mjs`）。他は撮影済みのものを維持。

@@ -15,6 +15,7 @@ import { VOD_PAGE_PROVIDERS, getVodProviderWorkCounts } from '@/lib/vod-page';
 import { getPhotobookHomeItems } from '@/lib/photobook-store';
 import PhotobookHomeSection from '@/components/site/PhotobookHomeSection';
 import HomeGroupSection from '@/components/site/HomeGroupSection';
+import OshiVodEntryCta from '@/components/oshi-vod/OshiVodEntryCta';
 import type { HomeGroupItem } from '@/components/site/HomeGroupSection';
 import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
 import './home-graphic.css';
@@ -273,6 +274,16 @@ export default async function HomePage() {
 
         {/* グループで探す */}
         <HomeGroupSection groups={homeGroups} />
+
+        {/* 推しに合うサブスク診断への導線（「グループで探す」の優先順位は維持し、その直後に置く）。
+            既存のセクション番号CSS（section:nth-of-type）に影響しないよう <aside> で描画している。 */}
+        <OshiVodEntryCta
+          href="/oshi-vod"
+          title="推しに合うサブスクを診断"
+          description="推しを選ぶだけで、出演作品が一番見られる動画配信サービスがわかります"
+          className="home-oshivod-cta"
+          style={{ marginBottom: '32px' }}
+        />
 
         {/* ジャンルで探す（主要ジャンルのみ初期表示。残りは <details> で展開。リンクはすべてサーバーHTMLに含まれる） */}
         <section>

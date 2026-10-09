@@ -32,6 +32,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'daily',
       priority: 1,
     },
+    // 推しに合うサブスク診断は本体ページのみ（人物の組み合わせ結果URLは noindex のため含めない）
+    {
+      url: `${BASE_URL}/oshi-vod`,
+      changeFrequency: 'weekly' as const,
+      priority: 0.7,
+    },
     {
       url: `${BASE_URL}/about`,
       lastModified: new Date('2026-08-12'),

@@ -17,6 +17,7 @@ const SLOT_LABELS: Record<string, string> = {
   vod_mid: 'VODサービスページ 中部',
   vod_bottom: 'VODサービスページ 下部',
   person_vod: '人物ページ VOD欄',
+  oshi_vod_result: 'サブスク診断 結果画面',
 };
 
 const STATUS_LABELS: Record<AffiliateProgramStatus, string> = {

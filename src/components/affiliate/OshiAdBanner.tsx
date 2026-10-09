@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { sendGaEvent } from '@/lib/ga-event';
 
 // 全人物詳細ページ共通の「#推しアド」（AccessTrade）広告枠。
 // 人物ごとにDBへ広告情報を保存する方式ではなく、このコンポーネント側に
@@ -12,7 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 // 書き換えると成果計測が壊れるため）。dangerouslySetInnerHTML を使うのも、JSX変換時の
 // 属性欠落・タイプミスを避けて元コードを文字列のまま渡すため。
 //
-// クリック計測（GA4 affiliate_click）は、AccessTradeのリンクコード自体には手を入れず、
+// クリック計測（GA4 affiliate_click。送信は src/lib/ga-event.ts の sendGaEvent 経由）は、AccessTradeのリンクコード自体には手を入れず、
 // 外側のラッパーdivにonClickを付けてイベントバブリングで検知する方式にしている。
 
 declare global {
@@ -52,15 +53,15 @@ export default function OshiAdBanner({ personName }: Props) {
   // 環境変数の設定漏れ時に広告が表示され続けるのを防ぐ。
   if (process.env.NEXT_PUBLIC_OSHI_AD_ENABLED !== 'true' || imageFailed) return null;
 
+  // GA4送信はサイト共通の sendGaEvent を通す（本番ホスト以外では送信しない判定を共通化。
+  // イベント名・パラメータは従来と同一）。
   const handleClick = () => {
-    if (typeof window !== 'undefined' && typeof window.gtag === 'function') {
-      window.gtag('event', 'affiliate_click', {
-        affiliate_name: 'oshi_ad',
-        page_type: 'person',
-        person_name: personName,
-        placement: 'after_watch_now',
-      });
-    }
+    sendGaEvent('affiliate_click', {
+      affiliate_name: 'oshi_ad',
+      page_type: 'person',
+      person_name: personName,
+      placement: 'after_watch_now',
+    });
   };
 
   return (

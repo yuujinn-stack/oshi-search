@@ -2,7 +2,8 @@ import 'server-only';
 import { getPersonWithConfigMerged } from '@/lib/persons';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
-import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
+import { normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
+import { getStreamingProviders } from '@/lib/vod-availability';
 import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
 import { getDisplayWorkType } from '@/lib/work-display-type';
 import { getAllStoredProducts } from '@/lib/product-store';
@@ -27,12 +28,7 @@ import { PersonNotFoundError } from '../person-data';
  * 人物ページ側のロジックを変更した場合は、ここも合わせて更新すること（数字がサイト表示とずれないように）。
  */
 
-// ─── VOD（page.tsx の getStreamingProviders と同一：見放題・無料・広告付きのみ） ───
-function getStreamingProviders(work: WorkRecord, terminatedSlugs: Set<string>): VodProvider[] {
-  return deduplicateProviders(
-    (work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p, terminatedSlugs)),
-  ).filter((p) => ['flatrate', 'free', 'ads'].includes(p.type));
-}
+// ─── VOD（人物ページと同じ共通関数 src/lib/vod-availability.ts の getStreamingProviders を使う） ───
 
 // ─── 商品（page.tsx の classifyProduct / DISPLAY_SECTIONS / 並び替えと同一） ───────
 const BOOK_TITLE_KEYWORDS: string[] = [

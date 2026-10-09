@@ -6,7 +6,11 @@ import { getAllPersonsMerged } from '@/lib/persons';
 import { getPublishedWorks } from '@/lib/work-store';
 import { getAllStoredProducts, CATEGORIES } from '@/lib/product-store';
 import { getAllVerdicts } from '@/lib/judgment-store';
-import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
+import { normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
+import { getConfirmedProviders } from '@/lib/vod-availability';
+import OshiVodEntryCta from '@/components/oshi-vod/OshiVodEntryCta';
+import { buildOshiVodGroupPath, buildOshiVodWithPath } from '@/lib/oshi-vod/params';
+import { canSelectWholeGroup } from '@/lib/oshi-vod/picker';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getAllPersonMetas } from '@/lib/person-meta';
@@ -95,10 +99,9 @@ const PRODUCT_DISPLAY: Array<{
 ];
 
 // ─── ユーティリティ ────────────────────────────────────────────────────────────
+// 公開してよい配信情報（src/lib/vod-availability.ts の共通関数。人物ページ等と同一判定）
 function getPublicProviders(work: WorkRecord, terminatedSlugs: Set<string>): VodProvider[] {
-  return deduplicateProviders(
-    (work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p, terminatedSlugs)),
-  );
+  return getConfirmedProviders(work.vodProviders, terminatedSlugs);
 }
 
 // ─── 作品コンパクトリンク ──────────────────────────────────────────────────────
@@ -666,6 +669,24 @@ export default async function GroupsPage({ params }: Props) {
                 <span key={n} className="font-medium text-slate-600">/ {n}</span>
               ))}
             </div>
+          )}
+
+          {/* ━━━ 推しに合うサブスク診断への導線 ━━━
+              現役メンバー（activeMembers：/oshi-vod の人物選択と同じ判定）が12人以下なら全員を選択済みで開く。
+              12人を超える（または現役0人の）グループは自動選択せず、メンバーを選びやすい状態で開く。 */}
+          {canSelectWholeGroup(activeMembers.length) ? (
+            <OshiVodEntryCta
+              href={buildOshiVodWithPath(activeMembers.map((m) => m.name))}
+              title="このグループ全員でサブスク診断"
+              description={`${groupName}の${activeMembers.length}人の出演作品が一番見られるサービスは？`}
+            />
+          ) : (
+            <OshiVodEntryCta
+              href={buildOshiVodGroupPath(groupName)}
+              title="このグループから推しを選んで診断"
+              description={`${groupName}のメンバーから推しを選んで、一番見られるサービスを診断`}
+              buttonLabel="選ぶ"
+            />
           )}
 
           {/* ━━━ 1. メンバー ━━━ */}

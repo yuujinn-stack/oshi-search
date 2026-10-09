@@ -14,6 +14,9 @@ const nextConfig: NextConfig = {
   // 大きいため、確実性を優先して明示的にトレース対象へ加えている。
   outputFileTracingIncludes: {
     '/api/admin/instagram-post/generate': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
+    // 推しに合うサブスク診断の結果画像・OG画像も同じ日本語フォントを使う
+    '/api/oshi-vod/image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
+    '/oshi-vod/opengraph-image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
   },
   images: {
     remotePatterns: [

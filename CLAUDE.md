@@ -27,9 +27,16 @@ docs/development-log.md
 ## プロジェクト概要
 
 - **フレームワーク：** Next.js App Router（Server / Client Components）
-- **DB：** Upstash Redis（`@upstash/redis`）
+- **DB（正本）：** Neon PostgreSQL（`@neondatabase/serverless` + Drizzle ORM / `drizzle-orm/neon-http`）。スキーマは `src/db/schema.ts`、本番へのテーブル追加は `/admin/db-init`（`src/app/api/admin/db-init/route.ts`）経由
+- **Redis（補助用途）：** Upstash Redis（`@upstash/redis`）。閲覧数・クリック数等の計測カウンタ（`/api/track`・`/api/search-track`）、ランキング集計、ジョブキュー・ロック等の補助データのみ。人物・作品・配信情報・商品の正本ではない
 - **スタイル：** Tailwind CSS + CSS変数によるテーマシステム
 - **デプロイ：** Vercel
+
+## VOD「現在視聴可能」判定・料金情報
+
+- 公開画面の「配信中として確認済み」「今すぐ見られる」判定は `src/lib/vod-availability.ts`（`getConfirmedProviders` / `getStreamingProviders`）の共通関数を使う。ページごとに同じ判定を書き写さない
+- VODサービスの月額料金は `src/lib/vod-plan-info.ts` だけで管理する（公式サイトのみを一次情報とし、`checkedAt` は実際に確認した日付。確認できないものは `isComparable=false`）
+- 推しに合うサブスク診断（`/oshi-vod`）の計算は `src/lib/oshi-vod/core.ts` の純粋関数に集約。ランキングにアフィリエイト提携情報を渡さない
 
 ## テーマシステム
 
