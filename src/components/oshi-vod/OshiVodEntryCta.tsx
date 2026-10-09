@@ -10,9 +10,11 @@ interface Props {
   buttonLabel?: string;
   className?: string;
   style?: CSSProperties;
+  /** 説明文の下に小さく添える補足（例: 「無料・登録不要」） */
+  note?: string;
 }
 
-export default function OshiVodEntryCta({ href, title, description, buttonLabel = '診断', className, style }: Props) {
+export default function OshiVodEntryCta({ href, title, description, buttonLabel = '診断', className, style, note }: Props) {
   return (
     <aside aria-label="推しに合うサブスク診断" className={className} style={style}>
       <Link
@@ -36,6 +38,23 @@ export default function OshiVodEntryCta({ href, title, description, buttonLabel 
           </span>
           <span style={{ display: 'block', fontSize: '15px', fontWeight: 900, lineHeight: 1.4 }}>{title}</span>
           <span style={{ display: 'block', fontSize: '12px', lineHeight: 1.6, color: '#62625C', marginTop: '2px' }}>{description}</span>
+          {note && (
+            <span
+              style={{
+                display: 'inline-block',
+                marginTop: '6px',
+                padding: '1px 6px',
+                fontSize: '11px',
+                fontWeight: 700,
+                lineHeight: 1.6,
+                color: '#146C3A',
+                background: '#EAF7EF',
+                border: '1px solid #BFE3CC',
+              }}
+            >
+              {note}
+            </span>
+          )}
         </span>
         <span
           style={{

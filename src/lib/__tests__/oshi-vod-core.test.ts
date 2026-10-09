@@ -355,7 +355,7 @@ describe('computeOshiVodDiagnosis', () => {
   it('作品数1位と結論文', () => {
     expect(r.byWorkCount[0].stat.service).toBe('unext');
     expect(r.byWorkCount[0].paidCount).toBe(3);
-    expect(r.headline).toBe('あなたの推し2人なら、作品数重視ではU-NEXTが一番合っています');
+    expect(r.headline).toBe('あなたの推し2人なら、作品数1位はU-NEXT');
   });
 
   it('1位で見られない作品と代替手段（追加チャンネルは別扱い）', () => {
@@ -395,6 +395,6 @@ describe('computeOshiVodDiagnosis', () => {
     const stats = computeServiceStats([], plans);
     expect(stats).toEqual([]);
     const tied = computeOshiVodDiagnosis([{ name: 'A', works: [work('w1', 'A', [vp('Hulu'), vp('U-NEXT')])] }], { terminatedSlugs: NO_TERMINATED });
-    expect(tied.headline).toBe('Aなら、作品数重視ではHuluとU-NEXTが同率で一番合っています');
+    expect(tied.headline).toBe('Aなら、作品数1位はHuluとU-NEXT（同率）');
   });
 });

@@ -280,7 +280,8 @@ export default async function HomePage() {
         <OshiVodEntryCta
           href="/oshi-vod"
           title="推しに合うサブスクを診断"
-          description="推しを選ぶだけで、出演作品が一番見られる動画配信サービスがわかります"
+          description="推しを選ぶだけで、一番多く見られるサービスがわかる"
+          note="無料・登録不要"
           className="home-oshivod-cta"
           style={{ marginBottom: '32px' }}
         />

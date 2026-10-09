@@ -414,7 +414,11 @@ function joinNames(names: string[]): string {
   return `${names.slice(0, 3).join('・')}ほか`;
 }
 
-/** 結果画面最上部の結論文 */
+/**
+ * 結果画面最上部の結論文。
+ * 月額・コスパ重視では別サービスが1位になりうるため、総合的な推薦（「一番合っている」等）ではなく
+ * 「作品数ランキングの1位」であることが分かる表現にする。
+ */
 export function buildHeadline(persons: Array<{ name: string }>, byWorkCount: RankedService[]): string {
   const prefix = persons.length === 1 ? `${persons[0].name}なら` : `あなたの推し${persons.length}人なら`;
   if (byWorkCount.length === 0) {
@@ -422,9 +426,9 @@ export function buildHeadline(persons: Array<{ name: string }>, byWorkCount: Ran
   }
   const top = byWorkCount.filter((r) => r.rank === 1);
   if (top.length > 1) {
-    return `${prefix}、作品数重視では${joinNames(top.map((r) => r.stat.displayName))}が同率で一番合っています`;
+    return `${prefix}、作品数1位は${joinNames(top.map((r) => r.stat.displayName))}（同率）`;
   }
-  return `${prefix}、作品数重視では${top[0].stat.displayName}が一番合っています`;
+  return `${prefix}、作品数1位は${top[0].stat.displayName}`;
 }
 
 // ─── エントリポイント ────────────────────────────────────────────────────────────

@@ -32,8 +32,12 @@ export default function OshiVodResultHero({ result }: { result: DiagnosisResult 
                   </div>
                 </div>
                 <p className="ov-hero-main-num">
-                  <span className="ov-hero-main-label">見放題で見られる推しの作品</span>
+                  <span className="ov-hero-main-label">対象{totals.paid}作品中、見放題で見られる作品</span>
                   <span className="ov-hero-main-value">{formatWorkFraction(r.paidCount, totals.paid)}</span>
+                  {/* 分母（対象作品）と登録出演作品の違いを小さく補足する */}
+                  <span className="ov-hero-main-caption">
+                    対象＝現在いずれかの有料サブスクで見放題確認できる{totals.paid}作品（登録出演作品{totals.registered}作品のうち）
+                  </span>
                 </p>
                 <dl className="ov-hero-nums">
                   <div><dt>カバー率</dt><dd>{formatCoverage(r.paidCount, totals.paid)}</dd></div>
