@@ -4,6 +4,7 @@ import { and, desc, eq, lt, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { videoGenerationJobs, videoWorkers } from '@/db/schema';
 import { personVideoSlug } from './person-slug';
+import { parseTemplateInput, TemplateInputError, type TemplateInputKind, type VideoTemplateInput } from '@/lib/video-template-input';
 
 /**
  * 動画生成ジョブ（video_generation_jobs）とWorker情報（video_workers）の読み書き。
@@ -29,6 +30,11 @@ export interface WorkerTemplateInfo {
    * readyなら全人物でCapCut生成でき、人物ごとのCapCut保存済み音声は要求しない。
    */
   sharedCapcut?: { ready: boolean; durationSeconds: number | null; message: string };
+  /**
+   * 複数人物を1本の動画にするテンプレートだけ（推しでサブスク比較: 人物3人）。ジョブ作成時にテンプレート固有の入力
+   * （template_input）を必須にし、この種別で検証する。省略時は従来どおり1ジョブ=1人物（template_inputはNULL）。
+   */
+  templateInputKind?: TemplateInputKind;
 }
 
 export interface WorkerInfo {
@@ -240,6 +246,8 @@ export async function createVideoJobs(input: {
   templateId: string;
   narrationMode: string;
   retryOfJobId?: string | null;
+  /** テンプレート固有の入力（templateInputKind を持つテンプレートだけ。それ以外は指定不可） */
+  templateInput?: unknown;
 }): Promise<VideoJob[]> {
   if (input.personNames.length === 0) throw new VideoJobError('人物が選択されていません。', 400);
   if (input.personNames.length > MAX_PERSONS_PER_REQUEST) {
@@ -254,6 +262,7 @@ export async function createVideoJobs(input: {
   if (!template.narrationModes.includes(input.narrationMode)) {
     throw new VideoJobError(`「${template.name}」はこのナレーション方式に対応していません。`, 400);
   }
+  const templateInput = resolveJobTemplateInput(template, input.personNames, input.templateInput);
   // CapCut保存済み音声: Workerが報告した状態がreadyの人物だけ受け付ける（フロントだけに任せない）。
   // 実際に生成する直前にもWorker側で再確認する。
   // テンプレート共通のCapCut音声が使えるテンプレートは、人物ごとのready判定をしない（共通音声が無ければ生成しない）
@@ -294,11 +303,39 @@ export async function createVideoJobs(input: {
     templateId: template.templateId,
     templateVersion: template.version,
     narrationMode: input.narrationMode,
+    // 従来のテンプレートは列に触れない（NULLのまま）
+    ...(templateInput ? { templateInput: templateInput as unknown as Record<string, unknown> } : {}),
     status: 'queued' as const,
     createdAt: new Date(now + i),
     updatedAt: new Date(now + i),
   }));
   return db.insert(videoGenerationJobs).values(rows).returning();
+}
+
+/**
+ * テンプレート固有の入力を検証する。templateInputKind を持つテンプレートは入力必須・1ジョブ（person_name は人物1）、
+ * 持たないテンプレートは入力を受け付けない（従来どおり template_input は NULL）。
+ */
+export function resolveJobTemplateInput(
+  template: Pick<WorkerTemplateInfo, 'name' | 'templateInputKind'>,
+  personNames: string[],
+  raw: unknown,
+): VideoTemplateInput | null {
+  if (!template.templateInputKind) {
+    if (raw !== undefined && raw !== null) throw new VideoJobError(`「${template.name}」はテンプレート固有の入力を受け付けません。`, 400);
+    return null;
+  }
+  let parsed: VideoTemplateInput;
+  try {
+    parsed = parseTemplateInput(template.templateInputKind, raw);
+  } catch (err) {
+    if (err instanceof TemplateInputError) throw new VideoJobError(err.message, 400);
+    throw err;
+  }
+  if (personNames.length !== 1 || personVideoSlug(personNames[0]) !== parsed.personSlugs[0]) {
+    throw new VideoJobError(`「${template.name}」は選択した人物1を代表としてジョブを1件だけ作成します。`, 400);
+  }
+  return parsed;
 }
 
 /** queuedのジョブだけキャンセルできる（Phase Aでは実行中ジョブの中断は行わない） */
@@ -327,6 +364,8 @@ export async function retryVideoJob(id: string): Promise<VideoJob> {
     templateId: source.templateId,
     narrationMode: source.narrationMode,
     retryOfJobId: source.id,
+    // テンプレート固有の入力（人物3人等）は元ジョブの値をそのまま引き継ぐ（順番・人数を変えない）
+    templateInput: source.templateInput ?? null,
   });
   return job;
 }

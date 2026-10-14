@@ -567,6 +567,9 @@ export const videoGenerationJobs = pgTable('video_generation_jobs', {
   templateId:      text('template_id').notNull(),
   templateVersion: integer('template_version'),
   narrationMode:   text('narration_mode').notNull(), // 'none' | 'auto' | 'capcut'（作成時にWorker報告の対応方式で検証）
+  // テンプレート固有の入力（drizzle/0018。複数人物のテンプレートだけ。従来のテンプレートはNULL）。
+  // 推しでサブスク比較: {"version":1,"personSlugs":[3人のslug]}。person_name / person_slug には1人目を入れる
+  templateInput:   jsonb('template_input').$type<Record<string, unknown>>(),
   status:          text('status').notNull().default('queued'),
   attempts:        integer('attempts').notNull().default(0),
   progressStep:    integer('progress_step'),

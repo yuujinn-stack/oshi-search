@@ -10,6 +10,8 @@ import {
   listVideoJobs,
   VideoJobError,
 } from '@/server/video-jobs/job-store';
+import { loadOshiVodVideoDiagnosis } from '@/server/oshi-vod/video-diagnosis';
+import { OSHI_VOD_COMPARE_INPUT_KIND, parseOshiVodCompareInput, TemplateInputError } from '@/lib/video-template-input';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,6 +54,8 @@ interface CreateBody {
   personNames?: unknown;
   templateId?: unknown;
   narrationMode?: unknown;
+  /** テンプレート固有の入力（推しでサブスク比較: { personSlugs: [3人] }）。それ以外のテンプレートでは指定しない */
+  templateInput?: unknown;
 }
 
 /** ジョブ作成（人物ごとに1ジョブ）。人物は登録済み人物のみ、テンプレート・方式はWorker報告の能力で検証する */
@@ -63,14 +67,24 @@ export async function POST(req: NextRequest) {
   const templateId = typeof body.templateId === 'string' ? body.templateId.trim() : '';
   const narrationMode = typeof body.narrationMode === 'string' ? body.narrationMode : '';
   try {
+    // 推しでサブスク比較（人物3人で1本）: 3人のslugを検証し、診断結果（比較対象作品が1件以上）を確認してから1ジョブだけ作る。
+    // 人物1を person_name / person_slug に入れ、3人の正本は template_input に保存する（従来のテンプレートはこの分岐に入らない）
+    const workerTemplate = (await getLatestWorker())?.templates.find((t) => t.templateId === templateId);
+    if (workerTemplate?.templateInputKind === OSHI_VOD_COMPARE_INPUT_KIND) {
+      const input = parseOshiVodCompareInput(body.templateInput);
+      const diagnosis = await loadOshiVodVideoDiagnosis(input);
+      const jobs = await createVideoJobs({ personNames: [diagnosis.persons[0].name], templateId, narrationMode, templateInput: input });
+      return NextResponse.json({ jobs });
+    }
     const registered = new Set((await getAllPersonsMerged()).map((p) => p.name));
     const unknown = personNames.filter((p) => !registered.has(p));
     if (unknown.length > 0) {
       return NextResponse.json({ error: `登録されていない人物です: ${unknown.join(', ')}` }, { status: 400 });
     }
-    const jobs = await createVideoJobs({ personNames, templateId, narrationMode });
+    const jobs = await createVideoJobs({ personNames, templateId, narrationMode, templateInput: body.templateInput });
     return NextResponse.json({ jobs });
   } catch (err) {
+    if (err instanceof TemplateInputError) return NextResponse.json({ error: err.message }, { status: 400 });
     if (err instanceof VideoJobError) return NextResponse.json({ error: err.message }, { status: err.status });
     return NextResponse.json({ error: maskSecrets(String(err instanceof Error ? err.message : err)) }, { status: 500 });
   }

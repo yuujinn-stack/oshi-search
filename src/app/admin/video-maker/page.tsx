@@ -5,6 +5,7 @@ import { LogoutButton } from '@/components/admin/LogoutButton';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import VideoMakerClient from './VideoMakerClient';
 import { listPersonReadingCandidates } from '@/server/video-jobs/script-prep-store';
+import { personVideoSlug } from '@/server/video-jobs/person-slug';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,6 +32,8 @@ export default async function VideoMakerPage() {
     activityStatus: metas[p.name]?.activityStatus,
     generation: metas[p.name]?.generation,
   }));
+  // 推しでサブスク比較（人物3人で1本）の選択で内部値に使う、推しサーチDBの人物slug（Workerへ渡すslugと同じ計算）
+  const personSlugByName = Object.fromEntries(persons.map((p) => [p.name, personVideoSlug(p.name)]));
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
@@ -45,7 +48,7 @@ export default async function VideoMakerPage() {
           <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
-      <VideoMakerClient persons={personOptions} readingCandidates={readingCandidates} />
+      <VideoMakerClient persons={personOptions} readingCandidates={readingCandidates} personSlugByName={personSlugByName} />
     </div>
   );
 }

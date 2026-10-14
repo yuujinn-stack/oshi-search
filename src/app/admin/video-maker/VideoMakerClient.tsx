@@ -13,6 +13,8 @@ import {
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import { matchesQuery } from '@/lib/person-group-filter';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
+import VodCompareTrioPicker, { EMPTY_TRIO, completeTrio, type TrioSlots } from './VodCompareTrioPicker';
+import { OSHI_VOD_COMPARE_INPUT_KIND } from '@/lib/video-template-input';
 import { countHashtags, validateCaption, INSTAGRAM_CAPTION_MAX_LENGTH, INSTAGRAM_HASHTAG_MAX_COUNT } from '@/lib/instagram-caption-rules';
 import { HOURLY_TIME_OPTIONS } from '@/lib/instagram-post-times';
 import { addDaysJst, formatJst as formatJstDateTime, jstWallClockToUtcDate, nowJstParts } from '@/lib/jst-time';
@@ -34,6 +36,8 @@ interface WorkerTemplate {
   narrationModes: string[];
   /** テンプレート共通のCapCut音声を使うテンプレートだけ（readyなら全人物でCapCut生成できる） */
   sharedCapcut?: { ready: boolean; durationSeconds: number | null; message: string };
+  /** 人物3人で1本を作るテンプレートだけ（推しでサブスク比較）。このときだけ3人選択の画面を出す */
+  templateInputKind?: string;
 }
 
 interface WorkerInfo {
@@ -130,6 +134,8 @@ interface VideoJob {
   personName: string;
   personSlug: string | null;
   templateId: string;
+  /** テンプレート固有の入力（推しでサブスク比較: 3人のslug。従来のテンプレートは null） */
+  templateInput?: { personSlugs?: string[] } | null;
   narrationMode: NarrationMode;
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
   attempts: number;
@@ -224,8 +230,11 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 export default function VideoMakerClient({
   persons,
   readingCandidates = {},
+  personSlugByName = {},
 }: {
   persons: PersonOption[];
+  /** 人物名 → 推しサーチDBの人物slug（推しでサブスク比較の3人選択で内部値に使う） */
+  personSlugByName?: Record<string, string>;
   /** まず見る3作: 人物名の読みの候補（人物登録データの別名。未確認のため自動では使わない） */
   readingCandidates?: Record<string, string[]>;
 }) {
@@ -233,6 +242,8 @@ export default function VideoMakerClient({
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
+  // 推しでサブスク比較（人物3人で1本）の選択（人物1〜3のslug）
+  const [trioSlots, setTrioSlots] = useState<TrioSlots>(EMPTY_TRIO);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [narrationMode, setNarrationMode] = useState<NarrationMode | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -304,6 +315,9 @@ export default function VideoMakerClient({
 
   const templates = useMemo(() => worker?.templates ?? [], [worker]);
   const template = templates.find((t) => t.templateId === templateId) ?? null;
+  const trioMode = template?.templateInputKind === OSHI_VOD_COMPARE_INPUT_KIND;
+  const trio = completeTrio(trioSlots);
+  const nameBySlug = useMemo(() => new Map(Object.entries(personSlugByName).map(([n, s]) => [s, n])), [personSlugByName]);
 
   // CapCut保存済み音声: Workerが報告した状態（正本はMac上の保存音声と台本）。CapCut対応テンプレートでだけ表示する
   // テンプレート共通のCapCut音声を使うテンプレートは、人物ごとの音声状態（作成待ち・ready等）を扱わない
@@ -556,6 +570,27 @@ export default function VideoMakerClient({
   // 共通音声のテンプレートは、選択した人物全員を生成できる（人物ごとのready判定なし）
   const selectedNotReady = capcutMode && !sharedCapcut ? selectedNames.filter((n) => capcutByName.get(n)?.status !== 'ready') : [];
 
+  // 推しでサブスク比較: 3人（slug・選択順）で1ジョブだけ作る
+  async function submitTrio() {
+    if (!template || !narrationMode || !trio) return;
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      await fetchJson<{ jobs: VideoJob[] }>('/api/admin/video-jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateId: template.templateId, narrationMode, templateInput: { version: 1, personSlugs: trio } }),
+      });
+      setMessage({ kind: 'ok', text: '1件のジョブを登録しました（3人で1本）。Workerが順番に生成します。' });
+      setTrioSlots(EMPTY_TRIO);
+      await load();
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function submit(names: string[] = selectedNames) {
     if (!template || !narrationMode || names.length === 0) return;
     setSubmitting(true);
@@ -647,6 +682,12 @@ export default function VideoMakerClient({
           </div>
         </section>
 
+        {trioMode ? (
+        <section>
+          <h2 className="text-sm font-bold text-slate-700 mb-2">3. 人物（3人を選択）</h2>
+          <VodCompareTrioPicker persons={persons} slugByName={personSlugByName} value={trioSlots} onChange={setTrioSlots} />
+        </section>
+        ) : (
         <section>
           <h2 className="text-sm font-bold text-slate-700 mb-2">3. 人物（複数選択可）</h2>
           <PersonMultiSelect
@@ -664,8 +705,19 @@ export default function VideoMakerClient({
             </p>
           )}
         </section>
+        )}
 
         <div className="flex items-center gap-3 flex-wrap">
+          {trioMode ? (
+          <button
+            type="button"
+            disabled={submitting || !template || !narrationMode || !trio}
+            onClick={() => void submitTrio()}
+            className="px-5 py-2 rounded-lg bg-violet-600 text-white text-sm font-bold disabled:bg-gray-300"
+          >
+            {submitting ? '登録中...' : trio ? '生成する（3人で1本）' : '3人選ぶと生成できます'}
+          </button>
+          ) : (
           <button
             type="button"
             disabled={submitting || !template || !narrationMode || selectedNames.length === 0 || selectedNotReady.length > 0}
@@ -674,6 +726,7 @@ export default function VideoMakerClient({
           >
             {submitting ? '登録中...' : `生成する（${selectedNames.length}件）`}
           </button>
+          )}
           {capcutMode && !sharedCapcut && (
             <button
               type="button"
@@ -1130,7 +1183,11 @@ export default function VideoMakerClient({
                 <div key={job.id} className="py-3">
                   <div className="flex items-center gap-3 flex-wrap text-sm">
                     <span className={`text-xs px-2 py-0.5 rounded-full ${view.cls}`}>{view.label}</span>
-                    <span className="font-bold text-slate-800">{job.personName}</span>
+                    <span className="font-bold text-slate-800">
+                      {job.templateInput?.personSlugs?.length
+                        ? job.templateInput.personSlugs.map((s) => nameBySlug.get(s) ?? s).join('・')
+                        : job.personName}
+                    </span>
                     <span className="text-gray-600">{templateName(job.templateId)}</span>
                     <span className="text-xs text-gray-500">{NARRATION_LABELS[job.narrationMode] ?? job.narrationMode}</span>
                     {job.status === 'processing' && (

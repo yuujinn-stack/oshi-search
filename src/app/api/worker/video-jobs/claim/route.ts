@@ -19,6 +19,8 @@ export async function POST(req: NextRequest) {
         templateVersion: job.templateVersion,
         narrationMode: job.narrationMode,
         attempts: job.attempts,
+        // テンプレート固有の入力（推しでサブスク比較: 人物3人のslug。従来のテンプレートは null）
+        templateInput: job.templateInput ?? null,
       },
     };
   });
