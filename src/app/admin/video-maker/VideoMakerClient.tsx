@@ -1425,8 +1425,11 @@ function CompletedDetail({
   reelAutopublishEnabled: boolean;
   onReelChanged: () => void;
 }) {
-  const [tab, setTab] = useState('default');
-  const text = job.postTexts?.[tab] ?? '';
+  // 最初に表示するタブは、投稿文がある最初のタブ（投稿文 → Instagram → TikTok → Threads → X の順）
+  const [tab, setTab] = useState(() => POST_TEXT_TABS.find((t) => job.postTexts?.[t.key])?.key ?? 'default');
+  // 投稿前に手で直せる（この画面の中だけ。保存はしない）。コピーは編集後の文章
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const text = edits[tab] ?? job.postTexts?.[tab] ?? '';
   const result = job.result ?? {};
   const igReel = result.instagramReelVideo as { url?: unknown; qaStatus?: unknown; durationSec?: unknown } | undefined;
   const igReelUrl = igReel?.qaStatus === 'PASS' && typeof igReel.url === 'string' ? igReel.url : null;
@@ -1484,10 +1487,26 @@ function CompletedDetail({
               </button>
             ))}
           </div>
-          <textarea readOnly value={text} className="w-full h-32 text-xs border border-gray-200 rounded p-2" />
-          <button type="button" onClick={() => void navigator.clipboard.writeText(text)} className="text-xs text-violet-600 hover:underline">
-            コピー
-          </button>
+          <textarea
+            value={text}
+            onChange={(e) => setEdits((prev) => ({ ...prev, [tab]: e.target.value }))}
+            className="w-full h-32 text-xs border border-gray-200 rounded p-2"
+            aria-label="投稿文（編集してからコピーできます）"
+          />
+          <div className="flex gap-3">
+            <button type="button" onClick={() => void navigator.clipboard.writeText(text)} className="text-xs text-violet-600 hover:underline">
+              コピー
+            </button>
+            {edits[tab] !== undefined && edits[tab] !== (job.postTexts?.[tab] ?? '') && (
+              <button
+                type="button"
+                onClick={() => setEdits((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== tab)))}
+                className="text-xs text-gray-500 hover:text-violet-600"
+              >
+                元に戻す
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
