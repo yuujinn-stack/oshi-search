@@ -13,7 +13,7 @@ import {
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import { matchesQuery } from '@/lib/person-group-filter';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
-import VodCompareTrioPicker, { EMPTY_TRIO, completeTrio, type TrioSlots } from './VodCompareTrioPicker';
+import VodCompareTrioPicker, { EMPTY_TRIO, completeTrio, type TrioCapcutCheck, type TrioSlots } from './VodCompareTrioPicker';
 import { OSHI_VOD_COMPARE_INPUT_KIND } from '@/lib/video-template-input';
 import { countHashtags, validateCaption, INSTAGRAM_CAPTION_MAX_LENGTH, INSTAGRAM_HASHTAG_MAX_COUNT } from '@/lib/instagram-caption-rules';
 import { HOURLY_TIME_OPTIONS } from '@/lib/instagram-post-times';
@@ -244,6 +244,8 @@ export default function VideoMakerClient({
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
   // 推しでサブスク比較（人物3人で1本）の選択（人物1〜3のslug）
   const [trioSlots, setTrioSlots] = useState<TrioSlots>(EMPTY_TRIO);
+  // 選んだ3人で共通CapCut音声を使えるか（3人の診断結果を確認できるまでは null）
+  const [trioCapcut, setTrioCapcut] = useState<TrioCapcutCheck | null>(null);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [narrationMode, setNarrationMode] = useState<NarrationMode | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -554,6 +556,12 @@ export default function VideoMakerClient({
       setNarrationMode((NARRATION_ORDER.find((m) => template.narrationModes.includes(m)) as NarrationMode) ?? null);
     }
   }, [template, narrationMode]);
+  // 推しでサブスク比較: 選んだ3人の診断結果が共通CapCut音声の台本と一致しない場合は、CapCutを選べない（音声なしへ切り替える）。
+  // 判定はサーバー（プレビューAPI）。ジョブ作成APIでも必ず再確認する
+  const trioCapcutBlocked = trioMode && !!trioCapcut && !trioCapcut.compatible;
+  useEffect(() => {
+    if (trioCapcutBlocked && narrationMode === 'capcut') setNarrationMode('none');
+  }, [trioCapcutBlocked, narrationMode]);
 
   const templateName = (id: string) => templates.find((t) => t.templateId === id)?.name ?? id;
 
@@ -671,21 +679,38 @@ export default function VideoMakerClient({
           <h2 className="text-sm font-bold text-slate-700 mb-2">2. ナレーション方式</h2>
           <div className="flex flex-wrap gap-4 text-sm">
             {NARRATION_ORDER.map((m) => {
-              const supported = !!template?.narrationModes.includes(m);
+              // 推しでサブスク比較: 選んだ3人が共通CapCut音声を使えない場合は CapCut を選べない（音声なしは常に選べる）
+              const blockedForTrio = m === 'capcut' && trioCapcutBlocked;
+              const supported = !!template?.narrationModes.includes(m) && !blockedForTrio;
+              const title = supported ? '' : blockedForTrio ? trioCapcut?.reason ?? '' : 'このテンプレート・Workerでは選択できません';
               return (
-                <label key={m} className={supported ? 'cursor-pointer' : 'text-gray-300 cursor-not-allowed'} title={supported ? '' : 'このテンプレート・Workerでは選択できません'}>
+                <label key={m} className={supported ? 'cursor-pointer' : 'text-gray-300 cursor-not-allowed'} title={title}>
                   <input type="radio" name="vm-narration" className="mr-1" disabled={!supported} checked={narrationMode === m} onChange={() => setNarrationMode(m)} />
                   {NARRATION_LABELS[m]}
                 </label>
               );
             })}
           </div>
+          {trioMode && template?.narrationModes.includes('capcut') && trioCapcutBlocked && (
+            <p className="text-xs text-amber-700 bg-amber-50 rounded p-2 mt-2">⚠ {trioCapcut?.reason}</p>
+          )}
+          {trioMode && template?.narrationModes.includes('capcut') && !trio && (
+            <p className="text-xs text-gray-500 mt-2">
+              CapCutナレーションは、3人を選んだあと、診断結果が保存済みの共通CapCut音声の台本と一致する場合だけ使えます。
+            </p>
+          )}
         </section>
 
         {trioMode ? (
         <section>
           <h2 className="text-sm font-bold text-slate-700 mb-2">3. 人物（3人を選択）</h2>
-          <VodCompareTrioPicker persons={persons} slugByName={personSlugByName} value={trioSlots} onChange={setTrioSlots} />
+          <VodCompareTrioPicker
+            persons={persons}
+            slugByName={personSlugByName}
+            value={trioSlots}
+            onChange={setTrioSlots}
+            onCapcutCheck={setTrioCapcut}
+          />
         </section>
         ) : (
         <section>
@@ -711,11 +736,18 @@ export default function VideoMakerClient({
           {trioMode ? (
           <button
             type="button"
-            disabled={submitting || !template || !narrationMode || !trio}
+            // CapCut（共通音声）は、選んだ3人の適合をサーバーで確認できるまで生成できない
+            disabled={submitting || !template || !narrationMode || !trio || (capcutMode && trioCapcut?.compatible !== true)}
             onClick={() => void submitTrio()}
             className="px-5 py-2 rounded-lg bg-violet-600 text-white text-sm font-bold disabled:bg-gray-300"
           >
-            {submitting ? '登録中...' : trio ? '生成する（3人で1本）' : '3人選ぶと生成できます'}
+            {submitting
+              ? '登録中...'
+              : !trio
+                ? '3人選ぶと生成できます'
+                : capcutMode && !trioCapcut
+                  ? 'CapCut音声を使えるか確認中...'
+                  : '生成する（3人で1本）'}
           </button>
           ) : (
           <button
@@ -739,10 +771,16 @@ export default function VideoMakerClient({
           )}
           {message && <span className={`text-sm ${message.kind === 'ok' ? 'text-emerald-700' : 'text-red-600'}`}>{message.text}</span>}
         </div>
-        {capcutMode && sharedCapcut && (
+        {capcutMode && sharedCapcut && !trioMode && (
           <p className="text-xs text-gray-600">
             🎙 共通音声を使用（人物ごとの録音は不要
             {sharedCapcut.durationSeconds ? `・${sharedCapcut.durationSeconds.toFixed(1)}秒` : ''}）
+          </p>
+        )}
+        {capcutMode && sharedCapcut && trioMode && (
+          <p className="text-xs text-gray-600">
+            🎙 保存済みのテンプレート共通CapCut音声を使用
+            {sharedCapcut.durationSeconds ? `（${sharedCapcut.durationSeconds.toFixed(1)}秒）` : ''}：{sharedCapcut.message}
           </p>
         )}
         {capcutMode && !sharedCapcut && (

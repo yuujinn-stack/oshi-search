@@ -4,7 +4,14 @@ import { and, desc, eq, lt, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { videoGenerationJobs, videoWorkers } from '@/db/schema';
 import { personVideoSlug } from './person-slug';
-import { parseTemplateInput, TemplateInputError, type TemplateInputKind, type VideoTemplateInput } from '@/lib/video-template-input';
+import {
+  OSHI_VOD_COMPARE_INPUT_KIND,
+  parseTemplateInput,
+  TemplateInputError,
+  type TemplateInputKind,
+  type VideoTemplateInput,
+} from '@/lib/video-template-input';
+import { checkVodCompareSharedCapcut, type SharedCapcutRequirement } from '@/lib/oshi-vod/video-feature';
 
 /**
  * 動画生成ジョブ（video_generation_jobs）とWorker情報（video_workers）の読み書き。
@@ -28,8 +35,9 @@ export interface WorkerTemplateInfo {
   /**
    * テンプレート共通のCapCut音声を使うテンプレートだけ（推し活あるある等。ナレーションに人物名を含まない）。
    * readyなら全人物でCapCut生成でき、人物ごとのCapCut保存済み音声は要求しない。
+   * requires: 共通音声を使える条件（推しでサブスク比較だけ。診断結果の台本の種類がこれと一致する3人だけCapCutを許可する）
    */
-  sharedCapcut?: { ready: boolean; durationSeconds: number | null; message: string };
+  sharedCapcut?: { ready: boolean; durationSeconds: number | null; message: string; requires?: SharedCapcutRequirement };
   /**
    * 複数人物を1本の動画にするテンプレートだけ（推しでサブスク比較: 人物3人）。ジョブ作成時にテンプレート固有の入力
    * （template_input）を必須にし、この種別で検証する。省略時は従来どおり1ジョブ=1人物（template_inputはNULL）。
@@ -268,6 +276,14 @@ export async function createVideoJobs(input: {
   // テンプレート共通のCapCut音声が使えるテンプレートは、人物ごとのready判定をしない（共通音声が無ければ生成しない）
   if (input.narrationMode === 'capcut' && template.sharedCapcut && !template.sharedCapcut.ready) {
     throw new VideoJobError(`テンプレート共通のCapCut音声が使えないため生成できません: ${template.sharedCapcut.message}`, 400);
+  }
+  // 推しでサブスク比較: 共通CapCut音声は、3人の診断結果の台本の種類がWorker報告の利用条件（requires）と一致する場合だけ使える。
+  // 画面を通さずにAPIを呼んでも、再生成でも、ここで必ず確かめる（不一致・条件不明なら作らない）。Worker側でも生成直前に台本ハッシュで再確認する
+  if (input.narrationMode === 'capcut' && template.templateInputKind === OSHI_VOD_COMPARE_INPUT_KIND) {
+    const { loadOshiVodVideoDiagnosis } = await import('@/server/oshi-vod/video-diagnosis');
+    const diagnosis = await loadOshiVodVideoDiagnosis(templateInput!);
+    const check = checkVodCompareSharedCapcut(template, diagnosis);
+    if (!check.ok) throw new VideoJobError(check.reason, 400);
   }
   if (input.narrationMode === 'capcut' && !template.sharedCapcut) {
     const notReady = input.personNames

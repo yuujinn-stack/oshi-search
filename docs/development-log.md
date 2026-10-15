@@ -3504,3 +3504,25 @@ TMDb の「Amazon Video」（正規化スラグ amazonvideo）はレンタル・
 ### 設計上の判断・注意点
 - oshi-video-maker・DB schema・migration は変更なし。Worker側は既に「PERSON_REGISTRY優先、未登録なら渡されたslugを人物名から計算し直して一致した場合だけ使う」「テーマは registry に設定があれば上書き、無ければ DEFAULT_VIDEO_THEME」の実装済み。
 - 登録済み人物（松村北斗・目黒蓮など）は Worker が渡されたslugを使わず registry のslugを使うため挙動は変わらない。
+
+---
+
+## Task 92：動画「推しでサブスク比較 ショートV1」— テンプレート共通CapCut音声を、台本が一致する3人だけ選べるようにする
+
+### 目的
+oshi-video-maker 側で「推しでサブスク比較」をテンプレート共通のCapCut音声（推し活あるあると同じ sharedCapcut 方式）に対応させた。共通音声の台本は、診断結果が「2サービスの組み合わせ（80%以上の表示なし）」のときだけ完全に一致する（それ以外は独自結果シーンの文が変わる）。不適合な3人で CapCut を選んで Worker で失敗する・誤った音声で生成されることを防ぐため、管理画面とジョブ作成APIでも、3人の診断結果が共通音声の利用条件に合うかを確かめる。
+
+### 変更ファイル
+- `src/lib/oshi-vod/video-feature.ts`（新規）— 診断結果から動画の台本の種類（pair / pair-over80 / single / single-covers-all）を求める純粋関数 `oshiVodVideoFeature`（oshi-video-maker の decideVodCompareFeature と同じ条件。台本の文章は持たない）、Worker報告の利用条件 `requires` の検証 `parseSharedCapcutRequirement`、判定 `checkVodCompareSharedCapcut`、理由の文言。
+- `src/app/api/worker/heartbeat/route.ts` — `sharedCapcut.requires`（`{ kind: 'oshi-vod-compare-feature', feature: 'pair' }`）を検証して保存。既存の `video_workers.templates`（jsonb）に入るだけで schema 変更なし。知らない値は保存しない（条件不明＝CapCut不可）。
+- `src/server/video-jobs/job-store.ts` — `WorkerTemplateInfo.sharedCapcut.requires` を追加。`createVideoJobs` で、推しでサブスク比較 × capcut の場合だけ診断結果を読み込み（`loadOshiVodVideoDiagnosis`。循環importを避けるため動的import）、`checkVodCompareSharedCapcut` が不可なら 400（日本語の理由）。管理画面からの作成・API直接呼び出し・再生成（`retryVideoJob`）のすべてがここを通る。
+- `src/app/api/admin/video-jobs/vod-compare-preview/route.ts` — 3人の生成前確認の応答に `capcutCompatible` / `capcutReason` を追加（Worker最新報告＋診断結果で同じ関数を使って判定）。
+- `src/app/admin/video-maker/VodCompareTrioPicker.tsx` — プレビューの判定を `onCapcutCheck` で親へ渡す。
+- `src/app/admin/video-maker/VideoMakerClient.tsx` — 3人選択時、不適合なら「CapCutナレーション」を disabled にして理由を表示（選択中なら「音声なし」へ切り替え）。適合を確認できるまで CapCut での生成ボタンは押せない。共通音声の説明（Worker報告の message）を表示。「音声なし（あとから追加）」は常に選べる。
+- テスト: `src/lib/__tests__/oshi-vod-video-feature.test.ts`、`src/server/video-jobs/__tests__/job-store-vod-capcut.test.ts`、`src/app/api/admin/video-jobs/__tests__/vod-compare-preview.test.ts`（計17件。既存の推し活あるある・人物ごとCapCut（まず見る3作）の挙動が変わらないことも確認）。
+
+### 設計上の判断・注意点
+- DB schema・migration なし（requires は jsonb の templates に保存、ジョブは既存の narration_mode / template_input をそのまま使う）。claim・Worker へのジョブ受け渡しも変更なし。
+- 判定は3段: 管理画面（プレビューAPI）→ ジョブ作成API（最終防御・再生成も含む）→ oshi-video-maker の生成処理（診断結果から作った台本と共通音声の台本ハッシュを撮影前に照合し、違えば中止）。UIだけの判定にはしていない。
+- Workerが requires を報告しない（旧Worker）・共通音声が準備できていない場合は、推しでサブスク比較の CapCut は作れない（安全側）。推し活あるある（requires なし）・人物ごとのCapCut保存済み音声の判定は従来どおり。
+- 反映順: oshi-search を先に deploy（旧Workerは推しでサブスク比較の capcut を報告しないため、deploy しても挙動は変わらない）→ oshi-video-maker を更新し Worker を再起動（起動時にテンプレート報告を作るため再起動が必要）。

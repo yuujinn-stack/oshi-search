@@ -24,6 +24,15 @@ interface Preview {
   totals: { registered: number; paid: number };
   top: { displayName: string; fractionText: string } | null;
   bestPair: { services: string[]; fractionText: string } | null;
+  /** テンプレート共通CapCut音声を使えるか（診断結果の台本の種類がWorker報告の利用条件と一致するか） */
+  capcutCompatible?: boolean;
+  capcutReason?: string | null;
+}
+
+/** 選んだ3人でCapCutナレーション（共通音声）を使えるか。3人がそろって診断結果を確認できるまでは null */
+export interface TrioCapcutCheck {
+  compatible: boolean;
+  reason: string | null;
 }
 
 export default function VodCompareTrioPicker({
@@ -31,11 +40,13 @@ export default function VodCompareTrioPicker({
   slugByName,
   value,
   onChange,
+  onCapcutCheck,
 }: {
   persons: PersonOption[];
   slugByName: Record<string, string>;
   value: TrioSlots;
   onChange: (next: TrioSlots) => void;
+  onCapcutCheck?: (check: TrioCapcutCheck | null) => void;
 }) {
   const nameBySlug = useMemo(() => new Map(Object.entries(slugByName).map(([n, s]) => [s, n])), [slugByName]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -69,6 +80,11 @@ export default function VodCompareTrioPicker({
       cancelled = true;
     };
   }, [trioKey]);
+
+  // CapCutナレーションを使えるか（判定はサーバー側。ジョブ作成時にも必ず再確認される）を親へ伝える
+  useEffect(() => {
+    onCapcutCheck?.(preview ? { compatible: preview.capcutCompatible === true, reason: preview.capcutReason ?? null } : null);
+  }, [preview, onCapcutCheck]);
 
   function choose(index: number, name: string) {
     const slug = name ? slugByName[name] ?? null : null;

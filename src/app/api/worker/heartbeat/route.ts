@@ -10,6 +10,7 @@ import {
   type WorkerTemplateInfo,
 } from '@/server/video-jobs/job-store';
 import { listPendingScriptRequests, listPronunciationReadings, markScriptRequestsHandled } from '@/server/video-jobs/script-prep-store';
+import { parseSharedCapcutRequirement } from '@/lib/oshi-vod/video-feature';
 import { handleWorkerRequest, num, parseJobId, str } from '@/server/video-jobs/worker-route';
 import { isTemplateInputKind } from '@/lib/video-template-input';
 
@@ -92,6 +93,10 @@ export async function POST(req: NextRequest) {
                 ready: (t.sharedCapcut as Record<string, unknown>).ready === true,
                 durationSeconds: num((t.sharedCapcut as Record<string, unknown>).durationSeconds),
                 message: str((t.sharedCapcut as Record<string, unknown>).message, 300) ?? '',
+                // 共通音声を使える条件（推しでサブスク比較だけ。知らない種別・不正な値は保存しない＝条件不明として扱う）
+                ...(parseSharedCapcutRequirement((t.sharedCapcut as Record<string, unknown>).requires)
+                  ? { requires: parseSharedCapcutRequirement((t.sharedCapcut as Record<string, unknown>).requires)! }
+                  : {}),
               },
             }
           : {}),
