@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import type { RakutenItem } from '@/types/rakuten';
 import { getBestProductImageUrl, getRenderableProductTitle } from '@/lib/product-image';
+import { stripPromoTags } from '@/lib/product-curation';
+import { trackRakutenClick, type RakutenLinkElement, type RakutenPageType } from '@/lib/rakuten-click-track';
 
 // ─── 星レーティング ───────────────────────────────────────────────────────────
 function StarRating({ avg, count }: { avg: number; count: number }) {
@@ -28,16 +30,25 @@ function StarRating({ avg, count }: { avg: number; count: number }) {
   );
 }
 
-function trackProductClick(productId: string, personSlug: string, title: string, category: string, imageUrl: string, affiliateUrl: string) {
-  fetch('/api/track', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'product', productId, slug: personSlug, title, category, imageUrl, affiliateUrl }),
-  }).catch(() => {});
+// ─── 商品カード ───────────────────────────────────────────────────────────────
+interface ProductCardProps {
+  product: RakutenItem;
+  personSlug?: string;
+  /** クリック計測用: ページ種別・表示位置・位置内の順番（1始まり）・表示カテゴリ */
+  pageType?: RakutenPageType;
+  placement?: string;
+  position?: number;
+  displayCategory?: string;
 }
 
-// ─── 商品カード ───────────────────────────────────────────────────────────────
-export default function ProductCard({ product, personSlug = '' }: { product: RakutenItem; personSlug?: string }) {
+export default function ProductCard({
+  product,
+  personSlug = '',
+  pageType = 'person',
+  placement = 'product_card',
+  position,
+  displayCategory,
+}: ProductCardProps) {
   const [loaded, setLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
 
@@ -49,7 +60,21 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
   const reviewCount = Number(product.reviewCount);
   // 楽天から取得した商品名にHTMLエンティティ（&amp; 等）が未デコードのまま
   // 混入している場合があるため、表示直前でデコードする（DBの値は変更しない）
-  const displayTitle = getRenderableProductTitle(product.title);
+  // 取得時点のショップの宣伝タグ（【予約】【即納】【最安値】等）は表示時点で確認できないため表示しない
+  const displayTitle = stripPromoTags(getRenderableProductTitle(product.title));
+  const handleClick = (linkElement: RakutenLinkElement) => () =>
+    trackRakutenClick({
+      productId: product.id,
+      personSlug,
+      title: displayTitle,
+      category: displayCategory ?? product.category,
+      imageUrl: bestImageUrl,
+      affiliateUrl: href,
+      pageType,
+      placement,
+      position,
+      linkElement,
+    });
 
   return (
     <div
@@ -104,6 +129,7 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
           className="absolute inset-0 z-20"
           tabIndex={-1}
           aria-hidden="true"
+          onClick={handleClick('image')}
         />
       </div>
 
@@ -127,6 +153,7 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
           rel="noopener noreferrer sponsored"
           className="text-[11px] font-medium line-clamp-2 leading-snug flex-1 hover:underline"
           style={{ color: 'var(--ds-text)', minHeight: '2.5rem' }}
+          onClick={handleClick('title')}
         >
           {displayTitle}
         </a>
@@ -148,7 +175,7 @@ export default function ProductCard({ product, personSlug = '' }: { product: Rak
             minHeight: '44px',
             textDecoration: 'none',
           }}
-          onClick={() => trackProductClick(product.id, personSlug, displayTitle, product.category, bestImageUrl, product.affiliateUrl || product.itemUrl)}
+          onClick={handleClick('cta')}
         >
           楽天で見る →
         </a>

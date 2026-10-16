@@ -15,7 +15,8 @@ type SortKey = 'default' | 'price-asc' | 'price-desc' | 'review';
 
 // ─── タブ定義 ─────────────────────────────────────────────────────────────────
 const TAB_ALL = 'すべて';
-const CATEGORY_TABS = ['写真集・書籍', 'CD', 'Blu-ray・DVD', 'グッズ', '中古'];
+// 'その他' = 取得元・商品名から種類を判断できなかった商品（削除せず、ここにまとめて表示する）
+const CATEGORY_TABS = ['写真集・書籍', 'CD', 'Blu-ray・DVD', 'グッズ', 'その他', '中古'];
 
 // ─── コンポーネント ───────────────────────────────────────────────────────────
 export default function ProductTabList({ items, personSlug = '' }: { items: ProductWithSection[]; personSlug?: string }) {
@@ -117,8 +118,17 @@ export default function ProductTabList({ items, personSlug = '' }: { items: Prod
       {/* ─ 商品グリッド ─ */}
       {displayed.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-          {displayed.map(({ product }) => (
-            <ProductCard key={product.id} product={product} personSlug={personSlug} />
+          {displayed.map(({ product, sectionLabel, isUsed }, i) => (
+            <ProductCard
+              // 楽天市場の商品IDは同一ショップの別商品で重複しうるため（既知の不具合）、位置も含めてキーにする
+              key={`${isUsed ? 'u' : 'n'}:${product.id}:${i}`}
+              product={product}
+              personSlug={personSlug}
+              pageType="person"
+              placement="person_product_list"
+              position={i + 1}
+              displayCategory={isUsed ? '中古' : sectionLabel}
+            />
           ))}
         </div>
       ) : (

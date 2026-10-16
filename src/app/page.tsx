@@ -11,6 +11,8 @@ import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
 import type { GroupMeta } from '@/types/group';
 import { getRenderableProductTitle } from '@/lib/product-image';
+import { stripPromoTags } from '@/lib/product-curation';
+import TrackedRakutenLink from '@/components/site/TrackedRakutenLink';
 import { VOD_PAGE_PROVIDERS, getVodProviderWorkCounts } from '@/lib/vod-page';
 import { getPhotobookHomeItems } from '@/lib/photobook-store';
 import PhotobookHomeSection from '@/components/site/PhotobookHomeSection';
@@ -427,15 +429,28 @@ export default async function HomePage() {
             }}
               className="popular-products-grid"
             >
-              {popularProducts.map((product) => {
+              {popularProducts.map((product, i) => {
                 const href = product.affiliateUrl || (product.personSlug ? `/person/${encodeURIComponent(product.personSlug)}` : '/search');
                 const isExternal = !!product.affiliateUrl;
                 // 楽天商品名にHTMLエンティティ（&amp; 等）が未デコードのまま混入している
                 // 場合があるため、表示直前でデコードする（DBの値は変更しない）
-                const displayTitle = getRenderableProductTitle(product.title);
+                // 取得時点のショップの宣伝タグ（【予約】【最安値】等）は表示時点で確認できないため表示しない
+                const displayTitle = stripPromoTags(getRenderableProductTitle(product.title));
                 return (
-                  <a
+                  <TrackedRakutenLink
                     key={product.productId}
+                    track={isExternal ? {
+                      productId: product.productId,
+                      personSlug: product.personSlug,
+                      title: displayTitle,
+                      category: product.category,
+                      imageUrl: product.imageUrl,
+                      affiliateUrl: href,
+                      pageType: 'home',
+                      placement: 'home_popular_products',
+                      position: i + 1,
+                      linkElement: 'card',
+                    } : null}
                     href={href}
                     target={isExternal ? '_blank' : undefined}
                     rel={isExternal ? 'noopener noreferrer sponsored' : undefined}
@@ -511,7 +526,7 @@ export default async function HomePage() {
                         </span>
                       )}
                     </div>
-                  </a>
+                  </TrackedRakutenLink>
                 );
               })}
             </div>

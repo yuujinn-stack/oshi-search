@@ -3540,3 +3540,143 @@ oshi-video-maker 側で「推しでサブスク比較 ショートV1」でも In
 ### 設計上の判断・注意点
 - DB・migration・Worker API（complete の postTexts）は変更なし。Instagram予約投稿の本文欄（job.postTexts.instagram を初期値にした編集欄）も従来どおり。
 - 編集内容は保存しない（投稿文の正本は生成時の自動生成文。必要な人が都度直してコピーする運用）。
+
+---
+
+## Task 94：楽天商品の表示品質改善とクリック計測（Phase 1・未commit・Production未反映）
+
+### 目的
+楽天アフィリエイト商品の分類・重複・表示品質を改善し、楽天リンクのクリックを計測して今後の収益化の判断材料にする。VOD系アフィリエイト審査中のため、トップ／人物ページのセクション順・VOD広告リンク・配信ロゴ・CTA・サブスク診断・既存の楽天アフィリエイトURL・SEO（URL・metadata・構造化データ）は変更しない。
+
+### 変更ファイル
+- `src/lib/product-curation.ts`（新規・純粋関数）
+  - `classifyProductForDisplay(title, adminCat, itemUrl)` — 取得元API（管理カテゴリ）＋商品名の明示的な語だけで「写真集・書籍 / CD / Blu-ray・DVD / グッズ / その他」を判定。根拠が無いものは推測せず「その他」（needsReview）。楽天ブックスCD・DVD検索は管理カテゴリをそのまま使用。書籍検索は書籍キーワードが無くても書籍（従来はグッズに落ちていた）、括弧外の品目がカレンダー・トレカ等の場合のみグッズ。楽天市場は「[Blu-ray]」等の括弧付き形式→グッズ品目名（「〜付き」「〜なし」は除外）→CD/Disc→書籍→「グッズ」の語→その他の順。CD・DVDカテゴリに手動登録された楽天市場ショップ出品は、商品名に形式が明示されていればそれに従う。
+  - `isUsedListing` — グッズ等に混ざった【中古】出品を中古として扱う。
+  - `isBulkResaleSet` / `demoteBulkResaleSets` — 【10枚セット】【100枚セット】「各25枚」「×100枚」等の業者向けまとめ買い出品（5枚以上）。削除せず一覧の末尾へ・ピックアップから除外。全形態セット・2冊セット・特典の「5枚セット」は対象外。
+  - `dedupeProducts` — 同一ID・同一の商品ページ実URL（アフィリエイトURLは `pc` パラメータを展開）・同名出品（楽天市場の別ショップ）を先勝ちで1件に。楽天ブックスの同名は価格も一致する場合のみ重複扱い（別版の可能性）。初回盤A/B・通常盤・特典違いはタイトルが異なるため残る。
+  - `stripPromoTags` — 表示用タイトルから確認できない宣伝タグ（【予約】【即納】【最安値】【送料無料】【新品】【最新】【オリコン加盟店】等、括弧外の「10％OFF」）を除去。【中古】・限定特典・形式は残す。DBの値は変更しない。
+- `src/app/person/[slug]/page.tsx` — 旧 `BOOK_TITLE_KEYWORDS` / `classifyProduct` / `usedKeywords` を上記に置き換え。公開条件（verdict=related）・`applyDisplayOrder`／`sortUsedProducts`（並び替え・ティア）・データ取得は無変更。新品・中古それぞれ `dedupeProducts`、中古もセクション判定（従来はどのキーワードにも一致しない中古が表示から消えていた→中古タブに表示）。セクションに「その他」を追加。関連商品ピックアップには「その他」とまとめ買い出品を渡さない（`featuredSectionResults`）。JSXの並び・VOD・metadata・JSON-LDは無変更。
+- `src/components/ProductTabList.tsx` — 「その他」タブ追加（0件なら非表示）。React key を新品/中古で区別。ProductCard に計測用 placement=`person_product_list`・position・表示カテゴリを渡す。
+- `src/components/site/FeaturedProductsSection.tsx` — placement=`person_featured`・position・カテゴリを渡す。
+- `src/components/ProductCard.tsx` — 表示タイトルに `stripPromoTags`。従来CTAボタンのみだったクリック計測を、画像・商品名・ボタンの各リンクに（1クリック=1リンクなので重複しない）。href/target/rel・見た目は無変更。
+- `src/lib/rakuten-click-track.ts`（新規）— 楽天クリック計測の共通関数。既存の `/api/track`（type:'product'、Redis。トップ「人気商品」の集計元）と既存の GA4 `affiliate_click`（`sendGaEvent` 経由・本番ホストのみ）を再利用し、新しい送信先は作らない。GA4パラメータ: affiliate_name='rakuten', page_type, placement, position, link_element, person_name, product_id, product_category, item_name（100文字まで）。同じ商品・位置の1秒以内の連続クリックは1回だけ。`saveMeta:false` で人物が特定できないページから人物ページ由来のメタデータを空値で上書きしない。fetch は keepalive。
+- `src/components/site/TrackedRakutenLink.tsx`（新規）— サーバーコンポーネントのページの楽天 `<a>` を置き換える薄いラッパー（属性はそのまま出力、onClickで計測のみ）。
+- `src/app/page.tsx` — トップ「人気商品」（従来は計測なし）を TrackedRakutenLink に（placement=`home_popular_products`、外部リンクのときのみ計測）。表示タイトルに `stripPromoTags`。
+- `src/components/site/PhotobookCard.tsx` / `PhotobookHomeSection.tsx` / `src/app/photobooks/page.tsx` — 既存の写真集カード計測を共通関数経由に（Redisへの送信内容は従来と同じ、GA4を追加）。placement=`home_photobooks_female|male` / `photobooks_list`。
+- `src/app/groups/[groupSlug]/page.tsx` / `src/app/work/[workId]/page.tsx` — 楽天リンク（従来は計測なし）を TrackedRakutenLink に（`saveMeta:false`、クリック数のみ加算＋GA4）。
+- テスト: `src/lib/__tests__/product-curation.test.ts`（21件・実データの代表的なタイトルで分類・重複・まとめ買い・宣伝タグ）、`rakuten-click-track.test.ts`（5件・送信内容・二重計測防止・本番ホスト以外でGA送信しない）、`tracked-rakuten-link.test.ts`（2件・置き換え前後で `<a>` の出力が同一）。
+
+### 確認
+- `tsc --noEmit`（src エラー0。`.next/types/* 2.ts` 等のmacOS複製ファイルによる既存エラーのみ）、`npm test` 104ファイル/1876件合格、`next build` 成功。lint はプロジェクトに ESLint 設定・スクリプトが無いため、一時設定（eslint-config-next core-web-vitals + typescript）で変更ファイルのみ確認しエラー0（警告は既存の未使用import・`<img>`）。
+- `next start`（ローカル）× 390/1280px、計測送信（/api/track・GA）はブラウザ側で遮断して確認: トップ・人物6人（梅澤美波・松田里奈・成田凌・齊藤京子〔商品0件〕・阿部寛・佐藤勝利）で HTTP200・横スクロール0・「最安値」「予約受付中」表記0。人物ページの見出し・セクション順・VOD系リンク数は本番（oshi-search.jp）と全件一致。楽天リンクは全て target=_blank・rel に sponsored。CTAクリックで新規タブが楽天へ遷移し、計測は1回。グループ・写真集ページもクリックで遷移・計測1回（グループは saveMeta:false の送信内容）。
+- トップ「人気検索・人気商品」はローカルに Redis 環境変数が無いため非表示（環境差）。リンクの出力が従来と同一であることは SSR テストで確認。
+
+### 設計上の判断・注意点
+- **既存のデータ課題（未修正・要判断）**：`src/lib/rakuten.ts` の `stableId('ic', itemUrl)` は楽天市場の itemUrl（アフィリエイトURL `hb.afl.rakuten.co.jp/hgc/<ID>/?pc=…`）のパス末尾から作られるため、**同じショップの別商品が同じ商品IDになる**（例: 梅澤美波の「予習DVD」と「3rd YEAR BIRTHDAY LIVE」が同ID）。verdict（AI/手動判定）も商品ID単位なので判定が共有されている。修正にはID生成変更と既存 verdict・並び順データの移行が必要なため今回は触れていない。表示側は従来どおりID重複を先勝ちで1件にする（判定されていない商品の露出を増やさないため）。
+- 表示件数（人物ページの「関連商品 N件」・FAQ文中の件数）は重複除去・中古の追加表示で変わる（文言テンプレート・構造は無変更）。例: 梅澤美波 352→339、佐藤勝利 84→88、阿部寛 64→65。
+- 管理画面の並び替え（savedOrder）は従来どおり優先。まとめ買い出品のみ各セクション末尾へ移す。
+- 商品名の中の宣伝文句（括弧外の「最新コンサート会場販売」等）はショップの商品名として残している（タグ形式・割引率のみ除去）。
+- GA4 で placement・link_element 等をレポートに使う場合は、GA4 管理画面でカスタムディメンション登録が必要。
+
+---
+
+## Task 94 追記：本番反映前の影響調査と最終検証（未commit・Production未反映）
+
+### 1. 楽天市場の商品ID重複（既存不具合）の調査 — DB未変更
+- **原因**：`src/lib/rakuten.ts` の `stableId('ic', Item.itemUrl)` が URL パス末尾の先頭24文字をIDにしている。楽天市場APIは affiliateId 指定時に itemUrl をアフィリエイトURL（`hb.afl.rakuten.co.jp/hgc/<ショップ単位の値>/?pc=実URL`）で返すため、**同じショップの商品はすべて同じID**になる。楽天ブックス系（bk/cd/dv）は itemUrl が `books.rakuten.co.jp/rb/<商品番号>/` なので影響なし。手動登録（mn-）も一意。
+- **規模（本番DB読み取り専用の集計）**：楽天市場商品（グッズ・中古カテゴリ）6,165件に対し、人物内のID種類は5,908、全体では1,283種類しかない。同じ人物内で同じIDが別商品に付いている組が255組・510件（161人。すべてグッズ×中古の組）。その組に付いている判定：related 173 / deleted 43 / unrelated 18 / uncertain 3。1カテゴリ内の同一IDは0件（保存時の `mergeProductItems` が ID→Map で1件に潰すため）。
+- **影響**：
+  - 保存時：同じショップ・同じカテゴリの商品は1件しか残らない（取得のたびに後から来た商品で上書きされ、title・URL・価格が入れ替わることがある）。**同一ショップの初回盤A/B・通常盤・特典違いは区別されない**（楽天ブックスの商品は区別される）。
+  - 判定（verdicts）：ID単位のため、別商品と判定を共有する。上書きで中身が入れ替わった商品は、前の商品の判定のまま公開される可能性がある。
+  - クリック計測：Redis `product:click:{ID}`・`product:meta:{ID}` は人物をまたいだグローバルキーのため、同じショップの全商品のクリックが合算され、メタデータは最後にクリックされた商品で上書きされる（トップ「人気商品」の精度に影響）。GA4 は item_name・placement を送るため区別できる。
+  - 並び替え（product_display_order）：保存行は現在1行のみで影響は小さい。
+- **表示側の対応（今回）**：Phase 1 の重複除去が「IDが同じ別商品」をまとめないよう、`dedupeProducts` を「実URLが取れる場合はURL、取れない場合のみID」で同一判定するよう修正（従来の人物ページでも表示されていた組み合わせは引き続き両方表示）。React key に位置を含めた。
+- **修正案（未実行）**：
+  1. `stableId` を楽天市場だけ `pc` の実URL（`item.rakuten.co.jp/<shop>/<itemCode>/`）から作る新方式 `ic2-<shop>-<itemCode>` に変更（新規取得分から）。集計では実URLの無い楽天市場商品は0件、新方式で人物内6,163種類に分かれる。`product-store.ts` の `normalizeItemUrl` も `pc` を展開する。
+  2. dry-run スクリプト（書き込みなし）：products の ic- 商品ごとに新IDを計算し、旧ID→新IDの対応表、旧IDが複数の新IDに分かれるもの（255組）、verdict・並び順への影響件数をCSVで出力。
+  3. 本番DBのバックアップ（Neon のブランチ作成）を取ってから移行スクリプトを実行：products.items の id を新IDへ書き換え。verdicts は**旧行を残したまま**新IDの行を追加（旧IDが1商品にだけ対応するものは判定をコピー、複数に分かれたものはコピーせず未判定にしてAI判定に回す）。product_display_order の ID も置換。Redis のクリック数は移行しない（新ID分から計測。旧キーは残す）。
+  4. 移行後に楽天再取得を行うと、これまで1件に潰れていた同一ショップの商品が新規として入るため、AI判定の件数（OpenAI費用）が増える点に注意。
+  5. 確認後、旧ID行の削除は別途判断。
+
+### 2. TypeScript エラー（.next/types）
+- **原因**：プロジェクトが `~/Desktop` にあり、iCloud Drive の「デスクトップ」同期が有効（`FXICloudDriveDesktop=1`）。ビルド中のファイル置換が同期と競合し、`routes.d 4.ts`・`validator 5.ts` 等の複製が作られる（10/9 作成分は今回の作業前から存在）。tsconfig の include `.next/types/**/*.ts` に複製も含まれるため重複定義エラーになっていた。**今回の変更とは無関係**（HEAD 状態でも複製を除けば tsc 0件）。
+- **対応**：`.next/types` の複製6ファイルを scratchpad に退避（削除ではない）→ `next typegen` で再生成 → `tsc --noEmit` 0件。`.next` 直下にも同種の複製が約520個、`.git` 内にも `index 10` 等の複製があり、今後も再発しうる（後述）。
+
+### 3. 最終検証（変更前 HEAD と変更後を同条件で比較）
+- 条件：ローカル専用の Upstash 互換モック（メモリ内・本番Redisに接続しない。トップ「人気商品」用にテスト用のクリック数・メタデータを投入）＋本番DBは読み取りのみ。`git stash -u` で HEAD をビルド・取得 → 復元して変更後をビルド・取得。/api/track・GA・楽天への通信はブラウザ側で遮断。
+- 対象：トップ、人物（目黒蓮・齋藤京子・齊藤京子〔いずれも商品0件〕・梅澤美波・佐藤勝利・成田凌・阿部寛）、/photobooks、/groups/nogizaka46、作品ページ12件、/oshi-vod、robots.txt、sitemap.xml。
+- 結果：商品以外（title・description・canonical・robots・OG・JSON-LD（FAQの件数を除く）・見出し・セクション順・楽天以外の全リンク〔VOD・診断導線を含む〕）は全ページ同一。sitemap 同一。写真集・グループ・作品ページの楽天リンクは同一。トップ「人気商品」のリンク先は同一（表示名から宣伝タグのみ除去）。横スクロール0、コンソールエラー0。
+- 商品の除外：目黒蓮 157→157（除外0）。梅澤美波は別ショップの同名出品・同一URLの重複のみ除外（実URL同一の商品で確認）。佐藤勝利 +8・阿部寛 +1 は従来どのキーワードにも一致せず非表示だった中古（関連判定済み）。
+- 途中で見つけて修正：楽天ブックスの「同名・同価格」重複扱いで、目黒蓮の「月の満ち欠け」先着特典（商品番号 17447015 と 17514703）が1件にまとめられていた → 楽天ブックスは商品番号（URL）が同じ場合のみ重複とするよう変更。タイトルでの重複判定は楽天市場の一般ショップ出品どうしに限定。
+
+### 4. クリック計測
+- 本番ホスト扱い（ブラウザ内で oshi-search.jp をローカルへ向け、Google への通信は遮断し dataLayer で確認）で、人物（画像・商品名・ボタン・ピックアップ）・トップ人気商品・トップ写真集・写真集一覧・グループ・作品の9か所をクリック → いずれも /api/track 1回・GA4 affiliate_click 1回、新規タブで楽天へ遷移。ダブルクリックも各1回。VODリンクのクリックでは楽天の計測は発生しない。
+
+### 確認
+- `next build` 成功、`tsc --noEmit` 0件、`npm test` 104ファイル/1878件合格、変更ファイルの ESLint エラー0（警告5件は既存の未使用import等。既存テストファイルには以前からの lint エラーあり）。
+
+---
+
+## Task 94 追記2：本番反映前の最終確認（未commit・Production未反映）
+
+- **反映範囲の確認**：`HEAD` = `origin/main` = 現在の本番デプロイ（b9dee43、oshi-search.jp のエイリアス先、10/15 21:11 作成）。未pushコミット・stash なし。未コミットの変更は Phase 1 の11ファイル（変更）＋6ファイル（新規）だけ。差分の各行も Phase 1 関連のみで、動画生成・Instagram・VOD 関連の変更は含まれない。開発ログの差分は Task 94 の追記だけ（既存行の削除・変更なし）。
+- **Vercel Preview**：git 管理ファイル＋Phase 1 の新規ファイルだけを scratchpad にコピーし（`.git`・`node_modules`・`.next`・`.env*` を除く、686ファイル）、`vercel deploy`（`--prod` なし）を実行しようとしたが、Claude Code の権限設定でブロックされたため未実施。commit・push は不要な方式。
+- **GA4（スマホ幅 390px）**：本番ホスト扱いで再確認し、人物（画像・商品名・ボタン・ピックアップ）・トップ写真集・写真集一覧・グループ・作品の各クリックで /api/track 1回・GA4 affiliate_click 1回、ダブルクリックも1回、VODリンクでは発生しない（PC幅は前回確認済み）。
+
+---
+
+## Task 95（予定・未実施）：楽天市場の商品ID重複の修正と DB 移行計画
+
+> 本番DBの変更を伴うため、ユーザーの許可が出るまで実行しない。調査結果は Task 94 追記（本番DBの読み取り集計）を参照。
+
+### 原因
+- `src/lib/rakuten.ts` の `stableId(prefix, itemUrl)` は、URL パス末尾の先頭24文字を ID にする。
+- 楽天市場API（`fetchIchiba`＝グッズ、`fetchUsed`＝中古）は affiliateId 付きで呼ぶため、`itemUrl` がアフィリエイトURL `https://hb.afl.rakuten.co.jp/hgc/<ショップ単位の値>/?pc=<実URL>` で返る。パス末尾はショップごとに同じ値のため、**同じショップの全商品が同じ `ic-…` ID**になる。
+- 楽天ブックス系（bk-/cd-/dv-。itemUrl が `books.rakuten.co.jp/rb/<商品番号>/`）と手動登録（mn-）は影響なし。
+- 保存処理 `mergeProductItems`（`src/lib/product-store.ts`）は ID→Map で重複を除くため、同じショップ・同じカテゴリの商品は1件しか残らない。2つ目の判定キーである `normalizeItemUrl` もアフィリエイトURLのホスト＋パス（ショップ単位）で比較しているため、同様に衝突する。
+
+### 規模（2026-10-16 読み取り集計）
+- 楽天市場商品：6,165件（グッズ 3,307 / 中古 2,858）。旧IDの種類は人物内で5,908、全体で1,283。実URL（`pc`）が取れない商品は0件。実URLで数えると人物内6,163種類。
+- 同じ人物内で同じIDが別商品に付いている組：255組・510件（161人。すべてグッズ×中古の組）。付いている判定：related 173 / deleted 43 / unrelated 18 / uncertain 3。
+- `ic-` ID の verdicts：5,497行。`product_display_order`：1行。
+
+### 修正対象
+1. `src/lib/rakuten.ts`：楽天市場の ID を、実URL `item.rakuten.co.jp/<shop>/<itemCode>/` から作る新方式 `ic2-<shop>-<itemCode>` にする（`fetchIchiba`・`fetchUsed` の2か所）。楽天ブックス系・手動登録は変更しない。プレフィックスを変えるため、旧IDと新IDが混ざっても衝突しない。
+2. `src/lib/product-store.ts`：`normalizeItemUrl` を、アフィリエイトURLの場合は `pc` の実URLで比較するようにする（`src/lib/product-curation.ts` の `resolveProductPageUrl` と同じ考え方。共通化を検討）。
+3. 移行対象のデータ：
+   - Neon `products.items[].id`（グッズ・中古カテゴリの ic- 商品）
+   - Neon `verdicts`（person_name, product_id）
+   - Neon `product_display_order.order_ids`
+   - `photobook_settings` は写真集カテゴリ（bk-/mn-）のみのため対象外の見込み（dry-run で 0件を確認する）
+   - Redis `product:click:{id}` / `product:meta:{id}` / `person:productClicks:{slug}` は移行しない（旧キーは残し、新IDで計測を始める。旧IDの値は同じショップの商品が合算されていて分けられないため）
+4. 関連する管理画面API（商品削除・判定一括・不確実一覧・復旧・AI判定）は ID 文字列を扱うだけなので、コード変更は不要の見込み。dry-run 後に、旧ID・新ID混在での動作をテストで確認する。
+
+### 移行手順
+1. **コード修正とテスト**（DB変更なし）：新しい ID 関数の単体テスト（同じショップの別商品で別ID・同じ商品で同じID・`pc` 無しのフォールバック）、`mergeProductItems` で同じショップの別商品が潰れないテスト。
+2. **dry-run スクリプト**（`scripts/` 配下、SELECT のみ）：ic- 商品ごとに新IDを計算し、CSV を出力する。
+   - 旧ID→新IDの対応（人物・カテゴリ・タイトル・実URL）
+   - 旧IDが1つの新IDに対応するもの / 複数に分かれるもの（255組の見込み）
+   - 影響を受ける verdicts・product_display_order・photobook_settings の件数
+3. **バックアップ**（後述）を取得し、復元できることを確認する。
+4. **移行スクリプト**（`--apply` を付けたときだけ書き込む。人物単位でトランザクション、途中失敗時は再実行可能＝冪等）：
+   - `products.items` の ic- 商品の `id` を新IDへ書き換える（他のフィールドは変更しない）。
+   - verdicts：**旧IDの行は残したまま**、新IDの行を追加する。
+     - 旧IDが新ID1つにだけ対応する場合：verdict・score・source・reason をコピーし、reason に移行元を記録する。
+     - 旧IDが複数の新IDに分かれる場合（別商品が判定を共有していたもの）：どの商品に対する判定か判断できないため**コピーしない**（未判定としてAI判定に回す）。管理画面で確認できるよう、対象をCSVに残す。
+   - `product_display_order.order_ids` の旧IDを新IDへ置換する（分かれるものは先頭の1件）。
+5. **コード反映**：新IDでの取得・保存を有効にする（移行前にコードだけ反映すると、旧IDの商品と新IDの商品が二重になるため、移行の直後に反映する）。
+6. **確認**：人物ページの表示件数・ピックアップ・管理画面（product-check）を移行前のスナップショットと比較する。
+7. 楽天再取得を行うと、これまで1件に潰れていた同じショップの商品が新規（未判定）として入る → AI判定（OpenAI）の件数と費用が増えるため、対象人物を絞って段階的に行う。
+8. 旧ID の verdicts 行の削除は、一定期間問題がないことを確認してから別途判断する（今回の計画では削除しない）。
+
+### バックアップ方法
+- **Neon のブランチ**（移行直前の時点の本番DBを丸ごと複製。復元はブランチからの restore、または接続先の切り替えで可能）。作成後、ブランチ側で products・verdicts・product_display_order の件数が本番と一致することを確認する。
+- 追加で、対象3テーブルの該当行を JSON でエクスポート（`products` は グッズ・中古カテゴリ、`verdicts` は `product_id LIKE 'ic-%'`、`product_display_order` 全行）し、ローカル（commit対象外）に保存する。
+- Redis は移行で書き換えないため不要。念のため、既存の `/admin/redis-backup` でバックアップを取ってもよい。
+
+### 既存の商品判定データへの影響
+- 旧IDが新ID1つに対応する判定（大半）：そのまま新IDに引き継ぐため、公開状態は変わらない。
+- 別商品が判定を共有していたもの（255組・510件の見込み）：新IDでは未判定になり、AI判定が終わるまで公開ページに出ない（現在 related として表示されている組の一部が、一時的に非表示になる）。
+- 手動で付けた判定（source が手動のもの）も同じ規則で扱う。分かれるものは手動で付け直す必要がある（dry-run CSV で件数を確認）。
+- 旧ID の判定行は残すため、移行を取り消す場合は products の ID を戻すだけで元の状態に戻せる。
+- 公開ページの重複除去（`dedupeProducts`）は実URLで同一判定しているため、移行の前後どちらでも正しく動く。

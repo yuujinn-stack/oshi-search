@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { getBestProductImageUrl, getRenderableProductTitle } from '@/lib/product-image';
+import { trackRakutenClick, type RakutenLinkElement, type RakutenPageType } from '@/lib/rakuten-click-track';
 
 export interface PhotobookCardData {
   personName: string;
@@ -18,26 +19,20 @@ export interface PhotobookCardData {
   affiliateUrl: string;
 }
 
-function trackClick(data: PhotobookCardData, title: string, imageUrl: string, href: string) {
-  // 既存の商品クリック計測（type:'product'）をそのまま再利用する（新規計測経路を作らない）。
-  fetch('/api/track', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      type: 'product',
-      productId: data.productId,
-      slug: data.personName,
-      title,
-      category: '写真集',
-      imageUrl,
-      affiliateUrl: href,
-    }),
-  }).catch(() => {});
-}
-
 // 写真集カード。表紙（縦長比率）を主役にしたレイアウト。
 // リンク・アフィリエイトURL・クリック計測は既存のProductCard/／api/trackの仕組みをそのまま利用する。
-export default function PhotobookCard({ data }: { data: PhotobookCardData }) {
+export default function PhotobookCard({
+  data,
+  pageType = 'photobooks',
+  placement = 'photobook_card',
+  position,
+}: {
+  data: PhotobookCardData;
+  /** クリック計測用: ページ種別・表示位置・位置内の順番（1始まり） */
+  pageType?: RakutenPageType;
+  placement?: string;
+  position?: number;
+}) {
   const [loaded, setLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
 
@@ -46,6 +41,20 @@ export default function PhotobookCard({ data }: { data: PhotobookCardData }) {
   const hasImage = !!bestImageUrl && !imgError;
   const displayTitle = getRenderableProductTitle(data.title);
   const price = Number(data.price) || 0;
+  // 既存の商品クリック計測（/api/track type:'product'、category='写真集'）を共通ヘルパー経由で再利用し、GA4 にも送る
+  const handleClick = (linkElement: RakutenLinkElement) => () =>
+    trackRakutenClick({
+      productId: data.productId,
+      personSlug: data.personName,
+      title: displayTitle,
+      category: '写真集',
+      imageUrl: bestImageUrl,
+      affiliateUrl: href,
+      pageType,
+      placement,
+      position,
+      linkElement,
+    });
 
   return (
     <div
@@ -84,7 +93,7 @@ export default function PhotobookCard({ data }: { data: PhotobookCardData }) {
           className="absolute inset-0 z-10"
           tabIndex={-1}
           aria-hidden="true"
-          onClick={() => trackClick(data, displayTitle, bestImageUrl, href)}
+          onClick={handleClick('image')}
         />
       </div>
 
@@ -103,7 +112,7 @@ export default function PhotobookCard({ data }: { data: PhotobookCardData }) {
           rel="noopener noreferrer sponsored"
           className="text-[11px] leading-snug line-clamp-2 hover:underline flex-1"
           style={{ color: 'var(--ds-text)', minHeight: '2.2rem' }}
-          onClick={() => trackClick(data, displayTitle, bestImageUrl, href)}
+          onClick={handleClick('title')}
         >
           {displayTitle}
         </a>
@@ -118,7 +127,7 @@ export default function PhotobookCard({ data }: { data: PhotobookCardData }) {
           rel="noopener noreferrer sponsored"
           className="flex items-center justify-center font-bold text-[11px] tracking-wide active:scale-95 transition-transform duration-100 mt-0.5 bg-[#BF0000] hover:bg-[#A60000] active:bg-[#8F0000] text-white"
           style={{ borderRadius: 'var(--ds-radius)', minHeight: '34px', textDecoration: 'none' }}
-          onClick={() => trackClick(data, displayTitle, bestImageUrl, href)}
+          onClick={handleClick('cta')}
         >
           楽天で見る →
         </a>

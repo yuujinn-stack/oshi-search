@@ -60,8 +60,16 @@ export default function FeaturedProductsSection({ sectionResults, personSlug, to
               {icon} {label}
             </p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {products.map((product) => (
-                <ProductCard key={product.id} product={product} personSlug={personSlug} />
+              {products.map((product, i) => (
+                <ProductCard
+                  key={`${product.id}:${i}`}
+                  product={product}
+                  personSlug={personSlug}
+                  pageType="person"
+                  placement="person_featured"
+                  position={i + 1}
+                  displayCategory={label}
+                />
               ))}
             </div>
           </div>

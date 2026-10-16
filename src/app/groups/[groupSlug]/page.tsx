@@ -1,4 +1,5 @@
 import GraphicPageStyles from '@/components/site/GraphicPageStyles';
+import TrackedRakutenLink from '@/components/site/TrackedRakutenLink';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, permanentRedirect } from 'next/navigation';
@@ -135,10 +136,35 @@ function CompactWorkLink({ work }: { work: WorkRecord }) {
 }
 
 // ─── 商品カード ────────────────────────────────────────────────────────────────
-function MiniProductCard({ product, used }: { product: RakutenItem; used?: boolean }) {
+function MiniProductCard({
+  product,
+  used,
+  sectionLabel,
+  position,
+}: {
+  product: RakutenItem;
+  used?: boolean;
+  sectionLabel: string;
+  position: number;
+}) {
+  const href = product.affiliateUrl || product.itemUrl;
   return (
-    <a
-      href={product.affiliateUrl || product.itemUrl}
+    <TrackedRakutenLink
+      // グループページでは人物を特定できないため、人物ページ由来の商品メタデータは上書きしない（クリック数のみ加算）
+      track={{
+        productId: product.id,
+        personSlug: '',
+        title: product.title,
+        category: used ? '中古' : sectionLabel,
+        imageUrl: product.imageUrl,
+        affiliateUrl: href,
+        pageType: 'group',
+        placement: 'group_products',
+        position,
+        linkElement: 'card',
+        saveMeta: false,
+      }}
+      href={href}
       target="_blank"
       rel="noopener noreferrer sponsored"
       className="mini-product-link overflow-hidden hover:shadow-md hover:-translate-y-0.5 transition-all block"
@@ -183,7 +209,7 @@ function MiniProductCard({ product, used }: { product: RakutenItem; used?: boole
           </p>
         )}
       </div>
-    </a>
+    </TrackedRakutenLink>
   );
 }
 
@@ -936,11 +962,11 @@ export default async function GroupsPage({ params }: Props) {
                         <span className="text-xs" style={{ color: 'var(--ds-muted)' }}>{totalCount}件</span>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                        {displayNew.map((p) => (
-                          <MiniProductCard key={p.id} product={p} />
+                        {displayNew.map((p, i) => (
+                          <MiniProductCard key={p.id} product={p} sectionLabel={label} position={i + 1} />
                         ))}
-                        {displayUsed.map((p) => (
-                          <MiniProductCard key={p.id} product={p} used />
+                        {displayUsed.map((p, i) => (
+                          <MiniProductCard key={p.id} product={p} used sectionLabel={label} position={displayNew.length + i + 1} />
                         ))}
                       </div>
                       {totalCount > displayed && (

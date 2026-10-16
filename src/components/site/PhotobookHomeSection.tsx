@@ -60,9 +60,9 @@ export default function PhotobookHomeSection({ femaleItems, maleItems }: Props) 
 
         {items.length > 0 ? (
           <div className="persons-row">
-            {items.map((item) => (
+            {items.map((item, i) => (
               <div key={`${item.personName}-${item.productId}`} className="photobook-row-item">
-                <PhotobookCard data={item} />
+                <PhotobookCard data={item} pageType="home" placement={`home_photobooks_${tab}`} position={i + 1} />
               </div>
             ))}
           </div>

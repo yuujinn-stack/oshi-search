@@ -100,8 +100,14 @@ export default async function PhotobooksPage({ searchParams }: Props) {
             {result.totalCount}件中 {(page - 1) * result.pageSize + 1}〜{Math.min(page * result.pageSize, result.totalCount)}件
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {result.items.map((item) => (
-              <PhotobookCard key={`${item.personName}-${item.productId}`} data={item} />
+            {result.items.map((item, i) => (
+              <PhotobookCard
+                key={`${item.personName}-${item.productId}`}
+                data={item}
+                pageType="photobooks"
+                placement="photobooks_list"
+                position={(page - 1) * result.pageSize + i + 1}
+              />
             ))}
           </div>
 

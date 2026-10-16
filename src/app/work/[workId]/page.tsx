@@ -1,4 +1,5 @@
 import GraphicPageStyles from '@/components/site/GraphicPageStyles';
+import TrackedRakutenLink from '@/components/site/TrackedRakutenLink';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, permanentRedirect } from 'next/navigation';
@@ -588,9 +589,23 @@ export default async function WorkDetailPage({ params }: Props) {
                 <p className="text-[11px] text-gray-400 mt-0.5">楽天市場の商品情報</p>
               </div>
               <div className="p-4 space-y-2.5">
-                {relatedProducts.map((product) => (
-                  <a
+                {relatedProducts.map((product, i) => (
+                  <TrackedRakutenLink
                     key={product.id}
+                    // 作品ページ由来のクリックは人物ページ由来の商品メタデータを上書きしない（クリック数のみ加算）
+                    track={{
+                      productId: product.id,
+                      personSlug: '',
+                      title: product.title,
+                      category: product.category,
+                      imageUrl: product.imageUrl,
+                      affiliateUrl: product.affiliateUrl || product.itemUrl,
+                      pageType: 'work',
+                      placement: 'work_related_products',
+                      position: i + 1,
+                      linkElement: 'card',
+                      saveMeta: false,
+                    }}
                     href={product.affiliateUrl || product.itemUrl}
                     target="_blank"
                     rel="noopener noreferrer sponsored"
@@ -625,7 +640,7 @@ export default async function WorkDetailPage({ params }: Props) {
                       </div>
                     </div>
                     <span className="text-gray-300 group-hover:text-indigo-400 transition-colors flex-shrink-0 text-sm">›</span>
-                  </a>
+                  </TrackedRakutenLink>
                 ))}
               </div>
               <p className="text-[10px] text-gray-300 px-4 pb-3">

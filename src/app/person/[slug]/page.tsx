@@ -38,6 +38,14 @@ import {
   calcDisplayScore,
   type PersonDisplayContext,
 } from '@/lib/product-display-score';
+import {
+  classifyProductForDisplay,
+  dedupeProducts,
+  demoteBulkResaleSets,
+  isBulkResaleSet,
+  isUsedListing,
+  REVIEW_SECTION_LABEL,
+} from '@/lib/product-curation';
 import type { WorkRecord } from '@/types/work';
 import { buildHeroBadgeTitles, buildInfoGenreList, normalizeTag } from '@/lib/person-display-tags';
 import { ACTIVITY_LABEL } from '@/lib/person-badges';
@@ -110,75 +118,21 @@ function applyDisplayOrder(
   return result;
 }
 
-// ─── 商品タイトルによるカテゴリ振り分け ────────────────────────────────────
-// 判定順: CD → Blu-ray・DVD → 写真集・書籍（タイトル判定） → グッズ
-// 管理カテゴリは CD・Blu-ray・DVD・中古 以外では使用しない。
-
-// 写真集・書籍と判定するタイトルキーワード
-const BOOK_TITLE_KEYWORDS: string[] = [
-  '写真集', 'フォトブック',
-  'PHOTOBOOK', 'Photobook', 'photobook', 'PHOTO BOOK', 'Photo Book',
-  'BOOK', 'BOOKS',
-  '書籍', '単行本', '雑誌', 'ムック', 'ガイド', 'コミック', '楽譜', '小説',
-  '図鑑', '絵本', 'エッセイ',
-  '乃木撮', '日向撮', '櫻撮',
-  'B.L.T.', 'BRODY', 'EX大衆', 'anan', 'アップトゥボーイ', 'UTB',
-  'Platinum FLASH', 'BUBKA', '東京カレンダー', 'TRIANGLE',
-];
-
-// タイトルと管理カテゴリから表示セクションラベルを返す
-// CD・Blu-ray・DVD のみ管理カテゴリを使用。それ以外はタイトル判定のみ。
-function classifyProduct(title: string, adminCat: ProductCategory): string {
-  if (adminCat === 'CD') return 'CD';
-  if (adminCat === 'Blu-ray・DVD') return 'Blu-ray・DVD';
-  // タイトルに書籍キーワードが含まれるか（管理カテゴリ不使用）
-  for (const kw of BOOK_TITLE_KEYWORDS) {
-    if (title.includes(kw)) return '写真集・書籍';
-  }
-  // 書籍キーワード未一致はすべてグッズ（管理カテゴリに関わらず）
-  return 'グッズ';
-}
+// ─── 商品のセクション振り分け ─────────────────────────────────────────────
+// 判定は src/lib/product-curation.ts の classifyProductForDisplay（取得元API＋商品名の明示的な語）。
+// 判断できない商品は削除せず「その他」へ（関連商品ピックアップには出さない）。
 
 // ─── 表示セクション定義 ───────────────────────────────────────────────────────
 const DISPLAY_SECTIONS: Array<{
   label: string;
   icon: string;
   sources: ProductCategory[]; // hasAnyData 判定 & 並び順キーに使用
-  usedKeywords: string[];
 }> = [
-  {
-    label: '写真集・書籍',
-    icon: '📷',
-    sources: ['写真集', '本・雑誌'],
-    usedKeywords: [
-      '写真集', 'フォトブック', 'PHOTOBOOK', 'Photobook', 'BOOK', 'BOOKS',
-      '書籍', '単行本', '雑誌', 'ムック', 'ガイド', 'コミック', '小説', '楽譜',
-      '乃木撮', '日向撮', '櫻撮', 'B.L.T.', 'BRODY', 'EX大衆', 'anan',
-    ],
-  },
-  {
-    label: 'CD',
-    icon: '💿',
-    sources: ['CD'],
-    usedKeywords: ['CD', 'シングル', 'アルバム', 'ALBUM', 'SINGLE', 'ベストアルバム'],
-  },
-  {
-    label: 'Blu-ray・DVD',
-    icon: '📀',
-    sources: ['Blu-ray・DVD'],
-    usedKeywords: ['DVD', 'Blu-ray', 'ブルーレイ', 'ライブ', 'コンサート', 'ツアー'],
-  },
-  {
-    label: 'グッズ',
-    icon: '🎁',
-    sources: ['グッズ'],
-    usedKeywords: [
-      'アクリルスタンド', 'アクスタ', '缶バッジ', '生写真', 'キーホルダー',
-      'タオル', 'Tシャツ', 'ペンライト', 'クリアファイル', 'ステッカー',
-      'ぬいぐるみ', 'キーチェーン', 'うちわ', 'ストラップ', 'ブロマイド',
-      'グッズ', 'カレンダー', 'ポスター', 'トレカ', 'フィギュア',
-    ],
-  },
+  { label: '写真集・書籍', icon: '📷', sources: ['写真集', '本・雑誌'] },
+  { label: 'CD', icon: '💿', sources: ['CD'] },
+  { label: 'Blu-ray・DVD', icon: '📀', sources: ['Blu-ray・DVD'] },
+  { label: 'グッズ', icon: '🎁', sources: ['グッズ'] },
+  { label: REVIEW_SECTION_LABEL, icon: '📦', sources: [] },
 ];
 
 interface Props { params: Promise<{ slug: string }> }
@@ -321,53 +275,43 @@ export default async function PersonPage({ params }: Props) {
     worksResult.status === 'rejected' ||
     verdictsResult.status === 'rejected';
 
-  // ── 中古商品 ──
-  const usedCatData = storedData['中古'];
-  const usedProducts: RakutenItem[] = [];
-  if (usedCatData && Array.isArray(usedCatData.products)) {
-    for (const p of usedCatData.products) {
-      const v = verdicts[p.id];
-      if (!v || v.verdict !== 'related') continue;
-      usedProducts.push(p);
-    }
-  }
-
-  // ── 新商品をタイトルで振り分け ──────────────────────────────────────────
-  // ① 全カテゴリ（中古除く）の関連商品を収集
-  // ② classifyProduct でタイトル判定してセクション振り分け
+  // ── 公開対象（verdict=related）の商品を収集 ────────────────────────────
+  // ① 全カテゴリの関連商品を収集（公開条件 verdict=related は従来どおり）
+  //    楽天市場カテゴリに混ざった【中古】出品は中古として扱う
+  // ② 重複除去（新品・中古それぞれ。ID重複は従来どおり先勝ち＋実URL・同名出品の重複も除く）
+  // ③ classifyProductForDisplay でセクション振り分け
   const NEW_PRODUCT_CATS: ProductCategory[] = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD'];
 
-  const bookProducts: RakutenItem[] = [];
-  const cdProducts: RakutenItem[] = [];
-  const blurayProducts: RakutenItem[] = [];
-  const goodsProducts: RakutenItem[] = [];
-  const globalSeen = new Set<string>();
+  const newCandidates: RakutenItem[] = [];
+  const usedCandidates: RakutenItem[] = [];
+  const sourceCatOf = new Map<RakutenItem, ProductCategory>();
   let anyDataFetched = false;
 
-  for (const cat of NEW_PRODUCT_CATS) {
+  for (const cat of [...NEW_PRODUCT_CATS, '中古' as const]) {
     const catData = storedData[cat];
     if (!catData) continue;
-    anyDataFetched = true;
+    if (cat !== '中古') anyDataFetched = true;
     if (!Array.isArray(catData.products)) continue;
     for (const p of catData.products) {
-      if (globalSeen.has(p.id)) continue;
       const v = verdicts[p.id];
       if (!v || v.verdict !== 'related') continue;
-      globalSeen.add(p.id);
-      const section = classifyProduct(p.title, cat);
-      if (section === '写真集・書籍') bookProducts.push(p);
-      else if (section === 'CD') cdProducts.push(p);
-      else if (section === 'Blu-ray・DVD') blurayProducts.push(p);
-      else goodsProducts.push(p);
+      sourceCatOf.set(p, cat);
+      if (cat === '中古' || isUsedListing(p.title)) usedCandidates.push(p);
+      else newCandidates.push(p);
     }
   }
 
-  const sectionProductLookup: Record<string, RakutenItem[]> = {
-    '写真集・書籍': bookProducts,
-    'CD': cdProducts,
-    'Blu-ray・DVD': blurayProducts,
-    'グッズ': goodsProducts,
-  };
+  const sectionProductLookup: Record<string, RakutenItem[]> = {};
+  const sectionUsedLookup: Record<string, RakutenItem[]> = {};
+  for (const [list, lookup] of [
+    [dedupeProducts(newCandidates), sectionProductLookup],
+    [dedupeProducts(usedCandidates), sectionUsedLookup],
+  ] as const) {
+    for (const p of list) {
+      const { section } = classifyProductForDisplay(p.title, sourceCatOf.get(p) ?? p.category, p.itemUrl);
+      (lookup[section] ??= []).push(p);
+    }
+  }
 
   // 人物コンテキスト（表示スコア計算用）
   // aliases は3文字未満を除外（短い別名の誤爆対策）
@@ -379,20 +323,16 @@ export default async function PersonPage({ params }: Props) {
   };
 
   // ── セクション別商品 ──────────────────────────────────────────────────────
-  const sectionResults = DISPLAY_SECTIONS.map(({ label, icon, sources, usedKeywords }) => {
+  const sectionResults = DISPLAY_SECTIONS.map(({ label, icon, sources }) => {
     const newProducts = sectionProductLookup[label] ?? [];
     const hasAnyData = newProducts.length > 0 ||
       anyDataFetched ||
       sources.some((cat) => !!storedData[cat]);
 
-    const sectionUsed = usedProducts.filter((p) => {
-      const title = p.title.replace(/^【中古】\s*/, '');
-      return usedKeywords.some((kw) => title.includes(kw));
-    });
-
     const savedOrder = sources.flatMap((cat) => displayOrders[cat] ?? []);
-    const sortedNew  = applyDisplayOrder(newProducts, savedOrder, personCtx);
-    const sortedUsed = sortUsedProducts(sectionUsed, personCtx);
+    // まとめ買い出品（【10枚セット】等）は削除せず、各セクションの末尾へ
+    const sortedNew  = demoteBulkResaleSets(applyDisplayOrder(newProducts, savedOrder, personCtx));
+    const sortedUsed = sortUsedProducts(sectionUsedLookup[label] ?? [], personCtx);
 
     const newResult: ApiResult = !hasAnyData
       ? { status: 'no_data' as const }
@@ -401,6 +341,17 @@ export default async function PersonPage({ params }: Props) {
       : { status: 'empty' as const };
     return { label, icon, newResult, usedProducts: sortedUsed };
   });
+
+  // 関連商品ピックアップ（おすすめ表示）用: 「その他」（種類を判断できない商品）と
+  // まとめ買い出品を除く。並び順は上の sectionResults と同じ（関連度の高い順）。
+  const featuredSectionResults = sectionResults
+    .filter((s) => s.label !== REVIEW_SECTION_LABEL)
+    .map((s) => ({
+      ...s,
+      newResult: s.newResult.status === 'ok'
+        ? { status: 'ok' as const, products: s.newResult.products.filter((p) => !isBulkResaleSet(p.title)) }
+        : s.newResult,
+    }));
 
   // ── 全商品フラット化（ProductTabList 用）─────────────────────────────────
   // フィルタ済み sectionResults を再利用する（公開条件・verdict ロジックは変更しない）
@@ -762,7 +713,7 @@ export default async function PersonPage({ params }: Props) {
 
           {/* ━━━ 関連商品ピックアップ（プレビュー） ━━━ */}
           <FeaturedProductsSection
-            sectionResults={sectionResults}
+            sectionResults={featuredSectionResults}
             personSlug={name}
             totalProductCount={totalProductCount}
           />
