@@ -4,6 +4,9 @@ export type { ProductCategory };
 
 // ---- 楽天市場商品検索API ----
 export interface RakutenIchibaItem {
+  /** 楽天市場の公式商品識別子（店舗コード:商品コード）。商品IDの生成に使う（src/lib/rakuten-item-id.ts） */
+  itemCode?: string;
+  shopCode?: string;
   itemName: string;
   itemPrice: number;
   reviewCount: number;
@@ -75,6 +78,7 @@ export interface RakutenItem {
   category: ProductCategory;
   relevanceScore: number;
   isUsed?: boolean;      // 中古商品フラグ（category==='中古' または title に【中古】含む）
+  itemCode?: string;     // 楽天市場の公式商品識別子（店舗コード:商品コード）。楽天市場の商品のみ
   // AI判定に渡す追加フィールド（取得できた場合のみ）
   author?: string;       // Books: 著者名
   artistName?: string;   // DVD: アーティスト名

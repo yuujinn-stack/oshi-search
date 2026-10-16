@@ -4,6 +4,7 @@ import ProductRecoveryClient from './ProductRecoveryClient';
 import { isRecoveryExecutionAllowed, getRecoveryBlockReason } from '@/lib/recovery-guard';
 import type { WorkRecoveryItem } from '@/app/api/admin/work-recovery/route';
 import type { OrphanStat } from '@/app/api/admin/product-recovery/route';
+import { getOrphanVerdicts, summarizeOrphanVerdicts } from '@/lib/orphan-verdicts';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,30 +55,16 @@ export default async function WorkRecoveryPage({ searchParams }: Props) {
   // ── 商品タブ: 孤立 verdict 人物別集計 ────────────────────────────────────────
   let orphanStats: OrphanStat[] = [];
   let orphanTotal = 0;
+  let orphanMigratedTotal = 0;
   let orphanError: string | null = null;
 
   if (activeTab === 'products') {
     try {
-      const rows = await neonSql`
-        WITH product_ids AS (
-          SELECT DISTINCT p.person_name, elem->>'id' AS product_id
-          FROM products p,
-          LATERAL jsonb_array_elements(p.items) AS elem
-          WHERE jsonb_typeof(p.items) = 'array'
-        )
-        SELECT v.person_name, COUNT(*)::int AS orphan_count
-        FROM verdicts v
-        LEFT JOIN product_ids pi
-          ON v.person_name = pi.person_name AND v.product_id = pi.product_id
-        WHERE pi.product_id IS NULL
-        GROUP BY v.person_name
-        ORDER BY orphan_count DESC
-      `;
-      orphanStats = rows.map((r) => ({
-        personName:  r.person_name as string,
-        orphanCount: r.orphan_count as number,
-      }));
-      orphanTotal = orphanStats.reduce((s, r) => s + r.orphanCount, 0);
+      // 新ID商品へ引き継ぎ済みの旧ID判定（楽天市場の商品ID移行）は孤立に含めない
+      const summary = summarizeOrphanVerdicts(await getOrphanVerdicts());
+      orphanStats = summary.stats;
+      orphanTotal = summary.total;
+      orphanMigratedTotal = summary.migratedTotal;
     } catch (err) {
       orphanError = String(err);
     }
@@ -167,6 +154,7 @@ export default async function WorkRecoveryPage({ searchParams }: Props) {
           <ProductRecoveryClient
             initialStats={orphanStats}
             initialTotal={orphanTotal}
+            initialMigratedTotal={orphanMigratedTotal}
             recoveryEnabled={recoveryEnabled}
             recoveryBlockReason={recoveryBlockReason}
           />

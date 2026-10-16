@@ -8,7 +8,8 @@ import { eq, sql } from 'drizzle-orm';
 import { upsertProduct } from '@/db/write';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
-import { parseAffiliateUrl } from '@/lib/rakuten-affiliate-link';
+import { isLegacyIchibaId, isNewIchibaId } from '@/lib/rakuten-item-id';
+import { normalizeItemUrl } from '@/lib/legacy-ichiba-verdict';
 
 export const CATEGORIES: ProductCategory[] = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD', '中古'];
 
@@ -31,16 +32,8 @@ export interface ProductMergeStats {
 // itemUrl を正規化してセカンダリキーにする（URLパスの変更対策）
 // 楽天アフィリエイトURL（hb.afl.rakuten.co.jp/hgc/<識別子>/?pc=<商品ページ>）は、ホスト＋パスが店舗単位で同じになり
 // 同じ店舗の別商品が同一とみなされてしまうため、遷移先（pc）の商品ページで比較する。
-export function normalizeItemUrl(url: string): string {
-  if (!url) return '';
-  const target = parseAffiliateUrl(url)?.pageUrl ?? url;
-  try {
-    const u = new URL(target);
-    return (u.hostname + u.pathname).toLowerCase().replace(/\/$/, '');
-  } catch {
-    return target.toLowerCase();
-  }
-}
+// 実装は src/lib/legacy-ichiba-verdict.ts（復旧APIと同じ規則で比較するため共通化）
+export { normalizeItemUrl };
 
 const isAffiliateUrlFormat = (v: unknown) => typeof v === 'string' && /^https?:\/\/hb\.afl\.rakuten\.co\.jp\//.test(v);
 
@@ -86,8 +79,19 @@ export function mergeProductItems(
     const existingMatch =
       existingById.get(fetchedItem.id) ??
       existingByUrl.get(normalizeItemUrl(fetchedItem.itemUrl));
-    if (existingMatch) {
-      resultById.set(fetchedItem.id, mergeRakutenItem({ ...fetchedItem }, existingMatch));
+    if (existingMatch && existingMatch.id.startsWith('mn-')) {
+      // 手動登録の商品（mn-、判定は manual）と同じ商品ページなら、手動登録の商品をそのまま残し取得分は追加しない。
+      // 取得分のIDで置き換えると手動登録の判定が外れ、同じ商品が未判定の別IDとして扱われるため
+      resultById.set(existingMatch.id, { ...existingMatch });
+      mergedCount++;
+    } else if (existingMatch) {
+      // 楽天市場の商品IDの安定化（Phase 4）：新ID（ich-）で取得した商品が、既存の楽天市場商品（旧ID ic- または新ID ich-）と
+      // 同じ商品ページなら既存のIDを残す。IDを変えると、そのIDに付いている判定（verdicts）が外れて商品が非表示になるため。
+      // - 旧ID → 新IDの切り替えは、判定の引き継ぎとあわせて移行スクリプトでのみ行う
+      // - URL由来で移行した新IDと、取得時の itemCode 由来の新IDが万一異なっても、IDは変わらない（一度付いたIDを維持）
+      const keepLegacyId = (isLegacyIchibaId(existingMatch.id) || isNewIchibaId(existingMatch.id)) && isNewIchibaId(fetchedItem.id);
+      const id = keepLegacyId ? existingMatch.id : fetchedItem.id;
+      resultById.set(id, { ...mergeRakutenItem({ ...fetchedItem }, existingMatch), id });
       mergedCount++;
     } else {
       resultById.set(fetchedItem.id, { ...fetchedItem });
@@ -200,7 +204,10 @@ export async function appendProductToCategory(
   const row = rows.find((r) => r.category === category);
   let existing: RakutenItem[] = row ? (row.items as RakutenItem[]) : [];
   const fetchedAt = row ? row.fetchedAt.getTime() : Date.now();
-  const dup = existing.some((p) => p.id === product.id || p.itemUrl === product.itemUrl);
+  // 同じ商品ページ（アフィリエイトURLなら遷移先）の商品があれば重複とする。手動登録の通常URLと、定期取得の
+  // アフィリエイトURL（新ID ich- / 旧ID ic-）の同じ商品が二重に登録されないようにする
+  const page = normalizeItemUrl(product.itemUrl);
+  const dup = existing.some((p) => p.id === product.id || p.itemUrl === product.itemUrl || (!!page && normalizeItemUrl(p.itemUrl) === page));
   if (dup) return 'duplicate';
   existing = [...existing, product];
   await upsertProduct(personName, category, existing, fetchedAt);

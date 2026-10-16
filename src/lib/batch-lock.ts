@@ -23,6 +23,10 @@ export function personRakutenFetchLockKey(personName: string): string {
   return `product-rakuten-refetch:${personName.trim()}`;
 }
 
+// 商品ID移行（Phase 4・楽天市場の旧ID ic- → 新ID ich-）の実行中ロック。保持されている間は products への書き込み
+// （定期取得・手動の再取得・手動登録・復旧などすべて upsertProduct 経由）を止める（src/db/write.ts）。
+export const PRODUCT_ID_MIGRATION_LOCK_KEY = 'product-id-migration';
+
 // ロックの有効期間: 10分（通常の全件バッチは1〜2分で完了）
 const LOCK_TTL_MS = 10 * 60 * 1000;
 

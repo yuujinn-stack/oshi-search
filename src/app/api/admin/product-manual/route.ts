@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath, revalidateTag } from 'next/cache';
 import { appendProductToCategory, getStoredProductItemById, updateProductInCategory } from '@/lib/product-store';
 import { resolveManualAffiliateUrl } from '@/lib/rakuten-affiliate-resolve';
+import { ichibaItemIdFromApi } from '@/lib/rakuten-item-id';
 import {
   AFFILIATE_LINK_STATUS_LABEL,
   affiliateLinkStatusOf,
@@ -27,6 +28,8 @@ export async function POST(req: NextRequest) {
     itemUrl?: string;
     /** 管理画面の楽天検索で、楽天APIがこの商品に返した affiliateUrl（ある場合は最優先で使う） */
     affiliateUrl?: string;
+    /** 管理画面の楽天検索（楽天市場）で、楽天APIがこの商品に返した itemCode（店舗コード:商品コード） */
+    itemCode?: string;
     imageUrl?: string;
     category?: string;
     price?: number;
@@ -52,6 +55,11 @@ export async function POST(req: NextRequest) {
   // 以前は itemUrl をそのまま affiliateUrl に入れていたため、楽天ブックスの通常URLが「アフィリエイトURL」として保存されていた。
   const link = await resolveManualAffiliateUrl({ title: title.trim(), itemUrl: itemUrl.trim(), apiAffiliateUrl: body.affiliateUrl });
 
+  // 楽天市場の公式商品識別子は、商品URL（またはアフィリエイトURLの遷移先）の店舗と整合する場合だけ保存する（推測で補完しない）。
+  // 手動登録の商品IDは従来どおり mn-（一意）で、itemCode は同一商品の確認・移行用の参考情報。
+  const codeCheck = body.itemCode ? ichibaItemIdFromApi({ itemCode: body.itemCode, itemUrl: link.affiliateUrl || itemUrl.trim() }) : null;
+  const itemCodeToStore = codeCheck?.id ? body.itemCode!.trim() : undefined;
+
   const results: { personName: string; status: 'created' | 'duplicate' }[] = [];
   for (let i = 0; i < personNames.length; i++) {
     const personName = personNames[i];
@@ -70,6 +78,7 @@ export async function POST(req: NextRequest) {
       relevanceScore: 100,
       isUsed: isUsed ?? false,
       description: description?.trim() || undefined,
+      ...(itemCodeToStore ? { itemCode: itemCodeToStore } : {}),
     };
     const status = await appendProductToCategory(personName, category as ProductCategory, product);
     results.push({ personName, status });

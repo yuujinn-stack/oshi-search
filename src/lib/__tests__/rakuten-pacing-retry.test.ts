@@ -71,7 +71,7 @@ describe('rakuten.ts のペーシング・429リトライ', () => {
       callCount++;
       if (callCount === 1) return rateLimitedResponse();
       return new Response(
-        JSON.stringify({ Items: [{ Item: { itemName: 'テスト商品', itemPrice: 1000, itemUrl: 'https://item.rakuten.co.jp/x/y/' } }], count: 1 }),
+        JSON.stringify({ Items: [{ Item: { itemName: 'テスト商品', itemPrice: 1000, itemUrl: 'https://item.rakuten.co.jp/x/y/', itemCode: 'x:y' } }], count: 1 }),
         { status: 200 },
       );
     });

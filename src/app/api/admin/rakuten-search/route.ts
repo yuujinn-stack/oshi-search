@@ -28,6 +28,8 @@ export interface RakutenSearchItem {
   itemUrl: string;
   /** affiliateId 付きで呼んだ楽天APIが返した affiliateUrl（楽天ブックス系は itemUrl が通常URLのため、こちらが正規のアフィリエイトURL） */
   affiliateUrl: string;
+  /** 楽天市場の公式商品識別子（店舗コード:商品コード）。楽天市場の結果のみ */
+  itemCode?: string;
   price: number;
   reviewCount: number;
   shopName?: string;
@@ -190,6 +192,7 @@ export async function GET(req: NextRequest) {
           price: Number(Item.itemPrice ?? 0),
           reviewCount: Number(Item.reviewCount ?? 0),
           shopName: String(Item.shopName ?? '') || undefined,
+          itemCode: String(Item.itemCode ?? '') || undefined,
           isUsed: false,
           suggestedCategory: 'グッズ' as ProductCategory,
         };

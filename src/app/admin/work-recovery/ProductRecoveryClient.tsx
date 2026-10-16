@@ -12,6 +12,8 @@ import type {
 interface Props {
   initialStats:       OrphanStat[];
   initialTotal:       number;
+  /** 新ID商品へ引き継ぎ済みの旧ID判定（孤立に含めない） */
+  initialMigratedTotal?: number;
   recoveryEnabled:    boolean;
   recoveryBlockReason: string | null;
 }
@@ -20,6 +22,8 @@ interface DryRunResult {
   dryRun:           true;
   recoverableCount: number;
   alreadyInDbCount: number;
+  sameProductExistsCount?:    number;
+  legacyIdHasNewIdItemCount?: number;
   notInRedisCount:  number;
   preview: { productId: string; category: string; title: string }[];
 }
@@ -32,7 +36,7 @@ interface ExecResult {
 }
 
 export default function ProductRecoveryClient({
-  initialStats, initialTotal, recoveryEnabled, recoveryBlockReason,
+  initialStats, initialTotal, initialMigratedTotal = 0, recoveryEnabled, recoveryBlockReason,
 }: Props) {
   const [stats]             = useState<OrphanStat[]>(initialStats);
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
@@ -42,7 +46,7 @@ export default function ProductRecoveryClient({
   // Redis スキャン
   const [redisResult, setRedisResult] = useState<{
     verdicts:   OrphanVerdict[];
-    summary: { total: number; classA: number; classE: number; redisKeyExists: boolean; redisCategories: string[] };
+    summary: { total: number; classA: number; classE: number; classR?: number; redisKeyExists: boolean; redisCategories: string[] };
   } | null>(null);
   const [redisLoading, setRedisLoading] = useState(false);
   const [redisError, setRedisError]     = useState('');
@@ -100,7 +104,7 @@ export default function ProductRecoveryClient({
     );
     const data = (await res.json()) as {
       verdicts?: OrphanVerdict[];
-      summary?:  { total: number; classA: number; classE: number; redisKeyExists: boolean; redisCategories: string[] };
+      summary?:  { total: number; classA: number; classE: number; classR?: number; redisKeyExists: boolean; redisCategories: string[] };
       error?:    string;
     };
     if (res.ok && data.verdicts) {
@@ -222,6 +226,11 @@ export default function ProductRecoveryClient({
         <span className="text-2xl font-bold text-orange-600">{initialTotal.toLocaleString()} 件</span>
         <span className="text-xs text-orange-500">（商品データが DB に存在しない verdict — 孤立状態）</span>
       </div>
+      {initialMigratedTotal > 0 && (
+        <p className="px-1 text-xs text-gray-500">
+          ※ 楽天市場の商品ID移行で新IDの商品へ引き継ぎ済みの旧ID判定 {initialMigratedTotal.toLocaleString()} 件は、孤立ではないため上の件数に含めていません（復旧対象外）。
+        </p>
+      )}
 
       {!recoveryEnabled && recoveryBlockReason && (
         <div className="px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-xl text-xs text-yellow-700">
@@ -304,6 +313,9 @@ export default function ProductRecoveryClient({
                     <span>合計: <strong>{redisResult.summary.total}</strong></span>
                     <span className="text-green-700">A (Redis完全): <strong>{redisResult.summary.classA}</strong></span>
                     <span className="text-gray-600">E (データなし): <strong>{redisResult.summary.classE}</strong></span>
+                    {(redisResult.summary.classR ?? 0) > 0 && (
+                      <span className="text-amber-700">R (要確認・復旧対象外): <strong>{redisResult.summary.classR}</strong></span>
+                    )}
                   </div>
                   <p className="text-purple-500">
                     Redis キー存在: {redisResult.summary.redisKeyExists ? '✓' : '✗'}
@@ -365,6 +377,12 @@ export default function ProductRecoveryClient({
                   <div className="flex gap-4 flex-wrap">
                     <span className="text-green-700">復旧可能: <strong>{dryRunResult.recoverableCount}</strong></span>
                     <span className="text-gray-500">DB既存: <strong>{dryRunResult.alreadyInDbCount}</strong></span>
+                    {(dryRunResult.sameProductExistsCount ?? 0) > 0 && (
+                      <span className="text-gray-500">同じ商品あり: <strong>{dryRunResult.sameProductExistsCount}</strong></span>
+                    )}
+                    {(dryRunResult.legacyIdHasNewIdItemCount ?? 0) > 0 && (
+                      <span className="text-amber-700">新ID移行済み・要確認: <strong>{dryRunResult.legacyIdHasNewIdItemCount}</strong></span>
+                    )}
                     <span className="text-red-500">Redisなし: <strong>{dryRunResult.notInRedisCount}</strong></span>
                   </div>
                   {dryRunResult.preview.slice(0, 5).map((p) => (
@@ -696,11 +714,12 @@ function ClassBadge({ cls }: { cls: OrphanVerdict['classification'] }) {
     C:       'bg-yellow-100 text-yellow-700',
     D:       'bg-orange-100 text-orange-700',
     E:       'bg-red-100 text-red-600',
+    R:       'bg-amber-100 text-amber-700',
     pending: 'bg-gray-100 text-gray-500',
   };
   const labels: Record<string, string> = {
     A: 'A: Redis完全', B: 'B: バックアップ', C: 'C: 別カテゴリ',
-    D: 'D: 別ID', E: 'E: なし', pending: '未確認',
+    D: 'D: 別ID', E: 'E: なし', R: 'R: 要確認（新IDあり）', pending: '未確認',
   };
   return (
     <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${map[cls] ?? 'bg-gray-100 text-gray-500'}`}>

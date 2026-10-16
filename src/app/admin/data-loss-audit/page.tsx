@@ -5,6 +5,7 @@ import { db } from '@/db/client';
 import { sql } from 'drizzle-orm';
 import { LogoutButton } from '@/components/admin/LogoutButton';
 import HiddenWorksSearch, { type HiddenWorkRecord } from './HiddenWorksSearch';
+import { getOrphanVerdicts, summarizeOrphanVerdicts } from '@/lib/orphan-verdicts';
 
 export const dynamic = 'force-dynamic';
 
@@ -176,6 +177,7 @@ export default async function DataLossAuditPage() {
     countsResult,
     orphanResult,
     verdictDiffResult,
+    orphanVerdicts,
   ] = await Promise.all([
     // ② 作品ソース別内訳
     db.execute(sql`
@@ -291,6 +293,8 @@ export default async function DataLossAuditPage() {
       ORDER BY abs(COALESCE(v.verdict_count, 0) - COALESCE(p.item_count, 0)) DESC
       LIMIT 50
     `),
+    // ⑪ 孤立verdict の分類（楽天市場の商品ID移行で新IDの商品へ引き継ぎ済みの旧ID判定を孤立から除く）
+    getOrphanVerdicts(),
   ]);
 
   const worksBySource      = extractRows<WorksBySourceRow>(worksBySourceResult);
@@ -343,7 +347,10 @@ export default async function DataLossAuditPage() {
 
   // 差分サマリ
   const totalDiffAbs = verdictDiff.reduce((s, r) => s + Math.abs(r.diff), 0);
-  const orphanCount = orphan?.orphan_count ?? 0;
+  // 孤立件数は、新IDの商品へ引き継ぎ済みの旧ID判定（移行済み）を除いた件数
+  const orphanSummary = summarizeOrphanVerdicts(orphanVerdicts);
+  const orphanCount = orphanSummary.total;
+  const migratedVerdictCount = orphanSummary.migratedTotal;
   const hasSignificantDiff = verdictDiff.some((r) => Math.abs(r.diff) > 10);
 
   return (
@@ -753,13 +760,17 @@ export default async function DataLossAuditPage() {
         <p className="text-xs text-gray-500 mb-3">
           verdicts テーブルに存在するが、products.items 内に対応する商品 ID が見つからない verdict の件数。
           孤立 verdict = 商品データが storeProducts の上書きで消えたか、product-delete で削除後に verdict が残っている状態。
+          楽天市場の商品ID移行（旧 ic- → 新 ich-）で新IDの商品へ判定を引き継いだ旧IDの判定は、孤立ではないため「移行済み」として別に数える。
         </p>
         {orphan && (
           <div className="flex flex-wrap gap-3 mb-3">
             {[
               { label: 'verdicts 合計', value: orphan.total_verdicts.toLocaleString(), color: 'text-slate-800' },
               { label: 'products に一致', value: orphan.matched_verdicts.toLocaleString(), color: 'text-green-700' },
-              { label: '孤立 verdict', value: orphan.orphan_count.toLocaleString(), color: orphan.orphan_count > 0 ? 'text-orange-600 font-bold' : 'text-gray-400' },
+              { label: '孤立 verdict', value: orphanCount.toLocaleString(), color: orphanCount > 0 ? 'text-orange-600 font-bold' : 'text-gray-400' },
+              ...(migratedVerdictCount > 0
+                ? [{ label: '移行済み旧ID判定（孤立ではない）', value: migratedVerdictCount.toLocaleString(), color: 'text-gray-500' }]
+                : []),
             ].map(({ label, value, color }) => (
               <div key={label} className="bg-white rounded-lg border border-gray-200 px-4 py-2 text-center">
                 <div className="text-xs text-gray-500">{label}</div>

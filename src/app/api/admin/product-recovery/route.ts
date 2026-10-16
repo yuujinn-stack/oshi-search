@@ -5,13 +5,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidateTag } from 'next/cache';
 import { db } from '@/db/client';
-import { neonSql } from '@/db/client';
 import { products as productsTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { upsertProduct, hasIdempotencyKey, insertWorkStatusHistory } from '@/db/write';
 import { getRedis } from '@/lib/redis';
 import { getRecoveryBlockReason } from '@/lib/recovery-guard';
 import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
+import { getOrphanVerdicts, summarizeOrphanVerdicts } from '@/lib/orphan-verdicts';
+import { recoveryConflict, type RecoveryConflict } from '@/lib/legacy-ichiba-verdict';
 import type { RakutenItem } from '@/types/rakuten';
 
 export const dynamic = 'force-dynamic';
@@ -21,6 +22,8 @@ const MAX_CANDIDATES_PER_EXECUTE = 100;
 export interface OrphanStat {
   personName:  string;
   orphanCount: number;
+  /** 楽天市場の商品ID移行で新ID商品へ引き継ぎ済みの旧ID判定（孤立ではないため orphanCount に含めない） */
+  migratedCount: number;
 }
 
 export interface OrphanVerdict {
@@ -30,8 +33,11 @@ export interface OrphanVerdict {
   source:     string;
   reason:     string | null;
   judgedAt:   string;
-  /** 分類: A=Redis完全 B=Redis部分 C=DB別カテゴリ D=別ID候補 E=データなし */
-  classification: 'A' | 'B' | 'C' | 'D' | 'E' | 'pending';
+  /**
+   * 分類: A=Redis完全 B=Redis部分 C=DB別カテゴリ D=別ID候補 E=データなし
+   * R=要確認（旧IDに対応する新ID商品が同じ人物にある。旧IDで復旧すると二重登録・判定の付け違いになるおそれがあるため復旧対象外）
+   */
+  classification: 'A' | 'B' | 'C' | 'D' | 'E' | 'R' | 'pending';
   redisCategory?: string;
   redisTitle?:    string;
 }
@@ -99,27 +105,8 @@ export async function GET(req: NextRequest) {
   // ── 孤立 verdict 人物別集計 ──────────────────────────────────────────────────
   if (type === 'orphan-stats') {
     try {
-      const rows = await neonSql`
-        WITH product_ids AS (
-          SELECT DISTINCT p.person_name, elem->>'id' AS product_id
-          FROM products p,
-          LATERAL jsonb_array_elements(p.items) AS elem
-          WHERE jsonb_typeof(p.items) = 'array'
-        )
-        SELECT v.person_name, COUNT(*)::int AS orphan_count
-        FROM verdicts v
-        LEFT JOIN product_ids pi
-          ON v.person_name = pi.person_name AND v.product_id = pi.product_id
-        WHERE pi.product_id IS NULL
-        GROUP BY v.person_name
-        ORDER BY orphan_count DESC
-      `;
-      const stats: OrphanStat[] = rows.map((r) => ({
-        personName:  r.person_name as string,
-        orphanCount: r.orphan_count as number,
-      }));
-      const total = stats.reduce((s, r) => s + r.orphanCount, 0);
-      return NextResponse.json({ stats, total });
+      const { stats, total, migratedTotal } = summarizeOrphanVerdicts(await getOrphanVerdicts());
+      return NextResponse.json({ stats, total, migratedTotal });
     } catch (err) {
       return NextResponse.json({ error: String(err) }, { status: 500 });
     }
@@ -132,38 +119,18 @@ export async function GET(req: NextRequest) {
   // ── 人物の孤�� verdict 詳細 ───────────────────────────────────────────────────
   if (type === 'orphan-detail') {
     try {
-      const rows = await neonSql`
-        WITH product_ids AS (
-          SELECT DISTINCT elem->>'id' AS product_id
-          FROM products p,
-          LATERAL jsonb_array_elements(p.items) AS elem
-          WHERE p.person_name = ${personName}
-            AND jsonb_typeof(p.items) = 'array'
-        )
-        SELECT
-          v.product_id,
-          v.verdict,
-          v.score::float AS score,
-          v.source,
-          v.reason,
-          v.judged_at
-        FROM verdicts v
-        LEFT JOIN product_ids pi ON v.product_id = pi.product_id
-        WHERE v.person_name = ${personName}
-          AND pi.product_id IS NULL
-        ORDER BY v.judged_at DESC
-        LIMIT 500
-      `;
-      const verdicts: OrphanVerdict[] = rows.map((r) => ({
-        productId:      r.product_id as string,
-        verdict:        r.verdict as string,
-        score:          r.score as number,
-        source:         r.source as string,
-        reason:         r.reason as string | null,
-        judgedAt:       String(r.judged_at).slice(0, 19).replace('T', ' '),
-        classification: 'E' as const,
+      const all = await getOrphanVerdicts(personName);
+      const verdicts: OrphanVerdict[] = all.filter((o) => o.kind !== 'migrated').slice(0, 500).map((o) => ({
+        productId:      o.productId,
+        verdict:        o.verdict,
+        score:          Number(o.score ?? 0),
+        source:         o.source,
+        reason:         o.reason ?? null,
+        judgedAt:       o.judgedAt,
+        classification: o.kind === 'same_shop_new_id' ? 'R' as const : 'E' as const,
       }));
-      return NextResponse.json({ verdicts, personName });
+      const migratedCount = all.filter((o) => o.kind === 'migrated').length;
+      return NextResponse.json({ verdicts, personName, migratedCount });
     } catch (err) {
       return NextResponse.json({ error: String(err) }, { status: 500 });
     }
@@ -179,25 +146,13 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // 孤立 verdict を取得
+    // 孤立 verdict を取得（新ID商品へ引き継ぎ済みの旧ID判定は除く。旧IDに対応する新ID商品がある判定は R として復旧対象外）
     let orphanProductIds: string[] = [];
+    const reviewIds = new Set<string>();
     try {
-      const rows = await neonSql`
-        WITH product_ids AS (
-          SELECT DISTINCT elem->>'id' AS product_id
-          FROM products p,
-          LATERAL jsonb_array_elements(p.items) AS elem
-          WHERE p.person_name = ${personName}
-            AND jsonb_typeof(p.items) = 'array'
-        )
-        SELECT v.product_id
-        FROM verdicts v
-        LEFT JOIN product_ids pi ON v.product_id = pi.product_id
-        WHERE v.person_name = ${personName}
-          AND pi.product_id IS NULL
-        LIMIT 1000
-      `;
-      orphanProductIds = rows.map((r) => r.product_id as string);
+      const orphans = (await getOrphanVerdicts(personName)).filter((o) => o.kind !== 'migrated').slice(0, 1000);
+      orphanProductIds = orphans.map((o) => o.productId);
+      for (const o of orphans) if (o.kind === 'same_shop_new_id') reviewIds.add(o.productId);
     } catch (err) {
       return NextResponse.json({ error: `DB query failed: ${String(err)}` }, { status: 500 });
     }
@@ -238,6 +193,14 @@ export async function GET(req: NextRequest) {
     // 分類（商品URLや画像URLはログに出力しない）
     const results: OrphanVerdict[] = orphanProductIds.map((productId) => {
       const redisMatch = redisProductMap.get(productId);
+      if (reviewIds.has(productId)) {
+        return {
+          productId, verdict: '', score: 0, source: '', reason: null, judgedAt: '',
+          classification: 'R' as const,
+          redisCategory: redisMatch?.category,
+          redisTitle:    redisMatch?.title,
+        };
+      }
       if (redisMatch) {
         return {
           productId, verdict: '', score: 0, source: '', reason: null, judgedAt: '',
@@ -251,6 +214,7 @@ export async function GET(req: NextRequest) {
 
     const classA = results.filter((r) => r.classification === 'A').length;
     const classE = results.filter((r) => r.classification === 'E').length;
+    const classR = results.filter((r) => r.classification === 'R').length;
 
     return NextResponse.json({
       verdicts: results,
@@ -259,6 +223,7 @@ export async function GET(req: NextRequest) {
         total:  results.length,
         classA,
         classE,
+        classR,
         redisKeyExists: Object.keys(redisData).length > 0,
         redisCategories: Object.keys(redisData),
       },
@@ -280,23 +245,7 @@ export async function GET(req: NextRequest) {
     // 孤立 productId を DB から取得（最大 500 件）
     let orphanIds: string[] = [];
     try {
-      const rows = await neonSql`
-        WITH product_ids AS (
-          SELECT DISTINCT elem->>'id' AS product_id
-          FROM products p,
-          LATERAL jsonb_array_elements(p.items) AS elem
-          WHERE p.person_name = ${personName}
-            AND jsonb_typeof(p.items) = 'array'
-        )
-        SELECT v.product_id
-        FROM verdicts v
-        LEFT JOIN product_ids pi ON v.product_id = pi.product_id
-        WHERE v.person_name = ${personName}
-          AND pi.product_id IS NULL
-        ORDER BY v.judged_at DESC
-        LIMIT 500
-      `;
-      orphanIds = rows.map((r) => r.product_id as string);
+      orphanIds = (await getOrphanVerdicts(personName)).filter((o) => o.kind !== 'migrated').slice(0, 500).map((o) => o.productId);
     } catch (err) {
       return NextResponse.json({ error: `DB query failed: ${String(err)}` }, { status: 500 });
     }
@@ -463,6 +412,9 @@ function extractLastUrlSegment(itemUrl: string): string {
 //   - 確認トークン 'RECOVER_PRODUCTS' 必須
 //   - 冪等性キー必須（二重実行防止）
 //   - 現 DB に同一 productId がある場合は復旧対象外 (already_in_db)
+//   - 現 DB に同じ商品ページの商品がある場合は復旧対象外 (same_product_exists：旧IDと新IDの二重登録防止)
+//   - 旧ID（ic-）の商品で、同じ旧IDに対応する新ID（ich-）商品が人物にある場合は復旧対象外 (legacy_id_has_new_id_item)
+//     ※ 判定は人物の全カテゴリの商品に対して行い、書き込み直前に最新のDBで再確認する
 //   - 全置換せず既存配列へ追記（削除・上書きしな��）
 //   - 一部カテゴリ失敗時も他カテゴリは続行（ロールバックしない）
 export async function POST(req: NextRequest) {
@@ -553,22 +505,18 @@ export async function POST(req: NextRequest) {
     } catch { /* skip */ }
   }
 
-  // DB から現在の商品 ID セットを取得（重複チェック用）
-  const existingProductIds = new Set<string>();
+  // DB から人物の現在の全商品（全カテゴリ）を取得（重複チェック用）
+  let existingItems: RakutenItem[] = [];
   try {
     const rows = await db.select().from(productsTable)
       .where(eq(productsTable.personName, personName));
-    for (const row of rows) {
-      for (const item of (row.items as RakutenItem[])) {
-        if (item?.id) existingProductIds.add(item.id);
-      }
-    }
+    existingItems = rows.flatMap((row) => (row.items as RakutenItem[]).filter((item) => item?.id));
   } catch (err) {
     return NextResponse.json({ error: `DB 取得失敗: ${String(err)}` }, { status: 500 });
   }
 
   // 各候補を評価
-  type CandidateStatus = 'recoverable' | 'already_in_db' | 'not_in_redis';
+  type CandidateStatus = 'recoverable' | RecoveryConflict | 'not_in_redis';
   interface EvaluatedCandidate {
     productId:    string;
     status:       CandidateStatus;
@@ -576,16 +524,23 @@ export async function POST(req: NextRequest) {
     category?:    string;
   }
 
-  const evaluated: EvaluatedCandidate[] = candidates.map(({ productId }) => {
-    if (existingProductIds.has(productId)) {
-      return { productId, status: 'already_in_db' };
+  const evaluated: EvaluatedCandidate[] = [];
+  for (const { productId } of candidates) {
+    if (existingItems.some((i) => i.id === productId)) {
+      evaluated.push({ productId, status: 'already_in_db' });
+      continue;
     }
     const found = redisItemMap.get(productId);
     if (!found) {
-      return { productId, status: 'not_in_redis' };
+      evaluated.push({ productId, status: 'not_in_redis' });
+      continue;
     }
-    return { productId, status: 'recoverable', item: found.item, category: found.category };
-  });
+    // 同じ商品ページ・新IDへ移行済みの旧IDは追加しない（同じ実行内の候補どうしの重複も防ぐ）
+    const conflict = recoveryConflict(found.item, [...existingItems, ...evaluated.flatMap((c) => (c.status === 'recoverable' && c.item ? [c.item] : []))]);
+    evaluated.push(conflict
+      ? { productId, status: conflict }
+      : { productId, status: 'recoverable', item: found.item, category: found.category });
+  }
 
   const recoverable = evaluated.filter((c): c is EvaluatedCandidate & { status: 'recoverable'; item: RakutenItem; category: string } =>
     c.status === 'recoverable',
@@ -597,6 +552,8 @@ export async function POST(req: NextRequest) {
       dryRun:           true,
       recoverableCount: recoverable.length,
       alreadyInDbCount: evaluated.filter((c) => c.status === 'already_in_db').length,
+      sameProductExistsCount:  evaluated.filter((c) => c.status === 'same_product_exists').length,
+      legacyIdHasNewIdItemCount: evaluated.filter((c) => c.status === 'legacy_id_has_new_id_item').length,
       notInRedisCount:  evaluated.filter((c) => c.status === 'not_in_redis').length,
       preview: recoverable.map((c) => ({
         productId: c.productId,
@@ -623,14 +580,16 @@ export async function POST(req: NextRequest) {
         .where(eq(productsTable.personName, personName));
       const row = rows.find((r) => r.category === category);
       const existing: RakutenItem[] = row ? (row.items as RakutenItem[]) : [];
-      const existingIdsInCat = new Set(existing.map((i) => i.id));
+      // 書き込み直前の最新の全カテゴリの商品で再確認（評価後に定期取得・手動登録で追加された商品との二重登録防止）
+      const latestAll = rows.flatMap((r) => (r.items as RakutenItem[]).filter((i) => i?.id));
 
       // 既存にないものだけ追加（二重追加防止）
-      const toAdd = newItems.filter((i) => !existingIdsInCat.has(i.id));
-      if (toAdd.length === 0) {
-        skippedIds.push(...newItems.map((i) => i.id));
-        continue;
+      const toAdd: RakutenItem[] = [];
+      for (const i of newItems) {
+        if (!recoveryConflict(i, [...latestAll, ...toAdd])) toAdd.push(i);
+        else skippedIds.push(i.id);
       }
+      if (toAdd.length === 0) continue;
 
       // 既存配列へ追記（削除・置換しない��
       const merged = [...existing, ...toAdd];
@@ -639,7 +598,7 @@ export async function POST(req: NextRequest) {
       recovered += toAdd.length;
     } catch (err) {
       // 一部カテゴリ失敗: このカテゴリをスキップ（他カテゴリは続行、ロールバックしない）
-      skippedIds.push(...newItems.map((i) => i.id));
+      skippedIds.push(...newItems.map((i) => i.id).filter((id) => !skippedIds.includes(id)));
       console.error(`[product-recovery] category=${category} write failed: ${String(err)}`);
     }
   }

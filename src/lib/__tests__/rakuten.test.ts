@@ -91,6 +91,7 @@ describe('getProductsByCategory', () => {
       reviewCount: 10,
       reviewAverage: 4.5,
       itemUrl: 'https://item.rakuten.co.jp/shop/test-item/',
+      itemCode: 'shop:test-item', // 楽天市場APIの公式商品識別子（商品IDの生成に使う）
       affiliateUrl: '',
       mediumImageUrls: [{ imageUrl: 'https://thumbnail.image.rakuten.co.jp/t.jpg?_ex=128x128' }],
       shopName: 'テストショップ',

@@ -3,6 +3,7 @@
 // 失敗時は console.warn('[dual-write] DB_ERR ...') のみ出力し、本番処理を失敗扱いにしない。
 
 import { db, neonSql } from './client';
+import { getBatchLockStatus, PRODUCT_ID_MIGRATION_LOCK_KEY } from '@/lib/batch-lock';
 import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons, workStatusHistory, vodRecheckLogs, photobookSettings } from './schema';
 import { eq, and } from 'drizzle-orm';
 import type { WorkRecord } from '@/types/work';
@@ -23,6 +24,12 @@ export async function upsertProduct(
   items: unknown[],
   fetchedAt: number,
 ): Promise<void> {
+  // 商品ID移行の実行中は、移行スクリプト以外からの商品データの書き込みを止める（同時更新で移行結果を上書きしないため）。
+  // 移行スクリプトはこの関数を使わず、行単位の楽観ロックで直接更新する。
+  const migration = await getBatchLockStatus(PRODUCT_ID_MIGRATION_LOCK_KEY);
+  if (migration.isLocked) {
+    throw new Error('商品ID移行中のため、商品データの書き込みを停止しています');
+  }
   const fetchedAtDate = new Date(fetchedAt);
   await db
     .insert(products)

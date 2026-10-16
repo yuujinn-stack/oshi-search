@@ -6,6 +6,7 @@ import type {
   RakutenDvdResponse,
   ApiResult,
 } from '@/types/rakuten';
+import { ichibaItemIdFromApi, type IchibaIdStatus } from '@/lib/rakuten-item-id';
 import type { PersonConfig } from '@/types/person';
 import { calcScore } from './scoring';
 
@@ -209,6 +210,28 @@ function stableId(prefix: string, itemUrl: string): string {
 
 // 問題商品追跡キーワード（Vercelログで取得漏れ商品を全ステップ追跡する）
 const TRACK_TITLE_TERMS = ['感情の隙間', '1st写真集', '2nd写真集', '3rd写真集'];
+
+// 楽天市場の商品ID（Phase 4）：店舗単位だった旧ID（stableId('ic', itemUrl)）の代わりに、公式の itemCode から作る。
+// itemCode が無い・不正・商品URLの店舗と一致しない商品は推測でIDを作らず、保存しない（理由ごとに件数をログ）。
+function ichibaItemsWithId<T>(
+  label: string,
+  items: { Item: { itemCode?: string; itemUrl?: string } & T }[],
+  build: (Item: { itemCode?: string; itemUrl?: string } & T, id: string) => RakutenItem,
+): RakutenItem[] {
+  const skipped: Partial<Record<IchibaIdStatus, number>> = {};
+  let urlDiffers = 0;
+  const out: RakutenItem[] = [];
+  for (const { Item } of items) {
+    const r = ichibaItemIdFromApi({ itemCode: Item.itemCode, itemUrl: Item.itemUrl });
+    if (!r.id) { skipped[r.status] = (skipped[r.status] ?? 0) + 1; continue; }
+    if (r.status === 'ok_url_differs') urlDiffers++;
+    out.push(build(Item, r.id));
+  }
+  if (Object.keys(skipped).length || urlDiffers) {
+    console.warn(`[rakuten] ${label}: 商品IDを確認できず保存しない ${JSON.stringify(skipped)} / itemCode と商品URLの商品コードが異なる ${urlDiffers}件（itemCode を使用）`);
+  }
+  return out;
+}
 
 function logTrackedItem(foundBySearch: string, id: string, title: string, itemUrl: string): void {
   const matched = TRACK_TITLE_TERMS.filter((t) => title.includes(t));
@@ -620,10 +643,11 @@ async function fetchIchiba(
       const total = data.count ?? 0;
       console.log(`[rakuten] Ichiba取得: ${returned}件 (総数=${total}) keyword="${keyword}" page=${page}`);
 
-      items.push(...data.Items.map(({ Item }) => {
+      items.push(...ichibaItemsWithId('Ichiba', data.Items, (Item, id) => {
         const title = Item.itemName ?? '';
         return {
-          id: stableId('ic', Item.itemUrl ?? ''),
+          id,
+          itemCode: Item.itemCode,
           title,
           shopName: Item.shopName ?? '',
           catchcopy: Item.catchcopy ?? '',
@@ -714,8 +738,9 @@ async function fetchUsed(
       const total = data.count ?? 0;
       console.log(`[rakuten] 中古取得: ${returned}件 (総数=${total}) keyword="${keyword}" page=${page}`);
 
-      items.push(...data.Items.map(({ Item }) => ({
-        id: stableId('ic', Item.itemUrl ?? ''),
+      items.push(...ichibaItemsWithId('中古', data.Items, (Item, id) => ({
+        id,
+        itemCode: Item.itemCode,
         title: Item.itemName ?? '',
         shopName: Item.shopName ?? '',
         catchcopy: Item.catchcopy ?? '',
