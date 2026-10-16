@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { sendGaEvent } from '@/lib/ga-event';
+import { ACCESSTRADE_OSHI_AD_BANNER_HTML as ACCESSTRADE_BANNER_HTML } from './oshi-ad-link';
 
 // 全人物詳細ページ共通の「#推しアド」（AccessTrade）広告枠。
 // 人物ごとにDBへ広告情報を保存する方式ではなく、このコンポーネント側に
@@ -22,8 +23,6 @@ declare global {
   }
 }
 
-const ACCESSTRADE_BANNER_HTML =
-  '<a href="https://h.accesstrade.net/sp/cc?rk=0100q6rn00ovvr" rel="nofollow" referrerpolicy="no-referrer-when-downgrade"><img src="https://h.accesstrade.net/sp/rr?rk=0100q6rn00ovvr" alt="#推しアド" border="0" width="300" height="250"></a>';
 
 interface Props {
   personName: string;

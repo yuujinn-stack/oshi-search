@@ -38,6 +38,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'weekly' as const,
       priority: 0.7,
     },
+    // 応援広告ガイド（静的ページ。内容を更新したら lastModified も更新する）
+    {
+      url: `${BASE_URL}/support-ads`,
+      lastModified: new Date('2026-10-16'),
+      changeFrequency: 'monthly' as const,
+      priority: 0.5,
+    },
     {
       url: `${BASE_URL}/about`,
       lastModified: new Date('2026-08-12'),

@@ -1,0 +1,108 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   はじめての応援広告ガイド（/support-ads）専用スタイル。
+   公開ページ共通の C案「Graphic Pop」（graphic-site.css・GraphicPageStyles）を前提に、
+   ページ固有の部品（.sa-*）だけをここで定義する。スコープは .sa-page 配下のみ。
+   スマホ最優先（基準 360〜430px）。PC は max-w-3xl の1カラム（比較カードのみ2列）。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--supportads { --graphic-page-label: 'GUIDE / SUPPORT AD'; }
+
+.sa-page { overflow-wrap: anywhere; }
+.sa-page .sa-h1 { font-size: clamp(26px, 6.4vw, 36px); line-height: 1.25; margin: 0 0 12px; }
+.sa-page .sa-h2 { font-size: 18px; line-height: 1.4; margin: 0 0 12px; }
+.sa-page .sa-lead { font-size: 14px; line-height: 1.8; color: var(--graphic-body); margin: 0 0 12px; }
+.sa-page .sa-text { font-size: 14px; line-height: 1.8; color: var(--graphic-body); margin: 0; }
+.sa-page .sa-note { font-size: 12px; line-height: 1.7; color: var(--graphic-muted); margin: 10px 0 0; }
+.sa-page .sa-sections { display: flex; flex-direction: column; gap: 32px; margin-top: 24px; }
+.sa-page .sa-sections > section { border-top: 1.5px solid var(--graphic-rule); padding-top: 18px; }
+
+/* 広告表記（ページ上部） */
+.sa-page .sa-disclosure {
+  font-size: 12px; line-height: 1.7; margin: 0;
+  padding: 10px 12px; background: var(--graphic-panel);
+  border-left: 3px solid var(--graphic-orange); color: var(--graphic-body);
+}
+.sa-page .sa-jump {
+  display: inline-block; margin-left: 6px; font-weight: 700;
+  color: var(--graphic-orange-text); text-decoration: underline; text-underline-offset: 2px;
+}
+
+/* リスト */
+.sa-page .sa-list { margin: 0; padding-left: 1.2em; list-style: disc; font-size: 14px; line-height: 1.8; color: var(--graphic-body); }
+.sa-page .sa-list > li + li { margin-top: 4px; }
+.sa-page .sa-list--tight { font-size: 13px; line-height: 1.7; margin-top: 8px; }
+
+/* カード（媒体・一人/団体） */
+.sa-page .sa-media,
+.sa-page .sa-compare { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 640px) {
+  .sa-page .sa-compare { grid-template-columns: 1fr 1fr; }
+}
+.sa-page .sa-card { background: #FFFFFF; border: 1.5px solid var(--graphic-ink); padding: 14px; }
+.sa-page .sa-card-title { font-family: var(--graphic-font-jp); font-weight: 900; font-size: 16px; line-height: 1.4; color: var(--graphic-ink); margin: 0 0 6px; }
+.sa-page .sa-card-also { font-family: inherit; font-weight: 700; font-size: 12px; color: var(--graphic-muted); }
+.sa-page .sa-price {
+  margin: 10px 0 0; padding-top: 8px; border-top: 1px dashed var(--graphic-border-strong);
+  font-size: 13px; font-weight: 700; line-height: 1.6; color: var(--graphic-text);
+}
+.sa-page .sa-price-label {
+  display: inline-block; margin-right: 8px; padding: 0 6px;
+  font-size: 11px; font-weight: 700; background: var(--graphic-orange-soft);
+  color: var(--graphic-orange-text); border: 1px solid var(--graphic-orange);
+}
+
+/* 選び方・流れ（番号付き） */
+.sa-page .sa-steps,
+.sa-page .sa-flow { margin: 0; padding: 0; list-style: none; counter-reset: sastep; display: flex; flex-direction: column; gap: 10px; }
+.sa-page .sa-steps > li,
+.sa-page .sa-flow > li {
+  counter-increment: sastep; position: relative; padding: 12px 12px 12px 48px;
+  background: #FFFFFF; border: 1px solid var(--graphic-border);
+}
+.sa-page .sa-steps > li::before,
+.sa-page .sa-flow > li::before {
+  content: counter(sastep); position: absolute; left: 12px; top: 12px;
+  width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  font-family: var(--graphic-font-mono); font-weight: 700; font-size: 13px;
+  background: var(--graphic-ink); color: #FFFFFF;
+}
+.sa-page .sa-steps strong,
+.sa-page .sa-flow strong { display: block; font-size: 15px; line-height: 1.5; color: var(--graphic-ink); }
+.sa-page .sa-steps span,
+.sa-page .sa-flow span { display: block; margin-top: 2px; font-size: 13px; line-height: 1.7; color: var(--graphic-body); }
+
+/* 必要書類 */
+.sa-page .sa-docs { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 14px; }
+@media (min-width: 640px) {
+  .sa-page .sa-docs { grid-template-columns: 1fr 1fr; }
+}
+.sa-page .sa-docs > div { background: var(--graphic-panel); border: 1px solid var(--graphic-border); padding: 12px; }
+.sa-page .sa-docs .sa-card-title { font-size: 14px; }
+
+/* FAQ（/oshi-vod と同じ開閉スタイル） */
+.sa-page .sa-faq { display: flex; flex-direction: column; }
+.sa-page .sa-more { margin-top: 10px; border: 1px solid var(--graphic-border); background: #FFFFFF; }
+.sa-page .sa-more > summary {
+  display: flex; align-items: center; min-height: 44px; padding: 10px 12px; cursor: pointer;
+  font-size: 14px; font-weight: 700; line-height: 1.5; color: var(--graphic-ink); list-style: none;
+}
+.sa-page .sa-more > summary::-webkit-details-marker { display: none; }
+.sa-page .sa-more > summary::after { content: '＋'; margin-left: auto; padding-left: 8px; color: var(--graphic-orange-text); }
+.sa-page .sa-more[open] > summary::after { content: '－'; }
+.sa-page .sa-more > .sa-text { margin: 0 12px 12px; font-size: 13px; }
+
+/* 推しアド広告枠 */
+.sa-page .sa-cta {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  background: #FFFFFF; border: 1.5px solid var(--graphic-ink); box-shadow: 4px 4px 0 var(--graphic-orange);
+  padding: 18px 14px 20px;
+}
+.sa-page .sa-pr {
+  display: inline-block; padding: 1px 8px; font-size: 11px; font-weight: 700;
+  border: 1px solid var(--graphic-border-strong); color: var(--graphic-muted); background: var(--graphic-panel);
+}
+.sa-page .sa-cta-title { font-family: var(--graphic-font-jp); font-weight: 900; font-size: 18px; color: var(--graphic-ink); margin: 10px 0 6px; }
+.sa-page .sa-cta-text { font-size: 13px; line-height: 1.7; color: var(--graphic-body); margin: 0 0 14px; max-width: 30em; }
+.sa-page .sa-cta-creative { margin: 0 auto; }
+
+.sa-page .sa-source { font-size: 12px; line-height: 1.7; color: var(--graphic-muted); margin: 0; }

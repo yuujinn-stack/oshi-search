@@ -3680,3 +3680,101 @@ oshi-video-maker 側で「推しでサブスク比較 ショートV1」でも In
 - 手動で付けた判定（source が手動のもの）も同じ規則で扱う。分かれるものは手動で付け直す必要がある（dry-run CSV で件数を確認）。
 - 旧ID の判定行は残すため、移行を取り消す場合は products の ID を戻すだけで元の状態に戻せる。
 - 公開ページの重複除去（`dedupeProducts`）は実URLで同一判定しているため、移行の前後どちらでも正しく動く。
+
+---
+
+## Task 94 追記3：Phase 1 本番反映（2026-10-16）
+
+- **反映**：commit `d6b61bb`（Phase 1 の17ファイルのみ）を main に push → Vercel 自動デプロイ `dpl_FboY7fWaf99stgGRfWPWbvT72jtn`（Ready、oshi-search.jp、githubCommitSha=d6b61bb）。
+- **反映前の本番（ロールバック先）**：`dpl_FyKpKRNMpxfyHA9An7AHF3Ek39Y7`（commit `b9dee43`）。戻す場合は `vercel rollback dpl_FyKpKRNMpxfyHA9An7AHF3Ek39Y7`（DB変更なしのため即時に戻せる）またはコミットの revert。
+- **公開後の確認（本番。/api/track はブラウザで止め、GA4の送信は内容を確認したうえで遮断、楽天への移動は移動先URLの確認のみ）**：
+  - トップ・人物（梅澤美波・松田里奈・成田凌・齊藤京子・阿部寛・佐藤勝利）× 390/1280px：見出し・セクション順・VOD系リンク数が反映前の本番と同一、HTTP200、横スクロール0、コンソールエラー0。楽天リンクは全て target=_blank・rel=sponsored。
+  - 目黒蓮・梅澤美波・佐藤勝利・成田凌・阿部寛・齋藤京子・齊藤京子・写真集一覧・グループ・作品・/oshi-vod・robots.txt：ローカルで検証したビルドと商品カード・タブ件数・metadata・楽天以外のリンクが一致。作品ページの JSON-LD の genre は本番のみ出力されるが、TMDb APIキーの有無（ローカルに無い）による環境差で、今回の変更とは無関係。
+  - 商品画像：トップ人気商品15・目黒蓮40・写真集一覧24件すべて読み込み成功（390/1280px）。
+  - クリック計測：人物（ボタン・画像・ピックアップ）・トップ人気商品・写真集一覧・グループ・作品の7か所 × 390/1280px で、本番の gtag.js が作る GA4 `affiliate_click` のリクエストが1クリックにつき1件（affiliate_name=rakuten・placement・position・link_element・product_id・product_category・item_name）、/api/track も1件。新規タブの移動先はリンクのアフィリエイトURLどおり。
+- **未確認**：GA4 管理画面（リアルタイム・DebugView）での受信は、本番プロパティへの送信を遮断して検証したため未確認。
+
+---
+
+## Task 96：楽天アフィリエイト設定の最終確認と、推しアド専用ページ「はじめての応援広告ガイド」（/support-ads）（未commit・Production未反映）
+
+### ① 楽天アフィリエイト設定の確認（コード変更なし・本番DBは読み取りのみ）
+- `src/lib/rakuten.ts` の楽天API呼び出し5か所（楽天ブックス書籍・DVD・CD、楽天市場・中古）と `src/app/api/admin/rakuten-search/route.ts` の4か所は、すべて `affiliateId: RAKUTEN_AFFILIATE_ID` を付けて呼び、APIが返す `affiliateUrl` を保存（空の場合だけ itemUrl）。公開ページのカード（ProductCard・PhotobookCard・グループ・作品・トップ人気商品）は `affiliateUrl || itemUrl` をそのままリンクにしている。
+- 本番DB集計（2026-10-16）：API経由の商品 83,290件はすべて `hb.afl.rakuten.co.jp/hgc/…` のアフィリエイトURL。楽天ブックスのCD・DVD検索は `http://` で返る（リンクとしては有効）。アフィリエイトURL内の識別部分（hgc の2・4番目のセグメント）は全件同じ形式で、1つのアカウント由来とみられる（IDは非表示）。`RAKUTEN_AFFILIATE_ID` はローカルの `.env.local` に無く Vercel のみに設定されているため、IDの値そのものの照合はしていない（ウェブサービス用の表記とリンク内の表記は異なるため、文字列一致では判定しない）。
+- **要対応（既存データ）**：管理画面の手動追加（`/api/admin/product-manual`）は入力URLをそのまま `affiliateUrl` に保存するため、手動商品のうち **141件が通常の `books.rakuten.co.jp` URL（成果が付かない）**で、いずれも公開中（related）。29件は楽天の短縮アフィリエイトURL（`a.r10.to`。発行アカウントは未確認）。今回は既存の楽天商品ページを変更しない方針のため未修正。対応案：手動追加時に楽天アフィリエイトURLへ変換する／既存141件を管理画面でアフィリエイトURLに差し替える。
+
+### ② 推しアド専用ページ
+- URL：`/support-ads`（既存ルートと重複なし）。ページ名「はじめての応援広告ガイド」。DB・外部APIを使わない静的ページ（build で ○ Static）。
+- 内容：応援広告とは／よく使われる場面／駅ポスター・駅サイネージ（デジタルサイネージ）・屋外ビジョン（街頭ビジョン）の違いと費用の目安／一人と団体（実行委員会・クラファン）の違い／希望日・予算・地域からの選び方／事務所の許可と必要書類／申込から掲載までの流れ／FAQ 6問／推しアドの広告枠。
+- 事実は推しアド公式（トップ・使い方ガイド・FAQ・費用ガイド〔2026/07/30更新〕・個人で出す方法〔2026/10/08更新〕・出し方ガイド〔2026/10/08更新〕）で確認できた内容だけを使用し、文章は独自に要約。料金は費用ガイドの「目安」（7日間、税込/税抜の記載なし、媒体・時期・空き状況で変動）として出典日つきで表示。許諾確認代行（税抜5,000円＋消費税・サービス料、最短1週間）、駅ポスターは2名以上の団体名義が必要、提出物（駅ポスター4点・デジタル2点）、提出期限、申込前の空き枠確認不可、枠取り後の変更不可、未成年対象の掲載不可。公式サイトへの通常リンク・LINE相談リンクは置かない（成果対象外の経路へ誘導しないため）。
+- SEO：title・description・canonical（https://oshi-search.jp/support-ads）・OG（article）、JSON-LD は BreadcrumbList・WebPage・FAQPage、index 対象。`src/app/sitemap.ts` に1件追加（既存エントリは無変更）。トップ・人物ページ・フッターからの導線は追加していない。
+- デザイン：C案（GraphicPageStyles＋ページ専用 `support-ads.css`、`.sa-*` にスコープ）。スマホ優先、芸能人写真なし、推しアドのロゴ・配色は使わない。ページ上部と広告枠に「PR／広告（アフィリエイトリンク）」「推しサーチは運営元ではない」を明示。
+
+### ③ アフィリエイトリンク
+- 既存の承認済み AccessTrade リンクコード（人物ページの #推しアド バナー、300×250、rk は非表示）を `src/components/affiliate/oshi-ad-link.ts` に移し（文字列は完全一致をテストで固定）、人物ページの `OshiAdBanner` と新ページの `SupportAdsCta` の両方から使う。リンクコードの改変・公式URLへの置き換えなし。表示は既存と同じ `NEXT_PUBLIC_OSHI_AD_ENABLED=true` のときだけ。
+- 計測：既存の GA4 `affiliate_click`（affiliate_name=oshi_ad、sendGaEvent 経由）を再利用し、page_type=`support_ads`・placement=`support_ads_bottom`。1秒以内の連続クリックは1回だけ送る。
+- **未確認**：AccessTrade 管理画面の最新の成果条件と、このリンクコードの遷移先（Web申込ページか、LINE相談か）。クリックURLへアクセスするとクリックが計上されるため、遷移先の実地確認はしていない。
+
+### 変更ファイル
+- 新規：`src/app/support-ads/page.tsx`、`src/app/support-ads/support-ads.css`、`src/components/affiliate/SupportAdsCta.tsx`、`src/components/affiliate/oshi-ad-link.ts`、`src/lib/support-ads/content.ts`、`src/lib/__tests__/support-ads.test.ts`
+- 変更：`src/components/affiliate/OshiAdBanner.tsx`（リンクコード定数を共通ファイルから読み込むだけ。描画・計測は無変更）、`src/app/sitemap.ts`（/support-ads を追加）
+
+### 確認
+- `tsc --noEmit` 0件、`npm test` 105ファイル/1885件合格、ESLint（変更ファイル）エラー0、`next build` 成功（`NEXT_PUBLIC_OSHI_AD_ENABLED=true`）。
+- 新ページ（`next start`、360/390/1280px）：HTTP200、横スクロール0、コンソールエラー0、metadata・canonical・OG・JSON-LD 3種、広告枠のリンクコードが既存と完全一致、広告表記2か所。AccessTrade への通信はすべて遮断（計測画像はダミー画像で代替）し、クリック・表示回数を計上していない。本番ホスト扱いで、バナーのクリック1回・ダブルクリックとも affiliate_click が1件。人物ページの既存バナーは従来どおり（パラメータ同一。ダブルクリックでは2件になる既存挙動は変更していない）。
+- 既存ページ：人物（目黒蓮・梅澤美波・佐藤勝利・成田凌・阿部寛・齋藤京子・齊藤京子）・写真集・グループ・作品・/oshi-vod・robots.txt を本番と比較し、metadata・JSON-LD・見出し・セクション順・リンクが同一（トップの人気検索/人気商品はローカルに Redis が無いための差、作品ページの JSON-LD の genre は TMDb キーの有無による差）。sitemap は /support-ads の追加のみ（ほか作品3件の差は本番 sitemap のキャッシュ時点の違い）。
+
+---
+
+## Task 96 追記：本番公開前の最終確認と軽微修正（未commit・Production未反映）
+
+### 推しアドの広告リンク
+- リンクコードは AccessTrade 標準形式（クリック `h.accesstrade.net/sp/cc?rk=…`・表示計測 `…/sp/rr?rk=…`、同じ rk、https、rel=nofollow）で、承認済みの人物ページ用バナーと完全一致。
+- **未確認**：AccessTrade 管理画面の最新成果条件、クリック後の遷移先（Web申込ページか LINE 相談か）。公開情報（推しアド公式・Web検索）には記載がなく、クリックURLにアクセスするとクリックが計上されるため実地確認はしていない。
+- **軽微修正**：成果対象外になりうる導線を確認なしで新設しないため、/support-ads の広告枠を `NEXT_PUBLIC_SUPPORT_ADS_CTA_ENABLED='true'`（かつ従来の `NEXT_PUBLIC_OSHI_AD_ENABLED='true'`）のときだけ表示するよう変更（`isSupportAdsCtaEnabled()`、`src/components/affiliate/oshi-ad-link.ts`）。Vercel には未設定のため、このまま公開すると新ページには広告枠・広告表記・AccessTrade への通信が出ない。管理画面で確認後、Production に `NEXT_PUBLIC_SUPPORT_ADS_CTA_ENABLED=true` を設定して再デプロイすると表示される（NEXT_PUBLIC_ はビルド時に埋め込まれるため再デプロイが必要）。FAQ「推しサーチと推しアドの関係」は広告枠の有無どちらでも正しい文に修正。
+- 人物ページの既存バナーは無変更（ダブルクリックで affiliate_click が2件になる既存挙動も変更していない）。
+
+### 公式情報との再照合（2026-10-16、FAQ・費用ガイド・出し方ガイド）
+- 料金の目安（B1 4万〜8万円・B0 8万〜15万円〔7日間〕、駅デジタルサイネージ 5万〜50万円・大型ビジョン/特殊枠 30万円〜〔7日間〜〕、クラファン1口500円〜、変動・税区分記載なし・印刷費別途）、許諾代行 税抜5,000円＋消費税・サービス料・最短1週間、準備期間（駅ポスター3〜4か月前・デジタルサイネージ2か月前・最短2日程度）、2名以上の団体名義、許可とスクリーンショット提出、提出物（4点・2点）、提出期限、空き枠確認不可、枠取り後変更不可、未成年不可、媒体社審査：すべて一致。
+- 表現の修正2点：「3日以内」は銀行振込の場合の推奨であることを明記、「個人で申し込める枠」の例を公式どおり「デジタルサイネージなど」に変更。
+
+### 確認
+- 本番相当（`NEXT_PUBLIC_OSHI_AD_ENABLED=true` のみ）で 360/430/390/768/1280px：横スクロール0・はみ出し0・文字切れ0（FAQ全開）・コンソールエラー0・広告枠/AccessTrade通信なし。広告枠を有効にしたビルドでも、リンクコード完全一致・PR表記2か所・クリック/ダブルクリックとも affiliate_click 1件。
+- 既存ページ（人物7・写真集・グループ・作品・/oshi-vod・robots.txt）は本番と同一（トップは Redis、作品の JSON-LD genre は TMDb キーの環境差）。`tsc` 0件、`npm test` 105ファイル/1886件合格、ESLint エラー0。
+
+---
+
+## Task 97（予定・未実施）：手動登録の楽天商品でアフィリエイトURLが付いていないものの修正案
+
+### 件数（2026-10-16 本番DB読み取り集計）
+- アフィリエイトURL（hb.afl.rakuten.co.jp）でない商品は全体で **170件**（すべて手動登録 mn-、29人分、URLの種類81）。依頼文の「514件」に該当する集計は見つからなかった。
+  - 通常の楽天ブックスURL（`http://books.rakuten.co.jp/rb/<商品番号>/`）：141件（商品番号71種類。写真集90・CD71の一部ほか）。すべて公開中（related）。
+  - 楽天の短縮リンク（`a.r10.to`）：29件。楽天アフィリエイトの短縮URLだが、どのアカウントで発行されたかは未確認（アクセスするとクリックが計上されるため未確認のまま）。
+- 原因：`/api/admin/product-manual` が入力URLをそのまま `itemUrl`・`affiliateUrl` に保存する。
+
+### 正しいリンクの作り方
+- 楽天APIに affiliateId を付けて呼ぶと、楽天ブックス商品は `https://hb.afl.rakuten.co.jp/hgc/<アフィリエイト識別子>/?pc=<URLエンコードした https://books.rakuten.co.jp/rb/<商品番号>/>` を返す（本番DBの楽天ブックス向けURL 77,092件がすべてこの形式・識別子1種類）。
+- 141件のうち **130件（商品番号65種類）は、同じ商品番号の API 発行済みアフィリエイトURLが DB 内に既にある**（タイトル一致130/130、pc の商品番号一致130/130）。これをそのまま使うのが最も安全（新たに生成しない）。
+- 残り **11件（3商品：日経エンタテインメント! 櫻坂46 Special 2026、SWITCH Vol.43 No.10、FRUITS ZIPPER 4th Anniversary写真集）**は、楽天ブックスAPI（affiliateId 付き）で ISBN/JAN またはタイトル検索して API の affiliateUrl を取得する（3回程度の呼び出し）。API に出ない場合は手動対応。
+- a.r10.to の29件は、楽天アフィリエイト管理画面のリンク作成履歴で発行元を確認するか、同じ商品の API URL に置き換えるかをユーザー判断。
+
+### 修正方針（実行はユーザーの許可後）
+1. dry-run（作成済み・読み取りのみ）：修正前後の対応表 CSV（人物・カテゴリ・商品ID・判定・現URL・提案URL・出典の商品ID・タイトル一致）を出力。
+2. Neon のブランチでバックアップ後、`products.items[].affiliateUrl` **だけ**を提案URLに更新する。`id`・`itemUrl`（元の商品URL・商品番号を保持）・verdicts（AI判定）は変更しない。公開カードは `affiliateUrl || itemUrl` なので、更新後はアフィリエイトURLで同じ商品ページ（pc の商品番号一致）へ遷移する。
+3. 更新後、対象29人の人物ページで該当カードの href が hb.afl に変わり、pc が元の商品番号と一致することを確認（リンク先へのアクセスはしない）。
+4. 再発防止：`/api/admin/product-manual` で楽天ブックス/楽天市場の通常URLが入力された場合、API で affiliateUrl を取得して保存する（取得できなければ警告）。
+
+---
+
+## Task 96 追記2：広告CTAの有効化準備（未commit・Production未反映）
+
+- ユーザーが既存バナー（AccessTrade 承認済みコード）を実際にクリックして遷移先を確認：推しアド公式トップ（app.oshi-ad.com、atnct パラメータ付き）。公式トップに「掲載枠を探す」の導線があり、Web申込・クレジットカード決済に対応。
+- CTA文言を遷移先に合わせて変更：見出し「公式サイトで掲載枠を探す」、本文「バナーを押すと推しアドの公式サイト（トップページ）が開きます。『掲載枠を探す』から…Webで申し込めます（支払いはクレジットカードまたは銀行振込）」、上部の案内リンク「公式サイトで掲載枠を探す ↓」。広告コードは無変更（完全一致テストあり）、公式URL・/ads への直リンクは置かない。
+- 表示条件は `NEXT_PUBLIC_OSHI_AD_ENABLED=true` かつ `NEXT_PUBLIC_SUPPORT_ADS_CTA_ENABLED=true`。参照箇所は `src/components/affiliate/oshi-ad-link.ts`（isSupportAdsCtaEnabled）と `src/app/support-ads/page.tsx` のみで、他ページには影響しない。/support-ads は静的ページ（○）のため、値はビルド時に HTML へ埋め込まれる（両方 true でビルドすると prerender HTML に広告枠・リンクコード・PR表記が入ることを確認、未設定なら入らないことも確認済み）。
+- 確認：両方 true のビルドで 360/390/430/768/1280px 横スクロール・はみ出し・文字切れ0、コンソールエラー0、リンクコード完全一致、PR表記2か所、JSON-LD 3種・canonical、affiliate_click はクリック・ダブルクリックとも1件（人物ページの既存バナーは従来どおり）。既存ページは本番と同一（トップ＝Redis、作品 JSON-LD genre＝TMDb キーの環境差のみ）。tsc 0件、npm test 105ファイル/1886件、ESLint エラー0。
+
+### 本番公開手順（ユーザー許可後に実施）
+1. Vercel 環境変数を追加：`NEXT_PUBLIC_SUPPORT_ADS_CTA_ENABLED=true` を **Production のみ**（Preview・Development には追加しない）。push より前に設定する（ビルド時に埋め込まれるため）。
+2. Phase 2 のファイルだけを commit：`src/app/support-ads/page.tsx`・`src/app/support-ads/support-ads.css`・`src/components/affiliate/SupportAdsCta.tsx`・`src/components/affiliate/oshi-ad-link.ts`・`src/components/affiliate/OshiAdBanner.tsx`・`src/lib/support-ads/content.ts`・`src/lib/__tests__/support-ads.test.ts`・`src/app/sitemap.ts`・`docs/development-log.md` → main へ push → Vercel 自動デプロイ。
+3. 公開後確認：デプロイの commit SHA、/support-ads の表示（スマホ・PC）・広告枠・PR表記・リンクコード、GA4 affiliate_click 1件（送信内容のみ確認）、sitemap に /support-ads、既存ページ（トップ・人物・/oshi-vod）が変わっていないこと。
+- ロールバック：`vercel rollback dpl_FboY7fWaf99stgGRfWPWbvT72jtn`（Phase 1 公開時のデプロイ。DB変更なしのため即時）。広告枠だけ止める場合は Production の `NEXT_PUBLIC_SUPPORT_ADS_CTA_ENABLED` を削除して再デプロイ。
