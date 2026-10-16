@@ -3795,3 +3795,86 @@ VODアフィリエイト審査に影響を与えずに、既存の利用者が�
 - ガイドリンクをクリック → /support-ads へクライアント遷移（ページ再読込なし）、affiliate_click 0件・/api/track の商品クリック0件・AccessTrade への遷移なし。フッターのリンクはトップ・/oshi-vod・/photobooks から /support-ads へ遷移。
 - 推しアドバナー自体のクリック計測は従来どおり（人物ページ：affiliate_name=oshi_ad・page_type=person・placement=after_watch_now、1クリック1件）。
 - 本番との比較：人物7・写真集・グループ・作品12・/oshi-vod で metadata・JSON-LD・見出し・セクション順が同一、リンクの差は /support-ads の追加のみ（トップは Redis、作品の JSON-LD genre は TMDb キーの環境差）。`tsc` 0件、`npm test` 105ファイル/1886件合格、ESLint エラー0（警告1件は既存の eslint-disable コメント）、`next build` 成功。
+
+---
+
+## Task 97 追記：手動登録の楽天商品 affiliateUrl 修正の準備（スクリプト作成・dry-run のみ。本番DB未変更・未commit）
+
+### 再集計（2026-10-16、本番DB読み取りのみ）
+- アフィリエイトURLでない商品は 170 件（全商品中。すべて手動登録 mn-）：楽天ブックス通常URL 141 件 / 短縮URL（a.r10.to）29 件。前回から変化なし。
+
+### 判定結果（`scripts/manual-affiliate-url-fix/run.ts` の dry-run）
+- **変更予定 130 件**（products 6 行：音嶋莉沙 CD 59・本・雑誌 3、野口衣織 写真集 30、髙松瞳 写真集 30、谷口愛季 CD 4、遠藤理子 CD 4／商品番号 68 種類）。同じ商品番号について楽天API（手動登録以外の bk-/cd-/dv- 商品）が発行済みのアフィリエイトURLを流用。130 件すべてで、流用元の遷移先（pc）の商品番号＝元の itemUrl の商品番号、遷移先はどちらも楽天ブックス（books.rakuten.co.jp）、商品名一致、URLの識別部分は楽天ブックス向けの共通値（DB全体の 77,158 件で1種類）と一致。※前回報告の「商品番号65種類」は誤りで、正しくは 68 種類。
+- **変更しない 40 件**：
+  - no_source 11 件（3商品：FRUITS ZIPPER 4th Anniversary写真集〔7人〕、日経エンタテインメント! 櫻坂46 Special 2026〔2人〕、SWITCH Vol.43 No.10〔2人〕）— DB内に同じ商品番号のアフィリエイトURLが無い（楽天市場の楽天ブックス店の商品にも無い）。URLを組み立てることはしない。
+  - skip_unverified 29 件（a.r10.to）— 楽天公式の短縮URLかどうか・発行アカウントを公開情報で確認できないため、展開・変換しない。
+- ambiguous_source・title_mismatch・invalid_source・duplicate_id_in_row は 0 件。
+
+### スクリプト（`scripts/manual-affiliate-url-fix/`：plan.ts・plan.test.ts・run.ts）
+- Prime Video チャンネル修正（Task 89）と同じ構成。デフォルト dry-run。apply は `--apply --expect <変更予定件数>` が一致し、異常判定が0件のときだけ。1トランザクションで、各 products 行は「読み込んだ時点の items と完全一致」の場合だけ更新（1行でも食い違えば全体ロールバック）。
+- 変更するのは該当要素の affiliateUrl だけ（商品ID・itemUrl・商品名・価格・他フィールド・要素数・並び順・verdicts は変更しない。plan.ts で affiliateUrl 以外の差分があれば例外）。
+- 商品ID重複問題への対策：(人物, カテゴリ, 配列内の位置, 商品ID, 現在の affiliateUrl, itemUrl) がすべて一致する要素だけを更新。同じ行に同じ商品IDが複数あれば変更しない。
+- 楽天API・外部APIは呼ばない（DB内の既存URLを流用するだけ。追加課金なし）。
+- 出力：`tmp/manual-affiliate-url-fix/<実行>/result.csv`（全170件の判定と修正前後URL）・`backup.json`（変更行の現在値）。`--rollback <backup.json>` で今回の変更だけを戻せる（dry-run で 130 件を判定できることを確認）。
+- テスト：plan.test.ts 16件（商品番号・http/https の扱い、商品名不一致・短縮URL・流用元なし・流用元複数・識別部分不一致・同一ID重複は変更しない、affiliateUrl 以外を変えない、状態が変わっていたら例外、再実行で already_applied）。
+- 確認時に、件数ガードの動作確認として `--apply --expect 999` を1回実行し、「件数不一致のため apply を中止」でトランザクション前に終了したこと（DB変更なし）を確認。
+
+### バックアップと復元（apply 時）
+- この環境には Neon の CLI・APIキー・Vercel 連携が無いため、Neon コンソールで実施：Branches → Create branch（親：本番ブランチ、Head、名前例 `backup-manual-affiliate-fix-20261016`）。復元は Neon の「Restore」（バックアップブランチから、または履歴保持期間内の時点を指定）。
+- 推奨：作成したブランチの接続文字列を DATABASE_URL にして先に apply（本番に影響なし）→ 結果確認 → 本番で dry-run → `--apply --expect 130`。
+- 行単位の復元はスクリプトの backup.json と `--rollback` で可能。
+
+### 適用後の影響
+- 公開カードは `affiliateUrl || itemUrl` のため、対象130件のリンクが楽天アフィリエイト経由になる（遷移先の商品ページは同じ）。表示件数・分類・並び順は変わらない（affiliateUrl は分類・重複判定・並び替えに使っていない。重複判定は itemUrl→pc の実URLで行うため同じ商品のまま）。
+- 残り：no_source 11件（3商品）は、管理画面の楽天検索（API・affiliateId 付き）で該当商品のURLを取得して個別に差し替えるか、次回の楽天取得で同じ商品番号が入った後にスクリプトを再実行すると対象になる。a.r10.to 29件は楽天アフィリエイト管理画面で発行元を確認後に判断。再発防止（手動追加時の自動変換）は未実装。
+
+### トップページ「人気検索」の並び順の変化
+- 人気検索は Redis `search:ranking`（/api/search-track で利用者の検索ごとに加算）の回数順 TOP10 を、トップページで60秒キャッシュして表示している。本番の3時点（Phase 1 後・Phase 2 後・内部リンク後）の10件は同じ顔ぶれで、入れ替わったのは8〜10位（髙地優吾・M!LK・広瀬すず）の順序のみ。検索回数の増加による動的な変化のため修正不要。
+
+---
+
+## Task 97 追記2：本番修正前の最終検証と、検証用ブランチでの試験の準備（本番DB未変更・未commit）
+
+### 130件の最終検証（本番DB読み取りのみ）
+- 130件すべて：商品名が流用元と**完全一致**（【】付記の違いも無し）、盤種・特典表記（Type A/B・初回仕様限定盤・通常盤・CD＋DVD/Blu-ray・限定カバー等）も一致、流用元の商品ID（cd-/dv-/bk-＋商品番号）の番号＝元の itemUrl の商品番号、同じ商品番号に別名の商品は無し、遷移先はどちらも楽天ブックスの同じ商品ページ。初回盤A/B・通常盤・特典違いは商品番号が異なるため同一扱いにならない。
+- 価格は 57 件で流用元と異なる（手動登録時に入力された価格。商品番号が同じためリンク先は同じ商品）。価格は今回変更しないため、表示価格はそのまま（既存の状態）。
+- 流用元のアフィリエイトURLは、現在サイトで使われている楽天API発行の楽天ブックス向けURL 77,158 件と同じ識別部分（1種類）。推しサーチのアカウントとの対応を値で照合する手段はローカルに無い（RAKUTEN_AFFILIATE_ID は Vercel のみ）ため、反映後に楽天アフィリエイトの成果レポートでクリックの計上を確認する。
+- 判断できない商品（流用元なし11・短縮URL29）は対象外。異常判定（名称不一致・流用元複数・形式不一致・同一ID重複）は0件。
+- affiliateUrl の利用箇所はリンク表示（ProductCard・PhotobookCard・グループ・作品・トップ人気商品・計測）と写真集の代表選び（URLの有無のみ）だけで、分類・重複判定（itemUrl→実URL）・並び順・AI判定には使っていないため、表示件数・順位は変わらない。
+
+### スクリプトの追加安全策（`scripts/manual-affiliate-url-fix/run.ts`）
+- 書き込み（apply・復元）には `--confirm-host <接続先ホスト名>` を必須化（接続先の取り違え防止）。apply はさらに `--expect 130` の一致が必要。
+- `--branch-selftest`：Neon 検証用ブランチ専用の通し試験。接続先が `.env.local` の本番ホストと同じなら開始前に中止（本番で実行できないことを確認済み）。内容：①対象行の1つを試験用に変更した状態で古い計画の更新を試み、全体が中止されて1件も更新されないこと（同時更新で古いデータを上書きしない）→ 試験用変更を戻す、②適用し、130件が適用済み・各行が想定どおり（affiliateUrl 以外不変）、③バックアップから復元し、全行が元の状態（元のURL）と完全一致、を自動判定。
+- 更新SQLは本番に対して EXPLAIN（実行しない）＋存在しないキーで文法・型を確認済み。tsc・npm test（106ファイル/1902件）・ESLint エラー0。
+
+### 検証用ブランチでの試験手順（ユーザー許可後）
+1. Neon コンソール → 対象プロジェクト → Branches → New branch（Parent：本番ブランチ、Current data、自動削除 1 day のまま）→ Create。
+2. Connect → 作成したブランチを選択 → 接続文字列をコピー → プロジェクト直下に `.env.branch-test` を作成し `DATABASE_URL=<接続文字列>` の1行だけを書く（.gitignore の `.env*` で git 対象外。Vercel の環境変数は変更しない）。
+3. `npx dotenv -e .env.branch-test -- npx tsx scripts/manual-affiliate-url-fix/run.ts`（dry-run で 130 件）→ `… --branch-selftest --expect 130 --confirm-host <ブランチのホスト名>` で PASS を確認。
+4. 本番：Neon でバックアップ用ブランチを作成（または履歴からの復元期間を確認）→ `npx dotenv -e .env.local -- … run.ts`（dry-run、backup.json 保存）→ `… --apply --expect 130 --confirm-host <本番ホスト名>` → 人物ページでリンク確認。戻す場合は `--rollback <backup.json> --apply --confirm-host <本番ホスト名>`。
+5. 検証用ブランチは自動削除（1日）または Branches の ⋮ → Delete。
+
+### Neon の料金（公式料金ページ、2026-10-16 確認）
+- ブランチ：Free・Launch は1プロジェクト10個まで追加料金なし（超過は Launch/Scale で $1.50/branch-month、時間按分）。子ブランチのストレージは書き込んだ分だけ増える（copy-on-write）。
+- コンピュート：ブランチが動作中の時間だけ CU-hour を消費（Free は月100 CU-hour まで、Launch $0.106/CU-hour）。5分無操作で停止。
+- 履歴（時点復元）：Free 6時間（1GB まで）・Launch 7日・Scale 30日。契約プランはこの環境から確認できないため、Neon の Billing 画面で確認が必要。
+
+---
+
+## Task 97 追記3：本番DBの affiliateUrl 修正を実施（2026-10-16、未commit）
+
+- 方針変更（ユーザー指示）：検証用ブランチは作らず、本番DBで直接実行。新しい Neon ブランチ作成・Vercel 環境変数の変更・commit/push/deploy はしていない。
+- 事前確認：接続先は .env.local の DATABASE_URL（本番DB。ホスト名はログに記載しない）。dry-run 130件（6行）・異常判定0・対象外 no_source 11／短縮URL 29。バックアップ（backup.json：6行の items 全体＝元URLを含む／changes 130件＝人物・カテゴリ・配列位置・商品ID・修正前後URL）を検証（130/130 有効・対象一意）し、--rollback の dry-run で 130 件を判定できることを確認。成果対象の確認：流用URLは楽天API（affiliateId=RAKUTEN_AFFILIATE_ID、131日前から設定）が発行したもので、楽天ブックス向けリンク 77,158 件と同じ識別部分（1種類）。楽天APIドキュメント上、affiliateId 指定時に affiliateUrl が返り、手動リンク形式も hgc/<アフィリエイトID>/ 。更新前に全 products 行・verdicts・product_display_order・photobook_settings の指紋（md5）を取得。
+- 実行：`run.ts --apply --expect 130 --confirm-host <本番ホスト>` を1回。products 6行・affiliateUrl 130件を1トランザクション（各行 items 完全一致の楽観ロック）で更新。スクリプトの反映後検証：適用済み 130 / 変更予定 0。
+- 事後確認：products 2,160行のうち変化したのは対象6行のみ（谷口愛季 CD・遠藤理子 CD・野口衣織 写真集・音嶋莉沙 CD・音嶋莉沙 本・雑誌・髙松瞳 写真集）、全行の要素数不変、verdicts（86,655件）・product_display_order・photobook_settings は指紋一致（変更なし）。6行内で変わったのは affiliateUrl 130件のみで全件想定どおり、他フィールドの差分0。対象外：楽天ブックス通常URL 11件・a.r10.to 29件はそのまま。本番の人物ページ（3人）でカードのリンクが新URLに置き換わり、旧URLのリンクは無し。アフィリエイトURL 3件（2商品）を実際にたどり、hb.afl → pt.afl → books.rakuten.co.jp の同じ商品番号ページに到達（このため自分のクリックが最大3回計上されうる）。
+- バックアップ：`tmp/manual-affiliate-url-fix/2026-10-16T07-00-20-305Z-apply/backup.json`・`result.csv`（git 対象外の tmp/）、同じものを作業用ディレクトリにも複製。戻す場合：`npx dotenv -e .env.local -- npx tsx scripts/manual-affiliate-url-fix/run.ts --rollback tmp/manual-affiliate-url-fix/2026-10-16T07-00-20-305Z-apply/backup.json`（確認）→ `--apply --confirm-host <本番ホスト>`。
+- 残り：no_source 11件（3商品）・a.r10.to 29件・手動追加時の自動変換（再発防止）は未対応。楽天アフィリエイトの成果レポートでのクリック計上確認はユーザー側。
+
+---
+
+## Task 97 完了：手動登録の楽天商品 affiliateUrl 修正の完了整理（2026-10-16）
+
+- 修正スクリプト `scripts/manual-affiliate-url-fix/`（plan.ts・plan.test.ts・run.ts）を確認：テスト16件合格・tsc・ESLint エラー0、接続情報や実際のアフィリエイトIDの記載なし。
+- バックアップを git 管理外かつ iCloud 同期外の `~/oshi-search-backups/2026-10-16-manual-affiliate-url-fix/` に保存（権限 700/600、SHA256SUMS 付き、DB接続情報は含まない）。正本は `2026-10-16T07-00-20-305Z-apply/backup.json`（本番更新直前に取得）。リポジトリ内の tmp/ にも同じものが残っている（git 対象外）。
+- 書き込みなしの復元確認：上記バックアップで `run.ts --rollback`（dry-run）を実行し「復元予定 130 / 復元済み 0 / エラー 0」、チェックサム全件一致。必要時は `--apply --confirm-host <本番DBのホスト名>` で今回の130件だけを元のURLに戻せる。
+- 追加のDB変更・API呼び出し・デプロイはしていない。
