@@ -359,6 +359,8 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
             personNames: targetNames,
             title: item.title,
             itemUrl: item.itemUrl,
+            // 楽天APIが返した正規の affiliateUrl（楽天ブックス系は itemUrl が通常URLのため）。サーバー側で遷移先を検証して使う
+            affiliateUrl: item.affiliateUrl,
             imageUrl: item.imageUrl,
             category: addCategory,
             price: item.price,

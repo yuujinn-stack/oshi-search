@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath, revalidateTag } from 'next/cache';
-import { appendProductToCategory, updateProductInCategory } from '@/lib/product-store';
+import { appendProductToCategory, getStoredProductItemById, updateProductInCategory } from '@/lib/product-store';
+import { resolveManualAffiliateUrl } from '@/lib/rakuten-affiliate-resolve';
+import {
+  AFFILIATE_LINK_STATUS_LABEL,
+  affiliateLinkStatusOf,
+  parseAffiliateUrl,
+  productKeyOfLink,
+  productKeyString,
+} from '@/lib/rakuten-affiliate-link';
 import { saveVerdict } from '@/lib/judgment-store';
 import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
 import type { ProductCategory } from '@/types/person';
@@ -17,6 +25,8 @@ export async function POST(req: NextRequest) {
     personNames?: string[];
     title?: string;
     itemUrl?: string;
+    /** 管理画面の楽天検索で、楽天APIがこの商品に返した affiliateUrl（ある場合は最優先で使う） */
+    affiliateUrl?: string;
     imageUrl?: string;
     category?: string;
     price?: number;
@@ -37,6 +47,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '無効なカテゴリです' }, { status: 400 });
   }
 
+  // affiliateUrl には確認できた正規のアフィリエイトURLだけを入れる（確認できなければ空＝要確認。
+  // 公開ページは affiliateUrl || itemUrl でリンクするため、空でもリンクは従来どおり機能する）。
+  // 以前は itemUrl をそのまま affiliateUrl に入れていたため、楽天ブックスの通常URLが「アフィリエイトURL」として保存されていた。
+  const link = await resolveManualAffiliateUrl({ title: title.trim(), itemUrl: itemUrl.trim(), apiAffiliateUrl: body.affiliateUrl });
+
   const results: { personName: string; status: 'created' | 'duplicate' }[] = [];
   for (let i = 0; i < personNames.length; i++) {
     const personName = personNames[i];
@@ -46,7 +61,7 @@ export async function POST(req: NextRequest) {
       title: title.trim(),
       itemUrl: itemUrl.trim(),
       imageUrl: imageUrl?.trim() ?? '',
-      affiliateUrl: itemUrl.trim(),
+      affiliateUrl: link.affiliateUrl,
       price: price ?? 0,
       reviewCount: 0,
       reviewAverage: 0,
@@ -67,7 +82,14 @@ export async function POST(req: NextRequest) {
 
   const created = results.filter((r) => r.status === 'created').map((r) => r.personName);
   const duplicates = results.filter((r) => r.status === 'duplicate').map((r) => r.personName);
-  return NextResponse.json({ ok: true, created, duplicates });
+  return NextResponse.json({
+    ok: true,
+    created,
+    duplicates,
+    linkStatus: link.status,
+    linkStatusLabel: AFFILIATE_LINK_STATUS_LABEL[link.status],
+    linkMessage: link.message,
+  });
 }
 
 // PUT /api/admin/product-manual — 手動商品編集
@@ -99,6 +121,28 @@ export async function PUT(req: NextRequest) {
   if (updates.isUsed !== undefined) filteredUpdates.isUsed = Boolean(updates.isUsed);
   if (updates.description !== undefined) filteredUpdates.description = (updates.description as string).trim() || undefined;
 
+  // 商品URLが変わった場合だけ affiliateUrl を決め直す（従来は itemUrl だけ更新され、リンク先が古いままになっていた）。
+  // 新しい商品URLが確認済みの affiliateUrl と同じ商品を指す場合は、その正規URLを残す（通常URLで上書きしない）。
+  let linkStatus: string | undefined;
+  if (filteredUpdates.itemUrl !== undefined) {
+    const current = await getStoredProductItemById(personName, category as ProductCategory, productId);
+    if (!current) return NextResponse.json({ error: '商品が見つかりません' }, { status: 404 });
+    if (filteredUpdates.itemUrl !== (current.itemUrl ?? '').trim()) {
+      const keep = parseAffiliateUrl(current.affiliateUrl);
+      const newKey = productKeyOfLink(filteredUpdates.itemUrl);
+      if (keep && newKey && productKeyString(keep.key) === productKeyString(newKey)) {
+        filteredUpdates.affiliateUrl = current.affiliateUrl;
+      } else {
+        const link = await resolveManualAffiliateUrl({
+          title: filteredUpdates.title ?? current.title ?? '',
+          itemUrl: filteredUpdates.itemUrl,
+        });
+        filteredUpdates.affiliateUrl = link.affiliateUrl;
+      }
+      linkStatus = affiliateLinkStatusOf({ itemUrl: filteredUpdates.itemUrl, affiliateUrl: filteredUpdates.affiliateUrl });
+    }
+  }
+
   const ok = await updateProductInCategory(personName, category as ProductCategory, productId, filteredUpdates);
   if (!ok) {
     return NextResponse.json({ error: '商品が見つかりません' }, { status: 404 });
@@ -110,5 +154,8 @@ export async function PUT(req: NextRequest) {
   if (filteredUpdates.imageUrl !== undefined) {
     revalidateTag(RANKING_DATA_CACHE_TAG, { expire: 0 });
   }
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    ok: true,
+    ...(linkStatus ? { linkStatus, linkStatusLabel: AFFILIATE_LINK_STATUS_LABEL[linkStatus as keyof typeof AFFILIATE_LINK_STATUS_LABEL] } : {}),
+  });
 }

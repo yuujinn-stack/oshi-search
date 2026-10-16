@@ -3878,3 +3878,52 @@ VODアフィリエイト審査に影響を与えずに、既存の利用者が�
 - バックアップを git 管理外かつ iCloud 同期外の `~/oshi-search-backups/2026-10-16-manual-affiliate-url-fix/` に保存（権限 700/600、SHA256SUMS 付き、DB接続情報は含まない）。正本は `2026-10-16T07-00-20-305Z-apply/backup.json`（本番更新直前に取得）。リポジトリ内の tmp/ にも同じものが残っている（git 対象外）。
 - 書き込みなしの復元確認：上記バックアップで `run.ts --rollback`（dry-run）を実行し「復元予定 130 / 復元済み 0 / エラー 0」、チェックサム全件一致。必要時は `--apply --confirm-host <本番DBのホスト名>` で今回の130件だけを元のURLに戻せる。
 - 追加のDB変更・API呼び出し・デプロイはしていない。
+
+---
+
+## Task 99（Phase 3）：手動登録の楽天商品で通常URLが保存される問題の再発防止（未commit・Production未反映）
+
+### 調査結果（本番DBは読み取りのみ）
+- 手動登録の商品（ID mn-）は `/api/admin/product-manual`（POST）だけが作る。入力元は ①管理画面「商品を追加」（URLを手入力）と ②管理画面「楽天検索」からの一括追加。
+- 根本原因：
+  1. `/api/admin/rakuten-search` が楽天APIの `affiliateUrl` を捨てて `itemUrl` だけ返していた。楽天市場APIは affiliateId 指定時に itemUrl 自体がアフィリエイトURLになるが、楽天ブックス系（書籍・CD・DVD）は itemUrl が通常URLで、正規URLは affiliateUrl にしか入らない。
+  2. product-manual が `affiliateUrl = itemUrl` で保存していた（通常URL・短縮URLもそのまま「affiliateUrl」になる）。
+  3. 編集（PUT）は itemUrl だけ更新し affiliateUrl を更新しないため、URLを直してもリンク先が古いまま。
+- 手動商品のURLの内訳：楽天ブックス向けと同じ識別部分の hb.afl 5,083 件・楽天市場各店舗の hb.afl 3,474 件（いずれも楽天検索の楽天市場APIから追加。店舗名・rafcid 付き）、楽天ブックス通常URL 141 件（店舗名なし＝楽天検索の書籍/CD/DVD から追加。130件は Task 97 で修正済み）、a.r10.to 29 件（手入力）。
+- 再取得（batch-processor → storeProducts → mergeProductItems）：楽天API商品と手動商品は同じ products 行に入り、ID または normalizeItemUrl（ホスト＋パス）が一致すると統合される。
+  - mergeRakutenItem は fetched の空でない値で上書きするため、楽天APIが affiliateUrl を返さない場合（affiliateId 未設定など）、rakuten.ts の affiliateLink() が itemUrl で代用 → 既存の正規アフィリエイトURLが通常URLで上書きされうる。
+  - normalizeItemUrl はアフィリエイトURLのホスト＋パス（楽天市場では店舗単位で同じ）で比較していたため、同じ店舗の別商品が同一とみなされ、手動登録の楽天市場商品が別商品で上書き・統合されうる（商品ID重複問題 Task 95 と同種）。
+  - 修正済み130件：itemUrl が楽天ブックス通常URLのため、同じ商品番号の楽天APIの CD・DVD・書籍が同じ行に再取得されると、従来どおりその API 商品に統合される（ID は API 側に変わる。今回の変更で affiliateUrl が通常URLに戻ることは無くなった）。
+
+### 変更
+- `src/lib/rakuten-affiliate-link.ts`（新規・純粋関数）：リンク種別判定（アフィリエイトURLはホスト hb.afl.rakuten.co.jp・/hgc/<識別子>/・pc が楽天の商品ページの場合だけ。通常URL・短縮URL・クエリに文字列を含むだけのURLを誤判定しない）、同一性キー（楽天ブックス＝商品番号〔楽天市場の楽天ブックス店 book/<番号> も同じ〕、楽天市場＝店舗＋商品コード）、管理画面のリンク状態（確認済み／通常URLのため要確認／短縮URLのため要確認／発行元未確認のため要確認／URL未設定）、同一商品名の判定（全半角・空白・盤種特典を含まない【】付記だけ吸収。Type A/B・初回/通常・特典表記の違いは別商品）、手動登録時の affiliateUrl の決定（①楽天APIが返した正規URL（遷移先が同じ商品の場合）②既存DBの同じ商品・同じ販売元・同じ名前の正規URL（URLが1種類に決まる場合）③それ以外は空＝要確認。URLは組み立てない・短縮URLは変換しない。貼り付けた hb.afl は既存のAPI発行URLと同じ識別部分の場合だけ確認済み）。
+- `src/lib/rakuten-affiliate-resolve.ts`（新規・サーバー）：既存DBから同じ商品の API 発行アフィリエイトURL（手動登録以外）を最大50件読む。読み取りのみ・楽天APIは呼ばない。読み取り失敗時も推測せず要確認。
+- `src/app/api/admin/product-manual/route.ts`：POST は上記で affiliateUrl を決定（確認できなければ空。公開カードは affiliateUrl || itemUrl のためリンクは従来どおり機能）し、レスポンスに linkStatus・表示名・理由を返す。楽天検索から渡された affiliateUrl を受け付ける。PUT は itemUrl が変わったときだけ決め直し、新しいURLが確認済み affiliateUrl と同じ商品なら正規URLを残す。商品ID・商品名・価格・カテゴリ・AI判定（saveVerdict の扱い）は従来どおり。
+- `src/app/api/admin/rakuten-search/route.ts`・`src/app/admin/rakuten-search/RakutenSearchClient.tsx`：書籍・CD・DVD・楽天市場の結果に API の affiliateUrl を含め、追加時に product-manual へ渡す（APIの追加呼び出しなし）。
+- `src/lib/product-store.ts`：mergeRakutenItem は既存の affiliateUrl がアフィリエイトURLで、取得値がそうでない場合は上書きしない。normalizeItemUrl はアフィリエイトURLなら遷移先（pc）の商品ページで比較（同じ店舗の別商品を同一視しない。同じ商品は従来どおり統合）。
+- 管理画面：`src/components/admin/AffiliateLinkBadge.tsx`（新規）。`ManualProductModal.tsx` に入力URLの扱いの案内（保存前）と保存結果のリンク状態、編集時の現在のリンク状態。`PersonProducts.tsx` の商品一覧に、手動追加商品は常に・それ以外は要確認／未設定のときだけバッジ表示。要確認は黄色・⚠、確認済みは緑・✓。
+- DBカラムの追加なし（状態は itemUrl・affiliateUrl から判定）。DBデータの変更なし（130件・11件・29件を含め既存データは触れない）。
+
+### テスト・確認
+- 追加テスト：`rakuten-affiliate-link.test.ts`（24件：正規URL・http/https、通常URL（楽天ブックス・楽天市場）、短縮URL、URL未設定、偽装URL、同名の別商品番号、特典違い・盤違い、同じ店舗の別商品、候補複数、貼り付けURLの発行元）、`product-store-affiliate.test.ts`（6件：再取得で正規URLを通常URLで上書きしない、修正済み手動商品が通常URLに戻らない、同じ店舗の別商品を統合しない）、`product-manual-affiliate-route.test.ts`（10件：API URL優先・DB流用・見つからなければ空・同名別番号・短縮URL・DB失敗時・未設定400・編集時の保持／決め直し）。
+- `tsc --noEmit` 0件、`npm test` 109ファイル/1942件合格、`next build` 成功。ESLint：新規ファイル・変更箇所のエラー0（RakutenSearchClient・PersonProducts の5件は HEAD 時点からある react-hooks のエラー）。
+- 本番DB読み取りでの確認：保存済み全商品のリンク状態は API 商品 83,356 件すべて確認済み、手動商品は確認済み 8,687（＝8,557＋修正130）／通常URLのため要確認 11／短縮URLのため要確認 29（想定どおり）。照合処理は修正済み商品の正式名で「確認済み（既存DB）」、名前が1文字でも違えば要確認、no_source 商品は要確認、短縮URLは照合なし。1件あたり約1.5秒（全商品の jsonb を走査）。
+- 管理画面（ローカル本番ビルド＋ローカル専用 Redis モック、書き込み系リクエストはブラウザで遮断）：商品一覧のバッジ（音嶋莉沙 62件確認済み、谷口愛季 要確認2件・確認済み4件）、追加フォームの案内文（通常URL・短縮URL・アフィリエイトURL）、編集時の現在のリンク状態を確認。
+
+---
+
+## Task 99 追記：本番公開前の最終確認（未commit・Production未反映）
+
+### 「確認済み」表示の意味の明確化
+- 「確認済み」は〈楽天アフィリエイトURLの形式〉かつ〈遷移先が商品URLと同じ商品〉の確認で、成果帰属（どの楽天アカウントに計上されるか）は確認していない。混同を避けるため表示名を「アフィリエイトURL（形式・遷移先確認済み）」に変更し、バッジの説明と保存結果に「成果の計上先は楽天アフィリエイトのレポートで確認」と明記。URLの出どころ（楽天APIが返したURL／既存DBの同じ商品のURL／既存のAPI発行URLと同じ発行元）は保存結果の理由に表示。
+- アフィリエイトIDの照合（認証情報・IDは出力せず一致可否のみ）：本番の管理画面「楽天検索」を1回呼び（本番管理画面へのログイン1回・楽天API 1回）、現在の本番設定で発行されたURLの識別部分を DB 保存済みURLと比較 → 楽天ブックス店 2/2、DBにも存在する店舗 4/4 で一致。DB の正規URLは現在の本番設定（RAKUTEN_AFFILIATE_ID）で発行されたものと同じ。ID がユーザーの楽天アカウントのものかは楽天の管理画面でのみ確認可能。
+
+### 照合処理の軽量化（DBスキーマ・インデックス変更なし）
+- `findAffiliateCandidates`：items を全展開する前に、products 行を文字列で絞り込む（楽天ブックス＝商品番号を含む行、楽天市場＝商品コードを含む行〔大文字小文字無視〕。必ず候補を含む上位集合）。最終判定の正規表現と同一性・名前の検証は従来どおり。
+- 本番DB読み取りでの確認：修正済み130件すべてで、照合結果が保存済みの正規URLと一致（130/130、平均 315ms・最大 564ms。従来は約1.3〜1.9秒）。楽天市場のAPI商品20件（無作為）も 20/20 で同じ商品ページの正規URLを返した（平均 約0.5秒）。
+
+### テスト追加・最終確認
+- `rakuten-search-affiliate.test.ts`（5件：書籍・CD・DVD・楽天市場で API の affiliateUrl を返す、API が返さない場合は空で通常URLで代用しない、追加のAPI呼び出しなし）。
+- `tsc` 0件、`npm test` 110ファイル/1947件合格、ESLint（変更・新規ファイル）エラー0、`next build` 成功。
+- 公開ページ（ローカル本番ビルド＋ローカルRedisモック）：人物7・写真集・グループ・/oshi-vod・robots.txt は本番と完全一致（楽天リンク・商品カード含む）。作品の JSON-LD（TMDb キー）とトップ（Redis）の差は既知の環境差。
+- 管理画面：「✓ アフィリエイトURL（形式・遷移先確認済み）」「⚠ 通常URLのため要確認」の表示、編集時の現在のリンク状態を確認（書き込み系リクエストはブラウザで遮断）。

@@ -23,6 +23,8 @@ import { useBulkSelection } from '@/hooks/useBulkSelection';
 import ManualProductModal from './ManualProductModal';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import { compareProductsByTitle } from '@/lib/product-sort-title';
+import AffiliateLinkBadge from '@/components/admin/AffiliateLinkBadge';
+import { affiliateLinkStatusOf } from '@/lib/rakuten-affiliate-link';
 
 interface ProductData {
   status: string;
@@ -180,6 +182,11 @@ function SortableProductCard({
         <p className="line-clamp-2 text-slate-700 font-medium leading-tight">{p.title}</p>
         <div className="flex flex-wrap items-center gap-1.5 mt-1">
           <span className="text-gray-400">{p.catLabel}</span>
+          {(() => {
+            // 楽天リンクの状態：手動追加商品は常に、それ以外は要確認・未設定のときだけ表示
+            const linkStatus = affiliateLinkStatusOf(p);
+            return (p.id.startsWith('mn-') || linkStatus !== 'verified') ? <AffiliateLinkBadge status={linkStatus} /> : null;
+          })()}
           <span className="font-mono text-gray-400">score {p.relevanceScore}</span>
           {p.judgment ? (
             p.judgment.verdict === 'uncertain' && p.judgment.reason?.startsWith('卒業後グループ商品候補') ? (

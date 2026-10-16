@@ -8,6 +8,7 @@ import { eq, sql } from 'drizzle-orm';
 import { upsertProduct } from '@/db/write';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
+import { parseAffiliateUrl } from '@/lib/rakuten-affiliate-link';
 
 export const CATEGORIES: ProductCategory[] = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD', '中古'];
 
@@ -28,21 +29,29 @@ export interface ProductMergeStats {
 }
 
 // itemUrl を正規化してセカンダリキーにする（URLパスの変更対策）
-function normalizeItemUrl(url: string): string {
+// 楽天アフィリエイトURL（hb.afl.rakuten.co.jp/hgc/<識別子>/?pc=<商品ページ>）は、ホスト＋パスが店舗単位で同じになり
+// 同じ店舗の別商品が同一とみなされてしまうため、遷移先（pc）の商品ページで比較する。
+export function normalizeItemUrl(url: string): string {
   if (!url) return '';
+  const target = parseAffiliateUrl(url)?.pageUrl ?? url;
   try {
-    const u = new URL(url);
+    const u = new URL(target);
     return (u.hostname + u.pathname).toLowerCase().replace(/\/$/, '');
   } catch {
-    return url.toLowerCase();
+    return target.toLowerCase();
   }
 }
 
-// fetched の情報で existing を更新するが、null / undefined / "" で既存値を上書きしない
+const isAffiliateUrlFormat = (v: unknown) => typeof v === 'string' && /^https?:\/\/hb\.afl\.rakuten\.co\.jp\//.test(v);
+
+// fetched の情報で existing を更新するが、null / undefined / "" で既存値を上書きしない。
+// 既存の affiliateUrl が楽天アフィリエイトURLで、fetched の affiliateUrl がそうでない場合（楽天APIが affiliateUrl を
+// 返さず itemUrl で代用された場合など）は、正規のアフィリエイトURLを通常URLで上書きしない。
 export function mergeRakutenItem(fetched: RakutenItem, existing: RakutenItem): RakutenItem {
   const result = { ...existing } as Record<string, unknown>;
   for (const [key, value] of Object.entries(fetched)) {
     if (value !== null && value !== undefined && value !== '') {
+      if (key === 'affiliateUrl' && isAffiliateUrlFormat(existing.affiliateUrl) && !isAffiliateUrlFormat(value)) continue;
       result[key] = value;
     }
   }

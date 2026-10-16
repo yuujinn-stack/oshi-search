@@ -4,6 +4,8 @@ import { useState } from 'react';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
 import PersonCombobox, { type PersonOption } from '@/components/admin/PersonCombobox';
+import AffiliateLinkBadge from '@/components/admin/AffiliateLinkBadge';
+import { affiliateLinkStatusOf, describeLinkBeforeSave, type AffiliateLinkStatus } from '@/lib/rakuten-affiliate-link';
 
 const CATEGORIES: { value: ProductCategory; label: string }[] = [
   { value: '写真集', label: '写真集' },
@@ -52,7 +54,8 @@ export default function ManualProductModal({
   // ── 送信状態 ─────────────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState('');
-  const [result, setResult] = useState<{ created: string[]; duplicates: string[] } | null>(null);
+  const [result, setResult] = useState<{ created: string[]; duplicates: string[]; linkStatus?: AffiliateLinkStatus; linkMessage?: string } | null>(null);
+  const linkHint = describeLinkBeforeSave(itemUrl);
 
   // ── 追加先人物操作 ────────────────────────────────────────────────────────
   function addName(name: string) {
@@ -127,7 +130,7 @@ export default function ManualProductModal({
         }),
       });
       if (res.ok) {
-        const data = await res.json() as { created: string[]; duplicates: string[] };
+        const data = await res.json() as { created: string[]; duplicates: string[]; linkStatus?: AffiliateLinkStatus; linkMessage?: string };
         setResult(data);
         onSaved();
       } else {
@@ -160,6 +163,18 @@ export default function ManualProductModal({
                 ? `✓ ${result.created.length}人に追加しました`
                 : '追加できた人物がいませんでした'}
             </p>
+            {result.created.length > 0 && result.linkStatus && (
+              <p className="text-xs mt-1 flex flex-wrap items-center gap-1.5">
+                <span className="text-gray-500">リンク:</span>
+                <AffiliateLinkBadge status={result.linkStatus} />
+                {result.linkMessage && <span className="text-gray-500">{result.linkMessage}</span>}
+              </p>
+            )}
+            {result.created.length > 0 && result.linkStatus === 'verified' && (
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                ※ 形式と遷移先の確認です。成果の計上先（楽天アカウント）は楽天アフィリエイトのレポートで確認してください。
+              </p>
+            )}
             {result.created.length > 0 && (
               <ul className="text-xs text-green-600 space-y-0.5 pl-3">
                 {result.created.map((n) => <li key={n}>・{n}</li>)}
@@ -305,6 +320,17 @@ export default function ManualProductModal({
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-300"
                 required
               />
+              {isEdit && itemUrl.trim() === (editProduct?.itemUrl ?? '').trim() && (
+                <p className="mt-1.5 text-xs flex items-center gap-1.5">
+                  <span className="text-gray-500">現在のリンク:</span>
+                  <AffiliateLinkBadge status={affiliateLinkStatusOf(editProduct!)} />
+                </p>
+              )}
+              {linkHint.text && !(isEdit && itemUrl.trim() === (editProduct?.itemUrl ?? '').trim()) && (
+                <p className={`mt-1.5 text-xs leading-relaxed ${linkHint.tone === 'ok' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  {linkHint.text}
+                </p>
+              )}
             </div>
 
             {/* 商品画像URL + プレビュー */}

@@ -26,6 +26,8 @@ export interface RakutenSearchItem {
   title: string;
   imageUrl: string;
   itemUrl: string;
+  /** affiliateId 付きで呼んだ楽天APIが返した affiliateUrl（楽天ブックス系は itemUrl が通常URLのため、こちらが正規のアフィリエイトURL） */
+  affiliateUrl: string;
   price: number;
   reviewCount: number;
   shopName?: string;
@@ -77,6 +79,7 @@ export async function GET(req: NextRequest) {
         title: String(Item.title ?? ''),
         imageUrl: String(Item.largeImageUrl ?? Item.mediumImageUrl ?? ''),
         itemUrl: String(Item.itemUrl ?? ''),
+        affiliateUrl: String(Item.affiliateUrl ?? ''),
         price: Number(Item.itemPrice ?? 0),
         reviewCount: Number(Item.reviewCount ?? 0),
         author: String(Item.author ?? '') || undefined,
@@ -110,6 +113,7 @@ export async function GET(req: NextRequest) {
         title: String(Item.title ?? ''),
         imageUrl: String(Item.largeImageUrl ?? Item.mediumImageUrl ?? ''),
         itemUrl: String(Item.itemUrl ?? ''),
+        affiliateUrl: String(Item.affiliateUrl ?? ''),
         price: Number(Item.itemPrice ?? 0),
         reviewCount: Number(Item.reviewCount ?? 0),
         artistName: String(Item.artistName ?? '') || undefined,
@@ -143,6 +147,7 @@ export async function GET(req: NextRequest) {
         title: String(Item.title ?? ''),
         imageUrl: String(Item.largeImageUrl ?? Item.mediumImageUrl ?? ''),
         itemUrl: String(Item.itemUrl ?? ''),
+        affiliateUrl: String(Item.affiliateUrl ?? ''),
         price: Number(Item.itemPrice ?? 0),
         reviewCount: Number(Item.reviewCount ?? 0),
         artistName: String(Item.artistName ?? '') || undefined,
@@ -181,6 +186,7 @@ export async function GET(req: NextRequest) {
           title: String(Item.itemName ?? ''),
           imageUrl: imgs[0]?.imageUrl ?? '',
           itemUrl: String(Item.itemUrl ?? ''),
+          affiliateUrl: String(Item.affiliateUrl ?? ''),
           price: Number(Item.itemPrice ?? 0),
           reviewCount: Number(Item.reviewCount ?? 0),
           shopName: String(Item.shopName ?? '') || undefined,
