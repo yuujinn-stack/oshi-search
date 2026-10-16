@@ -3778,3 +3778,20 @@ oshi-video-maker 側で「推しでサブスク比較 ショートV1」でも In
 2. Phase 2 のファイルだけを commit：`src/app/support-ads/page.tsx`・`src/app/support-ads/support-ads.css`・`src/components/affiliate/SupportAdsCta.tsx`・`src/components/affiliate/oshi-ad-link.ts`・`src/components/affiliate/OshiAdBanner.tsx`・`src/lib/support-ads/content.ts`・`src/lib/__tests__/support-ads.test.ts`・`src/app/sitemap.ts`・`docs/development-log.md` → main へ push → Vercel 自動デプロイ。
 3. 公開後確認：デプロイの commit SHA、/support-ads の表示（スマホ・PC）・広告枠・PR表記・リンクコード、GA4 affiliate_click 1件（送信内容のみ確認）、sitemap に /support-ads、既存ページ（トップ・人物・/oshi-vod）が変わっていないこと。
 - ロールバック：`vercel rollback dpl_FboY7fWaf99stgGRfWPWbvT72jtn`（Phase 1 公開時のデプロイ。DB変更なしのため即時）。広告枠だけ止める場合は Production の `NEXT_PUBLIC_SUPPORT_ADS_CTA_ENABLED` を削除して再デプロイ。
+
+---
+
+## Task 98：応援広告ガイド（/support-ads）への内部リンク追加（未commit・Production未反映）
+
+### 目的
+VODアフィリエイト審査に影響を与えずに、既存の利用者が応援広告ガイドを見つけられるようにする。
+
+### 変更ファイル
+- `src/components/affiliate/OshiAdBanner.tsx` — 既存の広告カード（AccessTrade のリンクコード・計測 onClick・装飾・文言）は1行も変えず、外側に `<div>` を1つ追加し、カードの直下に `next/link` のテキストリンク「初めての応援広告｜費用・始め方を見る →」（/support-ads、`theme-text-link`、タップ領域44px）を追加。リンクは計測用 onClick を持つ creative の外にあるため affiliate_click は送られず、通常のサイト内遷移になる。広告が非表示（環境変数未設定・画像読込失敗）のときはリンクも一緒に非表示。
+- `src/app/layout.tsx` — フッターナビの先頭に「応援広告の費用・始め方」（/support-ads）を追加。
+
+### 確認
+- 本番相当のビルド（`NEXT_PUBLIC_OSHI_AD_ENABLED=true`・`NEXT_PUBLIC_SUPPORT_ADS_CTA_ENABLED=true`）で、人物ページの広告カードの outerHTML が本番と完全一致（目黒蓮）。360/390/430/768/1280px：リンクはカードの12px下、横スクロール0・はみ出し0、エラー0。本文の並び順（今すぐ見られる作品 → 推しアド → 配信中の出演作品 → …）は従来どおり（推しアドの下にリンク1行分＝約56pxが増える）。
+- ガイドリンクをクリック → /support-ads へクライアント遷移（ページ再読込なし）、affiliate_click 0件・/api/track の商品クリック0件・AccessTrade への遷移なし。フッターのリンクはトップ・/oshi-vod・/photobooks から /support-ads へ遷移。
+- 推しアドバナー自体のクリック計測は従来どおり（人物ページ：affiliate_name=oshi_ad・page_type=person・placement=after_watch_now、1クリック1件）。
+- 本番との比較：人物7・写真集・グループ・作品12・/oshi-vod で metadata・JSON-LD・見出し・セクション順が同一、リンクの差は /support-ads の追加のみ（トップは Redis、作品の JSON-LD genre は TMDb キーの環境差）。`tsc` 0件、`npm test` 105ファイル/1886件合格、ESLint エラー0（警告1件は既存の eslint-disable コメント）、`next build` 成功。

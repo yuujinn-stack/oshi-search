@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { sendGaEvent } from '@/lib/ga-event';
 import { ACCESSTRADE_OSHI_AD_BANNER_HTML as ACCESSTRADE_BANNER_HTML } from './oshi-ad-link';
 
@@ -63,7 +64,11 @@ export default function OshiAdBanner({ personName }: Props) {
     });
   };
 
+  // 広告カード（AccessTradeのリンクコード・計測を含む）は従来のまま。その直下に、応援広告ガイド（/support-ads）への
+  // サイト内リンクを置く。ガイドへのリンクは広告ではないため、計測用 onClick を持つ creative の外に置き、
+  // next/link の通常のサイト内遷移として扱う（affiliate_click は送らない）。広告が非表示のときは一緒に非表示。
   return (
+    <div>
     <div
       className="theme-card relative overflow-hidden px-4 py-6 flex justify-center"
       style={{
@@ -123,6 +128,12 @@ export default function OshiAdBanner({ personName }: Props) {
           dangerouslySetInnerHTML={{ __html: ACCESSTRADE_BANNER_HTML }}
         />
       </div>
+    </div>
+    <p className="mt-3 text-center text-sm">
+      <Link href="/support-ads" className="theme-text-link font-semibold inline-flex items-center min-h-[44px] px-1">
+        初めての応援広告｜費用・始め方を見る →
+      </Link>
+    </p>
     </div>
   );
 }

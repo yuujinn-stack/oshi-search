@@ -42,6 +42,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <nav aria-label="フッターナビゲーション">
             <ul className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-gray-400">
               <li>
+                <Link href="/support-ads" className="hover:text-gray-600 hover:underline underline-offset-2 transition-colors py-1 px-1 inline-block min-h-[32px] flex items-center">
+                  応援広告の費用・始め方
+                </Link>
+              </li>
+              <li>
                 <Link href="/about" className="hover:text-gray-600 hover:underline underline-offset-2 transition-colors py-1 px-1 inline-block min-h-[32px] flex items-center">
                   推しサーチについて
                 </Link>
