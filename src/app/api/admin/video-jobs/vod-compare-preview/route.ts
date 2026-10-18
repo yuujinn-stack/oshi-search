@@ -13,12 +13,15 @@ export const dynamic = 'force-dynamic';
  * テンプレート共通CapCut音声を使えるか（capcutCompatible・理由）を返す。判定はジョブ作成時と同じ関数（ジョブ作成時にも必ず再確認する）。
  */
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => ({}))) as { personSlugs?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { personSlugs?: unknown; templateId?: unknown };
   try {
     const input = parseOshiVodCompareInput({ personSlugs: body.personSlugs });
     const d = await loadOshiVodVideoDiagnosis(input);
     const top = d.byWorkCount[0];
-    const template = (await getLatestWorker())?.templates.find((t) => t.templateInputKind === OSHI_VOD_COMPARE_INPUT_KIND);
+    // 3人入力のテンプレートは複数ある（推しでサブスク比較・サブスク比較機能紹介）。選択中のテンプレートで判定する
+    // （templateId を送らない古い画面からの呼び出しは従来どおり最初の3人入力テンプレート）
+    const templates = ((await getLatestWorker())?.templates ?? []).filter((t) => t.templateInputKind === OSHI_VOD_COMPARE_INPUT_KIND);
+    const template = typeof body.templateId === 'string' ? templates.find((t) => t.templateId === body.templateId) : templates[0];
     const capcut = template
       ? checkVodCompareSharedCapcut(template, d)
       : ({ ok: false, reason: '動画生成Workerの報告がないため、CapCutナレーションを確認できません' } as const);

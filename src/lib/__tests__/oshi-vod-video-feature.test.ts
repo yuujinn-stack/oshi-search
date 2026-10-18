@@ -73,3 +73,24 @@ describe('checkVodCompareSharedCapcut', () => {
     expect(notReady).toEqual({ ok: false, reason: '共通CapCut音声が使えないため生成できません: 台本が一致しません' });
   });
 });
+
+// 動画「サブスク比較機能紹介」: 共通音声の台本が診断結果に依存しない（固定文だけ）ため、どの3人でも使える
+describe('サブスク比較機能紹介（oshi-vod-compare-any）', () => {
+  const ANY_TEMPLATE = { narrationModes: ['capcut', 'none'], sharedCapcut: { ready: true, message: '共通音声', requires: { kind: 'oshi-vod-compare-any' as const } } };
+  it('利用条件 oshi-vod-compare-any を受け付ける', () => {
+    expect(parseSharedCapcutRequirement({ kind: 'oshi-vod-compare-any' })).toEqual({ kind: 'oshi-vod-compare-any' });
+  });
+  it('診断結果の種類に関係なく使える', () => {
+    for (const diag of [d({ bestPair: ['unext', 'hulu'] }), d({ bestPair: ['unext', 'hulu'], over80: { achieved: true, combo: ['unext', 'hulu'] } }), d({ bestPair: null }), d({ bestPair: ['unext'], singleCoversAll: true })]) {
+      expect(checkVodCompareSharedCapcut(ANY_TEMPLATE, diag)).toEqual({ ok: true });
+    }
+  });
+  it('共通音声が準備できていない・CapCut非対応なら従来どおり拒否する', () => {
+    const pair = d({ bestPair: ['unext', 'hulu'] });
+    expect(checkVodCompareSharedCapcut({ ...ANY_TEMPLATE, sharedCapcut: { ...ANY_TEMPLATE.sharedCapcut, ready: false, message: '未取り込み' } }, pair).ok).toBe(false);
+    expect(checkVodCompareSharedCapcut({ ...ANY_TEMPLATE, narrationModes: ['none'] }, pair).ok).toBe(false);
+  });
+  it('推しでサブスク比較（pair）の判定は変わらない', () => {
+    expect(checkVodCompareSharedCapcut(PAIR_TEMPLATE, d({ bestPair: null }))).toEqual({ ok: false, reason: VOD_COMPARE_CAPCUT_MISMATCH_MESSAGE });
+  });
+});

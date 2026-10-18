@@ -41,7 +41,10 @@ export default function VodCompareTrioPicker({
   value,
   onChange,
   onCapcutCheck,
+  templateId,
 }: {
+  /** 選択中のテンプレート（CapCut音声を使えるかの判定に使う） */
+  templateId?: string;
   persons: PersonOption[];
   slugByName: Record<string, string>;
   value: TrioSlots;
@@ -66,7 +69,7 @@ export default function VodCompareTrioPicker({
     void fetch('/api/admin/video-jobs/vod-compare-preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ personSlugs: trioKey.split(',') }),
+      body: JSON.stringify({ personSlugs: trioKey.split(','), ...(templateId ? { templateId } : {}) }),
     })
       .then(async (res) => {
         const data = await res.json().catch(() => ({}));
@@ -79,7 +82,7 @@ export default function VodCompareTrioPicker({
     return () => {
       cancelled = true;
     };
-  }, [trioKey]);
+  }, [trioKey, templateId]);
 
   // CapCutナレーションを使えるか（判定はサーバー側。ジョブ作成時にも必ず再確認される）を親へ伝える
   useEffect(() => {

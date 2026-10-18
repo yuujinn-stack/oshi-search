@@ -705,6 +705,7 @@ export default function VideoMakerClient({
         <section>
           <h2 className="text-sm font-bold text-slate-700 mb-2">3. 人物（3人を選択）</h2>
           <VodCompareTrioPicker
+            templateId={template?.templateId}
             persons={persons}
             slugByName={personSlugByName}
             value={trioSlots}

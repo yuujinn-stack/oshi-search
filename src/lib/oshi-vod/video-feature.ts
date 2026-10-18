@@ -13,10 +13,15 @@ const FEATURES: readonly OshiVodVideoFeature[] = ['pair', 'pair-over80', 'single
 /** Workerが報告する共通CapCut音声の利用条件の種別（推しでサブスク比較の台本の種類） */
 export const OSHI_VOD_COMPARE_FEATURE_REQUIREMENT = 'oshi-vod-compare-feature';
 
-export interface SharedCapcutRequirement {
-  kind: typeof OSHI_VOD_COMPARE_FEATURE_REQUIREMENT;
-  feature: OshiVodVideoFeature;
-}
+/**
+ * 動画「サブスク比較機能紹介」: 共通CapCut音声の台本が診断結果に依存しない（固定文だけ）ことを表す利用条件の種別。
+ * この種別のときだけ、診断結果の種類を見ずに共通音声を使える
+ */
+export const OSHI_VOD_COMPARE_ANY_REQUIREMENT = 'oshi-vod-compare-any';
+
+export type SharedCapcutRequirement =
+  | { kind: typeof OSHI_VOD_COMPARE_FEATURE_REQUIREMENT; feature: OshiVodVideoFeature }
+  | { kind: typeof OSHI_VOD_COMPARE_ANY_REQUIREMENT };
 
 /** 共通CapCut音声を使えない3人のとき、管理画面・ジョブ作成で表示する理由 */
 export const VOD_COMPARE_CAPCUT_MISMATCH_MESSAGE =
@@ -40,6 +45,7 @@ export function oshiVodVideoFeature(d: FeatureInput): OshiVodVideoFeature {
 export function parseSharedCapcutRequirement(raw: unknown): SharedCapcutRequirement | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
+  if (r.kind === OSHI_VOD_COMPARE_ANY_REQUIREMENT) return { kind: OSHI_VOD_COMPARE_ANY_REQUIREMENT };
   if (r.kind !== OSHI_VOD_COMPARE_FEATURE_REQUIREMENT) return null;
   if (typeof r.feature !== 'string' || !(FEATURES as readonly string[]).includes(r.feature)) return null;
   return { kind: OSHI_VOD_COMPARE_FEATURE_REQUIREMENT, feature: r.feature as OshiVodVideoFeature };
@@ -65,6 +71,8 @@ export function checkVodCompareSharedCapcut(
   if (!requires) {
     return { ok: false, reason: '共通CapCut音声の利用条件をWorkerから確認できません。音声なしで生成してください' };
   }
+  // 台本が診断結果に依存しない共通音声（サブスク比較機能紹介）は、どの3人でも使える
+  if (requires.kind === OSHI_VOD_COMPARE_ANY_REQUIREMENT) return { ok: true };
   if (oshiVodVideoFeature(diagnosis) !== requires.feature) return { ok: false, reason: VOD_COMPARE_CAPCUT_MISMATCH_MESSAGE };
   return { ok: true };
 }
