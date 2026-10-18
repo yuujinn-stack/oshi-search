@@ -13,6 +13,7 @@
 import ProductCard from '@/components/ProductCard';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ApiResult } from '@/types/rakuten';
+import { productTabAnchorId } from '@/lib/product-tabs';
 
 const ITEMS_PER_CATEGORY = 4;
 
@@ -27,9 +28,14 @@ interface Props {
   sectionResults: SectionResult[];
   personSlug: string;
   totalProductCount: number;
+  /**
+   * 関連商品一覧（ProductTabList）のタブ別件数（src/lib/product-tabs.ts の countProductsByTab）。
+   * カテゴリ別「もっと見る」の件数表示に使う。無い場合は件数を表示しない。
+   */
+  categoryCounts?: Record<string, number>;
 }
 
-export default function FeaturedProductsSection({ sectionResults, personSlug, totalProductCount }: Props) {
+export default function FeaturedProductsSection({ sectionResults, personSlug, totalProductCount, categoryCounts }: Props) {
   const previewSections = sectionResults
     .map(({ label, icon, newResult }) => ({
       label,
@@ -72,9 +78,27 @@ export default function FeaturedProductsSection({ sectionResults, personSlug, to
                 />
               ))}
             </div>
+            <CategoryMoreLink label={label} shown={products.length} count={categoryCounts?.[label]} />
           </div>
         ))}
       </div>
     </section>
+  );
+}
+
+// カテゴリ別「もっと見る」：関連商品一覧（#products）をそのカテゴリのタブが選ばれた状態で開くページ内リンク。
+// 一覧の件数が分かり、ピックアップに出ていない商品が無い場合は表示しない。件数が分からない場合は数字なしで表示する。
+// 楽天へのリンクではないため、楽天クリック計測（affiliate_click・/api/track）は送らない。
+function CategoryMoreLink({ label, shown, count }: { label: string; shown: number; count: number | undefined }) {
+  const anchorId = productTabAnchorId(label);
+  if (!anchorId) return null;
+  const hasCount = typeof count === 'number' && Number.isFinite(count) && count > 0;
+  if (hasCount && count <= shown) return null;
+  return (
+    <div className="mt-2 text-right">
+      <a href={`#${anchorId}`} className="text-xs font-medium hover:underline inline-flex items-center gap-1" style={{ color: 'var(--ds-primary)' }}>
+        {label}をもっと見る{hasCount ? `（全${count}件）` : ''} →
+      </a>
+    </div>
   );
 }

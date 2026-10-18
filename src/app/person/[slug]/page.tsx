@@ -16,6 +16,7 @@ import { getInactiveProviderSlugs } from '@/lib/provider-store';
 // VOD フィルタ（「今すぐ見られる」判定）は src/lib/vod-availability.ts の共通関数を使う
 import { getStreamingProviders } from '@/lib/vod-availability';
 import ProductTabList, { type ProductWithSection } from '@/components/ProductTabList';
+import { countProductsByTab } from '@/lib/product-tabs';
 import PersonCard from '@/components/PersonCard';
 import WorksSection from '@/components/WorksSection';
 import ProviderLogo from '@/components/ProviderLogo';
@@ -716,6 +717,7 @@ export default async function PersonPage({ params }: Props) {
             sectionResults={featuredSectionResults}
             personSlug={name}
             totalProductCount={totalProductCount}
+            categoryCounts={countProductsByTab(allProductItems)}
           />
 
           {/* ━━━ 関連商品 ━━━ */}

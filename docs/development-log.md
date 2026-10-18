@@ -4032,3 +4032,28 @@ VODアフィリエイト審査に影響を与えずに、既存の利用者が�
 ### テスト
 - `src/lib/__tests__/legacy-ichiba-verdict.test.ts`（新規 10件）、`scripts/ichiba-id-migration/plan.test.ts` に移行後の分類・復旧の統合テスト1件追加。
 - 全テスト 114ファイル・1,981件 OK、`npx tsc --noEmit` OK（`.next/types/* 3.ts` の既知の重複ファイル由来のエラーのみ）、`next build` OK。lint はプロジェクトに設定が無いため未実施。
+
+## Task 100（Phase 5・②）：人物ページのカテゴリ別商品導線（未commit・Production未反映）
+
+### 目的
+人物ページの「関連商品ピックアップ」（各カテゴリ最大4件）から、そのカテゴリの商品一覧へ直接進めるようにし、楽天商品へのクリック機会を増やす。SNS投稿などからカテゴリ一覧へ直接リンクできるようにする。
+
+### 変更
+- `src/lib/product-tabs.ts`（新規・純粋関数）：タブ定義（ProductTabList から移動。タブ名・分類は不変）、タブ↔ページ内リンクID（`#products-photobook|cd|bluray|goods|other|used`）、タブ別件数 `countProductsByTab`（一覧と同じ数え方）。
+- `src/components/site/FeaturedProductsSection.tsx`：各カテゴリのピックアップの下に「<カテゴリ>をもっと見る（全N件） →」（`href="#products-<slug>"` の通常のページ内リンク。見た目は既存の「関連商品をもっと見る」と同じ文字リンク）。一覧の件数がピックアップの表示件数以下なら出さない。件数が渡されない場合は数字なしで表示。
+- `src/app/person/[slug]/page.tsx`：ピックアップに `categoryCounts={countProductsByTab(allProductItems)}` を渡すだけ（並び順・掲載条件・他セクションは不変）。
+- `src/components/ProductTabList.tsx`：
+  - 商品があるカテゴリごとに着地点 `<span id="products-<slug>">`（高さ0、固定ヘッダー＋クイックナビ分の scroll-margin）をサーバー描画。JS 読み込み前でもその位置へスクロールする。`space-y-4` の外に置き、レイアウトは変えない。
+  - マウント時（直接アクセス・リロード）と hashchange（戻る／進む）で URL のカテゴリを選択。ページ内リンクで選んだ状態からカテゴリ以外のURLへ戻ったら「すべて」に戻す。同じリンクの再クリック（hashchange が起きない）もクリックで反映。選ばれたタブがタブ列の外にあれば横方向だけスクロールして見せる。
+  - URL の書き換え（pushState/replaceState）はしない（既存のクイックナビと同じ通常のページ内リンクのみ）。新しいページURLは増えないため canonical・構造化データ・サイトマップに影響しない。
+
+### 注意点
+- 内部リンクなので楽天クリック計測（affiliate_click・/api/track）は送らない。楽天リンク・計測のコードは変更なし。
+- 既存の「関連商品をもっと見る」（#products）は従来どおり「すべて」。
+- 「その他」はピックアップに出ないためリンクは無いが、`#products-other` で直接開ける。
+
+### 確認
+- 単体テスト `src/lib/__tests__/product-tabs.test.ts`（9件）：タブ↔ID の往復、カテゴリ以外のハッシュは無視、件数、ピックアップのリンク（5件以上／4件以下／件数不明）、楽天リンクの href・sponsored 不変、着地点の描画。
+- 全テスト 115ファイル・1,990件 OK、tsc OK（`.next/types/* N.ts` は既知のiCloud重複ファイル）、build OK。lint はプロジェクトに設定なし。
+- ローカルの本番ビルド＋Playwright（360/390/430/1280px、/api/track はブラウザ内で横取りし本番Redisへ送らない）：79項目すべて OK。CD・写真集のリンク→該当タブ、件数表示＝タブ件数、一覧の先頭が固定ヘッダーに隠れない、戻る／進む、直接アクセス、不明なカテゴリ、再クリック、横はみ出しなし、ハイドレーションエラーなし、もっと見るで計測なし、楽天リンクのクリックは /api/track 1回。件数4件以下の人物（リンクなし）・商品0件の人物（エラーなし）。
+- 本番（現行コード）とローカルで人物ページの楽天リンク（URL・順序・target・rel）が完全一致（目黒蓮75件・成田凌27件）。canonical・JSON-LD・VOD・今すぐ見るセクションのHTMLも一致。
