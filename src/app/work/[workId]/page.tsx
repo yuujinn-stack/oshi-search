@@ -8,10 +8,8 @@ import { workAliases } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getPublicWorkById, getAllPersonsForWork, getPublishedWorks } from '@/lib/work-store';
-import { getAllStoredProducts } from '@/lib/product-store';
-import { getAllVerdicts } from '@/lib/judgment-store';
+import { getWorkRelatedProducts } from '@/lib/work-related-products';
 import { getWorkPublicUrl } from '@/lib/work-url';
-import type { ProductCategory } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
 import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
@@ -65,24 +63,13 @@ async function fetchTmdbDetails(
 }
 
 // ─── 楽天の保存済み商品から作品名に関連するものを取得 ────────────────────────
+// 関連商品の選び方（対象カテゴリ・判定 related・作品名の一致・最大6件）は src/lib/work-related-products.ts。
+// 人物の全商品を読まず、表示する商品だけを DB から読む（選ばれる商品・順序は従来と同じ）。
 async function getRelatedProducts(
   personName: string,
   workTitle: string,
 ): Promise<RakutenItem[]> {
-  const [storedData, verdicts] = await Promise.all([
-    getAllStoredProducts(personName),
-    getAllVerdicts(personName),
-  ]);
-  const titleNorm = workTitle.toLowerCase().replace(/[　\s]/g, '');
-  const targetCats: ProductCategory[] = ['Blu-ray・DVD', 'CD', '本・雑誌'];
-  return targetCats
-    .flatMap((cat) => storedData[cat]?.products ?? [])
-    .filter((p) => {
-      if (verdicts[p.id]?.verdict !== 'related') return false;
-      const pTitle = p.title.toLowerCase().replace(/[　\s]/g, '');
-      return pTitle.includes(titleNorm);
-    })
-    .slice(0, 6);
+  return getWorkRelatedProducts(personName, workTitle);
 }
 
 // ─── メタデータ ────────────────────────────────────────────────────────────────

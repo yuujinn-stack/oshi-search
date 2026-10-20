@@ -15,7 +15,9 @@
 //   よる人物またぎ統合）を使って2段階で統合する。詳細は photobook.ts のコメント参照。
 
 import { sql } from 'drizzle-orm';
+import { unstable_cache } from 'next/cache';
 import { db } from '@/db/client';
+import { PUBLIC_LISTING_CACHE_TAG, PUBLIC_LISTING_REVALIDATE_SECONDS } from './public-listing-cache';
 import { getAllPersonsMerged } from './persons';
 import { getAllPersonMetas } from './person-meta';
 import { getAllGroupMetas } from './group-meta';
@@ -579,9 +581,28 @@ export async function getAllPhotobookItems(): Promise<PhotobookItem[]> {
 }
 
 // ── 公開ページ用: published=trueのみ ────────────────────────────────────────────
-export async function getPublishedPhotobookItems(): Promise<PhotobookItem[]> {
+// 公開側（トップ・/photobooks）の集計結果は1時間キャッシュする（集計は1回数秒かかり、以前は表示のたび・
+// トップの60秒ごとの作り直しのたびに実行していたため）。キャッシュするのは公開用の結果だけで、
+// 管理画面（getAllPhotobookItems・getAdminPhotobookRows 等）は常に最新を読む。
+// 写真集設定・商品・判定・人物・人物メタ・グループの書き込み時は revalidatePublicListings()（PUBLIC_LISTING_CACHE_TAG）、
+// 男女設定の変更時は既存の revalidateTag(PHOTOBOOK_HOME_CACHE_TAG) で即時に無効化される。
+// 返す値は JSON にできる項目だけ（Date・Map を含まない）なので、キャッシュ前後で内容は変わらない。
+export const PHOTOBOOK_HOME_CACHE_TAG = 'photobook-home';
+const PHOTOBOOK_PUBLIC_CACHE_TAGS = [PHOTOBOOK_HOME_CACHE_TAG, PUBLIC_LISTING_CACHE_TAG];
+
+async function getPublishedPhotobookItemsUncached(): Promise<PhotobookItem[]> {
   const all = await getAllPhotobookItems();
   return all.filter((i) => i.published);
+}
+
+const getPublishedPhotobookItemsCached = unstable_cache(
+  getPublishedPhotobookItemsUncached,
+  ['photobook-published-items', 'v1'],
+  { revalidate: PUBLIC_LISTING_REVALIDATE_SECONDS, tags: PHOTOBOOK_PUBLIC_CACHE_TAGS },
+);
+
+export async function getPublishedPhotobookItems(): Promise<PhotobookItem[]> {
+  return getPublishedPhotobookItemsCached();
 }
 
 // ── 管理画面用: 重複統合済み（manual_exclude・非公開も含む）─────────────────────
@@ -696,10 +717,22 @@ export async function getPhotobookListItems(
 }
 
 // 検索用: 写真集を1件以上持つ人物・グループの一覧（人物検索/グループ検索の候補生成用）
-export async function getPhotobookFacets(): Promise<{
+export interface PhotobookFacets {
   persons: { name: string; group: string; gender: PhotobookGender | null }[];
   groups: { name: string; gender: PhotobookGender | null }[];
-}> {
+}
+
+const getPhotobookFacetsCached = unstable_cache(
+  getPhotobookFacetsUncached,
+  ['photobook-facets', 'v1'],
+  { revalidate: PUBLIC_LISTING_REVALIDATE_SECONDS, tags: PHOTOBOOK_PUBLIC_CACHE_TAGS },
+);
+
+export async function getPhotobookFacets(): Promise<PhotobookFacets> {
+  return getPhotobookFacetsCached();
+}
+
+async function getPhotobookFacetsUncached(): Promise<PhotobookFacets> {
   const [all, maps] = await Promise.all([getPublishedPhotobookItems(), buildPersonResolveMaps()]);
   const personMap = new Map<string, { name: string; group: string; gender: PhotobookGender | null }>();
   const groupMap = new Map<string, { name: string; gender: PhotobookGender | null }>();

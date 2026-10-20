@@ -21,6 +21,7 @@
 import { sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import type { PhotobookGender } from './photobook';
+import { revalidatePublicListings } from '@/lib/public-listing-cache';
 
 // neon-httpドライバは `= ANY($1)` にJS配列をそのまま渡すとPostgres配列リテラルとして
 // 解釈できないため、photobook-store.ts と同じ ARRAY[$1,$2,...]::text[] 形式で組み立てる。
@@ -43,6 +44,7 @@ export async function bulkSetPersonGender(
       updated_at = EXCLUDED.updated_at
     RETURNING person_name
   `);
+  revalidatePublicListings();
   return { updated: result.rows.length };
 }
 
@@ -60,5 +62,6 @@ export async function bulkSetGroupGender(
     WHERE group_name = ANY(${textArraySql(groupNames)})
     RETURNING group_name
   `);
+  revalidatePublicListings();
   return { updated: result.rows.length };
 }

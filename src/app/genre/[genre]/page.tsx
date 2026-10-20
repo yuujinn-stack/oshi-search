@@ -6,7 +6,8 @@ import { getPersonsByGenreExtended } from '@/lib/persons';
 import { DEFAULT_GENRE_ORDER } from '@/lib/genre-utils';
 import { getCanonicalGenreLabel } from '@/lib/person-display-tags';
 
-export const revalidate = 60;
+// 1時間ごとに作り直す（人物・人物メタの変更時は src/lib/public-listing-cache.ts の revalidatePublicListings() で即時に作り直す）
+export const revalidate = 3600;
 export const dynamicParams = true;
 
 interface Props {

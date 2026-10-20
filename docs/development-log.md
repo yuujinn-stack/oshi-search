@@ -4057,3 +4057,32 @@ VODアフィリエイト審査に影響を与えずに、既存の利用者が�
 - 全テスト 115ファイル・1,990件 OK、tsc OK（`.next/types/* N.ts` は既知のiCloud重複ファイル）、build OK。lint はプロジェクトに設定なし。
 - ローカルの本番ビルド＋Playwright（360/390/430/1280px、/api/track はブラウザ内で横取りし本番Redisへ送らない）：79項目すべて OK。CD・写真集のリンク→該当タブ、件数表示＝タブ件数、一覧の先頭が固定ヘッダーに隠れない、戻る／進む、直接アクセス、不明なカテゴリ、再クリック、横はみ出しなし、ハイドレーションエラーなし、もっと見るで計測なし、楽天リンクのクリックは /api/track 1回。件数4件以下の人物（リンクなし）・商品0件の人物（エラーなし）。
 - 本番（現行コード）とローカルで人物ページの楽天リンク（URL・順序・target・rel）が完全一致（目黒蓮75件・成田凌27件）。canonical・JSON-LD・VOD・今すぐ見るセクションのHTMLも一致。
+
+---
+
+## Task 114：Vercel 使用量の削減（トップ・ジャンルの再生成1時間化、写真集の集計キャッシュ、作品ページの関連商品の取得量削減）（本番DB/Redis未変更）
+
+### 目的
+Vercel Hobby の無料枠超過（直近30日：Active CPU 10時間25分/4時間、ISR Writes 約29.4万/20万、Fast Origin Transfer 11.05GB/10GB）への対策。調査で効果が大きいとした改善案①〜③を実装（④人物ページのキャッシュは保留）。
+
+### 変更
+- `src/lib/public-listing-cache.ts`（新規）：`PUBLIC_LISTING_CACHE_TAG`・`PUBLIC_LISTING_REVALIDATE_SECONDS`（3600）・`revalidatePublicListings()`（タグ・`/`・`/genre/[genre]` を即時無効化。Next.js のリクエスト外〔GitHub Actions の価格更新・スクリプト・テスト〕や描画中は例外を握りつぶして何もしない）。
+- `src/app/page.tsx`：`revalidate` 60→3600。トップのデータキャッシュ5つ（人物・人気検索/人気商品・グループ・VOD作品数・写真集）を 60→3600秒にし、すべてに `PUBLIC_LISTING_CACHE_TAG` を付けた（既存の `RANKING_DATA_CACHE_TAG`・`photobook-home` も維持）。
+- `src/app/genre/[genre]/page.tsx`：`revalidate` 60→3600。
+- `src/lib/photobook-store.ts`：公開用の集計結果 `getPublishedPhotobookItems` と検索候補 `getPhotobookFacets` を `unstable_cache`（3600秒、タグ `photobook-home`＋`PUBLIC_LISTING_CACHE_TAG`）でキャッシュ。管理画面用（`getAllPhotobookItems`・`getAdminPhotobookRows`・男女管理）はキャッシュしない。
+- 即時反映：`src/db/write.ts` の公開ページに出るデータの書き込み関数（upsertProduct・upsertVerdict・deleteVerdictInDB・upsertWork・batchUpdateVodData・upsertPersonMeta・upsertGroupMeta・deleteGroupMetaInDB・upsertPhotobookSetting・resetPhotobookSetting・upsertVodProvider・deleteVodProviderInDB・publishPersonInDB・unpublishPersonInDB）の書き込み成功後、および `src/lib/photobook-gender-write.ts`（男女の一括設定）・`src/lib/work-store.ts`（作品の物理削除2か所）・`src/lib/work-dedup-apply.ts`（作品統合）で `revalidatePublicListings()` を呼ぶ。書き込み失敗時は呼ばない。
+- `src/lib/work-related-products.ts`（新規）：作品ページの関連商品。DB 側で「Blu-ray・DVD／CD／本・雑誌 × 判定 related」の商品の ID・商品名・位置だけを読み、作品名の一致は従来と同じ JS の正規化で判定、表示する最大6件の全項目だけを読む。2回の読み取りの間に位置の商品が変わった場合は従来の方法（全商品・全判定）で選び直す。従来の選び方は純粋関数 `selectWorkRelatedFromStored` として残した（テスト・検証用）。price-refresh の import 制約（judgment-store を読み込まない）を守るため product-store には置いていない。
+- `src/app/work/[workId]/page.tsx`：`getRelatedProducts` を `getWorkRelatedProducts` 経由に。
+- テスト：`work-related-products.test.ts`（無作為データ500通りで従来と一致・カテゴリ順・2回目の読み取りの省略・選び直し・DBエラー）、`public-listing-cache.test.ts`（無効化の内容・リクエスト外で失敗しない・3600・全書き込み関数の呼び出し・書き込み失敗時は呼ばない・写真集キャッシュのキーとタグ・管理画面はキャッシュしない）。`photobook-store-inflight.test.ts` は `next/cache` をモック。
+
+### 検証
+- tsc OK、npm test 117ファイル・2,009件 OK、build OK（`/` と `/genre/[genre]` は Revalidate 1h）。
+- 本番DBを読み取りのみで比較：公開作品のうち関連商品がある 2,509作品＋ない 722作品（計3,231作品・関連商品 6,664件）で、新旧の結果（商品・順序・件数・全項目）が完全一致。作品ページ1回あたりのDB読み込みは平均 176KB→10KB（-94%、300作品の抽出）。
+- ローカル `next start`（DB に書き込まない一時ルートで無効化を確認し、確認後に削除）：2回目以降はキャッシュから（写真集一覧 3.9秒→0.12秒）、無効化するとトップ・ジャンル・写真集が作り直され、その次からまたキャッシュ。
+- 本番（変更前）とローカル（変更後）の比較：トップ・ジャンル・写真集・作品ページ計30ページで title・description・robots・OG/Twitter・canonical・JSON-LD が一致。関連商品がある作品15ページ＋トップ＋写真集で楽天アフィリエイトリンク122件（URL・順序）が一致。GA4 タグも同じ。※ローカルは Upstash・TMDb の接続情報が無いため「人気商品・人気検索」と TMDb のジャンルを比較から除外。
+- `revalidatePublicListings()` は Next.js の外（tsx で直接実行）でも例外を出さないことを確認。
+
+### 注意点
+- トップの「人気検索・人気商品」（Redis のクリック数）はクリックでは無効化しないため、最大1時間遅れる（商品の保存時は従来どおり即時）。
+- 毎日の Cron（商品の自動更新・VOD）で書き込みがあると、その時点で1回作り直される（想定どおり）。
+- 人物ページ・作品ページは引き続き毎回生成（④人物ページのキャッシュは保留）。

@@ -5,6 +5,7 @@ import { db } from '@/db/client';
 import { works as worksTable, workAliases } from '@/db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { upsertWork } from '@/db/write';
+import { revalidatePublicListings } from '@/lib/public-listing-cache';
 import { normalizeProviderName, deduplicateProviders } from '@/lib/vod-dedup';
 import {
   computeChatgptFullSync, CHATGPT_SERVICE_SCOPE, isChatgptProtectionActive, stripChatgptScopeServices,
@@ -202,6 +203,7 @@ export async function setManualImageUrl(
 export async function deleteWork(personName: string, workId: string): Promise<void> {
   await db.delete(worksTable)
     .where(and(eq(worksTable.personName, personName), eq(worksTable.id, workId)));
+  revalidatePublicListings();
 }
 
 // 作品を論理削除（deleted フラグをセット）
@@ -684,5 +686,6 @@ export async function deleteWorksBySource(
   const deleted = await db.delete(worksTable)
     .where(and(eq(worksTable.personName, personName), eq(worksTable.source, source)))
     .returning({ id: worksTable.id });
+  if (deleted.length > 0) revalidatePublicListings();
   return deleted.length;
 }

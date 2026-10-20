@@ -11,6 +11,7 @@ import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
 import type { GroupMeta } from '@/types/group';
 import { getRenderableProductTitle } from '@/lib/product-image';
+import { PUBLIC_LISTING_CACHE_TAG, PUBLIC_LISTING_REVALIDATE_SECONDS } from '@/lib/public-listing-cache';
 import { stripPromoTags } from '@/lib/product-curation';
 import TrackedRakutenLink from '@/components/site/TrackedRakutenLink';
 import { VOD_PAGE_PROVIDERS, getVodProviderWorkCounts } from '@/lib/vod-page';
@@ -31,12 +32,13 @@ const graphicMonoFont = Space_Mono({ subsets: ['latin'], weight: ['400', '700'],
 const graphicJpFont = Noto_Sans_JP({ subsets: ['latin'], weight: ['900'], display: 'swap', preload: false });
 const GRAPHIC_FONT_VARS_CSS = `html:not([data-proto]):has(.oshi-home-graphic){--pc-display:${graphicDisplayFont.style.fontFamily},system-ui,sans-serif;--pc-jp:${graphicJpFont.style.fontFamily},'Hiragino Sans',system-ui,sans-serif;--pc-mono:${graphicMonoFont.style.fontFamily},ui-monospace,monospace;}`;
 
-// Redis への問い合わせ結果を 60 秒間 Vercel Data Cache でキャッシュ
-// → 同一デプロイ内でリクエストが集中しても Redis 呼び出しは最大1回/60秒
+// トップのデータは1時間 Vercel Data Cache でキャッシュする（Vercel の使用量削減のため 60秒→1時間）。
+// 人物・人物メタ・グループ・作品・商品・判定・写真集設定を書き込むと src/lib/public-listing-cache.ts の
+// revalidatePublicListings() で PUBLIC_LISTING_CACHE_TAG ごと即時に無効化されるため、管理画面の変更は速やかに反映される。
 const getCachedEnrichedData = unstable_cache(
   getAllPersonsEnrichedWithGenres,
   ['home-enriched-data'],
-  { revalidate: 60 },
+  { revalidate: PUBLIC_LISTING_REVALIDATE_SECONDS, tags: [PUBLIC_LISTING_CACHE_TAG] },
 );
 
 // トップページで表示している「人気検索」「人気商品」だけを取得する軽量版。
@@ -47,13 +49,13 @@ const getCachedEnrichedData = unstable_cache(
 const getCachedRankingData = unstable_cache(
   getHomeRankingData,
   ['home-ranking-lite-data'],
-  { revalidate: 60, tags: [RANKING_DATA_CACHE_TAG] },
+  { revalidate: PUBLIC_LISTING_REVALIDATE_SECONDS, tags: [RANKING_DATA_CACHE_TAG, PUBLIC_LISTING_CACHE_TAG] },
 );
 
 const getCachedGroupMetas = unstable_cache(
   getAllGroupMetas,
   ['home-group-metas'],
-  { revalidate: 60 },
+  { revalidate: PUBLIC_LISTING_REVALIDATE_SECONDS, tags: [PUBLIC_LISTING_CACHE_TAG] },
 );
 
 // 「配信サービスから探す」の0件provider除外判定専用。トップページでは詳細な
@@ -68,7 +70,7 @@ async function getVodProviderWorkCountsObject(): Promise<Record<string, number>>
 const getCachedVodProviderWorkCounts = unstable_cache(
   getVodProviderWorkCountsObject,
   ['home-vod-provider-counts'],
-  { revalidate: 60 },
+  { revalidate: PUBLIC_LISTING_REVALIDATE_SECONDS, tags: [PUBLIC_LISTING_CACHE_TAG] },
 );
 
 const HOME_PHOTOBOOK_LIMIT = 8;
@@ -83,7 +85,7 @@ async function getHomePhotobookItems(): Promise<{ female: Awaited<ReturnType<typ
 const getCachedHomePhotobookItems = unstable_cache(
   getHomePhotobookItems,
   ['home-photobook-items'],
-  { revalidate: 60, tags: ['photobook-home'] },
+  { revalidate: PUBLIC_LISTING_REVALIDATE_SECONDS, tags: ['photobook-home', PUBLIC_LISTING_CACHE_TAG] },
 );
 
 const EMPTY_RANKING: HomeRankingData = {
@@ -91,7 +93,8 @@ const EMPTY_RANKING: HomeRankingData = {
   popularProducts: [],
 };
 
-export const revalidate = 60;
+// 1時間ごとに作り直す（データ変更時は revalidatePublicListings() で即時に作り直す）。値は Next.js の制約で数値リテラル。
+export const revalidate = 3600;
 
 const GENRE_EMOJI: Record<string, string> = {
   '坂道': '🌸', 'アイドル': '⭐', '元アイドル': '🌟', 'タレント': '✨', 'バラエティ': '🎪', '芸人': '😄', 'テレビ': '📺',

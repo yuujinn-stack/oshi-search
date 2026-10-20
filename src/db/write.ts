@@ -7,6 +7,8 @@ import { getBatchLockStatus, PRODUCT_ID_MIGRATION_LOCK_KEY } from '@/lib/batch-l
 import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons, workStatusHistory, vodRecheckLogs, photobookSettings } from './schema';
 import { eq, and } from 'drizzle-orm';
 import type { WorkRecord } from '@/types/work';
+// トップ・ジャンル一覧・写真集のキャッシュ（1時間）を、公開ページに出るデータの書き込み後に無効化する
+import { revalidatePublicListings } from '@/lib/public-listing-cache';
 
 // ── Fire-and-forget ラッパー ──────────────────────────────────────────────────
 // void で起動 → エラーは warn のみ。本番処理の遅延なし。
@@ -38,6 +40,7 @@ export async function upsertProduct(
       target: [products.personName, products.category],
       set: { fetchedAt: fetchedAtDate, items },
     });
+  revalidatePublicListings();
 }
 
 // ── AI/手動判定（verdicts）────────────────────────────────────────────────────
@@ -80,6 +83,7 @@ export async function upsertVerdict(
         updatedAt:     row.updatedAt,
       },
     });
+  revalidatePublicListings();
 }
 
 // ── 出演作品（works）──────────────────────────────────────────────────────────
@@ -180,6 +184,7 @@ export async function upsertWork(work: WorkRecord): Promise<void> {
         updatedAt:       row.updatedAt,
       },
     });
+  revalidatePublicListings();
 }
 
 // ── ステータス変更履歴（work_status_history）──────────────────────────────────
@@ -324,6 +329,7 @@ export async function upsertPersonMeta(name: string, meta: PersonMetaInput): Pro
         updatedAt:        now,
       },
     });
+  revalidatePublicListings();
 }
 
 // ── グループメタ（group_meta）─────────────────────────────────────────────────
@@ -380,6 +386,7 @@ export async function upsertGroupMeta(meta: GroupMetaInput): Promise<void> {
         updatedAt:      row.updatedAt,
       },
     });
+  revalidatePublicListings();
 }
 
 // ── 写真集 表示設定・例外設定（photobook_settings）──────────────────────────
@@ -438,6 +445,7 @@ export async function upsertPhotobookSetting(input: PhotobookSettingInput): Prom
       target: [photobookSettings.personName, photobookSettings.productId],
       set: setClause,
     });
+  revalidatePublicListings();
 }
 
 // 手動除外を解除して自動判定(auto)に戻す（設定行ごと削除。存在しなければ何もしない）
@@ -445,6 +453,7 @@ export async function resetPhotobookSetting(personName: string, productId: strin
   await db.delete(photobookSettings).where(
     and(eq(photobookSettings.personName, personName), eq(photobookSettings.productId, productId)),
   );
+  revalidatePublicListings();
 }
 
 // ── VODプロバイダー（vod_providers）──────────────────────────────────────────
@@ -477,6 +486,7 @@ export async function upsertVodProvider(record: VodProviderInput): Promise<void>
         updatedAt: now,
       },
     });
+  revalidatePublicListings();
 }
 
 // ── インポート人物（persons）──────────────────────────────────────────────────
@@ -548,12 +558,14 @@ export async function publishPersonInDB(name: string, publishedAt: number): Prom
   await db.update(persons)
     .set({ publishedAt: new Date(publishedAt), updatedAt: new Date() })
     .where(eq(persons.name, name));
+  revalidatePublicListings();
 }
 
 export async function unpublishPersonInDB(name: string): Promise<void> {
   await db.update(persons)
     .set({ publishedAt: null, updatedAt: new Date() })
     .where(eq(persons.name, name));
+  revalidatePublicListings();
 }
 
 // ── DB専用書き込みモード用 物理削除関数 ─────────────────────────────────────
@@ -561,14 +573,17 @@ export async function unpublishPersonInDB(name: string): Promise<void> {
 export async function deleteVerdictInDB(personName: string, productId: string): Promise<void> {
   await db.delete(verdicts)
     .where(and(eq(verdicts.personName, personName), eq(verdicts.productId, productId)));
+  revalidatePublicListings();
 }
 
 export async function deleteGroupMetaInDB(groupName: string): Promise<void> {
   await db.delete(groupMeta).where(eq(groupMeta.groupName, groupName));
+  revalidatePublicListings();
 }
 
 export async function deleteVodProviderInDB(slug: string): Promise<void> {
   await db.delete(vodProviders).where(eq(vodProviders.slug, slug));
+  revalidatePublicListings();
 }
 
 export async function deleteImportedPersonInDB(name: string): Promise<void> {
@@ -622,4 +637,5 @@ export async function batchUpdateVodData(
       await buildCTE(workList.slice(i, i + CHUNK));
     }
   }
+  revalidatePublicListings();
 }

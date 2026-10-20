@@ -19,6 +19,7 @@ import { normalizeProviderName } from '@/lib/vod-dedup';
 import { getRedis } from '@/lib/redis';
 import { isGroupStale } from '@/lib/work-dedup-review';
 import { ALGORITHM_VERSION } from '@/lib/work-dedup';
+import { revalidatePublicListings } from '@/lib/public-listing-cache';
 
 // ─── 型定義 ──────────────────────────────────────────────────────────────────
 
@@ -627,6 +628,9 @@ export async function executeApply(params: {
       redisError: null,
     };
   }
+
+  // 作品の統合で配信サービスごとの作品数が変わるため、トップのキャッシュを無効化する
+  revalidatePublicListings();
 
   // Redis後処理（best-effort）
   const redisResult = await syncRedisAfterApply(canonicalWorkId, duplicateWorkIds);

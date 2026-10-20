@@ -9,6 +9,8 @@ const mockGetAllGroupMetas = vi.hoisted(() => vi.fn());
 const mockGetStoredProductItemById = vi.hoisted(() => vi.fn());
 
 vi.mock('@/db/client', () => ({ db: { execute: mockExecute } }));
+// 公開用の集計結果の1時間キャッシュ（unstable_cache）は Next.js の実行環境が必要なため、テストではそのまま呼ぶ
+vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn, revalidateTag: vi.fn(), revalidatePath: vi.fn() }));
 vi.mock('@/lib/persons', () => ({ getAllPersonsMerged: mockGetAllPersonsMerged }));
 vi.mock('@/lib/person-meta', () => ({ getAllPersonMetas: mockGetAllPersonMetas }));
 vi.mock('@/lib/group-meta', () => ({ getAllGroupMetas: mockGetAllGroupMetas }));
