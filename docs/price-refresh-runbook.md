@@ -131,7 +131,8 @@ COMMIT;
 （既存の経路は従来どおりの間隔制御のため。重なっても価格以外の変更を検知すれば自動停止する）。
 1. **保存（ローカル）**：`backup.ts export "<人物>"`、`snapshot.ts snapshot before-<人物>.json "<人物>"`。
 2. **dry-run**：Actions → price-refresh → Run workflow（mode=`dry-run`、persons=`<人物>`）。ログで対象カテゴリ数・推定 API 回数・コード指定の候補数・DB 更新対象の行数を確認。
-3. **更新**：Run workflow（mode=`manual-test`、persons=`<人物>`、budget_min=`20`）。ログの `status: "ok"`、`completed: 1`、`halt: null`。
+3. **更新**：Run workflow（mode=`manual-test`、persons=`<人物>`、budget_min=`20`）。ログの `status: "ok"`、`completed: 1`、`halt: null`、`failedCategories: {}`。
+   `failedCategories` に `503`・`429` 等があれば（楽天から取得できなかったカテゴリ。保存済みの商品は変更していない）、先に進まず原因を確認する。
 4. **比較（ローカル）**：`snapshot.ts snapshot after-<人物>.json "<人物>"` → `snapshot.ts compare before-<人物>.json after-<人物>.json`。
    `"ok": true`（判定・件数・ID と並び・価格以外の全項目が不変）と、`pricesChanged`・`priceFetchedAtSet`（価格・取得日時が入った件数）を確認。
    同時に `backup.ts restore <dir> "<人物>"`（違いの表示だけ）で `verdictsUnchanged: true`。
@@ -162,6 +163,10 @@ COMMIT;
 - 超過時：Neon はコンピュートが次の請求期間まで停止（データは消えない＝サイトも止まる）、Upstash Free は超過時の扱いが公式に明記されていない。超えない運用を前提にする。
 
 ## 7. 緊急停止・再開
+
+状況の確認：管理画面 **/admin/price-refresh**（読み取りのみ）で、自動停止の有無・実行中か・直近の実行の要約・人物ごとの直近の結果
+（更新件数・楽天から取得できなかったカテゴリと HTTP ステータス）・公開中の商品の価格の取得状況（30日以内／古い／不明）・
+人物ごとの「価格を更新できていない商品」と理由の目安を確認できる。
 
 | 状況 | 操作 | 効果 |
 |---|---|---|

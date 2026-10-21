@@ -271,3 +271,45 @@ describe('自動停止（価格以外の変更を検知）', () => {
     expect(r.persons[0].completed).toBe(true);
   });
 });
+
+describe('管理画面用の記録（直近の結果・実行の要約）', () => {
+  it('取得できなかったカテゴリ（503 等）を人物の直近の結果と実行の要約に残す（保存済みの商品は変更しない）', async () => {
+    const store = createMemoryStateStore();
+    spies.refreshPersonPrices.mockImplementation(async (_p, cats: string[]) => {
+      clock += 10_000;
+      if (cats[0] === '本・雑誌') return { ...okCategory(0), categories: [{ category: '本・雑誌', status: 'fetch_failed', httpStatus: 503, updated: 0 }] };
+      return okCategory(2);
+    });
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], onlyPersons: ['a'], relatedIdsOf: async () => new Set() });
+    expect(r.persons[0].failedCategories).toEqual([{ category: '本・雑誌', status: 'fetch_failed', httpStatus: 503 }]);
+    const last = store.states.a.last!;
+    expect(last.failedCategories).toEqual([{ category: '本・雑誌', status: 'fetch_failed', httpStatus: 503 }]);
+    expect(last.updated).toBe(10); // 503 以外の5カテゴリ×2件
+    expect(last.completed).toBe(true);
+    expect(store.lastRun).toMatchObject({ manualTest: true, status: 'ok', persons: 1, completed: 1, updated: 10, failedCategories: 1 });
+  });
+
+  it('時間切れで途中の人物も、続きの位置を保ったまま直近の結果を残す', async () => {
+    const store = createMemoryStateStore();
+    await runPriceRefreshBatch({ budgetMs: 25_000, store, now, persons: [P('a')], relatedIdsOf: async () => new Set() });
+    expect(store.states.a.nextCategory).toBe(3);
+    expect(store.states.a.last).toMatchObject({ completed: false, categories: 3, updated: 3, failedCategories: [] });
+  });
+
+  it('ロック中・停止中で何もしなかった回は、実行の要約を上書きしない', async () => {
+    const store = createMemoryStateStore();
+    await store.setHalt({ at: 1, person: 'x', reasons: ['テスト'] });
+    await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], relatedIdsOf: async () => new Set() });
+    expect(store.lastRun).toBeNull();
+  });
+
+  it('自動停止した人物は、直近の結果に halted を残す', async () => {
+    const store = createMemoryStateStore();
+    let n = 0;
+    const fp = async () => ({ products: { CD: { count: 1, hash: n++ === 0 ? 'before' : 'after' } }, verdicts: { count: 0, hash: '' } });
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], relatedIdsOf: async () => new Set(), fingerprintOf: fp });
+    expect(r.status).toBe('halted');
+    expect(store.states.a.last).toMatchObject({ halted: true, completed: false });
+    expect(store.lastRun).toMatchObject({ status: 'halted', persons: 1 });
+  });
+});

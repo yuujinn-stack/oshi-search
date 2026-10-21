@@ -29,6 +29,8 @@ export const LOCK_KEY = 'price-refresh:runner-lock';
 export const LOOKUP_CACHE_PREFIX = 'price-lookup:';
 /** 自動停止の印（価格以外の変更を検知したら記録。手動で消すまで実行しない） */
 export const HALT_KEY = 'price-refresh:halt';
+/** 直近の実行の要約（管理画面 /admin/price-refresh の表示用） */
+export const LAST_RUN_KEY = 'price-refresh:last-run';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface PersonRefreshState {
@@ -38,6 +40,44 @@ export interface PersonRefreshState {
   startedAt?: number;
   /** 次に処理するカテゴリの位置（CATEGORIES の添字。途中再開用） */
   nextCategory?: number;
+  /** 直近の処理結果（管理画面の表示用。取得できなかったカテゴリ・商品は保存済みのデータを変更していない） */
+  last?: PersonLastResult;
+}
+
+export interface FailedCategory {
+  category: string;
+  /** fetch_failed（楽天から取得できなかった：429・503・ネットワーク等）／db_error（保存に失敗） */
+  status: string;
+  httpStatus?: number;
+}
+
+export interface PersonLastResult {
+  at: number;
+  /** カテゴリ検索で価格の項目を更新した商品数 */
+  updated: number;
+  /** 今回処理したカテゴリ数 */
+  categories: number;
+  failedCategories: FailedCategory[];
+  lookup?: Pick<LookupResult, 'attempted' | 'fromCache' | 'applied' | 'notFound' | 'mismatched' | 'failed' | 'stoppedBy'>;
+  completed: boolean;
+  /** 価格以外の変更を検知して自動停止した */
+  halted?: boolean;
+}
+
+export interface LastRunInfo {
+  startedAt: number;
+  finishedAt: number;
+  /** 人物を指定した手動テストか */
+  manualTest: boolean;
+  status: RunSummary['status'];
+  stoppedBy: RunSummary['stoppedBy'];
+  persons: number;
+  completed: number;
+  updated: number;
+  lookedUp: number;
+  lookupApplied: number;
+  /** 取得できなかったカテゴリの延べ数 */
+  failedCategories: number;
 }
 
 /** 進み具合の保存先（本番は Redis。テスト・ローカルはメモリ） */
@@ -49,6 +89,8 @@ export interface RefreshStateStore {
   /** 自動停止の印（無ければ null） */
   getHalt(): Promise<HaltInfo | null>;
   setHalt(info: HaltInfo): Promise<void>;
+  /** 直近の実行の要約（管理画面の表示用。無くても動く） */
+  setLastRun?(info: LastRunInfo): Promise<void>;
 }
 
 export interface HaltInfo { at: number; person: string; reasons: string[] }
@@ -77,6 +119,7 @@ export function createRedisStateStore(): RefreshStateStore | null {
       try { return typeof v === 'string' ? JSON.parse(v) : v; } catch { return { at: 0, person: '', reasons: ['不明'] }; }
     },
     async setHalt(info) { await redis.set(HALT_KEY, JSON.stringify(info)); }, // 期限なし（手動で消すまで）
+    async setLastRun(info) { await redis.set(LAST_RUN_KEY, JSON.stringify(info)); },
   };
 }
 
@@ -104,13 +147,16 @@ export function createRedisLookupCache(ttlMs: number): LookupCache | null {
   };
 }
 
-export function createMemoryStateStore(initial: Record<string, PersonRefreshState> = {}): RefreshStateStore & { states: Record<string, PersonRefreshState>; readonly halt: HaltInfo | null } {
+export function createMemoryStateStore(initial: Record<string, PersonRefreshState> = {}): RefreshStateStore & { states: Record<string, PersonRefreshState>; readonly halt: HaltInfo | null; readonly lastRun: LastRunInfo | null } {
   const states = { ...initial };
   let lock: string | null = null;
   let halt: HaltInfo | null = null;
+  let lastRun: LastRunInfo | null = null;
   return {
     states,
     get halt() { return halt; },
+    get lastRun() { return lastRun; },
+    async setLastRun(info) { lastRun = structuredClone(info); },
     async getHalt() { return halt; },
     async setHalt(info) { halt = info; },
     async getAll() { return structuredClone(states); },
@@ -200,7 +246,7 @@ export function fingerprintDiff(a: PersonFingerprint, b: PersonFingerprint): str
 
 export interface RunSummary {
   status: 'ok' | 'locked' | 'no_state_store' | 'config_missing' | 'halted';
-  persons: { name: string; categories: number; updated: number; lookup?: LookupResult; completed: boolean }[];
+  persons: { name: string; categories: number; updated: number; lookup?: LookupResult; completed: boolean; failedCategories: FailedCategory[] }[];
   updated: number;
   lookedUp: number;
   lookupApplied: number;
@@ -217,6 +263,31 @@ async function relatedIdsFromDb(personName: string): Promise<Set<string>> {
 export async function runPriceRefreshBatch(opts: RunOptions): Promise<RunSummary> {
   const now = opts.now ?? (() => Date.now());
   const store = opts.store ?? createRedisStateStore();
+  const startedAt = now();
+  const summary = await runBatch({ ...opts, store: store ?? undefined }, store);
+  // 実際に処理した実行だけ要約を残す（ロック中・停止中で何もしなかった回は残さない）
+  const ran = store && summary.status !== 'locked' && summary.status !== 'no_state_store' && !(summary.status === 'halted' && summary.persons.length === 0);
+  if (ran) {
+    try {
+      await store.setLastRun?.({
+        startedAt, finishedAt: now(), manualTest: !!opts.onlyPersons?.length,
+        status: summary.status, stoppedBy: summary.stoppedBy,
+        persons: summary.persons.length, completed: summary.persons.filter((p) => p.completed).length,
+        updated: summary.updated, lookedUp: summary.lookedUp, lookupApplied: summary.lookupApplied,
+        failedCategories: summary.persons.reduce((n, p) => n + p.failedCategories.length, 0),
+      });
+    } catch { /* 表示用の要約が保存できなくても価格更新の結果は変わらない */ }
+  }
+  return summary;
+}
+
+function lookupBrief(l: LookupResult): PersonLastResult['lookup'] {
+  return { attempted: l.attempted, fromCache: l.fromCache, applied: l.applied, notFound: l.notFound, mismatched: l.mismatched, failed: l.failed, stoppedBy: l.stoppedBy };
+}
+
+async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null): Promise<RunSummary> {
+  const now = opts.now ?? (() => Date.now());
+  const store = storeOrNull;
   const base: RunSummary = { status: 'ok', persons: [], updated: 0, lookedUp: 0, lookupApplied: 0, stoppedBy: 'all_done' };
   if (!store) return { ...base, status: 'no_state_store', stoppedBy: 'no_state_store' };
 
@@ -251,7 +322,9 @@ export async function runPriceRefreshBatch(opts: RunOptions): Promise<RunSummary
       // 処理前の「価格以外」の指紋（処理後と比べ、価格以外が変わっていたら自動停止）
       const before = await fingerprintOf(name);
       const resumeFrom = prev.startedAt && (!prev.completedAt || prev.startedAt > prev.completedAt) ? prev.nextCategory ?? 0 : 0;
-      await store.set(name, { ...prev, startedAt: now(), nextCategory: resumeFrom });
+      let cur: PersonRefreshState = { ...prev, startedAt: now(), nextCategory: resumeFrom };
+      await store.set(name, cur);
+      const failedCategories: FailedCategory[] = [];
 
       // (A) カテゴリ検索（前回の続きから。カテゴリを1つ終えるごとに進み具合を保存）
       let categoriesDone = 0;
@@ -266,8 +339,12 @@ export async function runPriceRefreshBatch(opts: RunOptions): Promise<RunSummary
         if (r.remaining.length > 0) break;
         updated += r.updated;
         categoriesDone++;
+        for (const c of r.categories) {
+          if (c.status === 'fetch_failed' || c.status === 'db_error') failedCategories.push({ category: c.category, status: c.status, httpStatus: c.httpStatus });
+        }
         if (r.categories.some((c) => c.httpStatus === 429)) rateLimited = true;
-        await store.set(name, { ...prev, startedAt: now(), nextCategory: i + 1 });
+        cur = { ...prev, startedAt: now(), nextCategory: i + 1 };
+        await store.set(name, cur);
         if (rateLimited) break;
       }
       const finishedCategories = resumeFrom + categoriesDone >= CATEGORIES.length;
@@ -289,13 +366,16 @@ export async function runPriceRefreshBatch(opts: RunOptions): Promise<RunSummary
       if (diff.length > 0) {
         const halt: HaltInfo = { at: now(), person: name, reasons: diff };
         await store.setHalt(halt);
-        base.persons.push({ name, categories: categoriesDone, updated, lookup, completed: false });
+        await store.set(name, { ...cur, last: { at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed: false, halted: true } });
+        base.persons.push({ name, categories: categoriesDone, updated, lookup, completed: false, failedCategories });
         return { ...base, status: 'halted', stoppedBy: 'halted', halt };
       }
       const lookupFinished = !lookup || lookup.stoppedBy === 'done';
       const completed = finishedCategories && lookupFinished && !rateLimited;
-      if (completed) await store.set(name, { completedAt: now(), startedAt: prev.startedAt, nextCategory: 0 });
-      base.persons.push({ name, categories: categoriesDone, updated, lookup, completed });
+      const last: PersonLastResult = { at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed };
+      if (completed) await store.set(name, { completedAt: now(), startedAt: prev.startedAt, nextCategory: 0, last });
+      else await store.set(name, { ...cur, last });
+      base.persons.push({ name, categories: categoriesDone, updated, lookup, completed, failedCategories });
       base.updated += updated;
       if (rateLimited) { base.stoppedBy = 'rate_limited'; break; }
       // 時間の枠を使い切って人物の途中で止まった（続きは次回）

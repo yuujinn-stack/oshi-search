@@ -73,6 +73,12 @@ async function main() {
   const budgetMin = Math.min(Math.max(Number(process.env.PRICE_REFRESH_BUDGET_MIN ?? 20), 1), 300);
   const t0 = Date.now();
   const s = await runPriceRefreshBatch({ budgetMs: budgetMin * 60_000, lookupPerPerson, onlyPersons });
+  // 楽天から取得できなかったカテゴリ（保存済みの商品は変更していない）を、HTTP ステータスごとに数える（503 等の確認用）
+  const failedByStatus: Record<string, number> = {};
+  for (const p of s.persons) for (const f of p.failedCategories) {
+    const k = f.status === 'db_error' ? 'db_error' : String(f.httpStatus ?? 'network');
+    failedByStatus[k] = (failedByStatus[k] ?? 0) + 1;
+  }
   out({
     mode: onlyPersons.length ? 'manual-test' : 'scheduled',
     status: s.status,
@@ -82,13 +88,19 @@ async function main() {
     updatedBySearch: s.updated,
     lookupApiCalls: s.lookedUp,
     lookupApplied: s.lookupApplied,
+    failedCategories: failedByStatus,
     minutes: Math.round((Date.now() - t0) / 6000) / 10,
     suppressedLogs: suppressed,
     // 自動停止（価格以外の変更を検知）したときの人物と理由（カテゴリ名と種類だけ。商品の情報は含まない）
     halt: s.halt ?? null,
   });
   if (s.status === 'halted') out({ alert: '自動停止しました。原因を確認するまで定期実行は何もしません（docs/price-refresh-runbook.md の「自動停止したとき」）' });
-  if (onlyPersons.length) for (const p of s.persons) out({ person: p.name, categories: p.categories, updated: p.updated, lookup: p.lookup, completed: p.completed });
+  if (onlyPersons.length) {
+    for (const p of s.persons) out({ person: p.name, categories: p.categories, updated: p.updated, lookup: p.lookup, completed: p.completed, failedCategories: p.failedCategories });
+  }
+  if (Object.keys(failedByStatus).length) {
+    out({ warning: '楽天から取得できなかったカテゴリがあります（保存済みの商品は変更していません）。手動テスト中は先に進まず原因を確認してください', failedCategories: failedByStatus });
+  }
   if (s.status !== 'ok' && s.status !== 'locked') process.exit(1);
 }
 
