@@ -4086,3 +4086,33 @@ Vercel Hobby の無料枠超過（直近30日：Active CPU 10時間25分/4時間
 - トップの「人気検索・人気商品」（Redis のクリック数）はクリックでは無効化しないため、最大1時間遅れる（商品の保存時は従来どおり即時）。
 - 毎日の Cron（商品の自動更新・VOD）で書き込みがあると、その時点で1回作り直される（想定どおり）。
 - 人物ページ・作品ページは引き続き毎回生成（④人物ページのキャッシュは保留）。
+
+---
+
+## Task 116：楽天商品の価格の分割自動更新 — 本番稼働前の最終準備（手動実行のみ・定期実行は無効のまま）
+
+### 目的
+Task 107〜113 の価格更新（GitHub Actions・OpenAI 不使用）を、既存の新商品の発見・AI判定・公開ページを変えずに、手動実行だけできる状態で公開できるようにする。
+
+### 公開する範囲（以前の未公開機能とは切り分け。HEAD に「追加」する形）
+- 新規：`src/lib/price-refresh.ts`・`src/lib/price-refresh-runner.ts`・`src/lib/rakuten-api-gate.ts`・`src/lib/price-freshness.ts`（`scripts/price-refresh/coverage.ts` の取得日時の基準日数に使う。公開ページでは未使用）・`scripts/price-refresh/*`（run・snapshot・backup・halt・coverage）・`.github/workflows/price-refresh.yml`・`docs/price-refresh-runbook.md`・テスト。
+- `src/lib/product-store.ts`：価格更新専用の関数（productIdentityKey・PRICE_FIELD_KEYS・mergePriceFieldsOnly・getStoredCategoryRow・savePriceOnlyItems・applyPriceUpdates・applyPriceUpdatesToItems・listPersonsWithProducts）を追加するだけ。mergeProductItems・storeProducts 等の既存の関数は変えない。
+- `src/db/write.ts`：`updateProductItemsOnly`（既存行の items・fetched_at だけを UPDATE。INSERT しない）を追加。
+- `src/types/rakuten.ts`：`priceFetchedAt`（DB に保存）と表示用の `priceStale`・`priceDateLabel`（型だけ。公開ページでは未使用）を追加。
+- `src/lib/rakuten.ts`：価格更新が楽天APIの共通の使用権（rakuten-api-gate）の中で呼んだときだけ、使用権を通して送る（1.1秒以上の間隔・2回目も 429 なら共通の停止を記録・停止中は送らず 429 扱い）。使用権の外（既存の商品の自動更新・管理画面・診断）は従来どおり（0.4秒間隔のプロセス内制御）で動作を変えない。
+- 含めない：推し活お買い物診断、楽天クレジット、価格の取得日時の表示（商品カード・各ページ）、新商品の発見の変更（mergeProductItems の同一性チェック・手動判定の保護・AI判定の分離＝batch-processor・verdict-decision）、Vercel 用の `/api/cron/price-refresh`、U-NEXT 関連（別作業）。
+
+### 作業中のコードの変更（両方に共通）
+- `src/lib/price-refresh.ts`：カテゴリ検索を `withRakutenApiSession`（label `price-search:<カテゴリ>`）の中で行う。作業中の `src/lib/rakuten.ts` は既に使用権を持っていればそれを使う（二重に取らない）。
+- `.github/workflows/price-refresh.yml`：リポジトリ変数 `PRICE_REFRESH_ENABLED` が `true` でないあいだは `full`（全件）を実行しない（最初のステップで失敗させる）。schedule は引き続きコメントで無効。
+- `scripts/price-refresh/run.ts`：manual-test の人物は2人まで。本体（DB 接続）は環境変数・人物の確認後に読み込む（未設定時に接続エラーの詳細を出さず、足りない項目名だけ出す）。
+- `docs/price-refresh-runbook.md`：上記に合わせて更新（全件の禁止、2人まで、実行時間帯の注意、表示は今回含めない、429 の扱い）。
+
+### 検証（公開版：HEAD 445dce3 に上記だけを適用した作業ツリー）
+- tsc OK、npm test 122ファイル・2,077件 OK（公開しない機能のテストは公開版から除外：新商品の発見の同一性チェック、商品カードの表示、Vercel 用ルート。共通の使用権のテストは価格更新の使用権の中で実行する形に変更。`rakuten-gate-scope.test.ts` を追加：使用権の外は Redis を使わず従来どおり、中では使用権を通し、2回目の 429 で共通の停止を記録し以後は送らない）、build OK（公開ページ・ルートの追加なし）。
+- 価格更新の dry-run（成田凌）OK。manual-test の人数制限・人物未指定・環境変数不足は要約1行で終了。
+- GitHub リポジトリは公開（public）→ GitHub Actions の標準ランナーは無料。Neon は 105MB、price_refresher ロール・トリガーは未作成（読み取りのみで確認）。
+
+### 注意点
+- 既存の商品の自動更新・管理画面は共通の使用権を使わないため、同じ時間に動くと合計で1秒1回を超えうる。手動テストは毎日 12:00〜12:10 頃（JST、既存の自動更新）を避け、実行中は同じ人物の管理画面での再取得・編集をしない。schedule は既存の自動更新と重ならない時刻。
+- 価格更新を本番で動かしても、公開ページの表示は価格の値が変わるだけ（取得日時の表示は含めていない）。

@@ -1,0 +1,81 @@
+# 価格の分割自動更新（価格更新専用モード。OpenAI は使わない・判定と掲載状態は変えない・新しい商品は追加しない）
+#
+# 安全のための設定:
+# - 起動は手動（workflow_dispatch・書き込み権限のある人だけ）と、有効化後の schedule のみ。pull_request では起動しない
+#   （フォークからの PR には Secrets も渡されない）。schedule は既定ブランチでのみ動く。
+# - Secrets は Environment「price-refresh」に登録し、Environment の「Deployment branches」を main だけに制限する。
+# - リポジトリ変数 PRICE_REFRESH_ENABLED（小規模テストが成功するまで設定しない）:
+#     true 以外のあいだは、schedule の実行は何もせず終わり、手動実行の full（全件）も実行できない
+#     （dry-run と manual-test〔人物2人まで〕だけ）。緊急停止もこの変数を true 以外に戻す。
+#     さらに止める場合は Actions 画面で workflow を Disable。
+# - OPENAI_API_KEY は渡さない。ログは件数の要約だけ（scripts/price-refresh/run.ts）。
+# - 使う外部 Action はコミットSHAで固定。checkout はトークンを保存しない。
+name: price-refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'dry-run＝読み取りだけ（書き込みなし） / manual-test＝persons の人物だけ更新 / full＝通常どおり'
+        type: choice
+        options: [dry-run, manual-test, full]
+        default: dry-run
+      persons:
+        description: '対象の人物（カンマ区切り・完全一致）。dry-run・manual-test で使う。空なら全員（manual-test では必須・2人まで）'
+        default: ''
+      budget_min:
+        description: '1回の実行で作業を始めてよい時間（分）'
+        default: '20'
+      lookup_per_person:
+        description: '1人あたりのコード指定の取得の上限'
+        default: '60'
+  # 本番での小規模検証が終わってから有効化する。3時間ごと（UTC 1,4,7,10,13,16,19,22時の37分＝JST 10,13,16,19,22,1,4,7時台）。
+  # 既存の新規商品の発見（/api/cron/refresh、UTC 3時台）と重ならない時刻にしている（同じ人物を同時に更新すると自動停止の対象になるため）。
+  # schedule:
+  #   - cron: '37 1,4,7,10,13,16,19,22 * * *'
+
+concurrency:
+  group: price-refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    # schedule の実行はリポジトリ変数 PRICE_REFRESH_ENABLED が 'true' のときだけ（緊急停止スイッチ）
+    if: github.event_name == 'workflow_dispatch' || vars.PRICE_REFRESH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: price-refresh
+    timeout-minutes: 45
+    steps:
+      # 小規模テストの成功前（PRICE_REFRESH_ENABLED が true でない）は全件更新を実行しない
+      - name: 全件更新の許可の確認
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'full' && vars.PRICE_REFRESH_ENABLED != 'true'
+        run: |
+          echo "full（全件更新）は、小規模テストの成功後にリポジトリ変数 PRICE_REFRESH_ENABLED=true を設定するまで実行できません。"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci --ignore-scripts
+      - name: 価格の分割自動更新
+        run: npx tsx scripts/price-refresh/run.ts
+        env:
+          DATABASE_URL: ${{ secrets.PRICE_REFRESH_DATABASE_URL }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          RAKUTEN_APP_ID: ${{ secrets.RAKUTEN_APP_ID }}
+          RAKUTEN_ACCESS_KEY: ${{ secrets.RAKUTEN_ACCESS_KEY }}
+          RAKUTEN_AFFILIATE_ID: ${{ secrets.RAKUTEN_AFFILIATE_ID }}
+          NEXT_PUBLIC_SITE_URL: https://oshi-search.jp
+          # 入力値は環境変数として渡す（シェルに埋め込まない）
+          PRICE_REFRESH_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'dry-run' && '1' || '' }}
+          PRICE_REFRESH_PERSONS: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'full' && inputs.persons || '' }}
+          PRICE_REFRESH_REQUIRE_PERSONS: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'manual-test' && '1' || '' }}
+          PRICE_REFRESH_BUDGET_MIN: ${{ github.event_name == 'workflow_dispatch' && inputs.budget_min || '20' }}
+          PRICE_REFRESH_LOOKUP_PER_PERSON: ${{ github.event_name == 'workflow_dispatch' && inputs.lookup_per_person || '60' }}

@@ -4,12 +4,14 @@
 import { cache } from 'react';
 import { db } from '@/db/client';
 import { products as productsTable, batchMeta as batchMetaTable } from '@/db/schema';
-import { eq, sql } from 'drizzle-orm';
-import { upsertProduct } from '@/db/write';
+import { and, eq, sql } from 'drizzle-orm';
+import { upsertProduct, updateProductItemsOnly } from '@/db/write';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
 import { isLegacyIchibaId, isNewIchibaId } from '@/lib/rakuten-item-id';
 import { normalizeItemUrl } from '@/lib/legacy-ichiba-verdict';
+import { productKeyOfLink, productKeyString } from '@/lib/rakuten-affiliate-link';
+import { parseItemCode } from '@/lib/rakuten-item-id';
 
 export const CATEGORIES: ProductCategory[] = ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD', '中古'];
 
@@ -238,6 +240,159 @@ export async function updateProductInCategory(
 // 1カテゴリの商品点数が多い場合（数百〜千件規模）に無駄が大きい。jsonb_array_elements
 // + WHERE でDB側から対象商品1件だけを絞り込むことで、カテゴリ内の商品点数が増えても
 // 転送量・JSONパース量が定数に近くなるようにする。
+// ── 価格更新専用モード（src/lib/price-refresh.ts）──────────────────────────────
+// 既存の商品の並び・件数・ID・商品名・URL・アフィリエイトURL等は変えず、価格の項目だけを更新する。
+// 新商品の発見（mergeProductItems・storeProducts）はこれらを使わない（従来どおり）。
+
+/**
+ * 楽天の商品としての同一性キー（店舗コード・商品コード、または楽天ブックスの商品番号）。
+ * 商品ページURL（アフィリエイトURLなら遷移先）から作り、無ければ楽天市場の itemCode から作る。判断できなければ ''。
+ */
+export function productIdentityKey(item: Pick<RakutenItem, 'itemUrl' | 'affiliateUrl' | 'itemCode'>): string {
+  const fromUrl = productKeyString(productKeyOfLink(item.itemUrl) ?? productKeyOfLink(item.affiliateUrl));
+  if (fromUrl) return fromUrl;
+  const code = parseItemCode(item.itemCode);
+  return code ? `ichiba:${code.shop}/${code.code}` : '';
+}
+
+/** 価格として更新する項目（手動登録の商品・コード指定の取得で使う。それ以外の項目は変えない） */
+export interface PriceFields {
+  price: number;
+  priceFetchedAt: number;
+  reviewCount?: number;
+  reviewAverage?: number;
+}
+
+/** 価格更新専用モードで変更してよい商品の項目（これ以外は変えない） */
+export const PRICE_FIELD_KEYS = ['price', 'priceFetchedAt', 'reviewCount', 'reviewAverage'] as const;
+
+function applyPriceFields(item: RakutenItem, f: PriceFields): RakutenItem {
+  const next: RakutenItem = { ...item, price: f.price, priceFetchedAt: f.priceFetchedAt };
+  if (typeof f.reviewCount === 'number') next.reviewCount = f.reviewCount;
+  if (typeof f.reviewAverage === 'number') next.reviewAverage = f.reviewAverage;
+  return next;
+}
+
+export interface PriceOnlyMergeResult {
+  items: RakutenItem[];
+  /** 価格の項目を更新した既存商品 */
+  updated: number;
+  /** 検索結果に含まれず変更しなかった既存商品 */
+  notReturned: number;
+  /** 既存に無い商品（追加しない） */
+  newCandidates: number;
+  /** 同じIDだが楽天の同一性キーが違う（別商品の疑い。更新しない） */
+  identityMismatches: number;
+  /** 同一性キーが分からず照合できない既存商品（更新しない） */
+  unidentifiable: number;
+}
+
+/**
+ * 価格更新専用モードの反映（純粋関数）。既存の商品の並び・件数・ID・商品名・URL・アフィリエイトURL等は一切変えず、
+ * 楽天の同一性キー（店舗コード・商品コード、または楽天ブックスの商品番号）が一致した取得結果の価格の項目
+ * （price・priceFetchedAt・reviewCount・reviewAverage）だけを更新する。手動登録の商品も同じ扱い。
+ */
+export function mergePriceFieldsOnly(
+  existing: readonly RakutenItem[],
+  fetched: readonly RakutenItem[],
+  fetchedAt: number,
+): PriceOnlyMergeResult {
+  const fetchedByKey = new Map<string, RakutenItem>();
+  const fetchedById = new Map<string, RakutenItem>();
+  for (const f of fetched) {
+    const k = productIdentityKey(f);
+    if (k && !fetchedByKey.has(k)) fetchedByKey.set(k, f);
+    if (!fetchedById.has(f.id)) fetchedById.set(f.id, f);
+  }
+  const existingKeys = new Set<string>();
+  const existingIds = new Set<string>();
+  let updated = 0, notReturned = 0, identityMismatches = 0, unidentifiable = 0;
+  const items = existing.map((item) => {
+    existingIds.add(item.id);
+    const key = productIdentityKey(item);
+    if (!key) {
+      if (fetchedById.has(item.id)) unidentifiable++; else notReturned++;
+      return item;
+    }
+    existingKeys.add(key);
+    const f = fetchedByKey.get(key);
+    if (!f) {
+      const sameId = fetchedById.get(item.id);
+      if (sameId && productIdentityKey(sameId) && productIdentityKey(sameId) !== key) identityMismatches++;
+      else notReturned++;
+      return item;
+    }
+    if (!(Number(f.price) > 0)) { notReturned++; return item; }
+    updated++;
+    return applyPriceFields(item, { price: Number(f.price), priceFetchedAt: fetchedAt, reviewCount: f.reviewCount, reviewAverage: f.reviewAverage });
+  });
+  let newCandidates = 0;
+  for (const f of fetched) {
+    const k = productIdentityKey(f);
+    if (k ? !existingKeys.has(k) : !existingIds.has(f.id)) newCandidates++;
+  }
+  return { items, updated, notReturned, newCandidates, identityMismatches, unidentifiable };
+}
+
+/** 1カテゴリの行を読む（対象カテゴリだけ）。無ければ null */
+export async function getStoredCategoryRow(personName: string, category: ProductCategory): Promise<{ items: RakutenItem[]; fetchedAt: number } | null> {
+  const rows = await db.select().from(productsTable)
+    .where(and(eq(productsTable.personName, personName), eq(productsTable.category, category)));
+  const row = rows.find((r) => r.category === category);
+  return row ? { items: row.items as RakutenItem[], fetchedAt: row.fetchedAt.getTime() } : null;
+}
+
+/** 価格更新専用モードの保存：既存行の items（と fetched_at）だけを UPDATE（INSERT しない） */
+export async function savePriceOnlyItems(personName: string, category: ProductCategory, items: RakutenItem[], fetchedAt: number): Promise<boolean> {
+  return updateProductItemsOnly(personName, category, items, fetchedAt);
+}
+
+export interface PriceUpdate extends PriceFields {
+  /** 取得時に確認した楽天の同一性キー（保存直前にも一致を確認する） */
+  identityKey: string;
+}
+
+/**
+ * コード指定で取得した価格を、保存済みの商品に反映する（価格の項目だけ。商品ID・商品名・URL・アフィリエイトURL・判定は変えない）。
+ * 保存直前に最新の行を読み直し、同じIDで同一性キーも一致する商品だけ更新する。カテゴリ行の fetched_at（再検索日時）は変えない。
+ */
+export async function applyPriceUpdates(
+  personName: string,
+  category: ProductCategory,
+  updates: ReadonlyMap<string, PriceUpdate>,
+): Promise<{ applied: number; skipped: number }> {
+  if (updates.size === 0) return { applied: 0, skipped: 0 };
+  const rows = await db.select().from(productsTable)
+    .where(and(eq(productsTable.personName, personName), eq(productsTable.category, category)));
+  const row = rows.find((r) => r.category === category);
+  if (!row) return { applied: 0, skipped: updates.size };
+  const { items, applied } = applyPriceUpdatesToItems(row.items as RakutenItem[], updates);
+  // 既存行の items だけを UPDATE（INSERT しない）。カテゴリの再検索日時（fetched_at）は元の値のまま
+  if (applied > 0) await updateProductItemsOnly(personName, category, items, row.fetchedAt.getTime());
+  return { applied, skipped: updates.size - applied };
+}
+
+/** applyPriceUpdates の反映部分（純粋関数）。同じIDで同一性キーも一致する商品の価格の項目だけ変える */
+export function applyPriceUpdatesToItems(
+  items: readonly RakutenItem[],
+  updates: ReadonlyMap<string, PriceUpdate>,
+): { items: RakutenItem[]; applied: number } {
+  let applied = 0;
+  const next = items.map((item) => {
+    const u = updates.get(item.id);
+    if (!u || productIdentityKey(item) !== u.identityKey) return item;
+    applied++;
+    return applyPriceFields(item, u);
+  });
+  return { items: next, applied };
+}
+
+/** 商品が保存されている人物名（読み取りのみ） */
+export async function listPersonsWithProducts(): Promise<string[]> {
+  const rows = await db.selectDistinct({ personName: productsTable.personName }).from(productsTable);
+  return rows.map((r) => r.personName).sort((a, b) => a.localeCompare(b, 'ja'));
+}
+
 export async function getStoredProductImageUrl(
   personName: string,
   category: ProductCategory,

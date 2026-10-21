@@ -9,6 +9,7 @@ import type {
 import { ichibaItemIdFromApi, type IchibaIdStatus } from '@/lib/rakuten-item-id';
 import type { PersonConfig } from '@/types/person';
 import { calcScore } from './scoring';
+import { RakutenApiCooldownError, currentRakutenApiSession, rakutenApiFetch } from './rakuten-api-gate';
 
 const APP_ID = (process.env.RAKUTEN_APP_ID ?? '').trim();
 const ACCESS_KEY = (process.env.RAKUTEN_ACCESS_KEY ?? '').trim();
@@ -64,22 +65,33 @@ function resolveRetryWaitMs(res: Response, bodyExcerpt: string): number {
 //  - 2回目も429（またはそれ以外の非2xx）ならそのレスポンスをそのまま返し、
 //    呼び出し元（各fetch関数の `!res.ok` チェック）に処理を委ねる。
 //    そのカテゴリ内の以降の検索・他カテゴリの処理は呼び出し元の既存の分離構造により継続される。
+//
+// 価格更新（src/lib/price-refresh.ts）が楽天APIの共通の使用権（src/lib/rakuten-api-gate.ts）の中で呼んだときだけ、
+// その使用権を通して送る（1.1秒以上の間隔・2回目も 429 なら全経路共通の停止を記録）。
+// それ以外（既存の商品の自動更新・管理画面）は従来どおりこのプロセス内の間隔制御で送る（動作は変えない）。
 async function rakutenFetch(reqUrl: string, cacheMode: RequestCache): Promise<Response> {
-  await paceRakutenRequest();
-  const doFetch = () => fetch(
-    reqUrl,
-    { cache: cacheMode, next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined, headers: AUTH_HEADERS },
-  );
+  const init = {
+    cache: cacheMode,
+    next: cacheMode === 'default' ? { revalidate: REVALIDATE } : undefined,
+    headers: AUTH_HEADERS,
+  } as RequestInit;
+  const session = currentRakutenApiSession();
+  if (!session) await paceRakutenRequest();
+  const doFetch = session
+    ? () => rakutenApiFetch(reqUrl, init, { label: 'rakuten', maxWaitMs: 60_000, onUnavailable: 'local' })
+    : () => fetch(reqUrl, init);
 
   let res = await doFetch();
   if (res.status === 429) {
     let bodyExcerpt = '';
-    try { bodyExcerpt = (await res.text()).slice(0, 200); } catch { /* ignore */ }
+    try { bodyExcerpt = (session ? await res.clone().text() : await res.text()).slice(0, 200); } catch { /* ignore */ }
     const waitMs = resolveRetryWaitMs(res, bodyExcerpt);
     console.log(`[rakuten] 429受信、${waitMs}ms待機後に1回だけ再試行します`);
     await sleep(waitMs);
-    lastRakutenRequestAt = Date.now();
+    if (!session) lastRakutenRequestAt = Date.now();
     res = await doFetch();
+    // 共通の使用権の中で2回目も 429 なら、全経路共通の停止を記録する（以後この使用権では送らない）
+    if (session && res.status === 429) await session.reportRateLimited(res);
   }
   return res;
 }
@@ -822,6 +834,11 @@ export async function getProductsByCategory(
   } catch (err) {
     if (err instanceof RakutenApiError) {
       return { status: 'upstream_error', httpStatus: err.httpStatus };
+    }
+    // 価格更新の使用権の中で、全経路共通の停止中（直前に 429）だった場合は、楽天へ送らずに 429 と同じ扱いにする
+    if (err instanceof RakutenApiCooldownError) {
+      console.log(`[rakuten] 楽天APIの呼び出し停止中のため取得しませんでした: category=${category} name=${name}`);
+      return { status: 'upstream_error', httpStatus: 429 };
     }
     // RakutenApiError以外（ネットワーク断・タイムアウト等、fetch自体が失敗したケース）は
     // これまで内容が一切ログに残らず、Vercel Logsから原因確認ができなかった。

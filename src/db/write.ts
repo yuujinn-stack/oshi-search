@@ -43,6 +43,31 @@ export async function upsertProduct(
   revalidatePublicListings();
 }
 
+/**
+ * 既存の商品行の items（と fetched_at）だけを UPDATE する（INSERT しない＝行が無ければ何もしない）。
+ * 価格更新専用モード用。価格更新の専用DBユーザーには products への INSERT 権限を付けず、
+ * UPDATE (items, fetched_at) だけを付ける運用を想定している（docs/price-refresh-runbook.md）。
+ * 戻り値: 更新した行があれば true。
+ */
+export async function updateProductItemsOnly(
+  personName: string,
+  category: string,
+  items: unknown[],
+  fetchedAt: number,
+): Promise<boolean> {
+  const migration = await getBatchLockStatus(PRODUCT_ID_MIGRATION_LOCK_KEY);
+  if (migration.isLocked) {
+    throw new Error('商品ID移行中のため、商品データの書き込みを停止しています');
+  }
+  const rows = await db
+    .update(products)
+    .set({ items, fetchedAt: new Date(fetchedAt) })
+    .where(and(eq(products.personName, personName), eq(products.category, category)))
+    .returning({ personName: products.personName });
+  if (rows.length > 0) revalidatePublicListings();
+  return rows.length > 0;
+}
+
 // ── AI/手動判定（verdicts）────────────────────────────────────────────────────
 
 export async function upsertVerdict(

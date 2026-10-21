@@ -84,6 +84,12 @@ export interface RakutenItem {
   artistName?: string;   // DVD: アーティスト名
   catchcopy?: string;    // Ichiba: キャッチコピー
   description?: string;  // Ichiba: 商品説明（先頭200文字）
+  // 価格を楽天APIから実際に取得した日時（epoch ms）。楽天の検索結果に含まれて価格を更新したときだけ保存する
+  // （価格更新専用モード src/lib/price-refresh.ts）。無い商品は取得日時不明（推測で付けない）
+  priceFetchedAt?: number;
+  // 表示用（src/lib/price-freshness.ts がページ描画時に付ける。DBには保存しない）
+  priceStale?: boolean;     // 取得日時不明、または取得から一定日数を超えた価格（価格を表示しない）
+  priceDateLabel?: string;  // 「10/19時点」または取得日「2026/7/1」（取得日時不明なら無し）
 }
 
 export interface ProductCardProps {
