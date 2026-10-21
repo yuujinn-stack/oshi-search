@@ -131,7 +131,7 @@ COMMIT;
 （既存の経路は従来どおりの間隔制御のため。重なっても価格以外の変更を検知すれば自動停止する）。
 1. **保存（ローカル）**：`backup.ts export "<人物>"`、`snapshot.ts snapshot before-<人物>.json "<人物>"`。
 2. **dry-run**：Actions → price-refresh → Run workflow（mode=`dry-run`、persons=`<人物>`）。ログで対象カテゴリ数・推定 API 回数・コード指定の候補数・DB 更新対象の行数を確認。
-3. **更新**：Run workflow（mode=`manual-test`、persons=`<人物>`、budget_min=`20`）。ログの `status: "ok"`、`completed: 1`、`halt: null`、`failedCategories: {}`。
+3. **更新**：Run workflow（mode=`manual-test`、persons=`<人物>`、budget_min=`20`）。ログの `status: "ok"`、`completed: 1`、`halt: null`、`failedCategories: {}`、`stopDetail: null`。
    `failedCategories` に `503`・`429` 等があれば（楽天から取得できなかったカテゴリ。保存済みの商品は変更していない）、先に進まず原因を確認する。
 4. **比較（ローカル）**：`snapshot.ts snapshot after-<人物>.json "<人物>"` → `snapshot.ts compare before-<人物>.json after-<人物>.json`。
    `"ok": true`（判定・件数・ID と並び・価格以外の全項目が不変）と、`pricesChanged`・`priceFetchedAtSet`（価格・取得日時が入った件数）を確認。
@@ -177,6 +177,7 @@ COMMIT;
 | 自動停止したとき | `halt.ts status` で人物と理由を確認 → `snapshot.ts compare`・`backup.ts restore`（違いの表示）で原因を確認 → 必要なら `backup.ts restore --apply` → 問題が無ければ `PRICE_REFRESH_HALT_CLEAR_CONFIRM=yes ... halt.ts clear` | 印を消すまで手動・定期とも実行しない |
 | 再開 | 変数を `true`（Disable した場合は Enable） | 進み具合の続きから |
 
+- 楽天APIの 503 等のエラー・通信エラー・保存の失敗が **3回続いたら**（人物をまたいでも数える。取得できたカテゴリ・商品があれば数え直す）その回を自動で終了し、原因（カテゴリと HTTP ステータス）と止まった位置（人物・カテゴリ）を記録する（ログの `stopDetail`、管理画面の「楽天のエラーで終えた位置」。Actions は失敗として通知）。失敗したカテゴリは次回もう一度取得する。
 - 楽天APIの 429 は、待ってから1回だけ再試行し、それでも 429 ならその回を自動で終了する。共通の停止（60秒以上）を記録し、価格更新は停止中は楽天へ送らない。既存の商品の自動更新・管理画面は従来どおりの間隔制御（共通の使用権は使わない）。
 - 取得できなかった商品（429・エラー・検索結果に出ない・在庫切れ）は、価格も価格の取得日時も変更しない。
 - 公開リポジトリの schedule は、リポジトリに60日間活動が無いと自動停止する（Actions 画面で Enable）。

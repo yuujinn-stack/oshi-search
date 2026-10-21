@@ -323,6 +323,27 @@ describe('コード指定の取得', () => {
       expect(db.upserts).toBe(0);
     });
 
+    it('503 等が3回続いたら残りは呼ばずに終了し、取得できなかった商品の価格は変えない', async () => {
+      seed('写真集', [book('1'), book('2'), book('3'), book('4')]);
+      fetchMock.mockResolvedValue({ ok: false, status: 503, headers: { get: () => null } });
+      const r = await lookupPricesByCode(PERSON.name, selectLookupCandidates({ '写真集': { products: [book('1'), book('2'), book('3'), book('4')] } }, { nowMs: Date.now(), freshMs: 0, limit: 10 }));
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(r).toMatchObject({ stoppedBy: 'upstream_errors', failed: 3, errors: ['503', '503', '503'] });
+      expect(db.upserts).toBe(0);
+      expect(rowItems('写真集').map((i) => i.price)).toEqual([1500, 1500, 1500, 1500]);
+    });
+
+    it('503 の後に取得できれば数え直す（503→成功→503→503 では止めない）', async () => {
+      seed('写真集', [book('1'), book('2'), book('3'), book('4')]);
+      const err = { ok: false, status: 503, headers: { get: () => null } };
+      fetchMock.mockResolvedValueOnce(err).mockResolvedValueOnce(api('book:2', 1800)).mockResolvedValueOnce(err).mockResolvedValueOnce(err);
+      const r = await lookupPricesByCode(PERSON.name, selectLookupCandidates({ '写真集': { products: [book('1'), book('2'), book('3'), book('4')] } }, { nowMs: Date.now(), freshMs: 0, limit: 10 }));
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(r.stoppedBy).toBe('done');
+      expect(r.failed).toBe(3);
+      expect(r.applied).toBe(1);
+    });
+
     it('取得の間に保存済みの商品が別の商品に変わっていたら反映しない（保存直前の同一性の確認）', async () => {
       seed('写真集', [book('1')]);
       const candidates = selectLookupCandidates({ '写真集': { products: [book('1')] } }, { nowMs: Date.now(), freshMs: 0, limit: 10 });

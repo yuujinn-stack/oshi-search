@@ -313,3 +313,72 @@ describe('管理画面用の記録（直近の結果・実行の要約）', () =
     expect(store.lastRun).toMatchObject({ status: 'halted', persons: 1 });
   });
 });
+
+describe('楽天のエラーが続いたらその回を終える（原因と位置を記録）', () => {
+  const fail = (category: string, httpStatus?: number, status = 'fetch_failed') =>
+    ({ ...okCategory(0), categories: [{ category, status, httpStatus, updated: 0 }] });
+
+  it('503 等が3回続いたら（人物をまたいでも）その回を終え、原因と位置を記録し、失敗したカテゴリは次回取り直す', async () => {
+    const store = createMemoryStateStore();
+    // a：写真集 503、本・雑誌 503 → b：写真集 503 で3回目
+    spies.refreshPersonPrices.mockImplementation(async (p: { name: string }, cats: string[]) => {
+      clock += 10_000;
+      if (p.name === 'a' && cats[0] === '写真集') return fail('写真集', 503);
+      if (p.name === 'a' && cats[0] === '本・雑誌') return fail('本・雑誌', 503);
+      if (p.name === 'a') return { ...okCategory(0), categories: [{ category: cats[0], status: 'no_existing', updated: 0 }] };
+      return fail('写真集', 503);
+    });
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a'), P('b'), P('c')], relatedIdsOf: async () => new Set() });
+    expect(r.stoppedBy).toBe('upstream_errors');
+    expect(r.stopDetail).toEqual({ person: 'b', category: '写真集', reasons: ['写真集: 503', '本・雑誌: 503', '写真集: 503'] });
+    expect(r.persons.map((p) => p.name)).toEqual(['a', 'b']); // c には進まない
+    expect(store.states.b.nextCategory).toBe(0); // 失敗した写真集から取り直す
+    expect(store.states.b.completedAt).toBeUndefined();
+    expect(store.states.b.last).toMatchObject({ completed: false, stop: { person: 'b', category: '写真集' } });
+    expect(store.lastRun?.stopDetail?.person).toBe('b');
+  });
+
+  it('途中で取得できたカテゴリがあれば数え直す（503 が2回→成功→503 では止めない）', async () => {
+    const store = createMemoryStateStore();
+    const seq = [503, 503, 0, 503];
+    let k = 0;
+    spies.refreshPersonPrices.mockImplementation(async (_p, cats: string[]) => {
+      clock += 10_000;
+      const s = seq[k++] ?? 0;
+      return s ? fail(cats[0], s) : okCategory(1);
+    });
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], relatedIdsOf: async () => new Set() });
+    expect(r.stoppedBy).not.toBe('upstream_errors');
+    expect(r.persons[0].failedCategories).toHaveLength(3);
+  });
+
+  it('保存の失敗（db_error）・通信エラーも数える', async () => {
+    const store = createMemoryStateStore();
+    const seq: [number | undefined, string][] = [[undefined, 'db_error'], [undefined, 'fetch_failed'], [500, 'fetch_failed']];
+    let k = 0;
+    spies.refreshPersonPrices.mockImplementation(async (_p, cats: string[]) => { clock += 10_000; const [h, st] = seq[k++]; return fail(cats[0], h, st); });
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], relatedIdsOf: async () => new Set() });
+    expect(r.stoppedBy).toBe('upstream_errors');
+    expect(r.stopDetail?.reasons).toEqual(['写真集: 保存失敗', '本・雑誌: 通信エラー', 'Blu-ray・DVD: 500']);
+  });
+
+  it('429 は1回で終え、失敗したカテゴリは次回取り直す（位置を記録）', async () => {
+    const store = createMemoryStateStore();
+    spies.refreshPersonPrices.mockImplementation(async (_p, cats: string[]) => { clock += 10_000; return cats[0] === '本・雑誌' ? fail('本・雑誌', 429) : okCategory(1); });
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], relatedIdsOf: async () => new Set() });
+    expect(r.stoppedBy).toBe('rate_limited');
+    expect(r.stopDetail).toEqual({ person: 'a', category: '本・雑誌', reasons: ['本・雑誌: 429'] });
+    expect(store.states.a.nextCategory).toBe(1);
+  });
+
+  it('コード指定の取得で 503 等が続いて止まった場合も、その回を終えて位置を記録する', async () => {
+    const store = createMemoryStateStore();
+    spies.selectLookupCandidates.mockReturnValue([{ code: 'book:1' }]);
+    spies.lookupPricesByCode.mockResolvedValue({ attempted: 3, fromCache: 0, applied: 0, notFound: 0, mismatched: 0, failed: 3, stoppedBy: 'upstream_errors', errors: ['503', '503', '503'] });
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, lookupPerPerson: 10, store, now, persons: [P('a'), P('b')], relatedIdsOf: async () => new Set() });
+    expect(r.stoppedBy).toBe('upstream_errors');
+    expect(r.stopDetail).toEqual({ person: 'a', category: 'コード指定', reasons: ['コード指定: 503', 'コード指定: 503', 'コード指定: 503'] });
+    expect(r.persons.map((p) => p.name)).toEqual(['a']);
+    expect(spies.lookupPricesByCode.mock.calls[0][2]).toMatchObject({ maxConsecutiveFailures: 3 });
+  });
+});

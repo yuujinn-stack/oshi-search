@@ -32,6 +32,8 @@ export const HALT_KEY = 'price-refresh:halt';
 /** 直近の実行の要約（管理画面 /admin/price-refresh の表示用） */
 export const LAST_RUN_KEY = 'price-refresh:last-run';
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** 楽天のエラー（503 等・通信エラー・保存失敗）がこの回数続いたら、その回を終える（429 は1回で終える。コード指定の取得にも渡す） */
+export const MAX_CONSECUTIVE_FAILURES = 3;
 
 export interface PersonRefreshState {
   /** 最後に (A)(B) を最後まで終えた日時 */
@@ -62,6 +64,18 @@ export interface PersonLastResult {
   completed: boolean;
   /** 価格以外の変更を検知して自動停止した */
   halted?: boolean;
+  /** 楽天のエラー（429、または 503 等の連続）でこの人物の途中でその回を終えた */
+  stop?: StopDetail;
+}
+
+/** 楽天のエラーでその回を終えたときの原因と位置 */
+export interface StopDetail {
+  /** 止まった人物 */
+  person: string;
+  /** 止まったカテゴリ（コード指定の取得で止まった場合は「コード指定」） */
+  category: string;
+  /** 原因（例：「本・雑誌: 503」「コード指定: 通信エラー」） */
+  reasons: string[];
 }
 
 export interface LastRunInfo {
@@ -78,6 +92,8 @@ export interface LastRunInfo {
   lookupApplied: number;
   /** 取得できなかったカテゴリの延べ数 */
   failedCategories: number;
+  /** 楽天のエラーでその回を終えた場合の原因と位置 */
+  stopDetail?: StopDetail;
 }
 
 /** 進み具合の保存先（本番は Redis。テスト・ローカルはメモリ） */
@@ -191,6 +207,8 @@ export interface RunOptions {
   lookupFreshMs?: number;
   /** 同じ人物を再処理するまでの最短間隔（完了してからこの時間はスキップ） */
   minIntervalMs?: number;
+  /** 楽天のエラーがこの回数続いたらその回を終える（既定 MAX_CONSECUTIVE_FAILURES） */
+  maxConsecutiveFailures?: number;
   store?: RefreshStateStore;
   now?: () => number;
   /** 手動テスト用：この人物だけ処理する（名前の完全一致。再処理の間隔は無視） */
@@ -250,9 +268,11 @@ export interface RunSummary {
   updated: number;
   lookedUp: number;
   lookupApplied: number;
-  stoppedBy: 'budget' | 'max_persons' | 'all_done' | 'rate_limited' | 'config_missing' | 'locked' | 'no_state_store' | 'halted';
+  stoppedBy: 'budget' | 'max_persons' | 'all_done' | 'rate_limited' | 'upstream_errors' | 'config_missing' | 'locked' | 'no_state_store' | 'halted';
   /** 自動停止したとき（または停止中だったとき）の内容 */
   halt?: HaltInfo;
+  /** 楽天のエラー（429、または 503 等の連続）でその回を終えたときの原因と位置 */
+  stopDetail?: StopDetail;
 }
 
 async function relatedIdsFromDb(personName: string): Promise<Set<string>> {
@@ -275,6 +295,7 @@ export async function runPriceRefreshBatch(opts: RunOptions): Promise<RunSummary
         persons: summary.persons.length, completed: summary.persons.filter((p) => p.completed).length,
         updated: summary.updated, lookedUp: summary.lookedUp, lookupApplied: summary.lookupApplied,
         failedCategories: summary.persons.reduce((n, p) => n + p.failedCategories.length, 0),
+        stopDetail: summary.stopDetail,
       });
     } catch { /* 表示用の要約が保存できなくても価格更新の結果は変わらない */ }
   }
@@ -314,6 +335,10 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
     const relatedIdsOf = opts.relatedIdsOf ?? relatedIdsFromDb;
     const fingerprintOf = opts.fingerprintOf ?? fingerprintFromDb;
 
+    const maxFailures = Math.max(1, opts.maxConsecutiveFailures ?? MAX_CONSECUTIVE_FAILURES);
+    // 楽天のエラーの連続回数（人物をまたいで数える。取得できたカテゴリ・商品があれば 0 に戻す）
+    let failureStreak = 0;
+    const recentFailures: string[] = [];
     for (const name of order) {
       if (now() >= deadline) { base.stoppedBy = 'budget'; break; }
       if (opts.maxPersons && base.persons.length >= opts.maxPersons) { base.stoppedBy = 'max_persons'; break; }
@@ -330,6 +355,8 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
       let categoriesDone = 0;
       let updated = 0;
       let rateLimited = false;
+      let errorStopped = false;
+      let stopDetail: StopDetail | undefined;
       // 保存済み商品は人物ごとに1回だけ読む（カテゴリに商品があるかの判定用。保存時は各カテゴリの最新の行を読み直す）
       const snapshot = resumeFrom < CATEGORIES.length ? await getAllStoredProducts(name) : undefined;
       for (let i = resumeFrom; i < CATEGORIES.length; i++) {
@@ -339,27 +366,47 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
         if (r.remaining.length > 0) break;
         updated += r.updated;
         categoriesDone++;
+        let categoryFailed = false;
         for (const c of r.categories) {
-          if (c.status === 'fetch_failed' || c.status === 'db_error') failedCategories.push({ category: c.category, status: c.status, httpStatus: c.httpStatus });
+          if (c.status !== 'fetch_failed' && c.status !== 'db_error') continue;
+          failedCategories.push({ category: c.category, status: c.status, httpStatus: c.httpStatus });
+          recentFailures.push(`${c.category}: ${c.status === 'db_error' ? '保存失敗' : c.httpStatus ?? '通信エラー'}`);
+          categoryFailed = true;
         }
         if (r.categories.some((c) => c.httpStatus === 429)) rateLimited = true;
-        cur = { ...prev, startedAt: now(), nextCategory: i + 1 };
+        if (categoryFailed) failureStreak++;
+        else if (r.categories.some((c) => c.status === 'updated' || c.status === 'no_results')) { failureStreak = 0; recentFailures.length = 0; }
+        errorStopped = !rateLimited && failureStreak >= maxFailures;
+        const stopping = rateLimited || errorStopped;
+        // その回を終える場合、失敗したカテゴリは次回もう一度取得する（進み具合を進めない。保存済みの商品は変更していない）
+        cur = { ...prev, startedAt: now(), nextCategory: stopping && categoryFailed ? i : i + 1 };
         await store.set(name, cur);
-        if (rateLimited) break;
+        if (stopping) {
+          stopDetail = { person: name, category: CATEGORIES[i], reasons: rateLimited ? [`${CATEGORIES[i]}: 429`] : recentFailures.slice(-maxFailures) };
+          break;
+        }
       }
       const finishedCategories = resumeFrom + categoriesDone >= CATEGORIES.length;
 
       // (B) コード指定（取得日時が不明・古い公開中の商品。カテゴリ検索を最後まで終えた人物だけ）
       let lookup: LookupResult | undefined;
-      if (finishedCategories && !rateLimited && now() < deadline && (opts.lookupPerPerson ?? 0) > 0) {
+      if (finishedCategories && !rateLimited && !errorStopped && now() < deadline && (opts.lookupPerPerson ?? 0) > 0) {
         const stored = await getAllStoredProducts(name);
         const candidates = selectLookupCandidates(stored, {
           nowMs: now(), freshMs: lookupFreshMs, limit: opts.lookupPerPerson!, onlyIds: await relatedIdsOf(name),
         });
-        lookup = await lookupPricesByCode(name, candidates, { deadline, now, cache: lookupCache ?? undefined, cacheMaxAgeMs: lookupFreshMs });
+        lookup = await lookupPricesByCode(name, candidates, { deadline, now, cache: lookupCache ?? undefined, cacheMaxAgeMs: lookupFreshMs, maxConsecutiveFailures: maxFailures });
         base.lookedUp += lookup.attempted;
         base.lookupApplied += lookup.applied;
-        if (lookup.stoppedBy === 'rate_limited') rateLimited = true;
+        if (lookup.attempted > lookup.failed) { failureStreak = 0; recentFailures.length = 0; }
+        if (lookup.stoppedBy === 'rate_limited') {
+          rateLimited = true;
+          stopDetail = { person: name, category: 'コード指定', reasons: ['コード指定: 429'] };
+        }
+        if (lookup.stoppedBy === 'upstream_errors') {
+          errorStopped = true;
+          stopDetail = { person: name, category: 'コード指定', reasons: (lookup.errors ?? []).map((e) => `コード指定: ${e}`) };
+        }
       }
       // 処理後の確認：価格以外（判定・商品件数・ID・商品名・URL・アフィリエイトURL・並び等）が変わっていたら自動停止
       const diff = fingerprintDiff(before, await fingerprintOf(name));
@@ -371,13 +418,15 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
         return { ...base, status: 'halted', stoppedBy: 'halted', halt };
       }
       const lookupFinished = !lookup || lookup.stoppedBy === 'done';
-      const completed = finishedCategories && lookupFinished && !rateLimited;
-      const last: PersonLastResult = { at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed };
+      const completed = finishedCategories && lookupFinished && !rateLimited && !errorStopped;
+      const last: PersonLastResult = { at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed, ...(stopDetail && { stop: stopDetail }) };
       if (completed) await store.set(name, { completedAt: now(), startedAt: prev.startedAt, nextCategory: 0, last });
       else await store.set(name, { ...cur, last });
       base.persons.push({ name, categories: categoriesDone, updated, lookup, completed, failedCategories });
       base.updated += updated;
-      if (rateLimited) { base.stoppedBy = 'rate_limited'; break; }
+      if (rateLimited) { base.stoppedBy = 'rate_limited'; base.stopDetail = stopDetail; break; }
+      // 楽天のエラー（503 等）が続いた：その回を終える（続きは次回。失敗したカテゴリから取り直す）
+      if (errorStopped) { base.stoppedBy = 'upstream_errors'; base.stopDetail = stopDetail; break; }
       // 時間の枠を使い切って人物の途中で止まった（続きは次回）
       if (!completed && now() >= deadline) { base.stoppedBy = 'budget'; break; }
     }

@@ -93,6 +93,9 @@ export default async function PriceRefreshAdminPage({ searchParams }: Props) {
                   ['価格を更新した商品', `検索 ${run.lastRun.updated} ／ コード指定 ${run.lastRun.lookupApplied}`],
                   ['コード指定の取得', `${run.lastRun.lookedUp} 回`],
                   ['取得できなかったカテゴリ', `${run.lastRun.failedCategories} 件`],
+                  ...(run.lastRun.stopDetail
+                    ? [['楽天のエラーで終えた位置', `${run.lastRun.stopDetail.person} / ${run.lastRun.stopDetail.category}（${run.lastRun.stopDetail.reasons.join('、')}）`]]
+                    : []),
                 ].map(([label, value]) => (
                   <div key={label} className="bg-white rounded-lg border border-gray-200 p-3">
                     <div className="text-xs text-gray-500">{label}</div>
@@ -196,7 +199,7 @@ export default async function PriceRefreshAdminPage({ searchParams }: Props) {
                       <td className="px-2 py-1 whitespace-nowrap">{fmt(r.completedAt)}</td>
                       <td className="px-2 py-1">
                         {r.last
-                          ? `${fmt(r.last.at)} 更新 ${r.last.updated}${r.last.lookup ? ` ／ コード指定 ${r.last.lookup.applied}` : ''}${r.last.halted ? ' ／ 自動停止' : ''}${failedLabel(r.last) ? ` ／ 取得できず：${failedLabel(r.last)}` : ''}`
+                          ? `${fmt(r.last.at)} 更新 ${r.last.updated}${r.last.lookup ? ` ／ コード指定 ${r.last.lookup.applied}` : ''}${r.last.halted ? ' ／ 自動停止' : ''}${r.last.stop ? ` ／ ${r.last.stop.category}で終了` : ''}${failedLabel(r.last) ? ` ／ 取得できず：${failedLabel(r.last)}` : ''}`
                           : '—'}
                       </td>
                     </tr>

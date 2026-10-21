@@ -222,10 +222,15 @@ export interface LookupResult {
   notFound: number;
   mismatched: number;
   failed: number;
-  stoppedBy: 'done' | 'deadline' | 'rate_limited' | 'gate' | 'config_missing';
+  stoppedBy: 'done' | 'deadline' | 'rate_limited' | 'gate' | 'config_missing' | 'upstream_errors';
+  /** upstream_errors で止まったときの直近のエラー（HTTP ステータスまたは「通信エラー」） */
+  errors?: string[];
 }
 
 const GATE_ERRORS = [RakutenApiBusyError, RakutenApiCooldownError, RakutenApiLeaseLostError, RakutenApiUnavailableError];
+
+/** 楽天のエラー（503 等・通信エラー・保存失敗）がこの回数続いたら、その回の処理を終える（429 は1回で終える） */
+export const DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
 
 /**
  * (B) コード指定で価格を取得して反映する。1件ずつ・共通の呼び出し制御の1つの使用権でまとめて行う。
@@ -234,7 +239,7 @@ const GATE_ERRORS = [RakutenApiBusyError, RakutenApiCooldownError, RakutenApiLea
 export async function lookupPricesByCode(
   personName: string,
   candidates: readonly LookupCandidate[],
-  opts: { deadline?: number; now?: () => number; cache?: LookupCache; cacheMaxAgeMs?: number } = {},
+  opts: { deadline?: number; now?: () => number; cache?: LookupCache; cacheMaxAgeMs?: number; maxConsecutiveFailures?: number } = {},
 ): Promise<LookupResult> {
   const now = opts.now ?? (() => Date.now());
   const result: LookupResult = { attempted: 0, fromCache: 0, applied: 0, notFound: 0, mismatched: 0, failed: 0, stoppedBy: 'done' };
@@ -278,6 +283,19 @@ export async function lookupPricesByCode(
   if (!appId || !accessKey) return { ...result, stoppedBy: 'config_missing' };
   const origin = (process.env.NEXT_PUBLIC_SITE_URL ?? '').trim() || 'https://oshi-search.jp';
 
+  const maxFailures = Math.max(1, opts.maxConsecutiveFailures ?? DEFAULT_MAX_CONSECUTIVE_FAILURES);
+  let streak = 0;
+  const recentErrors: string[] = [];
+  // 楽天のエラーを数え、続いたら止める（この商品は変更しない）
+  const failOnce = (label: string): boolean => {
+    result.failed++;
+    streak++;
+    recentErrors.push(label);
+    if (streak < maxFailures) return false;
+    result.stoppedBy = 'upstream_errors';
+    result.errors = recentErrors.slice(-maxFailures);
+    return true;
+  };
   if (pending.length > 0) await withRakutenApiSession({ label: 'price-lookup', maxWaitMs: 60_000, onUnavailable: 'local' }, async () => {
     for (const c of pending) {
       // 同じ実行内で同じコードを取得済みなら API を呼ばない（同じ人物の複数カテゴリなど）
@@ -291,7 +309,7 @@ export async function lookupPricesByCode(
           { label: 'price-lookup', maxWaitMs: 60_000, onUnavailable: 'local' });
       } catch (err) {
         if (GATE_ERRORS.some((E) => err instanceof E)) { result.stoppedBy = err instanceof RakutenApiCooldownError ? 'rate_limited' : 'gate'; result.failed++; break; }
-        result.failed++;
+        if (failOnce('通信エラー')) break;
         continue; // ネットワーク障害・タイムアウト：この商品は変更しない
       }
       if (res.status === 429) {
@@ -300,7 +318,8 @@ export async function lookupPricesByCode(
         result.stoppedBy = 'rate_limited';
         break;
       }
-      if (!res.ok) { result.failed++; continue; }
+      if (!res.ok) { if (failOnce(String(res.status))) break; continue; } // 503 等：この商品は変更しない
+      streak = 0;
       const data = (await res.json()) as { Items?: { Item: IchibaApiItem }[] };
       const it = data.Items?.[0]?.Item;
       if (!it) { result.notFound++; doneByCode.set(c.code, null); continue; } // 販売終了・在庫切れ等：変更しない

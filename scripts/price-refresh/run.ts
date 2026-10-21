@@ -93,7 +93,10 @@ async function main() {
     suppressedLogs: suppressed,
     // 自動停止（価格以外の変更を検知）したときの人物と理由（カテゴリ名と種類だけ。商品の情報は含まない）
     halt: s.halt ?? null,
+    // 楽天のエラー（429、または 503 等の連続）でその回を終えたときの原因と位置（人物・カテゴリ・HTTP ステータス）
+    stopDetail: s.stopDetail ?? null,
   });
+  if (s.stoppedBy === 'upstream_errors') out({ alert: '楽天のエラーが続いたため、この回の処理を終えました（取得できなかった商品は変更していません）。原因を確認してください', stopDetail: s.stopDetail });
   if (s.status === 'halted') out({ alert: '自動停止しました。原因を確認するまで定期実行は何もしません（docs/price-refresh-runbook.md の「自動停止したとき」）' });
   if (onlyPersons.length) {
     for (const p of s.persons) out({ person: p.name, categories: p.categories, updated: p.updated, lookup: p.lookup, completed: p.completed, failedCategories: p.failedCategories });
@@ -101,7 +104,8 @@ async function main() {
   if (Object.keys(failedByStatus).length) {
     out({ warning: '楽天から取得できなかったカテゴリがあります（保存済みの商品は変更していません）。手動テスト中は先に進まず原因を確認してください', failedCategories: failedByStatus });
   }
-  if (s.status !== 'ok' && s.status !== 'locked') process.exit(1);
+  // 自動停止・楽天のエラーの連続で終えた回は、Actions を失敗として通知する
+  if ((s.status !== 'ok' && s.status !== 'locked') || s.stoppedBy === 'upstream_errors') process.exit(1);
 }
 
 main().catch((e) => {
