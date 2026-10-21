@@ -1,5 +1,5 @@
 // 価格更新の前後比較（読み取りのみ。DB・Redis への書き込みなし）。
-// 本番での小規模更新の前と後にスナップショットを取り、価格の項目（price・priceFetchedAt・レビュー）以外が
+// 本番での小規模更新の前と後にスナップショットを取り、価格の項目（price・priceFetchedAt）以外が
 // 変わっていないこと（判定・商品件数・商品IDと並び・商品名・商品ページURL・アフィリエイトURL・その他の全項目）を確認し、
 // 価格・価格の取得日時が変わった件数を数える。想定外の変更があれば終了コード1（自動更新を止める合図）。
 // 出力はローカルの tmp/（git 管理外）。商品の中身はハッシュにして保存し、ファイルにも画面にも商品名・URLを出さない。
@@ -15,7 +15,7 @@ const DIR = 'tmp/price-refresh-snapshots';
 const h = (v: unknown) => crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex').slice(0, 16);
 
 // 価格更新で変わってよい項目（これ以外が1つでも変わったら異常。商品名・画像・URL・アフィリエイトURL・ID・並びも不変）
-const PRICE_FIELDS = new Set(['price', 'priceFetchedAt', 'reviewCount', 'reviewAverage']);
+const PRICE_FIELDS = new Set(['price', 'priceFetchedAt']);
 
 interface Snap {
   takenAt: string;

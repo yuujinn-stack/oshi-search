@@ -160,15 +160,16 @@ describe('価格更新専用モード：保存の内容', () => {
     expect(after).toMatchObject({ title: before.title, imageUrl: before.imageUrl, affiliateUrl: before.affiliateUrl, itemUrl: before.itemUrl, price: 1234 });
   });
 
-  it('並び順・件数・価格以外の項目は変わらない（同じ商品の別の並びで返ってきても）', async () => {
+  it('並び順・件数・価格以外の項目（レビュー数・平均を含む）は変わらない（同じ商品の別の並びで返ってきても）', async () => {
     const items = [book('1'), book('2'), book('3', { id: 'mn-3', title: '手動' })];
     seed('写真集', items);
     rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === '写真集'
-      ? ok([book('3', { price: 30 }), book('1', { price: 10 })]) : { status: 'empty' }));
+      ? ok([book('3', { price: 30, reviewCount: 50, reviewAverage: 4.5 }), book('1', { price: 10, reviewCount: 7, reviewAverage: 3 })]) : { status: 'empty' }));
     await refreshPersonPrices(PERSON);
     const after = rowItems('写真集');
     expect(after.map((p) => p.id)).toEqual(['bk-1', 'bk-2', 'mn-3']);
-    const strip = (p: RakutenItem) => { const { price, priceFetchedAt, reviewCount, reviewAverage, ...rest } = p; return rest; };
+    // 変わってよいのは price・priceFetchedAt だけ（レビュー数・平均は人物ページの自動の並び順に使うため変えない）
+    const strip = (p: RakutenItem) => { const { price, priceFetchedAt, ...rest } = p; return rest; };
     expect(after.map(strip)).toEqual(items.map(strip));
     expect(after.map((p) => p.price)).toEqual([10, 1500, 30]);
   });
@@ -263,7 +264,7 @@ describe('手動登録の商品（mn-）の価格更新（カテゴリ検索）'
       ? ok([book('555', { title: '楽天の商品名', price: 2222, reviewCount: 9, reviewAverage: 4.2 })]) : { status: 'empty' }));
     await refreshPersonPrices(PERSON);
     const [after] = rowItems('写真集');
-    expect(after).toMatchObject({ id: 'mn-abc', title: '手動で付けた商品名', affiliateUrl: 'https://a.r10.to/manual', itemUrl: manual.itemUrl, price: 2222, reviewCount: 9, reviewAverage: 4.2 });
+    expect(after).toMatchObject({ id: 'mn-abc', title: '手動で付けた商品名', affiliateUrl: 'https://a.r10.to/manual', itemUrl: manual.itemUrl, price: 2222, reviewCount: 0, reviewAverage: 0 });
     expect(after.priceFetchedAt).toBeDefined();
     expectNoOpenAiNoVerdicts();
   });

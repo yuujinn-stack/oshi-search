@@ -259,18 +259,16 @@ export function productIdentityKey(item: Pick<RakutenItem, 'itemUrl' | 'affiliat
 export interface PriceFields {
   price: number;
   priceFetchedAt: number;
-  reviewCount?: number;
-  reviewAverage?: number;
 }
 
-/** 価格更新専用モードで変更してよい商品の項目（これ以外は変えない） */
-export const PRICE_FIELD_KEYS = ['price', 'priceFetchedAt', 'reviewCount', 'reviewAverage'] as const;
+/**
+ * 価格更新専用モードで変更してよい商品の項目（これ以外は変えない）。レビュー数・レビュー平均は人物ページの自動の並び順に
+ * 使われるため変えない（DB の保護トリガー products_price_refresher_guard も同じ2項目だけを許可）。
+ */
+export const PRICE_FIELD_KEYS = ['price', 'priceFetchedAt'] as const;
 
 function applyPriceFields(item: RakutenItem, f: PriceFields): RakutenItem {
-  const next: RakutenItem = { ...item, price: f.price, priceFetchedAt: f.priceFetchedAt };
-  if (typeof f.reviewCount === 'number') next.reviewCount = f.reviewCount;
-  if (typeof f.reviewAverage === 'number') next.reviewAverage = f.reviewAverage;
-  return next;
+  return { ...item, price: f.price, priceFetchedAt: f.priceFetchedAt };
 }
 
 export interface PriceOnlyMergeResult {
@@ -290,7 +288,7 @@ export interface PriceOnlyMergeResult {
 /**
  * 価格更新専用モードの反映（純粋関数）。既存の商品の並び・件数・ID・商品名・URL・アフィリエイトURL等は一切変えず、
  * 楽天の同一性キー（店舗コード・商品コード、または楽天ブックスの商品番号）が一致した取得結果の価格の項目
- * （price・priceFetchedAt・reviewCount・reviewAverage）だけを更新する。手動登録の商品も同じ扱い。
+ * （price・priceFetchedAt）だけを更新する。手動登録の商品も同じ扱い。
  */
 export function mergePriceFieldsOnly(
   existing: readonly RakutenItem[],
@@ -324,7 +322,7 @@ export function mergePriceFieldsOnly(
     }
     if (!(Number(f.price) > 0)) { notReturned++; return item; }
     updated++;
-    return applyPriceFields(item, { price: Number(f.price), priceFetchedAt: fetchedAt, reviewCount: f.reviewCount, reviewAverage: f.reviewAverage });
+    return applyPriceFields(item, { price: Number(f.price), priceFetchedAt: fetchedAt });
   });
   let newCandidates = 0;
   for (const f of fetched) {

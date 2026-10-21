@@ -8,7 +8,7 @@
 
 | 場所 | 変わる項目 | 変わらないもの |
 |---|---|---|
-| Neon `products.items[]` | `price`・`priceFetchedAt`・`reviewCount`・`reviewAverage`（楽天の同一性キーが一致した商品だけ） | 商品の件数・並び・`id`・`title`・`itemUrl`・`affiliateUrl`・`imageUrl`・`category`・その他すべての項目 |
+| Neon `products.items[]` | `price`・`priceFetchedAt`（楽天の同一性キーが一致した商品だけ） | 商品の件数・並び・`id`・`title`・`itemUrl`・`affiliateUrl`・`imageUrl`・`category`・`reviewCount`・`reviewAverage`（人物ページの自動の並び順に使うため変えない）・その他すべての項目 |
 | Neon `products.fetched_at` | カテゴリ検索で価格を更新したカテゴリ行だけ（カテゴリを再検索した日時） | 行の追加・削除はしない（UPDATE のみ） |
 | Neon その他のテーブル | なし（`verdicts`・`persons`・`batch_lock` は読み取りのみ） | 判定（related / unrelated / 手動判定）・掲載状態 |
 | Redis | `price-refresh:state`（進み具合）・`price-refresh:runner-lock`・`price-refresh:halt`（自動停止の印）・`price-lookup:<code>`（取得結果、3日）・`rakuten-api:lease` / `rakuten-api:cooldown`（共通の呼び出し制御） | 既存のキー（閲覧数・人気商品・ジョブ等） |
@@ -49,7 +49,7 @@ GRANT UPDATE (items, fetched_at) ON products TO price_refresher;   -- INSERT・D
 CREATE OR REPLACE FUNCTION products_price_refresher_guard() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
-  price_keys text[] := ARRAY['price', 'priceFetchedAt', 'reviewCount', 'reviewAverage'];
+  price_keys text[] := ARRAY['price', 'priceFetchedAt'];   -- 変更してよいのはこの2項目だけ（レビュー数・平均も変更不可）
 BEGIN
   IF current_user <> 'price_refresher' THEN
     RETURN NEW;   -- サイト・既存の自動更新・管理画面（neondb_owner）には影響しない
@@ -65,6 +65,18 @@ BEGIN
     WHERE (o.e - price_keys) IS DISTINCT FROM (n.e - price_keys)
   ) THEN
     RAISE EXCEPTION 'price_refresher: 価格の項目以外は変更できません';
+  END IF;
+  -- 変更する場合、price は正の数値、priceFetchedAt は数値だけ（消す・文字列・0以下にはできない）
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(OLD.items) WITH ORDINALITY AS o(e, i)
+    JOIN jsonb_array_elements(NEW.items) WITH ORDINALITY AS n(e, i) ON o.i = n.i
+    WHERE ((n.e -> 'price') IS DISTINCT FROM (o.e -> 'price')
+           AND NOT COALESCE(CASE WHEN jsonb_typeof(n.e -> 'price') = 'number' THEN (n.e ->> 'price')::numeric > 0 END, false))
+       OR ((n.e -> 'priceFetchedAt') IS DISTINCT FROM (o.e -> 'priceFetchedAt')
+           AND jsonb_typeof(n.e -> 'priceFetchedAt') IS DISTINCT FROM 'number')
+  ) THEN
+    RAISE EXCEPTION 'price_refresher: 価格は正の数値、取得日時は数値でのみ更新できます';
   END IF;
   RETURN NEW;
 END

@@ -4,13 +4,13 @@
 //   import しないため、呼び出し経路そのものが存在しない（OpenAI の設定が無い環境でも動く）。
 // - 関連判定（verdicts）・掲載状態は変更しない。
 // - 既存に無い商品は追加しない（新規商品の発見と AI 判定は src/lib/batch-processor.ts の別処理）。
-// - 変更する DB の項目は products の items 内の price・priceFetchedAt・reviewCount・reviewAverage と、
+// - 変更する DB の項目は products の items 内の price・priceFetchedAt（レビュー数・平均は並び順に使われるため変えない）と、
 //   (A) で価格を更新したカテゴリ行の fetched_at（カテゴリを再検索した日時）だけ。
 // - 楽天APIの呼び出し間隔・同時実行は共通の制御（src/lib/rakuten-api-gate.ts）に従う。
 //
 // 更新の方法は2つ：
 //   (A) カテゴリ検索（refreshPersonPrices）… 人物のカテゴリを従来どおり検索し、結果に含まれた既存商品
-//       （楽天の同一性キーが一致したもの）の価格の項目（price・priceFetchedAt・reviewCount・reviewAverage）だけを更新。
+//       （楽天の同一性キーが一致したもの）の価格の項目（price・priceFetchedAt）だけを更新。
 //       商品名・画像・URL・アフィリエイトURL・ID・並び・件数は変えない（手動登録の商品も同じ）。
 //       保存は既存行の UPDATE だけ（INSERT しない）。
 //   (B) コード指定（lookupPricesByCode）… 楽天ブックスの商品番号（book:<番号>）または楽天市場APIの itemCode を
@@ -174,7 +174,7 @@ export function lookupCodeOf(item: Pick<RakutenItem, 'itemUrl' | 'affiliateUrl' 
   return null;
 }
 
-interface IchibaApiItem { itemCode?: string; itemPrice?: number; reviewCount?: number; reviewAverage?: number }
+interface IchibaApiItem { itemCode?: string; itemPrice?: number }
 
 export interface LookupCandidate {
   category: ProductCategory;
@@ -207,7 +207,7 @@ export function selectLookupCandidates(
  * コード指定の取得結果の共有キャッシュ（同じ商品が複数の人物に保存されているため。例：グループのCDは全メンバーに保存）。
  * 値は楽天APIから実際に取得した価格と取得日時。期限内に同じコードが出たら API を呼ばずにその値（取得日時もそのまま）を使う。
  */
-export interface CachedLookup { itemCode: string; price: number; fetchedAt: number; reviewCount?: number; reviewAverage?: number }
+export interface CachedLookup { itemCode: string; price: number; fetchedAt: number }
 export interface LookupCache {
   getMany(codes: readonly string[]): Promise<Map<string, CachedLookup>>;
   setMany(entries: readonly CachedLookup[]): Promise<void>;
@@ -252,8 +252,6 @@ export async function lookupPricesByCode(
       identityKey: productIdentityKey(c.item),
       price: v.price,
       priceFetchedAt: v.fetchedAt,
-      reviewCount: v.reviewCount,
-      reviewAverage: v.reviewAverage,
     });
     updatesByCategory.set(c.category, map);
   };
@@ -328,8 +326,6 @@ export async function lookupPricesByCode(
         itemCode: c.code,
         price: Number(it.itemPrice),
         fetchedAt: Date.now(),
-        reviewCount: typeof it.reviewCount === 'number' ? it.reviewCount : undefined,
-        reviewAverage: typeof it.reviewAverage === 'number' ? it.reviewAverage : undefined,
       };
       doneByCode.set(c.code, v);
       fetchedNow.push(v);

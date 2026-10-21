@@ -223,7 +223,7 @@ export interface RunOptions {
 }
 
 /**
- * 人物の「価格以外」の指紋。商品はカテゴリごとに件数と、価格の項目（price・priceFetchedAt・reviewCount・reviewAverage）を
+ * 人物の「価格以外」の指紋。商品はカテゴリごとに件数と、価格の項目（price・priceFetchedAt）を
  * 除いた各商品の内容を並び順どおりにつないだハッシュ。判定（verdicts）は全項目のハッシュ。DB 側で計算し、転送量はごくわずか。
  */
 export interface PersonFingerprint {
@@ -234,7 +234,7 @@ export interface PersonFingerprint {
 export async function fingerprintFromDb(personName: string): Promise<PersonFingerprint> {
   const prows = (await neonSql`
     SELECT p.category, count(t.e)::int AS n,
-      md5(coalesce(string_agg((t.e - ARRAY['price','priceFetchedAt','reviewCount','reviewAverage'])::text, '|' ORDER BY t.i), '')) AS h
+      md5(coalesce(string_agg((t.e - ARRAY['price','priceFetchedAt'])::text, '|' ORDER BY t.i), '')) AS h
     FROM products p LEFT JOIN LATERAL jsonb_array_elements(p.items) WITH ORDINALITY AS t(e, i) ON true
     WHERE p.person_name = ${personName}
     GROUP BY p.category`) as { category: string; n: number; h: string }[];

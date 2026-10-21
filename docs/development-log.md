@@ -4159,3 +4159,21 @@ Task 107〜113 の価格更新（GitHub Actions・OpenAI 不使用）を、既�
 ### 注意点
 - 1カテゴリの検索は複数回のリクエストを含むため、「3回」はカテゴリ（またはコード指定の商品）単位で数える。
 - 取得できなかった商品の価格・取得日時は従来どおり変更しない。
+
+---
+
+## Task 121：Neon 適用前の最終確認 — 価格更新で変えるのを price・priceFetchedAt だけに限定、トリガーで価格の値も検査、パスワードをハッシュで指定（未commit・本番DB未変更）
+
+### 目的
+「価格更新専用ユーザーは既存商品の price と取得日時以外を変更できない」ことを、コード・自動停止の比較・DB の保護トリガーで揃えて保証する。パスワードを Git・ログ・Neon の SQL Editor の履歴に出さない。
+
+### 変更
+- 価格更新で変更する項目を `price`・`priceFetchedAt` だけに（従来は reviewCount・reviewAverage も更新していた。レビュー数・平均は人物ページの自動の並び順〔レビュー数×平均〕と星の表示に使われるため、価格更新では変えない）：`src/lib/product-store.ts`（`PRICE_FIELD_KEYS`・`applyPriceFields`・`mergePriceFieldsOnly`）、`src/lib/price-refresh.ts`（コード指定の反映・キャッシュ）、`src/lib/price-refresh-runner.ts`（自動停止の指紋はレビューも「価格以外」として比較）、`scripts/price-refresh/snapshot.ts`（前後比較もレビューを保護対象に）。新商品の発見（neondb_owner の保存）では従来どおりレビューも更新される。
+- 保護トリガー（`docs/price-refresh-runbook.md` の SQL）：`price_keys` を `price`・`priceFetchedAt` の2つに。さらに、変更する場合は price は正の数値、priceFetchedAt は数値だけ（消す・文字列・null・0以下は拒否。元の値をそのまま残す場合は検査しない）。
+- `scripts/price-refresh/make-role-password.py`（新規・標準ライブラリのみ）：256ビットのパスワードを作り、画面に出さずに `.env.price-refresh.local`（Git 管理外・権限600）へ価格更新専用ユーザーの接続文字列を保存。Neon に貼る SQL を `tmp/price-refresh-role.sql`（Git 管理外・権限600）に書き出す。パスワードは PostgreSQL 標準の SCRAM-SHA-256 のハッシュで指定するため、SQL Editor の履歴にも平文は残らない（ハッシュが使えない場合の予備として平文版 `tmp/price-refresh-role.plain.sql` も作る。使わなければ消す）。既存のファイルは上書きしない。
+- テスト：価格更新でレビュー数・平均を変えないこと（カテゴリ検索・手動登録の商品）に期待値を変更。
+
+### 検証
+- npm test 130ファイル・2,215件 OK、tsc OK。
+- スクリプトのハッシュ計算は PostgreSQL 自身が作るハッシュと一致（同じ salt で比較）。ハッシュ指定の CREATE ROLE はそのまま保存される。ダミーの .env.local で全体を実行し、権限600・平文の表示なし・owner のパスワードを含まない・2回目は上書きせず終了を確認。
+- 本番と同じ構成の検証環境（Task 120 と同じ方法）で、更新後の SQL をハッシュ指定のパスワードで適用：60/60。追加分：既存（owner）によるレビュー数・平均の変更は成功、価格更新ユーザーによるレビュー数・平均の変更・price の削除・文字列・0・マイナス・null・priceFetchedAt の文字列化・削除はすべてトリガーが拒否、拒否後のデータは不変。owner の92件の保存はトリガー込み 5ms。
