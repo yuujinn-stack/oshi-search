@@ -20,6 +20,8 @@
 //   PRICE_REFRESH_DRY_RUN=1 PRICE_REFRESH_PERSONS="賀喜遥香" npx dotenv -e .env.local -- npx tsx scripts/price-refresh/run.ts
 // 本体（DB 接続を含む）は、環境変数・人物の指定を確認してから読み込む（未設定時に接続エラーの詳細を出さないため）
 
+import { checkRedisEnv, checkRedisRead, describeError, redisEnvProblems } from './diagnostics';
+
 const TAG = '[price-refresh-run]';
 const MAX_TEST_PERSONS = 2;
 const verbose = process.env.PRICE_REFRESH_VERBOSE === '1';
@@ -55,7 +57,19 @@ async function main() {
   if (missing.length) { out({ error: 'missing_env', missing }); process.exit(1); }
   if (process.env.OPENAI_API_KEY) out({ warning: 'OPENAI_API_KEY は不要です（この処理は OpenAI を使いません）' });
 
-  const { planPriceRefresh, runPriceRefreshBatch } = await import('@/lib/price-refresh-runner');
+  const { planPriceRefresh, runPriceRefreshBatch, HALT_KEY, LOCK_KEY } = await import('@/lib/price-refresh-runner');
+  const { getRedis } = await import('@/lib/redis');
+  // Redis（Upstash）への読み取りだけの接続確認。設定の形（値は出さない）と、読み取れるかを出す
+  const redisConfigured = !!(process.env.UPSTASH_REDIS_REST_URL ?? '').trim() && !!(process.env.UPSTASH_REDIS_REST_TOKEN ?? '').trim();
+  const checkRedis = async (): Promise<boolean> => {
+    const shape = checkRedisEnv(process.env);
+    const problems = redisEnvProblems(shape);
+    const redis = getRedis();
+    const read = redis ? await checkRedisRead(redis, { halt: HALT_KEY, lock: LOCK_KEY }, process.env) : { ok: false };
+    out({ redisCheck: read.ok ? 'ok' : 'failed', readOnly: true, ...(read.ok ? { halt: read.halt, locked: read.locked } : { error: read.error }), envShape: shape, ...(problems.length ? { envProblems: problems } : {}) });
+    if (!read.ok) out({ alert: 'Redis（Upstash）に接続できません。GitHub の Secrets「UPSTASH_REDIS_REST_URL」「UPSTASH_REDIS_REST_TOKEN」が Vercel の同じ名前の値と一致しているか確認してください（KV_REST_API_READ_ONLY_TOKEN・REDIS_URL・KV_URL ではない）' });
+    return read.ok;
+  };
 
   if (dryRun) {
     const plan = await planPriceRefresh({ onlyPersons, lookupPerPerson });
@@ -67,8 +81,14 @@ async function main() {
     if (onlyPersons.length && plan.persons.length < onlyPersons.length) {
       out({ warning: '指定した人物の一部に商品が無い、または名前が一致しません', found: plan.persons.map((p) => p.name) });
     }
+    // dry-run でも Redis の設定を読み取りだけで確認する（manual-test の前に Secrets の誤りに気づけるように。書き込みはしない）
+    if (redisConfigured) { if (!(await checkRedis())) process.exitCode = 1; }
+    else out({ redisCheck: 'not_configured', note: 'dry-run は Redis を使わない（manual-test・定期実行では必須）' });
     return;
   }
+
+  // 価格の更新を始める前に Redis を読み取りだけで確認する（失敗したら DB・楽天API・Redis に何もせず終了）
+  if (!(await checkRedis())) process.exit(1);
 
   const budgetMin = Math.min(Math.max(Number(process.env.PRICE_REFRESH_BUDGET_MIN ?? 20), 1), 300);
   const t0 = Date.now();
@@ -109,8 +129,8 @@ async function main() {
 }
 
 main().catch((e) => {
-  // 例外の内容は出さない（DB 接続文字列等を含みうる）。種類だけ
-  out({ error: 'failed', kind: e instanceof Error ? e.name : typeof e, suppressedLogs: suppressed });
+  // 原因（Upstash のエラー文・失敗したコマンド名・原因のコード）だけを出す。秘密の値・URL・接続文字列は伏せる
+  out({ error: 'failed', ...describeError(e, process.env), suppressedLogs: suppressed });
   if (verbose) original.error(e);
   process.exit(1);
 });
