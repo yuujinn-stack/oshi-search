@@ -109,6 +109,8 @@ async function main() {
     lookupApiCalls: s.lookedUp,
     lookupApplied: s.lookupApplied,
     failedCategories: failedByStatus,
+    // 前回の価格から30%以上の変動などで反映せず確認対象にした商品の数（保存済みの商品は変更していない）
+    priceReviews: s.persons.reduce((n, p) => n + p.priceReviews.length, 0),
     minutes: Math.round((Date.now() - t0) / 6000) / 10,
     suppressedLogs: suppressed,
     // 自動停止（価格以外の変更を検知）したときの人物と理由（カテゴリ名と種類だけ。商品の情報は含まない）
@@ -120,6 +122,10 @@ async function main() {
   if (s.status === 'halted') out({ alert: '自動停止しました。原因を確認するまで定期実行は何もしません（docs/price-refresh-runbook.md の「自動停止したとき」）' });
   if (onlyPersons.length) {
     for (const p of s.persons) out({ person: p.name, categories: p.categories, updated: p.updated, lookup: p.lookup, completed: p.completed, failedCategories: p.failedCategories });
+    // 確認対象（商品ID・変更前の価格・取得した価格・変動率・理由。価格と商品IDは公開情報で、認証情報は含まない）
+    for (const p of s.persons) for (const r of p.priceReviews) {
+      out({ priceReview: { person: p.name, category: r.category, id: r.id, previousPrice: r.previousPrice, fetchedPrice: r.fetchedPrice, changePercent: r.changeRate == null ? null : Math.round(r.changeRate * 1000) / 10, reason: r.reason } });
+    }
   }
   if (Object.keys(failedByStatus).length) {
     out({ warning: '楽天から取得できなかったカテゴリがあります（保存済みの商品は変更していません）。手動テスト中は先に進まず原因を確認してください', failedCategories: failedByStatus });

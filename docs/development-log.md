@@ -4177,3 +4177,23 @@ Task 107〜113 の価格更新（GitHub Actions・OpenAI 不使用）を、既�
 - npm test 130ファイル・2,215件 OK、tsc OK。
 - スクリプトのハッシュ計算は PostgreSQL 自身が作るハッシュと一致（同じ salt で比較）。ハッシュ指定の CREATE ROLE はそのまま保存される。ダミーの .env.local で全体を実行し、権限600・平文の表示なし・owner のパスワードを含まない・2回目は上書きせず終了を確認。
 - 本番と同じ構成の検証環境（Task 120 と同じ方法）で、更新後の SQL をハッシュ指定のパスワードで適用：60/60。追加分：既存（owner）によるレビュー数・平均の変更は成功、価格更新ユーザーによるレビュー数・平均の変更・price の削除・文字列・0・マイナス・null・priceFetchedAt の文字列化・削除はすべてトリガーが拒否、拒否後のデータは不変。owner の92件の保存はトリガー込み 5ms。
+
+---
+
+## Task 125：価格更新 — related の商品だけを更新、30%以上の変動は確認対象に（未commit・本番DB/Redis 未変更）
+
+### 目的
+成田凌の manual-test の前に、(1) 判定が unrelated・判定なしの商品を価格更新の対象から外す、(2) 前回の価格から30%以上変わる取得価格を自動で反映せず確認対象にする。判定・表示設定・並び順は変えない。
+
+### 変更
+- `src/lib/product-store.ts`：`PRICE_REVIEW_CHANGE_RATE = 0.3`、`priceChangeReview()`（前回の価格から30%以上〔整数で比較〕、または前回の価格が無い・0以下なら確認対象。商品ID・変更前の価格・取得した価格・変動率・理由）。`mergePriceFieldsOnly` に `eligibleIds`（related の商品ID）を追加し、対象外は変更しない（`notEligible`）、30%以上は反映せず `reviews` に入れる。`applyPriceUpdatesToItems`・`applyPriceUpdates`（コード指定）も30%以上は反映せず `reviews` を返す。
+- `src/lib/price-refresh.ts`：`refreshPersonPrices` に `eligibleIds`（related の商品が無いカテゴリは楽天APIを呼ばず `no_eligible`）。カテゴリの結果・全体の結果・コード指定の結果に `reviews`、カテゴリの結果に `notEligible`。
+- `src/lib/price-refresh-runner.ts`：人物ごとに判定が related の商品IDを1回読み、カテゴリ検索とコード指定の両方に使う。確認対象を `RunSummary.persons[].priceReviews`、人物の直近の結果 `last.priceReviews`（最大50件）・`last.notEligible`、実行の要約 `priceReviews`（件数）に記録。
+- `scripts/price-refresh/run.ts`：要約に `priceReviews`（件数）、手動テストでは確認対象ごとに `priceReview`（人物・カテゴリ・商品ID・変更前の価格・取得した価格・変動率％・理由）を出力。
+- `src/app/admin/price-refresh/page.tsx`：「価格の確認待ち（自動で更新しなかった商品）」の表（人物・カテゴリ・商品ID・変更前の価格・取得した価格・変動率・理由・日時）、人物の行に「確認待ち N」。
+- `docs/price-refresh-runbook.md`：変わる項目の説明を更新。
+- テスト：既存の価格更新のテストで30%以上の変化を使っていた値を30%未満に変更（目的は価格以外を変えないことの確認のため）。追加：30%の境界（±29.9% は反映、±30% は確認対象、前回の価格なし）、43,027円→28,059円の中古商品が確認対象として価格・取得日時・他の項目とも不変で保存もしない、related でない商品は結果に含まれても不変、related の無いカテゴリは楽天APIを呼ばない、カテゴリ行の fetched_at が新しくなっても確認対象は次回も確認されコード指定の候補に残る、API エラー時は価格を保持、コード指定でも30%以上は反映しない、runner が related の商品IDを渡し確認対象を記録（上限50件）。
+
+### 注意点
+- カテゴリ行の `fetched_at` は、そのカテゴリで1件以上反映したときだけ新しくなる。価格更新は毎回すべてのカテゴリを検索し、コード指定の候補は商品ごとの `priceFetchedAt` で選ぶため、行の `fetched_at` は確認対象・取得失敗の商品の再確認を妨げない（新商品の発見・公開サイトもこの値を使っていない）。
+- 確認対象の商品は、自動では反映されない（価格の変動が続く限り毎回確認対象になる）。反映の方法（管理画面からの承認等）は今回は用意していない。

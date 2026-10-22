@@ -12,7 +12,7 @@
 import { neonSql } from '@/db/client';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getRedis } from '@/lib/redis';
-import { CATEGORIES, getAllStoredProducts, listPersonsWithProducts, productIdentityKey as productIdentityKeyOf } from '@/lib/product-store';
+import { CATEGORIES, getAllStoredProducts, listPersonsWithProducts, productIdentityKey as productIdentityKeyOf, type PriceReview } from '@/lib/product-store';
 import {
   lookupCodeOf,
   lookupPricesByCode,
@@ -66,7 +66,14 @@ export interface PersonLastResult {
   halted?: boolean;
   /** 楽天のエラー（429、または 503 等の連続）でこの人物の途中でその回を終えた */
   stop?: StopDetail;
+  /** 前回の価格から30%以上の変動などで反映せず確認対象にした商品（最大 MAX_REVIEWS_PER_PERSON 件。保存済みの商品は変更していない） */
+  priceReviews?: PriceReview[];
+  /** 判定が related でないため更新しなかった商品の数 */
+  notEligible?: number;
 }
+
+/** 人物ごとに記録する確認対象の上限（Redis の容量を抑えるため） */
+export const MAX_REVIEWS_PER_PERSON = 50;
 
 /** 楽天のエラーでその回を終えたときの原因と位置 */
 export interface StopDetail {
@@ -94,6 +101,8 @@ export interface LastRunInfo {
   failedCategories: number;
   /** 楽天のエラーでその回を終えた場合の原因と位置 */
   stopDetail?: StopDetail;
+  /** 確認対象にした商品の数（全人物） */
+  priceReviews?: number;
 }
 
 /** 進み具合の保存先（本番は Redis。テスト・ローカルはメモリ） */
@@ -264,7 +273,7 @@ export function fingerprintDiff(a: PersonFingerprint, b: PersonFingerprint): str
 
 export interface RunSummary {
   status: 'ok' | 'locked' | 'no_state_store' | 'config_missing' | 'halted';
-  persons: { name: string; categories: number; updated: number; lookup?: LookupResult; completed: boolean; failedCategories: FailedCategory[] }[];
+  persons: { name: string; categories: number; updated: number; lookup?: LookupResult; completed: boolean; failedCategories: FailedCategory[]; priceReviews: PriceReview[] }[];
   updated: number;
   lookedUp: number;
   lookupApplied: number;
@@ -296,6 +305,7 @@ export async function runPriceRefreshBatch(opts: RunOptions): Promise<RunSummary
         updated: summary.updated, lookedUp: summary.lookedUp, lookupApplied: summary.lookupApplied,
         failedCategories: summary.persons.reduce((n, p) => n + p.failedCategories.length, 0),
         stopDetail: summary.stopDetail,
+        priceReviews: summary.persons.reduce((n, p) => n + p.priceReviews.length, 0),
       });
     } catch { /* 表示用の要約が保存できなくても価格更新の結果は変わらない */ }
   }
@@ -350,6 +360,10 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
       let cur: PersonRefreshState = { ...prev, startedAt: now(), nextCategory: resumeFrom };
       await store.set(name, cur);
       const failedCategories: FailedCategory[] = [];
+      // 更新の対象は判定が related の商品だけ（判定・表示設定は読むだけで変えない）
+      const relatedIds = await relatedIdsOf(name);
+      const priceReviews: PriceReview[] = [];
+      let notEligible = 0;
 
       // (A) カテゴリ検索（前回の続きから。カテゴリを1つ終えるごとに進み具合を保存）
       let categoriesDone = 0;
@@ -361,11 +375,13 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
       const snapshot = resumeFrom < CATEGORIES.length ? await getAllStoredProducts(name) : undefined;
       for (let i = resumeFrom; i < CATEGORIES.length; i++) {
         if (now() >= deadline) break;
-        const r = await refreshPersonPrices(person, [CATEGORIES[i] as ProductCategory], { deadline, now, stored: snapshot });
+        const r = await refreshPersonPrices(person, [CATEGORIES[i] as ProductCategory], { deadline, now, stored: snapshot, eligibleIds: relatedIds });
         if (r.configMissing) return { ...base, status: 'config_missing', stoppedBy: 'config_missing' };
         if (r.remaining.length > 0) break;
         updated += r.updated;
         categoriesDone++;
+        priceReviews.push(...(r.reviews ?? []));
+        notEligible += r.categories.reduce((n, c) => n + (c.notEligible ?? 0), 0);
         let categoryFailed = false;
         for (const c of r.categories) {
           if (c.status !== 'fetch_failed' && c.status !== 'db_error') continue;
@@ -393,11 +409,12 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
       if (finishedCategories && !rateLimited && !errorStopped && now() < deadline && (opts.lookupPerPerson ?? 0) > 0) {
         const stored = await getAllStoredProducts(name);
         const candidates = selectLookupCandidates(stored, {
-          nowMs: now(), freshMs: lookupFreshMs, limit: opts.lookupPerPerson!, onlyIds: await relatedIdsOf(name),
+          nowMs: now(), freshMs: lookupFreshMs, limit: opts.lookupPerPerson!, onlyIds: relatedIds,
         });
         lookup = await lookupPricesByCode(name, candidates, { deadline, now, cache: lookupCache ?? undefined, cacheMaxAgeMs: lookupFreshMs, maxConsecutiveFailures: maxFailures });
         base.lookedUp += lookup.attempted;
         base.lookupApplied += lookup.applied;
+        priceReviews.push(...(lookup.reviews ?? []));
         if (lookup.attempted > lookup.failed) { failureStreak = 0; recentFailures.length = 0; }
         if (lookup.stoppedBy === 'rate_limited') {
           rateLimited = true;
@@ -413,16 +430,19 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
       if (diff.length > 0) {
         const halt: HaltInfo = { at: now(), person: name, reasons: diff };
         await store.setHalt(halt);
-        await store.set(name, { ...cur, last: { at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed: false, halted: true } });
-        base.persons.push({ name, categories: categoriesDone, updated, lookup, completed: false, failedCategories });
+        await store.set(name, { ...cur, last: { at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed: false, halted: true, priceReviews: priceReviews.slice(0, MAX_REVIEWS_PER_PERSON), notEligible } });
+        base.persons.push({ name, categories: categoriesDone, updated, lookup, completed: false, failedCategories, priceReviews });
         return { ...base, status: 'halted', stoppedBy: 'halted', halt };
       }
       const lookupFinished = !lookup || lookup.stoppedBy === 'done';
       const completed = finishedCategories && lookupFinished && !rateLimited && !errorStopped;
-      const last: PersonLastResult = { at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed, ...(stopDetail && { stop: stopDetail }) };
+      const last: PersonLastResult = {
+        at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed,
+        ...(stopDetail && { stop: stopDetail }), priceReviews: priceReviews.slice(0, MAX_REVIEWS_PER_PERSON), notEligible,
+      };
       if (completed) await store.set(name, { completedAt: now(), startedAt: prev.startedAt, nextCategory: 0, last });
       else await store.set(name, { ...cur, last });
-      base.persons.push({ name, categories: categoriesDone, updated, lookup, completed, failedCategories });
+      base.persons.push({ name, categories: categoriesDone, updated, lookup, completed, failedCategories, priceReviews });
       base.updated += updated;
       if (rateLimited) { base.stoppedBy = 'rate_limited'; base.stopDetail = stopDetail; break; }
       // 楽天のエラー（503 等）が続いた：その回を終える（続きは次回。失敗したカテゴリから取り直す）

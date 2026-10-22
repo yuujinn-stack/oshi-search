@@ -382,3 +382,34 @@ describe('楽天のエラーが続いたらその回を終える（原因と位�
     expect(spies.lookupPricesByCode.mock.calls[0][2]).toMatchObject({ maxConsecutiveFailures: 3 });
   });
 });
+
+describe('related の商品だけを更新・30%以上の変動は確認対象として記録', () => {
+  it('判定が related の商品IDを価格更新に渡す（判定は読むだけ）', async () => {
+    const store = createMemoryStateStore();
+    const related = new Set(['bk-1', 'bk-2']);
+    await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], relatedIdsOf: async () => related });
+    for (const call of spies.refreshPersonPrices.mock.calls) expect(call[2]).toMatchObject({ eligibleIds: related });
+  });
+
+  it('確認対象（商品ID・変更前の価格・取得した価格・変動率・理由）を人物の直近の結果と実行の要約に残す', async () => {
+    const store = createMemoryStateStore();
+    const review = { category: '中古', id: 'ic-used-box', previousPrice: 43027, fetchedPrice: 28059, changeRate: -0.348, reason: 'price_change_30pct' };
+    spies.refreshPersonPrices.mockImplementation(async (_p, cats: string[]) => {
+      clock += 10_000;
+      return cats[0] === '中古' ? { ...okCategory(0), reviews: [review] } : okCategory(1);
+    });
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], onlyPersons: ['a'], relatedIdsOf: async () => new Set(['ic-used-box']) });
+    expect(r.persons[0].priceReviews).toEqual([review]);
+    expect(store.states.a.last?.priceReviews).toEqual([review]);
+    expect(store.lastRun?.priceReviews).toBe(1);
+    expect(r.persons[0].completed).toBe(true); // 確認対象があっても処理は完了（保存済みの商品は変えない）
+  });
+
+  it('記録する確認対象は人物ごとに上限まで（Redis の容量を抑える）', async () => {
+    const store = createMemoryStateStore();
+    const many = Array.from({ length: 80 }, (_, i) => ({ category: 'CD', id: `x-${i}`, previousPrice: 1000, fetchedPrice: 2000, changeRate: 1, reason: 'price_change_30pct' }));
+    spies.refreshPersonPrices.mockImplementation(async () => { clock += 10_000; return { ...okCategory(0), reviews: many.slice(0, 20) }; });
+    await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], relatedIdsOf: async () => new Set() });
+    expect(store.states.a.last?.priceReviews).toHaveLength(50);
+  });
+});

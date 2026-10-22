@@ -28,6 +28,7 @@ import {
   mergePriceFieldsOnly,
   productIdentityKey,
   savePriceOnlyItems,
+  type PriceReview,
   type PriceUpdate,
 } from '@/lib/product-store';
 import {
@@ -45,6 +46,7 @@ import type { PersonWithConfig, ProductCategory } from '@/types/person';
 export type PriceRefreshStatus =
   | 'updated'          // 保存した（今回取得できた既存商品の価格等を更新）
   | 'no_existing'      // 保存済みの商品が無いカテゴリ（追加しないので何もしない）
+  | 'no_eligible'      // 更新の対象（判定が related）の商品が無いカテゴリ（楽天APIを呼ばない）
   | 'no_results'       // 楽天の検索結果が0件（既存はそのまま）
   | 'fetch_failed'     // 楽天APIのエラー・429・タイムアウト（既存はそのまま）
   | 'config_missing'   // 楽天APIの認証情報なし
@@ -62,6 +64,10 @@ export interface PriceRefreshCategoryResult {
   newCandidates: number;
   /** IDやURLは一致したが楽天の商品コードが違うため更新しなかった数 */
   identityMismatches: number;
+  /** 更新の対象外（判定が related でない）のため変更しなかった数 */
+  notEligible: number;
+  /** 前回の価格から30%以上の変動などで反映せず確認対象にした商品（変更しない） */
+  reviews: PriceReview[];
 }
 
 export interface PriceRefreshResult {
@@ -75,10 +81,12 @@ export interface PriceRefreshResult {
   remaining: ProductCategory[];
   /** 楽天APIの認証情報が無い */
   configMissing: boolean;
+  /** 確認対象にした商品（全カテゴリ） */
+  reviews: PriceReview[];
 }
 
 const empty = (category: ProductCategory, status: PriceRefreshStatus, httpStatus?: number): PriceRefreshCategoryResult =>
-  ({ category, status, httpStatus, updated: 0, notReturned: 0, newCandidates: 0, identityMismatches: 0 });
+  ({ category, status, httpStatus, updated: 0, notReturned: 0, newCandidates: 0, identityMismatches: 0, notEligible: 0, reviews: [] });
 
 /**
  * (A) カテゴリ検索による価格更新。deadline（epoch ms）を過ぎたら次のカテゴリに進まず、残りを remaining で返す。
@@ -91,6 +99,8 @@ export async function refreshPersonPrices(
     now?: () => number;
     /** 保存済み商品の読み取り結果（カテゴリに商品があるかの判定だけに使う。省略時は読み取る） */
     stored?: Partial<Record<ProductCategory, { products: RakutenItem[] }>>;
+    /** 更新してよい商品ID（判定が related の商品）。省略時はすべて（price-refresh-runner は必ず渡す） */
+    eligibleIds?: ReadonlySet<string>;
   } = {},
 ): Promise<PriceRefreshResult> {
   const now = opts.now ?? (() => Date.now());
@@ -106,6 +116,11 @@ export async function refreshPersonPrices(
     }
     if ((stored[category]?.products.length ?? 0) === 0) {
       results.push(empty(category, 'no_existing'));
+      continue;
+    }
+    // 更新の対象（判定が related）の商品が無いカテゴリは楽天APIを呼ばない
+    if (opts.eligibleIds && !stored[category]!.products.some((p) => opts.eligibleIds!.has(p.id))) {
+      results.push({ ...empty(category, 'no_eligible'), notEligible: stored[category]!.products.length });
       continue;
     }
     // 1カテゴリ分の検索（複数ページ・複数キーワード）は、楽天APIの共通の使用権（src/lib/rakuten-api-gate.ts：
@@ -128,7 +143,7 @@ export async function refreshPersonPrices(
       const fetchedAt = now();
       const row = await getStoredCategoryRow(person.name, category);
       if (!row || row.items.length === 0) { results.push(empty(category, 'no_existing')); continue; }
-      const merged = mergePriceFieldsOnly(row.items, res.products, fetchedAt);
+      const merged = mergePriceFieldsOnly(row.items, res.products, fetchedAt, { eligibleIds: opts.eligibleIds });
       if (merged.updated > 0) await savePriceOnlyItems(person.name, category, merged.items, fetchedAt);
       results.push({
         category,
@@ -137,6 +152,8 @@ export async function refreshPersonPrices(
         notReturned: merged.notReturned + merged.unidentifiable,
         newCandidates: merged.newCandidates,
         identityMismatches: merged.identityMismatches,
+        notEligible: merged.notEligible,
+        reviews: merged.reviews.map((r) => ({ ...r, category })),
       });
     } catch (err) {
       console.error(`[price-refresh] 保存失敗 ${person.name}/${category}: ${err instanceof Error ? err.message : String(err)}`);
@@ -154,6 +171,7 @@ export async function refreshPersonPrices(
     fetchFailed: results.filter((r) => r.status === 'fetch_failed').length,
     remaining,
     configMissing,
+    reviews: results.flatMap((r) => r.reviews),
   };
 }
 
@@ -223,6 +241,8 @@ export interface LookupResult {
   mismatched: number;
   failed: number;
   stoppedBy: 'done' | 'deadline' | 'rate_limited' | 'gate' | 'config_missing' | 'upstream_errors';
+  /** 前回の価格から30%以上の変動などで反映せず確認対象にした商品（変更しない） */
+  reviews: PriceReview[];
   /** upstream_errors で止まったときの直近のエラー（HTTP ステータスまたは「通信エラー」） */
   errors?: string[];
 }
@@ -242,7 +262,7 @@ export async function lookupPricesByCode(
   opts: { deadline?: number; now?: () => number; cache?: LookupCache; cacheMaxAgeMs?: number; maxConsecutiveFailures?: number } = {},
 ): Promise<LookupResult> {
   const now = opts.now ?? (() => Date.now());
-  const result: LookupResult = { attempted: 0, fromCache: 0, applied: 0, notFound: 0, mismatched: 0, failed: 0, stoppedBy: 'done' };
+  const result: LookupResult = { attempted: 0, fromCache: 0, applied: 0, notFound: 0, mismatched: 0, failed: 0, stoppedBy: 'done', reviews: [] };
   if (candidates.length === 0) return result;
 
   const updatesByCategory = new Map<ProductCategory, Map<string, PriceUpdate>>();
@@ -340,6 +360,7 @@ export async function lookupPricesByCode(
     try {
       const r = await applyPriceUpdates(personName, category, updates);
       result.applied += r.applied;
+      result.reviews.push(...r.reviews);
     } catch (err) {
       console.error(`[price-refresh] コード指定の保存失敗 ${personName}/${category}: ${err instanceof Error ? err.message : String(err)}`);
       result.failed += updates.size;

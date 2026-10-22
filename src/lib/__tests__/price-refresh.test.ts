@@ -127,7 +127,7 @@ describe('価格更新専用モード：OpenAI API を一切使わない', () =>
     // 判定は price-refresh から一切参照されない（verdicts の内容に関係なく同じ動作）
     seed('グッズ', [ichiba('ich-s1:no-verdict', 's1', 'no-verdict'), ichiba('ic-legacyshopid000000000', 's2', 'old-ai'), ichiba('mn-manual1', 's3', 'manual-unrelated')]);
     rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => cat === 'グッズ'
-      ? ok([ichiba('ich-s1:no-verdict', 's1', 'no-verdict', { price: 900 }), ichiba('ich-s2:old-ai', 's2', 'old-ai', { price: 800 }), ichiba('ich-s3:manual-unrelated', 's3', 'manual-unrelated', { price: 700 })])
+      ? ok([ichiba('ich-s1:no-verdict', 's1', 'no-verdict', { price: 900 }), ichiba('ich-s2:old-ai', 's2', 'old-ai', { price: 800 }), ichiba('ich-s3:manual-unrelated', 's3', 'manual-unrelated', { price: 750 })])
       : { status: 'empty' });
     const r = await refreshPersonPrices(PERSON);
     expectNoOpenAiNoVerdicts();
@@ -141,12 +141,12 @@ describe('価格更新専用モード：保存の内容', () => {
   it('価格だけ変わった：価格と priceFetchedAt を更新し、ID・アフィリエイトURL・件数は変わらない', async () => {
     const before = ichiba('ich-s1:a', 's1', 'a');
     seed('グッズ', [before]);
-    rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === 'グッズ' ? ok([ichiba('ich-s1:a', 's1', 'a', { price: 1980 })]) : { status: 'empty' }));
+    rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === 'グッズ' ? ok([ichiba('ich-s1:a', 's1', 'a', { price: 1100 })]) : { status: 'empty' }));
     const t0 = Date.now();
     await refreshPersonPrices(PERSON);
     const [after] = rowItems('グッズ');
     expect(rowItems('グッズ')).toHaveLength(1);
-    expect(after).toMatchObject({ id: before.id, price: 1980, affiliateUrl: before.affiliateUrl, itemUrl: before.itemUrl, title: before.title });
+    expect(after).toMatchObject({ id: before.id, price: 1100, affiliateUrl: before.affiliateUrl, itemUrl: before.itemUrl, title: before.title });
     expect(after.priceFetchedAt).toBeGreaterThanOrEqual(t0);
   });
 
@@ -164,21 +164,21 @@ describe('価格更新専用モード：保存の内容', () => {
     const items = [book('1'), book('2'), book('3', { id: 'mn-3', title: '手動' })];
     seed('写真集', items);
     rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === '写真集'
-      ? ok([book('3', { price: 30, reviewCount: 50, reviewAverage: 4.5 }), book('1', { price: 10, reviewCount: 7, reviewAverage: 3 })]) : { status: 'empty' }));
+      ? ok([book('3', { price: 1400, reviewCount: 50, reviewAverage: 4.5 }), book('1', { price: 1600, reviewCount: 7, reviewAverage: 3 })]) : { status: 'empty' }));
     await refreshPersonPrices(PERSON);
     const after = rowItems('写真集');
     expect(after.map((p) => p.id)).toEqual(['bk-1', 'bk-2', 'mn-3']);
     // 変わってよいのは price・priceFetchedAt だけ（レビュー数・平均は人物ページの自動の並び順に使うため変えない）
     const strip = (p: RakutenItem) => { const { price, priceFetchedAt, ...rest } = p; return rest; };
     expect(after.map(strip)).toEqual(items.map(strip));
-    expect(after.map((p) => p.price)).toEqual([10, 1500, 30]);
+    expect(after.map((p) => p.price)).toEqual([1600, 1500, 1400]);
   });
 
   it('楽天APIから返ってこなかった商品：価格も priceFetchedAt も変更しない', async () => {
     const kept = ichiba('ich-s1:kept', 's1', 'kept', { price: 500, priceFetchedAt: OLD });
     const noDate = ichiba('ich-s1:nodate', 's1', 'nodate', { price: 600 });
     seed('グッズ', [kept, noDate, ichiba('ich-s1:back', 's1', 'back')]);
-    rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === 'グッズ' ? ok([ichiba('ich-s1:back', 's1', 'back', { price: 2000 })]) : { status: 'empty' }));
+    rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === 'グッズ' ? ok([ichiba('ich-s1:back', 's1', 'back', { price: 1100 })]) : { status: 'empty' }));
     const r = await refreshPersonPrices(PERSON);
     const items = rowItems('グッズ');
     expect(items.find((p) => p.id === kept.id)).toEqual(kept);
@@ -261,10 +261,10 @@ describe('手動登録の商品（mn-）の価格更新（カテゴリ検索）'
     const manual = book('555', { id: 'mn-abc', title: '手動で付けた商品名', affiliateUrl: 'https://a.r10.to/manual', itemUrl: 'https://books.rakuten.co.jp/rb/555/' });
     seed('写真集', [manual]);
     rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === '写真集'
-      ? ok([book('555', { title: '楽天の商品名', price: 2222, reviewCount: 9, reviewAverage: 4.2 })]) : { status: 'empty' }));
+      ? ok([book('555', { title: '楽天の商品名', price: 1650, reviewCount: 9, reviewAverage: 4.2 })]) : { status: 'empty' }));
     await refreshPersonPrices(PERSON);
     const [after] = rowItems('写真集');
-    expect(after).toMatchObject({ id: 'mn-abc', title: '手動で付けた商品名', affiliateUrl: 'https://a.r10.to/manual', itemUrl: manual.itemUrl, price: 2222, reviewCount: 0, reviewAverage: 0 });
+    expect(after).toMatchObject({ id: 'mn-abc', title: '手動で付けた商品名', affiliateUrl: 'https://a.r10.to/manual', itemUrl: manual.itemUrl, price: 1650, reviewCount: 0, reviewAverage: 0 });
     expect(after.priceFetchedAt).toBeDefined();
     expectNoOpenAiNoVerdicts();
   });
@@ -411,5 +411,99 @@ describe('コード指定の共有キャッシュ（同じ商品が複数の人�
     const r = await lookupPricesByCode(PERSON.name, selectLookupCandidates({ CD: { products: [book('9')] }, 写真集: { products: [book('9')] } }, { nowMs: Date.now(), freshMs: 0, limit: 10 }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(r).toMatchObject({ attempted: 1, fromCache: 1, applied: 2 });
+  });
+});
+
+describe('更新の対象は related の商品だけ・30%以上の変動は確認対象', () => {
+  // 成田凌の中古商品と同じ値（43,027円 → 28,059円、約34.8%下がる）
+  const USED = () => ichiba('ic-used-box', 'usedshop', '10001', { price: 43027, category: '中古' });
+
+  it('30%の境界：+29.9%・-29.9% は反映、+30%・-30% 以上と前回の価格が無いものは確認対象', async () => {
+    const { priceChangeReview } = await import('../product-store');
+    expect(priceChangeReview('a', 1000, 1299)).toBeNull();
+    expect(priceChangeReview('a', 1000, 701)).toBeNull();
+    expect(priceChangeReview('a', 1000, 1300)).toMatchObject({ reason: 'price_change_30pct', changeRate: 0.3 });
+    expect(priceChangeReview('a', 1000, 700)).toMatchObject({ reason: 'price_change_30pct', changeRate: -0.3 });
+    expect(priceChangeReview('a', 0, 500)).toMatchObject({ reason: 'no_previous_price', changeRate: null });
+    expect(priceChangeReview('a', undefined, 500)).toMatchObject({ reason: 'no_previous_price' });
+  });
+
+  it('43,027円 → 28,059円の中古商品は反映せず確認対象（価格・取得日時・他の項目とも変えない）', async () => {
+    const before = USED();
+    seed('中古', [before]);
+    rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === '中古' ? ok([ichiba('ic-used-box', 'usedshop', '10001', { price: 28059 })]) : { status: 'empty' }));
+    const r = await refreshPersonPrices(PERSON, undefined, { eligibleIds: new Set(['ic-used-box']) });
+    expect(rowItems('中古')[0]).toEqual(before);
+    expect(r.updated).toBe(0);
+    expect(r.reviews).toEqual([{ category: '中古', id: 'ic-used-box', previousPrice: 43027, fetchedPrice: 28059, changeRate: -0.348, reason: 'price_change_30pct' }]);
+    expect(db.upserts).toBe(0); // 反映する商品が無ければ保存しない（カテゴリ行の fetched_at も変えない）
+  });
+
+  it('related でない商品（unrelated・判定なし）は楽天の結果に含まれても変えない。related だけ更新', async () => {
+    const rel = ichiba('ich-s1:rel', 's1', 'rel');
+    const unrel = ichiba('ich-s1:unrel', 's1', 'unrel');
+    seed('グッズ', [rel, unrel]);
+    rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === 'グッズ'
+      ? ok([ichiba('ich-s1:rel', 's1', 'rel', { price: 1100 }), ichiba('ich-s1:unrel', 's1', 'unrel', { price: 1100 })]) : { status: 'empty' }));
+    const r = await refreshPersonPrices(PERSON, undefined, { eligibleIds: new Set(['ich-s1:rel']) });
+    const items = rowItems('グッズ');
+    expect(items.find((p) => p.id === 'ich-s1:rel')).toMatchObject({ price: 1100 });
+    expect(items.find((p) => p.id === 'ich-s1:rel')!.priceFetchedAt).toBeDefined();
+    expect(items.find((p) => p.id === 'ich-s1:unrel')).toEqual(unrel);
+    expect(r.categories.find((c) => c.category === 'グッズ')).toMatchObject({ updated: 1, notEligible: 1, newCandidates: 0 });
+    expectNoOpenAiNoVerdicts();
+  });
+
+  it('related の商品が無いカテゴリは楽天APIを呼ばない', async () => {
+    seed('グッズ', [ichiba('ich-s1:unrel', 's1', 'unrel')]);
+    const r = await refreshPersonPrices(PERSON, undefined, { eligibleIds: new Set() });
+    expect(rakuten.getProductsByCategory).not.toHaveBeenCalled();
+    expect(r.categories.find((c) => c.category === 'グッズ')).toMatchObject({ status: 'no_eligible', notEligible: 1 });
+  });
+
+  it('カテゴリ行の fetched_at が新しくなっても、確認対象・取得失敗の商品は次回も確認される（商品ごとの取得日時で判断）', async () => {
+    const ok1 = ichiba('ich-s1:ok', 's1', 'ok');
+    seed('中古', [ok1, USED()]);
+    const rows = () => ok([ichiba('ich-s1:ok', 's1', 'ok', { price: 1050 }), ichiba('ic-used-box', 'usedshop', '10001', { price: 28059 })]);
+    rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === '中古' ? rows() : { status: 'empty' }));
+    const eligibleIds = new Set(['ich-s1:ok', 'ic-used-box']);
+    const r1 = await refreshPersonPrices(PERSON, undefined, { eligibleIds });
+    expect(r1.updated).toBe(1);
+    expect(db.rows.find((x) => x.category === '中古')!.fetchedAt.getTime()).toBeGreaterThan(OLD); // 1件反映したので行の日時は新しい
+    expect(rowItems('中古').find((p) => p.id === 'ic-used-box')!.priceFetchedAt).toBeUndefined();
+    // 2回目：行の日時に関係なく、確認対象の商品は再び取得・判定される（自動では反映されない）
+    const r2 = await refreshPersonPrices(PERSON, undefined, { eligibleIds });
+    expect(r2.reviews.map((x) => x.id)).toEqual(['ic-used-box']);
+    expect(rowItems('中古').find((p) => p.id === 'ic-used-box')).toMatchObject({ price: 43027 });
+    // コード指定の候補（商品ごとの取得日時が無い・古い商品）にも残る
+    expect(selectLookupCandidates({ '中古': { products: rowItems('中古') } }, { nowMs: Date.now(), freshMs: 3 * 86400000, limit: 10, onlyIds: eligibleIds }).map((c) => c.item.id)).toContain('ic-used-box');
+  });
+
+  it('API エラー時は既存の価格を保持する（related でも変えない）', async () => {
+    const before = ichiba('ich-s1:rel', 's1', 'rel', { price: 1000 });
+    seed('グッズ', [before]);
+    rakuten.getProductsByCategory.mockResolvedValue({ status: 'upstream_error', httpStatus: 503 });
+    const r = await refreshPersonPrices(PERSON, undefined, { eligibleIds: new Set(['ich-s1:rel']) });
+    expect(rowItems('グッズ')[0]).toEqual(before);
+    expect(r.categories.find((c) => c.category === 'グッズ')).toMatchObject({ status: 'fetch_failed', httpStatus: 503 });
+  });
+
+  describe('コード指定の取得でも30%以上は確認対象', () => {
+    beforeEach(() => {
+      __resetRakutenApiGateForTests();
+      process.env.RAKUTEN_APP_ID = 'test-app'; process.env.RAKUTEN_ACCESS_KEY = 'test-key';
+    });
+    it('取得価格が前回から30%以上変わる商品は反映しない（reviews に入る）', async () => {
+      seed('写真集', [book('1'), book('2')]);
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemCode: 'book:1', itemPrice: 900 } }] }) }) // -40%
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemCode: 'book:2', itemPrice: 1600 } }] }) }); // +6.7%
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await lookupPricesByCode(PERSON.name, selectLookupCandidates({ '写真集': { products: [book('1'), book('2')] } }, { nowMs: Date.now(), freshMs: 0, limit: 10 }));
+      expect(r.applied).toBe(1);
+      expect(r.reviews).toEqual([{ category: '写真集', id: 'bk-1', previousPrice: 1500, fetchedPrice: 900, changeRate: -0.4, reason: 'price_change_30pct' }]);
+      expect(rowItems('写真集').map((p) => p.price)).toEqual([1500, 1600]);
+      expect(rowItems('写真集')[0].priceFetchedAt).toBeUndefined();
+    });
   });
 });

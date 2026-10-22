@@ -8,7 +8,7 @@
 
 | 場所 | 変わる項目 | 変わらないもの |
 |---|---|---|
-| Neon `products.items[]` | `price`・`priceFetchedAt`（楽天の同一性キーが一致した商品だけ） | 商品の件数・並び・`id`・`title`・`itemUrl`・`affiliateUrl`・`imageUrl`・`category`・`reviewCount`・`reviewAverage`（人物ページの自動の並び順に使うため変えない）・その他すべての項目 |
+| Neon `products.items[]` | `price`・`priceFetchedAt`（判定が **related** で、楽天の同一性キーが一致した商品だけ。前回の価格から **30%以上** 変わる取得価格は反映せず確認対象〔管理画面「価格更新」の「価格の確認待ち」・ログの `priceReview`〕。unrelated・判定なしの商品は変えない） | 商品の件数・並び・`id`・`title`・`itemUrl`・`affiliateUrl`・`imageUrl`・`category`・`reviewCount`・`reviewAverage`（人物ページの自動の並び順に使うため変えない）・その他すべての項目 |
 | Neon `products.fetched_at` | カテゴリ検索で価格を更新したカテゴリ行だけ（カテゴリを再検索した日時） | 行の追加・削除はしない（UPDATE のみ） |
 | Neon その他のテーブル | なし（`verdicts`・`persons`・`batch_lock` は読み取りのみ） | 判定（related / unrelated / 手動判定）・掲載状態 |
 | Redis | `price-refresh:state`（進み具合）・`price-refresh:runner-lock`・`price-refresh:halt`（自動停止の印）・`price-lookup:<code>`（取得結果、3日）・`rakuten-api:lease` / `rakuten-api:cooldown`（共通の呼び出し制御） | 既存のキー（閲覧数・人気商品・ジョブ等） |

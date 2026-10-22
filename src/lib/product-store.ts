@@ -271,6 +271,32 @@ function applyPriceFields(item: RakutenItem, f: PriceFields): RakutenItem {
   return { ...item, price: f.price, priceFetchedAt: f.priceFetchedAt };
 }
 
+/** 前回の価格からこの割合以上変わる価格は自動で反映せず、確認対象にする（30%） */
+export const PRICE_REVIEW_CHANGE_RATE = 0.3;
+
+/** 自動で反映せず確認対象にした価格（管理画面 /admin/price-refresh に出す。保存済みの商品は変更しない） */
+export interface PriceReview {
+  category?: string;
+  id: string;
+  /** 保存済みの価格（変更前） */
+  previousPrice: number;
+  /** 楽天から取得した価格（反映していない） */
+  fetchedPrice: number;
+  /** 変動率（例 -0.348＝34.8%下がる）。前回の価格が無い・0以下なら null */
+  changeRate: number | null;
+  reason: 'price_change_30pct' | 'no_previous_price';
+}
+
+/** 前回の価格から30%以上の変動、または前回の価格が無い・0以下なら確認対象（純粋関数。整数の比較で端数の誤差を避ける） */
+export function priceChangeReview(id: string, previousPrice: unknown, fetchedPrice: number): PriceReview | null {
+  const prev = Number(previousPrice);
+  if (!(prev > 0)) return { id, previousPrice: Number.isFinite(prev) ? prev : 0, fetchedPrice, changeRate: null, reason: 'no_previous_price' };
+  const diff = Math.abs(fetchedPrice - prev);
+  // 30% を整数（30）にして比べる（0.3 の浮動小数点の誤差で境界が揺れないように）
+  if (diff * 100 < prev * Math.round(PRICE_REVIEW_CHANGE_RATE * 100)) return null;
+  return { id, previousPrice: prev, fetchedPrice, changeRate: Math.round(((fetchedPrice - prev) / prev) * 1000) / 1000, reason: 'price_change_30pct' };
+}
+
 export interface PriceOnlyMergeResult {
   items: RakutenItem[];
   /** 価格の項目を更新した既存商品 */
@@ -283,6 +309,10 @@ export interface PriceOnlyMergeResult {
   identityMismatches: number;
   /** 同一性キーが分からず照合できない既存商品（更新しない） */
   unidentifiable: number;
+  /** 更新の対象外（判定が related でない）の既存商品（変更しない） */
+  notEligible: number;
+  /** 前回の価格から30%以上の変動などで、反映せず確認対象にした商品（変更しない） */
+  reviews: PriceReview[];
 }
 
 /**
@@ -294,6 +324,8 @@ export function mergePriceFieldsOnly(
   existing: readonly RakutenItem[],
   fetched: readonly RakutenItem[],
   fetchedAt: number,
+  /** eligibleIds：更新してよい商品ID（判定が related の商品）。省略時はすべて */
+  opts: { eligibleIds?: ReadonlySet<string> } = {},
 ): PriceOnlyMergeResult {
   const fetchedByKey = new Map<string, RakutenItem>();
   const fetchedById = new Map<string, RakutenItem>();
@@ -304,15 +336,18 @@ export function mergePriceFieldsOnly(
   }
   const existingKeys = new Set<string>();
   const existingIds = new Set<string>();
-  let updated = 0, notReturned = 0, identityMismatches = 0, unidentifiable = 0;
+  let updated = 0, notReturned = 0, identityMismatches = 0, unidentifiable = 0, notEligible = 0;
+  const reviews: PriceReview[] = [];
   const items = existing.map((item) => {
     existingIds.add(item.id);
     const key = productIdentityKey(item);
+    if (key) existingKeys.add(key);
+    // 判定が related でない商品は更新しない（判定・表示設定はこの処理では変えない）
+    if (opts.eligibleIds && !opts.eligibleIds.has(item.id)) { notEligible++; return item; }
     if (!key) {
       if (fetchedById.has(item.id)) unidentifiable++; else notReturned++;
       return item;
     }
-    existingKeys.add(key);
     const f = fetchedByKey.get(key);
     if (!f) {
       const sameId = fetchedById.get(item.id);
@@ -321,6 +356,9 @@ export function mergePriceFieldsOnly(
       return item;
     }
     if (!(Number(f.price) > 0)) { notReturned++; return item; }
+    // 前回の価格から30%以上の変動は反映せず確認対象にする（価格・取得日時とも変えない）
+    const review = priceChangeReview(item.id, item.price, Number(f.price));
+    if (review) { reviews.push(review); return item; }
     updated++;
     return applyPriceFields(item, { price: Number(f.price), priceFetchedAt: fetchedAt });
   });
@@ -329,7 +367,7 @@ export function mergePriceFieldsOnly(
     const k = productIdentityKey(f);
     if (k ? !existingKeys.has(k) : !existingIds.has(f.id)) newCandidates++;
   }
-  return { items, updated, notReturned, newCandidates, identityMismatches, unidentifiable };
+  return { items, updated, notReturned, newCandidates, identityMismatches, unidentifiable, notEligible, reviews };
 }
 
 /** 1カテゴリの行を読む（対象カテゴリだけ）。無ければ null */
@@ -358,31 +396,37 @@ export async function applyPriceUpdates(
   personName: string,
   category: ProductCategory,
   updates: ReadonlyMap<string, PriceUpdate>,
-): Promise<{ applied: number; skipped: number }> {
-  if (updates.size === 0) return { applied: 0, skipped: 0 };
+): Promise<{ applied: number; skipped: number; reviews: PriceReview[] }> {
+  if (updates.size === 0) return { applied: 0, skipped: 0, reviews: [] };
   const rows = await db.select().from(productsTable)
     .where(and(eq(productsTable.personName, personName), eq(productsTable.category, category)));
   const row = rows.find((r) => r.category === category);
-  if (!row) return { applied: 0, skipped: updates.size };
-  const { items, applied } = applyPriceUpdatesToItems(row.items as RakutenItem[], updates);
+  if (!row) return { applied: 0, skipped: updates.size, reviews: [] };
+  const { items, applied, reviews } = applyPriceUpdatesToItems(row.items as RakutenItem[], updates);
   // 既存行の items だけを UPDATE（INSERT しない）。カテゴリの再検索日時（fetched_at）は元の値のまま
   if (applied > 0) await updateProductItemsOnly(personName, category, items, row.fetchedAt.getTime());
-  return { applied, skipped: updates.size - applied };
+  return { applied, skipped: updates.size - applied, reviews: reviews.map((r) => ({ ...r, category })) };
 }
 
-/** applyPriceUpdates の反映部分（純粋関数）。同じIDで同一性キーも一致する商品の価格の項目だけ変える */
+/**
+ * applyPriceUpdates の反映部分（純粋関数）。同じIDで同一性キーも一致する商品の価格の項目だけ変える。
+ * 前回の価格から30%以上の変動は反映せず reviews に入れる。
+ */
 export function applyPriceUpdatesToItems(
   items: readonly RakutenItem[],
   updates: ReadonlyMap<string, PriceUpdate>,
-): { items: RakutenItem[]; applied: number } {
+): { items: RakutenItem[]; applied: number; reviews: PriceReview[] } {
   let applied = 0;
+  const reviews: PriceReview[] = [];
   const next = items.map((item) => {
     const u = updates.get(item.id);
     if (!u || productIdentityKey(item) !== u.identityKey) return item;
+    const review = priceChangeReview(item.id, item.price, u.price);
+    if (review) { reviews.push(review); return item; }
     applied++;
     return applyPriceFields(item, u);
   });
-  return { items: next, applied };
+  return { items: next, applied, reviews };
 }
 
 /** 商品が保存されている人物名（読み取りのみ） */

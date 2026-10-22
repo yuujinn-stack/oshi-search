@@ -45,6 +45,9 @@ export default async function PriceRefreshAdminPage({ searchParams }: Props) {
     .sort((a, b) => (b.unknown + b.stale) - (a.unknown + a.stale) || a.personName.localeCompare(b.personName, 'ja'));
   const totals = rows.reduce((t, r) => ({ total: t.total + r.total, fresh: t.fresh + r.fresh, stale: t.stale + r.stale, unknown: t.unknown + r.unknown }), { total: 0, fresh: 0, stale: 0, unknown: 0 });
   const withFailures = rows.filter((r) => r.last?.failedCategories.length);
+  const reviewRows = Object.entries(run?.states ?? {})
+    .flatMap(([person, st]) => (st.last?.priceReviews ?? []).map((review) => ({ person, at: st.last!.at, review })))
+    .sort((a, b) => b.at - a.at);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -125,6 +128,46 @@ export default async function PriceRefreshAdminPage({ searchParams }: Props) {
         </section>
       )}
 
+      {/* 価格の確認待ち */}
+      {reviewRows.length > 0 && (
+        <section className="mb-8">
+          <h2 className="text-base font-bold text-slate-700 mb-1">価格の確認待ち（自動で更新しなかった商品）</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            前回の価格から30%以上変わる取得価格（または前回の価格が無い商品）は自動で反映していません。保存済みの価格・取得日時はそのままです（直近の実行の結果）。
+          </p>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs bg-white border border-gray-200">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="px-2 py-1 text-left">人物</th>
+                  <th className="px-2 py-1 text-left">カテゴリ</th>
+                  <th className="px-2 py-1 text-left">商品ID</th>
+                  <th className="px-2 py-1 text-right">変更前の価格</th>
+                  <th className="px-2 py-1 text-right">取得した価格</th>
+                  <th className="px-2 py-1 text-right">変動率</th>
+                  <th className="px-2 py-1 text-left">理由</th>
+                  <th className="px-2 py-1 text-left">日時</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reviewRows.map(({ person: p, at, review: r }) => (
+                  <tr key={`${p}|${r.category}|${r.id}`} className="border-t border-gray-100">
+                    <td className="px-2 py-1 whitespace-nowrap">{p}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">{r.category ?? ''}</td>
+                    <td className="px-2 py-1 whitespace-nowrap font-mono">{r.id}</td>
+                    <td className="px-2 py-1 text-right whitespace-nowrap">{r.previousPrice > 0 ? `¥${r.previousPrice.toLocaleString()}` : '—'}</td>
+                    <td className="px-2 py-1 text-right whitespace-nowrap">¥{r.fetchedPrice.toLocaleString()}</td>
+                    <td className="px-2 py-1 text-right whitespace-nowrap">{r.changeRate == null ? '—' : `${r.changeRate > 0 ? '+' : ''}${(r.changeRate * 100).toFixed(1)}%`}</td>
+                    <td className="px-2 py-1">{r.reason === 'price_change_30pct' ? '前回の価格から30%以上の変動' : '前回の価格が無い'}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">{fmt(at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {/* 人物の詳細 */}
       {person && (
         <section className="mb-8">
@@ -199,7 +242,7 @@ export default async function PriceRefreshAdminPage({ searchParams }: Props) {
                       <td className="px-2 py-1 whitespace-nowrap">{fmt(r.completedAt)}</td>
                       <td className="px-2 py-1">
                         {r.last
-                          ? `${fmt(r.last.at)} 更新 ${r.last.updated}${r.last.lookup ? ` ／ コード指定 ${r.last.lookup.applied}` : ''}${r.last.halted ? ' ／ 自動停止' : ''}${r.last.stop ? ` ／ ${r.last.stop.category}で終了` : ''}${failedLabel(r.last) ? ` ／ 取得できず：${failedLabel(r.last)}` : ''}`
+                          ? `${fmt(r.last.at)} 更新 ${r.last.updated}${r.last.lookup ? ` ／ コード指定 ${r.last.lookup.applied}` : ''}${r.last.halted ? ' ／ 自動停止' : ''}${r.last.stop ? ` ／ ${r.last.stop.category}で終了` : ''}${r.last.priceReviews?.length ? ` ／ 確認待ち ${r.last.priceReviews.length}` : ''}${failedLabel(r.last) ? ` ／ 取得できず：${failedLabel(r.last)}` : ''}`
                           : '—'}
                       </td>
                     </tr>
