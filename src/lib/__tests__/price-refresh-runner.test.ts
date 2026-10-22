@@ -403,8 +403,9 @@ describe('related の商品だけを更新・30%以上の変動は確認対象�
       return cats[0] === '中古' ? { ...okCategory(0), reviews: [review] } : okCategory(1);
     });
     const r = await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], onlyPersons: ['a'], relatedIdsOf: async () => new Set(['ic-used-box']) });
-    expect(r.persons[0].priceReviews).toEqual([review]);
-    expect(store.states.a.last?.priceReviews).toEqual([review]);
+    // 楽天から価格を取得した日時つき（承認時に priceFetchedAt にする）
+    expect(r.persons[0].priceReviews).toEqual([{ ...review, fetchedAt: expect.any(Number) }]);
+    expect(store.states.a.last?.priceReviews).toEqual([{ ...review, fetchedAt: expect.any(Number) }]);
     expect(store.lastRun?.priceReviews).toBe(1);
     expect(r.persons[0].completed).toBe(true); // 確認対象があっても処理は完了（保存済みの商品は変えない）
   });
@@ -415,6 +416,30 @@ describe('related の商品だけを更新・30%以上の変動は確認対象�
     spies.refreshPersonPrices.mockImplementation(async () => { clock += 10_000; return { ...okCategory(0), reviews: many.slice(0, 20) }; });
     await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], relatedIdsOf: async () => new Set() });
     expect(store.states.a.last?.priceReviews).toHaveLength(50);
+  });
+
+  it('確認対象を受け取り箱にも残す（次の処理で人物の直近の結果が上書きされても、管理画面が DB に取り込めるように）', async () => {
+    const store = createMemoryStateStore();
+    const review = { category: '中古', id: 'ic-used-box', previousPrice: 43027, fetchedPrice: 28059, changeRate: -0.348, reason: 'price_change_30pct' };
+    spies.refreshPersonPrices.mockImplementation(async (_p, cats: string[]) => {
+      clock += 10_000;
+      return cats[0] === '中古' ? { ...okCategory(0), reviews: [review] } : okCategory(1);
+    });
+    await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], onlyPersons: ['a'], relatedIdsOf: async () => new Set(['ic-used-box']) });
+    const entries = Object.entries(store.reviewInbox);
+    expect(entries).toHaveLength(1);
+    expect(entries[0][0]).toBe(JSON.stringify(['a', '中古', 'ic-used-box', 43027, 28059]));
+    expect(entries[0][1]).toEqual({ person: 'a', ...review, fetchedAt: expect.any(Number) });
+  });
+
+  it('受け取り箱への保存に失敗しても価格更新は続ける（人物の直近の結果には残る）', async () => {
+    const store = createMemoryStateStore();
+    store.addReviews = async () => { throw new Error('redis down'); };
+    const review = { category: 'CD', id: 'x-1', previousPrice: 1000, fetchedPrice: 2000, changeRate: 1, reason: 'price_change_30pct' };
+    spies.refreshPersonPrices.mockImplementation(async () => { clock += 10_000; return { ...okCategory(0), reviews: [review] }; });
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], onlyPersons: ['a'], relatedIdsOf: async () => new Set(['x-1']) });
+    expect(r.persons[0].completed).toBe(true);
+    expect(store.states.a.last?.priceReviews?.length).toBeGreaterThan(0);
   });
 });
 

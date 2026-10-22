@@ -41,6 +41,7 @@ import {
   withRakutenApiSession,
 } from '@/lib/rakuten-api-gate';
 import { countDbRead } from '@/lib/price-refresh-io';
+import { retryOnProductWriteConflict } from '@/lib/product-write-guard';
 import type { RakutenItem } from '@/types/rakuten';
 import type { PersonWithConfig, ProductCategory } from '@/types/person';
 
@@ -159,13 +160,18 @@ export async function refreshPersonPrices(
     if (res.status === 'empty') { results.push(empty(category, 'no_results')); continue; }
 
     try {
-      // 保存直前の最新の行に対して、価格の項目だけを反映（並び・件数・ID・商品名・URL・アフィリエイトURL等は不変）
+      // 保存直前の最新の行に対して、価格の項目だけを反映（並び・件数・ID・商品名・URL・アフィリエイトURL等は不変）。
+      // 読んでから保存するまでに別の更新（新商品の発見・管理画面の編集・価格の承認等）が入ったら、読み直して作り直す（上書きしない）
       const fetchedAt = now();
-      const row = await getStoredCategoryRow(person.name, category);
-      countDbRead(row ? 1 : 0, row?.items);
-      if (!row || row.items.length === 0) { results.push(empty(category, 'no_existing')); continue; }
-      const merged = mergePriceFieldsOnly(row.items, res.products, fetchedAt, { eligibleIds: opts.eligibleIds });
-      if (merged.updated > 0) await savePriceOnlyItems(person.name, category, merged.items, fetchedAt);
+      const merged = await retryOnProductWriteConflict(async () => {
+        const row = await getStoredCategoryRow(person.name, category);
+        countDbRead(row ? 1 : 0, row?.items);
+        if (!row || row.items.length === 0) return null;
+        const m = mergePriceFieldsOnly(row.items, res.products, fetchedAt, { eligibleIds: opts.eligibleIds });
+        if (m.updated > 0) await savePriceOnlyItems(person.name, category, m.items, fetchedAt, row.items);
+        return m;
+      });
+      if (!merged) { results.push(empty(category, 'no_existing')); continue; }
       results.push({
         category,
         status: 'updated',

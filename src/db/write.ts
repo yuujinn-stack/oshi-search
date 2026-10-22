@@ -5,7 +5,8 @@
 import { db, neonSql } from './client';
 import { getBatchLockStatus, PRODUCT_ID_MIGRATION_LOCK_KEY } from '@/lib/batch-lock';
 import { products, verdicts, works, personMeta, groupMeta, vodProviders, persons, workStatusHistory, vodRecheckLogs, photobookSettings } from './schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
+import { ProductWriteConflictError } from '@/lib/product-write-guard';
 import type { WorkRecord } from '@/types/work';
 // トップ・ジャンル一覧・写真集のキャッシュ（1時間）を、公開ページに出るデータの書き込み後に無効化する
 import { revalidatePublicListings } from '@/lib/public-listing-cache';
@@ -20,11 +21,20 @@ export function dbWrite(label: string, fn: () => Promise<void>): void {
 
 // ── 商品（products） ──────────────────────────────────────────────────────────
 
+/**
+ * 同時更新の防止（src/lib/product-write-guard.ts）：読んだ時点の items。指定すると、行の items がこれと完全に一致する場合だけ書く
+ * （null＝読んだ時点で行が無かった：行が無い場合だけ INSERT）。一致しなければ ProductWriteConflictError（何も書かない）。
+ */
+export interface ProductWriteGuard {
+  expectedItems: unknown[] | null;
+}
+
 export async function upsertProduct(
   personName: string,
   category: string,
   items: unknown[],
   fetchedAt: number,
+  guard?: ProductWriteGuard,
 ): Promise<void> {
   // 商品ID移行の実行中は、移行スクリプト以外からの商品データの書き込みを止める（同時更新で移行結果を上書きしないため）。
   // 移行スクリプトはこの関数を使わず、行単位の楽観ロックで直接更新する。
@@ -33,6 +43,17 @@ export async function upsertProduct(
     throw new Error('商品ID移行中のため、商品データの書き込みを停止しています');
   }
   const fetchedAtDate = new Date(fetchedAt);
+  if (guard) {
+    const rows = guard.expectedItems === null
+      ? await db.insert(products).values({ personName, category, fetchedAt: fetchedAtDate, items })
+        .onConflictDoNothing().returning({ personName: products.personName })
+      : await db.update(products).set({ fetchedAt: fetchedAtDate, items })
+        .where(and(eq(products.personName, personName), eq(products.category, category), sql`${products.items} = ${JSON.stringify(guard.expectedItems)}::jsonb`))
+        .returning({ personName: products.personName });
+    if (rows.length === 0) throw new ProductWriteConflictError(personName, category);
+    revalidatePublicListings();
+    return;
+  }
   await db
     .insert(products)
     .values({ personName, category, fetchedAt: fetchedAtDate, items })
@@ -54,17 +75,25 @@ export async function updateProductItemsOnly(
   category: string,
   items: unknown[],
   fetchedAt: number,
+  /** 指定すると、行の items が読んだ時点と完全に一致する場合だけ更新（違えば ProductWriteConflictError） */
+  guard?: { expectedItems: unknown[] },
 ): Promise<boolean> {
   const migration = await getBatchLockStatus(PRODUCT_ID_MIGRATION_LOCK_KEY);
   if (migration.isLocked) {
     throw new Error('商品ID移行中のため、商品データの書き込みを停止しています');
   }
+  const rowKey = and(eq(products.personName, personName), eq(products.category, category));
   const rows = await db
     .update(products)
     .set({ items, fetchedAt: new Date(fetchedAt) })
-    .where(and(eq(products.personName, personName), eq(products.category, category)))
+    .where(guard ? and(rowKey, sql`${products.items} = ${JSON.stringify(guard.expectedItems)}::jsonb`) : rowKey)
     .returning({ personName: products.personName });
   if (rows.length > 0) revalidatePublicListings();
+  if (rows.length === 0 && guard) {
+    // 行はあるが読んだ時点から変わっている（別の更新が入った）→ 書かずに知らせる。行が無ければ false（INSERT しない）
+    const exists = await db.select({ personName: products.personName }).from(products).where(rowKey);
+    if (exists.length > 0) throw new ProductWriteConflictError(personName, category);
+  }
   return rows.length > 0;
 }
 

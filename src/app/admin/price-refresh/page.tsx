@@ -10,14 +10,45 @@ import {
 import { PRICE_FRESH_DAYS } from '@/lib/price-freshness';
 import type { PersonLastResult } from '@/lib/price-refresh-runner';
 import { LogoutButton } from '@/components/admin/LogoutButton';
+import {
+  PRICE_REVIEW_MAX_AGE_DAYS, PRICE_REVIEW_PAGE_SIZE, getReviewInboxStatus, listPendingPriceReviews, listPriceReviewLogs, neonReviewDb,
+  type PendingPriceReview, type PriceReviewLog, type ReviewInboxStatus,
+} from '@/lib/price-review-store';
+import { PriceReviewQueue, PriceReviewSyncButton } from './PriceReviewQueue';
 
-// 価格の分割自動更新の状況（読み取りのみ。DB・Redis への書き込み、価格更新の実行・停止の操作はしない）。
-// 実行・停止は GitHub Actions（price-refresh）と docs/price-refresh-runbook.md の手順で行う。
+// 価格の分割自動更新の状況。価格更新の実行・停止の操作はしない（GitHub Actions〔price-refresh〕と docs/price-refresh-runbook.md の手順で行う）。
+// 表示（GET）は読み取りのみ（DB・Redis に書かない）。価格の確認待ちの取り込み・承認・却下は、ボタンから /api/admin/price-review（POST）で行う。
 export const dynamic = 'force-dynamic';
 
 interface Props {
-  searchParams: Promise<{ person?: string }>;
+  searchParams: Promise<{ person?: string; view?: string; rp?: string; hp?: string }>;
 }
+
+const pageOf = (v?: string) => Math.min(Math.max(Math.floor(Number(v) || 1), 1), 10_000);
+
+function isMissingTable(err: unknown): boolean {
+  const e = err as { code?: string; message?: string; cause?: { code?: string; message?: string } } | null;
+  return (e?.code ?? e?.cause?.code) === '42P01' || /relation .*price_review.* does not exist/i.test(`${e?.message ?? ''} ${e?.cause?.message ?? ''}`);
+}
+
+function Pager({ page, total, param, extra }: { page: number; total: number; param: 'rp' | 'hp'; extra: Record<string, string> }) {
+  const pages = Math.max(1, Math.ceil(total / PRICE_REVIEW_PAGE_SIZE));
+  if (pages <= 1) return null;
+  const href = (n: number) => `/admin/price-refresh?${new URLSearchParams({ ...extra, [param]: String(n) }).toString()}`;
+  return (
+    <nav className="flex items-center gap-3 mt-3 text-sm" aria-label="ページ">
+      {page > 1 ? <Link href={href(page - 1)} className="px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-50">← 前へ</Link> : <span className="px-3 py-1.5 text-gray-300">← 前へ</span>}
+      <span className="text-gray-600">{page} / {pages}（{total.toLocaleString()} 件）</span>
+      {page < pages ? <Link href={href(page + 1)} className="px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-50">次へ →</Link> : <span className="px-3 py-1.5 text-gray-300">次へ →</span>}
+    </nav>
+  );
+}
+
+const ACTION_LABEL: Record<PriceReviewLog['action'], { text: string; cls: string }> = {
+  approved: { text: '承認', cls: 'bg-emerald-100 text-emerald-800' },
+  rejected: { text: '却下', cls: 'bg-red-100 text-red-700' },
+  stale: { text: '反映せず', cls: 'bg-amber-100 text-amber-800' },
+};
 
 function fmt(ms?: number): string {
   if (!ms) return '—';
@@ -32,7 +63,21 @@ function failedLabel(last?: PersonLastResult): string {
 }
 
 export default async function PriceRefreshAdminPage({ searchParams }: Props) {
-  const { person } = await searchParams;
+  const { person, view, rp, hp } = await searchParams;
+  const showHistory = view === 'history';
+  const reviewPage = pageOf(rp), historyPage = pageOf(hp);
+  // 確認待ち（DB が正本。読み取りのみ）と、Redis の受け取り箱にある未取り込みの数（読み取りのみ）
+  const reviewDb = neonReviewDb();
+  const inbox: ReviewInboxStatus | null = await getReviewInboxStatus().catch(() => null);
+  let reviewError: string | null = null;
+  let pending: { rows: PendingPriceReview[]; total: number } | null = null;
+  let logs: { rows: PriceReviewLog[]; total: number } | null = null;
+  try {
+    if (showHistory) logs = await listPriceReviewLogs(reviewDb, historyPage);
+    else pending = await listPendingPriceReviews(reviewDb, reviewPage);
+  } catch (e) {
+    reviewError = isMissingTable(e) ? '確認待ちのテーブルが未作成です。/admin/db-init でスキーマ初期化を実行してください。' : '確認待ちを読み取れませんでした。';
+  }
   const [run, freshness] = await Promise.all([
     getPriceRefreshRunStatus().catch(() => null),
     getPriceFreshnessByPerson().catch(() => null),
@@ -45,9 +90,6 @@ export default async function PriceRefreshAdminPage({ searchParams }: Props) {
     .sort((a, b) => (b.unknown + b.stale) - (a.unknown + a.stale) || a.personName.localeCompare(b.personName, 'ja'));
   const totals = rows.reduce((t, r) => ({ total: t.total + r.total, fresh: t.fresh + r.fresh, stale: t.stale + r.stale, unknown: t.unknown + r.unknown }), { total: 0, fresh: 0, stale: 0, unknown: 0 });
   const withFailures = rows.filter((r) => r.last?.failedCategories.length);
-  const reviewRows = Object.entries(run?.states ?? {})
-    .flatMap(([person, st]) => (st.last?.priceReviews ?? []).map((review) => ({ person, at: st.last!.at, review })))
-    .sort((a, b) => b.at - a.at);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -55,7 +97,7 @@ export default async function PriceRefreshAdminPage({ searchParams }: Props) {
         <div>
           <h1 className="text-2xl font-black text-slate-800">価格更新の状況</h1>
           <p className="text-sm text-gray-500 mt-1">
-            楽天商品の価格の分割自動更新（GitHub Actions・OpenAI 不使用）の状況です。読み取りのみで、ここから更新・停止の操作はしません。
+            楽天商品の価格の分割自動更新（GitHub Actions・OpenAI 不使用）の状況です。ここから価格更新の実行・停止はしません（価格の確認待ちの承認・却下だけができます）。
           </p>
           <p className="text-xs text-gray-400 mt-0.5">
             価格を取得できなかった商品は、保存済みの価格・取得日時をそのまま残します（判定・表示設定・並び順・商品名・アフィリエイトURLは変わりません）。
@@ -131,45 +173,97 @@ export default async function PriceRefreshAdminPage({ searchParams }: Props) {
         </section>
       )}
 
-      {/* 価格の確認待ち */}
-      {reviewRows.length > 0 && (
-        <section className="mb-8">
-          <h2 className="text-base font-bold text-slate-700 mb-1">価格の確認待ち（自動で更新しなかった商品）</h2>
-          <p className="text-xs text-gray-500 mb-3">
-            前回の価格から30%以上変わる取得価格（または前回の価格が無い商品）は自動で反映していません。保存済みの価格・取得日時はそのままです（直近の実行の結果）。
-          </p>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-xs bg-white border border-gray-200">
-              <thead className="bg-gray-50 text-gray-600">
-                <tr>
-                  <th className="px-2 py-1 text-left">人物</th>
-                  <th className="px-2 py-1 text-left">カテゴリ</th>
-                  <th className="px-2 py-1 text-left">商品ID</th>
-                  <th className="px-2 py-1 text-right">変更前の価格</th>
-                  <th className="px-2 py-1 text-right">取得した価格</th>
-                  <th className="px-2 py-1 text-right">変動率</th>
-                  <th className="px-2 py-1 text-left">理由</th>
-                  <th className="px-2 py-1 text-left">日時</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reviewRows.map(({ person: p, at, review: r }) => (
-                  <tr key={`${p}|${r.category}|${r.id}`} className="border-t border-gray-100">
-                    <td className="px-2 py-1 whitespace-nowrap">{p}</td>
-                    <td className="px-2 py-1 whitespace-nowrap">{r.category ?? ''}</td>
-                    <td className="px-2 py-1 whitespace-nowrap font-mono">{r.id}</td>
-                    <td className="px-2 py-1 text-right whitespace-nowrap">{r.previousPrice > 0 ? `¥${r.previousPrice.toLocaleString()}` : '—'}</td>
-                    <td className="px-2 py-1 text-right whitespace-nowrap">¥{r.fetchedPrice.toLocaleString()}</td>
-                    <td className="px-2 py-1 text-right whitespace-nowrap">{r.changeRate == null ? '—' : `${r.changeRate > 0 ? '+' : ''}${(r.changeRate * 100).toFixed(1)}%`}</td>
-                    <td className="px-2 py-1">{r.reason === 'price_change_30pct' ? '前回の価格から30%以上の変動' : '前回の価格が無い'}</td>
-                    <td className="px-2 py-1 whitespace-nowrap">{fmt(at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* 価格の確認待ち（承認・却下）と履歴 */}
+      <section className="mb-8" id="price-reviews">
+        <div className="flex flex-wrap items-center gap-2 mb-1">
+          <h2 className="text-base font-bold text-slate-700">価格の確認待ち（自動で更新しなかった商品）</h2>
+          <div className="flex rounded-md border border-gray-300 overflow-hidden text-xs ml-auto">
+            <Link href="/admin/price-refresh#price-reviews" className={`px-3 py-1.5 ${!showHistory ? 'bg-slate-800 text-white' : 'bg-white text-slate-700 hover:bg-gray-50'}`}>確認待ち{pending ? `（${pending.total}）` : ''}</Link>
+            <Link href="/admin/price-refresh?view=history#price-reviews" className={`px-3 py-1.5 border-l border-gray-300 ${showHistory ? 'bg-slate-800 text-white' : 'bg-white text-slate-700 hover:bg-gray-50'}`}>承認・却下の履歴</Link>
           </div>
-        </section>
-      )}
+        </div>
+        <p className="text-xs text-gray-500 mb-3">
+          前回の価格から30%以上変わる取得価格（または前回の価格が無い商品）は自動で反映していません。承認すると価格と価格の取得日時だけを更新し、却下すると保存済みの価格はそのままです。
+          {PRICE_REVIEW_MAX_AGE_DAYS}日より前に取得した価格は承認できません。
+        </p>
+        <div className="flex flex-wrap items-center gap-2 mb-3 text-xs text-slate-600">
+          <span>
+            価格更新の結果のうち未取り込み：{inbox ? `${inbox.waiting.toLocaleString()} 件` : '不明（Redis を読み取れません）'}
+            {inbox && inbox.waiting > 0 ? '（「取り込む」で確認待ちに追加。承認・却下のときも自動で取り込みます）' : ''}
+          </span>
+          <PriceReviewSyncButton />
+        </div>
+        {inbox && inbox.waiting >= inbox.capacity * 0.8 && (
+          <p className="text-xs text-amber-700 mb-2">未取り込みが上限（{inbox.capacity.toLocaleString()} 件）に近づいています。「取り込む」を押してください。</p>
+        )}
+        {inbox && inbox.dropped > 0 && (
+          <p className="text-xs text-amber-700 mb-2">
+            上限のため一時的に保存できなかった確認待ちが累計 {inbox.dropped.toLocaleString()} 件あります。保存済みの価格は変えていないため、次にその人物の価格を更新したときに再び確認待ちになります。
+          </p>
+        )}
+        {reviewError ? (
+          <p className="text-sm text-red-600">{reviewError}</p>
+        ) : showHistory ? (
+          logs && logs.rows.length > 0 ? (
+            <>
+              <div className="hidden md:block overflow-x-auto">
+                <table className="min-w-full text-xs bg-white border border-gray-200">
+                  <thead className="bg-gray-50 text-gray-600">
+                    <tr>
+                      <th className="px-2 py-1 text-left">操作日時</th>
+                      <th className="px-2 py-1 text-left">操作</th>
+                      <th className="px-2 py-1 text-left">人物</th>
+                      <th className="px-2 py-1 text-left">商品</th>
+                      <th className="px-2 py-1 text-right">変更前の価格</th>
+                      <th className="px-2 py-1 text-right">取得した価格</th>
+                      <th className="px-2 py-1 text-left">操作者</th>
+                      <th className="px-2 py-1 text-left">備考</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logs.rows.map((l) => (
+                      <tr key={l.id} className="border-t border-gray-100 align-top">
+                        <td className="px-2 py-1 whitespace-nowrap">{fmt(new Date(l.createdAt).getTime())}</td>
+                        <td className="px-2 py-1"><span className={`px-1.5 py-0.5 rounded font-bold ${ACTION_LABEL[l.action]?.cls ?? ''}`}>{ACTION_LABEL[l.action]?.text ?? l.action}</span></td>
+                        <td className="px-2 py-1 whitespace-nowrap">{l.personName}<div className="text-gray-400">{l.category}</div></td>
+                        <td className="px-2 py-1 max-w-xs"><div className="line-clamp-2">{l.itemTitle ?? '—'}</div><div className="font-mono text-[10px] text-gray-400 break-all">{l.itemId}</div></td>
+                        <td className="px-2 py-1 text-right whitespace-nowrap">{l.previousPrice > 0 ? `¥${l.previousPrice.toLocaleString()}` : '—'}</td>
+                        <td className="px-2 py-1 text-right whitespace-nowrap">¥{l.fetchedPrice.toLocaleString()}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">{l.performedBy}</td>
+                        <td className="px-2 py-1">{l.note ?? ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <ul className="md:hidden space-y-2">
+                {logs.rows.map((l) => (
+                  <li key={l.id} className="bg-white rounded-lg border border-gray-200 p-3 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className={`px-1.5 py-0.5 rounded font-bold ${ACTION_LABEL[l.action]?.cls ?? ''}`}>{ACTION_LABEL[l.action]?.text ?? l.action}</span>
+                      <span className="text-gray-500">{fmt(new Date(l.createdAt).getTime())} ／ {l.performedBy}</span>
+                    </div>
+                    <div className="mt-1 text-gray-500">{l.personName} ／ {l.category}</div>
+                    <div className="text-sm text-slate-800 line-clamp-2">{l.itemTitle ?? l.itemId}</div>
+                    <div className="mt-1">{l.previousPrice > 0 ? `¥${l.previousPrice.toLocaleString()}` : '—'} → ¥{l.fetchedPrice.toLocaleString()}</div>
+                    {l.note && <div className="text-amber-700 mt-1">{l.note}</div>}
+                  </li>
+                ))}
+              </ul>
+              <Pager page={historyPage} total={logs.total} param="hp" extra={{ view: 'history' }} />
+            </>
+          ) : (
+            <p className="text-sm text-gray-500">まだ履歴はありません。</p>
+          )
+        ) : pending && pending.rows.length > 0 ? (
+          <>
+            <PriceReviewQueue rows={pending.rows} />
+            <Pager page={reviewPage} total={pending.total} param="rp" extra={{}} />
+          </>
+        ) : (
+          <p className="text-sm text-emerald-700">確認待ちの商品はありません。</p>
+        )}
+      </section>
 
       {/* 人物の詳細 */}
       {person && (

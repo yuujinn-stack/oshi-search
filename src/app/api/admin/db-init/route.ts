@@ -120,6 +120,42 @@ const CREATE_STATEMENTS = [
     heartbeat_at TIMESTAMPTZ NOT NULL,
     expires_at   TIMESTAMPTZ NOT NULL
   )`,
+  // ── 価格の確認待ちと承認・却下の履歴（drizzle/0020_price_reviews.sql）──────
+  sql`CREATE TABLE IF NOT EXISTS price_reviews (
+    id             SERIAL PRIMARY KEY,
+    person_name    TEXT NOT NULL,
+    category       TEXT NOT NULL,
+    item_id        TEXT NOT NULL,
+    previous_price INTEGER NOT NULL,
+    fetched_price  INTEGER NOT NULL,
+    change_rate    DOUBLE PRECISION,
+    reason         TEXT NOT NULL,
+    fetched_at_ms  BIGINT NOT NULL,
+    item_identity  JSONB NOT NULL,
+    item_title     TEXT,
+    status         TEXT NOT NULL DEFAULT 'pending',
+    first_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    decided_by     TEXT,
+    decided_at     TIMESTAMPTZ
+  )`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS price_reviews_proposal_idx ON price_reviews (person_name, category, item_id, previous_price, fetched_price)`,
+  sql`CREATE INDEX IF NOT EXISTS price_reviews_status_idx ON price_reviews (status, fetched_at_ms)`,
+  sql`CREATE TABLE IF NOT EXISTS price_review_logs (
+    id             SERIAL PRIMARY KEY,
+    review_id      INTEGER NOT NULL,
+    person_name    TEXT NOT NULL,
+    category       TEXT NOT NULL,
+    item_id        TEXT NOT NULL,
+    item_title     TEXT,
+    previous_price INTEGER NOT NULL,
+    fetched_price  INTEGER NOT NULL,
+    action         TEXT NOT NULL,
+    performed_by   TEXT NOT NULL,
+    note           TEXT,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  sql`CREATE INDEX IF NOT EXISTS price_review_logs_created_at_idx ON price_review_logs (created_at)`,
   sql`CREATE TABLE IF NOT EXISTS work_status_history (
     id               SERIAL PRIMARY KEY,
     person_name      TEXT NOT NULL,
@@ -431,6 +467,9 @@ const ALTER_STATEMENTS = [
 ];
 
 const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'works', 'products', 'verdicts', 'batch_lock', 'work_status_history', 'vod_recheck_logs', 'photobook_settings', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements', 'instagram_posts', 'instagram_post_schedules', 'instagram_admin_notifications', 'video_generation_jobs', 'video_workers', 'pronunciation_readings', 'video_script_requests'];
+
+// 価格の確認待ち（drizzle/0020_price_reviews.sql）
+TABLE_NAMES.push('price_reviews', 'price_review_logs');
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。

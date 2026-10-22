@@ -184,7 +184,7 @@ describe('storeProducts', () => {
   it('既存なし + 新規0件 → upsertProduct を0件で呼ぶ（初回の空は保存）', async () => {
     mockDbSelect.mockResolvedValueOnce([]);
     const stats = await storeProducts('テスト人物', '写真集', []);
-    expect(upsertProduct).toHaveBeenCalledWith('テスト人物', '写真集', [], expect.any(Number));
+    expect(upsertProduct).toHaveBeenCalledWith('テスト人物', '写真集', [], expect.any(Number), { expectedItems: null });
     expect(stats.skippedBecauseError).toBe(false);
   });
 
@@ -255,14 +255,14 @@ describe('storeProducts', () => {
     const newItem = makeItem('new-1');
     await storeProducts('テスト人物', '写真集', [newItem]);
     expect(upsertProduct).toHaveBeenCalledWith(
-      'テスト人物', '写真集', [newItem], expect.any(Number)
+      'テスト人物', '写真集', [newItem], expect.any(Number), { expectedItems: null }
     );
   });
 
   it('DB読み取り失敗時 + 新規0件 → upsertProduct を空配列で呼ぶ（既存不明のため安全側に）', async () => {
     mockDbSelect.mockRejectedValueOnce(new Error('DB connection failed'));
     const stats = await storeProducts('テスト人物', '写真集', []);
-    expect(upsertProduct).toHaveBeenCalledWith('テスト人物', '写真集', [], expect.any(Number));
+    expect(upsertProduct).toHaveBeenCalledWith('テスト人物', '写真集', [], expect.any(Number), { expectedItems: null });
     expect(stats.skippedBecauseError).toBe(false);
   });
 

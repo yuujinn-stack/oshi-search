@@ -6,6 +6,7 @@ import { db } from '@/db/client';
 import { products as productsTable, batchMeta as batchMetaTable } from '@/db/schema';
 import { and, eq, sql } from 'drizzle-orm';
 import { upsertProduct, updateProductItemsOnly } from '@/db/write';
+import { retryOnProductWriteConflict } from '@/lib/product-write-guard';
 import type { RakutenItem } from '@/types/rakuten';
 import { countDbRead } from '@/lib/price-refresh-io';
 import type { ProductCategory } from '@/types/person';
@@ -143,7 +144,12 @@ export function mergeProductItems(
 //   2. 非破壊マージ: fetchedにない既存商品は全て保持（手動追加・verdict済み商品含む）
 //   3. 空値での既存値上書きなし（fetchedのnull/""は既存値を保持）
 //   4. stable key (id → normalized URL) で重複防止
-export async function storeProducts(
+// 同時更新で他の更新を上書きしない：読んだ時点の items と一致する場合だけ書き、違えば読み直してマージし直す（product-write-guard.ts）
+export async function storeProducts(...args: Parameters<typeof storeProductsOnce>): Promise<ProductMergeStats> {
+  return retryOnProductWriteConflict(() => storeProductsOnce(...args));
+}
+
+async function storeProductsOnce(
   personName: string,
   category: ProductCategory,
   products: RakutenItem[],
@@ -152,11 +158,13 @@ export async function storeProducts(
   // 既存データを先に取得（スキップ判定 + マージの両方に必要）
   let existingItems: RakutenItem[] = [];
   let hasExisting = false;
+  let rowFound = false;
   try {
     const rows = await db.select().from(productsTable)
       .where(eq(productsTable.personName, personName));
     const row = rows.find((r) => r.category === category);
     if (row) {
+      rowFound = true;
       existingItems = row.items as RakutenItem[];
       hasExisting = existingItems.length > 0;
     }
@@ -190,7 +198,8 @@ export async function storeProducts(
   }
 
   const fetchedAt = Date.now();
-  await upsertProduct(personName, category, stats.items, fetchedAt);
+  // 読んだ時点の items と一致する場合だけ保存（読み取りに失敗した場合は「行が無い」前提＝既存の行があれば保存しない）
+  await upsertProduct(personName, category, stats.items, fetchedAt, { expectedItems: rowFound ? existingItems : null });
 
   return { ...stats, skippedBecauseError: false };
 }
@@ -198,6 +207,14 @@ export async function storeProducts(
 // 手動追加: カテゴリに商品を1件追加（既存商品は保持）
 // 同じ id または itemUrl が既にある場合は 'duplicate' を返す
 export async function appendProductToCategory(
+  personName: string,
+  category: ProductCategory,
+  product: RakutenItem,
+): Promise<'created' | 'duplicate'> {
+  return retryOnProductWriteConflict(() => appendProductToCategoryOnce(personName, category, product));
+}
+
+async function appendProductToCategoryOnce(
   personName: string,
   category: ProductCategory,
   product: RakutenItem,
@@ -213,7 +230,7 @@ export async function appendProductToCategory(
   const dup = existing.some((p) => p.id === product.id || p.itemUrl === product.itemUrl || (!!page && normalizeItemUrl(p.itemUrl) === page));
   if (dup) return 'duplicate';
   existing = [...existing, product];
-  await upsertProduct(personName, category, existing, fetchedAt);
+  await upsertProduct(personName, category, existing, fetchedAt, { expectedItems: row ? (row.items as RakutenItem[]) : null });
   return 'created';
 }
 
@@ -224,15 +241,25 @@ export async function updateProductInCategory(
   productId: string,
   updates: Partial<RakutenItem>,
 ): Promise<boolean> {
+  return retryOnProductWriteConflict(() => updateProductInCategoryOnce(personName, category, productId, updates));
+}
+
+async function updateProductInCategoryOnce(
+  personName: string,
+  category: ProductCategory,
+  productId: string,
+  updates: Partial<RakutenItem>,
+): Promise<boolean> {
   const rows = await db.select().from(productsTable)
     .where(eq(productsTable.personName, personName));
   const row = rows.find((r) => r.category === category);
   if (!row) return false;
-  const items = row.items as RakutenItem[];
+  // 読んだ items は保存時の比較に使うため変更しない（コピーを編集）
+  const items = [...(row.items as RakutenItem[])];
   const idx = items.findIndex((p) => p.id === productId);
   if (idx === -1) return false;
   items[idx] = { ...items[idx], ...updates };
-  await upsertProduct(personName, category, items, row.fetchedAt.getTime());
+  await upsertProduct(personName, category, items, row.fetchedAt.getTime(), { expectedItems: row.items as RakutenItem[] });
   return true;
 }
 
@@ -379,9 +406,12 @@ export async function getStoredCategoryRow(personName: string, category: Product
   return row ? { items: row.items as RakutenItem[], fetchedAt: row.fetchedAt.getTime() } : null;
 }
 
-/** 価格更新専用モードの保存：既存行の items（と fetched_at）だけを UPDATE（INSERT しない） */
-export async function savePriceOnlyItems(personName: string, category: ProductCategory, items: RakutenItem[], fetchedAt: number): Promise<boolean> {
-  return updateProductItemsOnly(personName, category, items, fetchedAt);
+/**
+ * 価格更新専用モードの保存：既存行の items（と fetched_at）だけを UPDATE（INSERT しない）。
+ * expectedItems（読んだ時点の items）と一致する場合だけ更新し、違えば ProductWriteConflictError（呼び出し側で読み直す）。
+ */
+export async function savePriceOnlyItems(personName: string, category: ProductCategory, items: RakutenItem[], fetchedAt: number, expectedItems: RakutenItem[]): Promise<boolean> {
+  return updateProductItemsOnly(personName, category, items, fetchedAt, { expectedItems });
 }
 
 export interface PriceUpdate extends PriceFields {
@@ -399,6 +429,14 @@ export async function applyPriceUpdates(
   updates: ReadonlyMap<string, PriceUpdate>,
 ): Promise<{ applied: number; skipped: number; reviews: PriceReview[] }> {
   if (updates.size === 0) return { applied: 0, skipped: 0, reviews: [] };
+  return retryOnProductWriteConflict(() => applyPriceUpdatesOnce(personName, category, updates));
+}
+
+async function applyPriceUpdatesOnce(
+  personName: string,
+  category: ProductCategory,
+  updates: ReadonlyMap<string, PriceUpdate>,
+): Promise<{ applied: number; skipped: number; reviews: PriceReview[] }> {
   const rows = await db.select().from(productsTable)
     .where(and(eq(productsTable.personName, personName), eq(productsTable.category, category)));
   const row = rows.find((r) => r.category === category);
@@ -406,7 +444,7 @@ export async function applyPriceUpdates(
   if (!row) return { applied: 0, skipped: updates.size, reviews: [] };
   const { items, applied, reviews } = applyPriceUpdatesToItems(row.items as RakutenItem[], updates);
   // 既存行の items だけを UPDATE（INSERT しない）。カテゴリの再検索日時（fetched_at）は元の値のまま
-  if (applied > 0) await updateProductItemsOnly(personName, category, items, row.fetchedAt.getTime());
+  if (applied > 0) await updateProductItemsOnly(personName, category, items, row.fetchedAt.getTime(), { expectedItems: row.items as RakutenItem[] });
   return { applied, skipped: updates.size - applied, reviews: reviews.map((r) => ({ ...r, category })) };
 }
 

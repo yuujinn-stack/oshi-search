@@ -35,6 +35,21 @@ export const LOOKUP_CACHE_PREFIX = 'price-lookup:';
 export const HALT_KEY = 'price-refresh:halt';
 /** 直近の実行の要約（管理画面 /admin/price-refresh の表示用） */
 export const LAST_RUN_KEY = 'price-refresh:last-run';
+/**
+ * 価格の確認待ちの受け取り箱（Redis のハッシュ。項目＝人物・カテゴリ・商品ID・変更前の価格・取得した価格の組）。
+ * 管理画面が DB（price_reviews）に取り込んだら消す（src/lib/price-review-store.ts）。人物の直近の結果は次の処理で上書きされるため、
+ * 確認待ちが管理画面に取り込まれる前に消えないようにここにも残す。
+ */
+export const REVIEW_INBOX_KEY = 'price-refresh:review-inbox';
+/** 受け取り箱の項目数の上限（1項目は約300バイト。これ以上は追加せず、追加できなかった数を REVIEW_INBOX_DROPPED_KEY に数える） */
+export const MAX_REVIEW_INBOX = 20000;
+/**
+ * 受け取り箱が満杯で追加できなかった確認待ちの数（累計。管理画面に警告を出す）。追加できなかった確認待ちも、
+ * 保存済みの商品は変えていないため、次にその人物を処理したときに再び見つかる（人物の直近の結果にも最大50件残る）。
+ */
+export const REVIEW_INBOX_DROPPED_KEY = 'price-refresh:review-inbox-dropped';
+/** 1人の1回の処理で受け取り箱に入れる確認待ちの上限 */
+const MAX_INBOX_PER_PERSON = 200;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** 楽天のエラー（503 等・通信エラー・保存失敗）がこの回数続いたら、その回を終える（429 は1回で終える。コード指定の取得にも渡す） */
 export const MAX_CONSECUTIVE_FAILURES = 3;
@@ -71,7 +86,7 @@ export interface PersonLastResult {
   /** 楽天のエラー（429、または 503 等の連続）でこの人物の途中でその回を終えた */
   stop?: StopDetail;
   /** 前回の価格から30%以上の変動などで反映せず確認対象にした商品（最大 MAX_REVIEWS_PER_PERSON 件。保存済みの商品は変更していない） */
-  priceReviews?: PriceReview[];
+  priceReviews?: TimedPriceReview[];
   /** 判定が related でないため更新しなかった商品の数 */
   notEligible?: number;
   /** この人物の処理で使った量 */
@@ -133,9 +148,19 @@ export interface RefreshStateStore {
   setHalt(info: HaltInfo): Promise<void>;
   /** 直近の実行の要約（管理画面の表示用。無くても動く） */
   setLastRun?(info: LastRunInfo): Promise<void>;
+  /** 価格の確認待ちを受け取り箱に追加（管理画面が DB に取り込む。無くても動く） */
+  addReviews?(personName: string, reviews: readonly TimedPriceReview[]): Promise<void>;
 }
 
 export interface HaltInfo { at: number; person: string; reasons: string[] }
+
+/** 確認待ち（楽天から価格を取得した日時つき） */
+export type TimedPriceReview = PriceReview & { fetchedAt?: number };
+
+/** 受け取り箱の項目のキー（同じ組は上書きされる） */
+export function reviewInboxField(person: string, r: Pick<PriceReview, 'category' | 'id' | 'previousPrice' | 'fetchedPrice'>): string {
+  return JSON.stringify([person, r.category ?? '', r.id, r.previousPrice, r.fetchedPrice]);
+}
 
 export function createRedisStateStore(): RefreshStateStore | null {
   const redis = getRedis();
@@ -162,6 +187,24 @@ export function createRedisStateStore(): RefreshStateStore | null {
     },
     async setHalt(info) { await redis.set(HALT_KEY, JSON.stringify(info)); }, // 期限なし（手動で消すまで）
     async setLastRun(info) { await redis.set(LAST_RUN_KEY, JSON.stringify(info)); },
+    async addReviews(personName, reviews) {
+      const list = reviews.filter((r) => r.category).slice(0, MAX_INBOX_PER_PERSON);
+      if (list.length === 0) return;
+      // 既にある項目（同じ組）は上書きなので数を増やさない。新しい項目は空きの分だけ追加し、入らなかった数を数える
+      const keys = list.map((r) => reviewInboxField(personName, r));
+      const [count, present] = await Promise.all([redis.hlen(REVIEW_INBOX_KEY), redis.hmget<Record<string, unknown>>(REVIEW_INBOX_KEY, ...keys)]);
+      let room = Math.max(0, MAX_REVIEW_INBOX - count);
+      const fields: Record<string, string> = {};
+      let dropped = 0;
+      list.forEach((r, i) => {
+        const exists = present?.[keys[i]] != null;
+        if (!exists && room <= 0) { dropped++; return; }
+        if (!exists) room--;
+        fields[keys[i]] = JSON.stringify({ person: personName, ...r });
+      });
+      if (Object.keys(fields).length) await redis.hset(REVIEW_INBOX_KEY, fields);
+      if (dropped) await redis.incrby(REVIEW_INBOX_DROPPED_KEY, dropped);
+    },
   };
 }
 
@@ -189,13 +232,16 @@ export function createRedisLookupCache(ttlMs: number): LookupCache | null {
   };
 }
 
-export function createMemoryStateStore(initial: Record<string, PersonRefreshState> = {}): RefreshStateStore & { states: Record<string, PersonRefreshState>; readonly halt: HaltInfo | null; readonly lastRun: LastRunInfo | null } {
+export function createMemoryStateStore(initial: Record<string, PersonRefreshState> = {}): RefreshStateStore & { states: Record<string, PersonRefreshState>; reviewInbox: Record<string, TimedPriceReview & { person: string }>; readonly halt: HaltInfo | null; readonly lastRun: LastRunInfo | null } {
   const states = { ...initial };
   let lock: string | null = null;
   let halt: HaltInfo | null = null;
   let lastRun: LastRunInfo | null = null;
+  const reviewInbox: Record<string, TimedPriceReview & { person: string }> = {};
   return {
     states,
+    reviewInbox,
+    async addReviews(p, rs) { for (const r of rs) if (r.category) reviewInbox[reviewInboxField(p, r)] = { person: p, ...r }; },
     get halt() { return halt; },
     get lastRun() { return lastRun; },
     async setLastRun(info) { lastRun = structuredClone(info); },
@@ -472,7 +518,13 @@ async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | 
       const failedCategories: FailedCategory[] = [];
       // 更新の対象は判定が related の商品だけ（判定・表示設定は読むだけで変えない）
       const relatedIds = await relatedIdsOf(name);
-      const priceReviews: PriceReview[] = [];
+      const priceReviews: TimedPriceReview[] = [];
+      // 確認待ちに楽天から価格を取得した日時を付ける（承認時に priceFetchedAt にする）
+      const timed = (rs?: readonly PriceReview[]) => (rs ?? []).map((x) => ({ ...x, fetchedAt: now() }));
+      // 確認待ちを受け取り箱にも残す（失敗しても価格更新は続ける。人物の直近の結果にも残っている）
+      const keepReviews = async () => {
+        if (priceReviews.length && store.addReviews) await store.addReviews(name, priceReviews).catch(() => {});
+      };
       let notEligible = 0;
 
       // (A) カテゴリ検索（前回の続きから。カテゴリを1つ終えるごとに進み具合を保存）
@@ -495,7 +547,7 @@ async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | 
         if (r.remaining.length > 0) break;
         updated += r.updated;
         categoriesDone++;
-        priceReviews.push(...(r.reviews ?? []));
+        priceReviews.push(...timed(r.reviews));
         notEligible += r.categories.reduce((n, c) => n + (c.notEligible ?? 0), 0);
         let categoryFailed = false;
         for (const c of r.categories) {
@@ -537,7 +589,7 @@ async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | 
         lookup = await lookupPricesByCode(name, candidates, { deadline, now, cache: lookupCache ?? undefined, cacheMaxAgeMs: lookupFreshMs, maxConsecutiveFailures: maxFailures });
         base.lookedUp += lookup.attempted;
         base.lookupApplied += lookup.applied;
-        priceReviews.push(...(lookup.reviews ?? []));
+        priceReviews.push(...timed(lookup.reviews));
         if (lookup.attempted > lookup.failed) { failureStreak = 0; recentFailures.length = 0; }
         if (lookup.stoppedBy === 'rate_limited') {
           rateLimited = true;
@@ -554,6 +606,7 @@ async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | 
         const halt: HaltInfo = { at: now(), person: name, reasons: diff };
         await store.setHalt(halt);
         const usage = usageSince(personStart);
+        await keepReviews();
         await store.set(name, { ...cur, last: { at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed: false, halted: true, priceReviews: priceReviews.slice(0, MAX_REVIEWS_PER_PERSON), notEligible, usage } });
         base.persons.push({ name, categories: categoriesDone, updated, lookup, completed: false, failedCategories, priceReviews, usage });
         return { ...base, status: 'halted', stoppedBy: 'halted', halt };
@@ -567,6 +620,7 @@ async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | 
         at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed,
         ...(stopDetail && { stop: stopDetail }), priceReviews: priceReviews.slice(0, MAX_REVIEWS_PER_PERSON), notEligible, usage,
       };
+      await keepReviews();
       if (completed) await store.set(name, { completedAt: now(), startedAt: prev.startedAt, nextCategory: 0, last });
       else await store.set(name, { ...cur, last });
       base.persons.push({ name, categories: categoriesDone, updated, lookup, completed, failedCategories, priceReviews, usage });

@@ -8,6 +8,7 @@ import { db } from '@/db/client';
 import { products as productsTable } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { upsertProduct, hasIdempotencyKey, insertWorkStatusHistory } from '@/db/write';
+import { retryOnProductWriteConflict } from '@/lib/product-write-guard';
 import { getRedis } from '@/lib/redis';
 import { getRecoveryBlockReason } from '@/lib/recovery-guard';
 import { RANKING_DATA_CACHE_TAG } from '@/lib/ranking';
@@ -575,26 +576,34 @@ export async function POST(req: NextRequest) {
 
   for (const [category, newItems] of byCategory) {
     try {
-      // 現在の DB データを読み取り（既存商品を保持するため）
-      const rows = await db.select().from(productsTable)
-        .where(eq(productsTable.personName, personName));
-      const row = rows.find((r) => r.category === category);
-      const existing: RakutenItem[] = row ? (row.items as RakutenItem[]) : [];
-      // 書き込み直前の最新の全カテゴリの商品で再確認（評価後に定期取得・手動登録で追加された商品との二重登録防止）
-      const latestAll = rows.flatMap((r) => (r.items as RakutenItem[]).filter((i) => i?.id));
+      // 読んでから書くまでに別の更新（定期取得・手動登録・価格の承認等）が入ったら、読み直して作り直す（上書きしない）
+      const { toAdd, skipped } = await retryOnProductWriteConflict(async () => {
+        // 現在の DB データを読み取り（既存商品を保持するため）
+        const rows = await db.select().from(productsTable)
+          .where(eq(productsTable.personName, personName));
+        const row = rows.find((r) => r.category === category);
+        const existing: RakutenItem[] = row ? (row.items as RakutenItem[]) : [];
+        // 書き込み直前の最新の全カテゴリの商品で再確認（評価後に定期取得・手動登録で追加された商品との二重登録防止）
+        const latestAll = rows.flatMap((r) => (r.items as RakutenItem[]).filter((i) => i?.id));
 
-      // 既存にないものだけ追加（二重追加防止）
-      const toAdd: RakutenItem[] = [];
-      for (const i of newItems) {
-        if (!recoveryConflict(i, [...latestAll, ...toAdd])) toAdd.push(i);
-        else skippedIds.push(i.id);
-      }
+        // 既存にないものだけ追加（二重追加防止）
+        const add: RakutenItem[] = [];
+        const skip: string[] = [];
+        for (const i of newItems) {
+          if (!recoveryConflict(i, [...latestAll, ...add])) add.push(i);
+          else skip.push(i.id);
+        }
+        if (add.length === 0) return { toAdd: add, skipped: skip };
+
+        // 既存配列へ追記（削除・置換しない��
+        const merged = [...existing, ...add];
+        const fetchedAt = row ? row.fetchedAt.getTime() : Date.now();
+        // 読んだ時点の items と一致する場合だけ保存
+        await upsertProduct(personName, category, merged, fetchedAt, { expectedItems: row ? (row.items as RakutenItem[]) : null });
+        return { toAdd: add, skipped: skip };
+      });
+      skippedIds.push(...skipped);
       if (toAdd.length === 0) continue;
-
-      // 既存配列へ追記（削除・置換しない��
-      const merged = [...existing, ...toAdd];
-      const fetchedAt = row ? row.fetchedAt.getTime() : Date.now();
-      await upsertProduct(personName, category, merged, fetchedAt);
       recovered += toAdd.length;
     } catch (err) {
       // 一部カテゴリ失敗: このカテゴリをスキップ（他カテゴリは続行、ロールバックしない）

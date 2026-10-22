@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   serial,
   doublePrecision,
+  bigint,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -231,6 +232,50 @@ export const batchLock = pgTable('batch_lock', {
   heartbeatAt: timestamp('heartbeat_at', { withTimezone: true }).notNull(),
   expiresAt:   timestamp('expires_at',   { withTimezone: true }).notNull(),
 });
+
+// ── 価格の確認待ち（price_reviews）と承認・却下の履歴（price_review_logs）──────────
+// drizzle/0020_price_reviews.sql。価格更新で前回の価格から30%以上変わる取得価格などを自動で反映せず、
+// 管理画面 /admin/price-refresh で承認・却下する。1行＝人物・カテゴリ・商品ID・変更前の価格・取得した価格の組。
+// status: 'pending' | 'approved' | 'rejected' | 'superseded' | 'stale'（src/lib/price-review-store.ts）
+export const priceReviews = pgTable('price_reviews', {
+  id:            serial('id').primaryKey(),
+  personName:    text('person_name').notNull(),
+  category:      text('category').notNull(),
+  itemId:        text('item_id').notNull(),
+  previousPrice: integer('previous_price').notNull(),
+  fetchedPrice:  integer('fetched_price').notNull(),
+  changeRate:    doublePrecision('change_rate'),
+  reason:        text('reason').notNull(),
+  fetchedAtMs:   bigint('fetched_at_ms', { mode: 'number' }).notNull(),
+  itemIdentity:  jsonb('item_identity').$type<{ itemUrl: string | null; affiliateUrl: string | null; itemCode: string | null }>().notNull(),
+  itemTitle:     text('item_title'),
+  status:        text('status').notNull().default('pending'),
+  firstSeenAt:   timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:     timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  decidedBy:     text('decided_by'),
+  decidedAt:     timestamp('decided_at', { withTimezone: true }),
+}, (t) => [
+  uniqueIndex('price_reviews_proposal_idx').on(t.personName, t.category, t.itemId, t.previousPrice, t.fetchedPrice),
+  index('price_reviews_status_idx').on(t.status, t.fetchedAtMs),
+]);
+
+// 承認・却下の履歴（追記のみ）。action: 'approved' | 'rejected' | 'stale'
+export const priceReviewLogs = pgTable('price_review_logs', {
+  id:            serial('id').primaryKey(),
+  reviewId:      integer('review_id').notNull(),
+  personName:    text('person_name').notNull(),
+  category:      text('category').notNull(),
+  itemId:        text('item_id').notNull(),
+  itemTitle:     text('item_title'),
+  previousPrice: integer('previous_price').notNull(),
+  fetchedPrice:  integer('fetched_price').notNull(),
+  action:        text('action').notNull(),
+  performedBy:   text('performed_by').notNull(),
+  note:          text('note'),
+  createdAt:     timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('price_review_logs_created_at_idx').on(t.createdAt),
+]);
 
 // ── ステータス変更履歴（work_status_history）──────────────────────────────────
 export const workStatusHistory = pgTable('work_status_history', {

@@ -4231,3 +4231,78 @@ Task 107〜113 の価格更新（GitHub Actions・OpenAI 不使用）を、既�
 - `estimate`：実際に更新するときの楽天APIの回数の見込み（カテゴリ検索 3〜12回/カテゴリ＋コード指定の候補）と、上限に対して何回の実行に分かれるか。
 - `progress`（Redis 設定時）：対象人物ごとの進み具合を `HMGET price-refresh:state` で読む（never_run／in_progress＋続きのカテゴリ／completed、直近の結果の API・DB の量、確認待ち・取得失敗の数、自動停止の有無）。Redis へのコマンドは GET・EXISTS・HMGET のみ（偽の Upstash で確認）。
 - `src/lib/price-refresh-runner.ts`：表示用に `CATEGORIES_ORDER`（nextCategory の添字の順）を export。
+
+## Task 127：価格の確認待ちの承認・却下（管理画面 /admin/price-refresh）（未commit・本番DB/Redis 未変更・マイグレーション未適用）
+
+### 目的
+30%以上の価格変動などで自動更新しなかった商品を、管理画面から個別に承認（価格を反映）・却下（反映しない）できるようにする。確認待ちを DB に永続化し、次の実行で消えないようにする。
+
+### 調査（変更前）
+- 確認待ちは Redis の人物ごとの直近の結果（`price-refresh:state` の `last.priceReviews`、最大50件）にだけあり、次にその人物を処理すると上書きされていた（途中で止まると消える）。
+- 価格更新は GitHub Actions で price_refresher（products の items・fetched_at の UPDATE のみ・トリガーで price/priceFetchedAt 以外の変更を拒否）として実行。管理画面は既存サイトの接続（neondb_owner）。
+- 管理者認証は proxy.ts（/api/admin はセッション Cookie〔HMAC 署名〕と書き込み時の Origin を確認）。管理者は共有パスワードの1種類のため、操作者は名前の入力で記録する（U-NEXT の確認承認と同じ方式）。
+
+### 変更
+- `drizzle/0020_price_reviews.sql`（新規）・`src/db/schema.ts`・`src/app/api/admin/db-init/route.ts`：テーブル `price_reviews`（変更案。人物・カテゴリ・商品ID・変更前の価格・取得した価格の組で一意。status: pending／approved／rejected／superseded／stale）と `price_review_logs`（承認・却下・反映せずの履歴。追記のみ）を追加のみ。既存テーブル・権限の変更なし。
+- `src/lib/price-refresh-runner.ts`：確認待ちに楽天から価格を取得した日時（`fetchedAt`）を付け、Redis の受け取り箱 `price-refresh:review-inbox`（上限5000項目・1人1回200件）にも書く（失敗しても価格更新は続ける）。価格の判定・30%のルール・related のみ・上限・中断・再開は不変。
+- `src/lib/price-review-store.ts`（新規）：取り込み（Redis → DB、1トランザクション、取り込めたら受け取り箱の項目だけ消す。保存されていない商品は取り込まない）、一覧（ページ分割・現在の保存価格・承認できない理由）、履歴、承認・却下。
+  - 承認：Serializable の1トランザクションで (1) 確認待ちを承認済み（確認待ちのまま・画面の価格と一致・14日以内・商品の条件を満たすときだけ）(2) 商品の該当要素の `price`・`priceFetchedAt` だけを `jsonb_set` で更新 (3) 商品が更新されていなければ 0 除算で全体を取り消す (4) 履歴。商品の条件：同じIDがカテゴリ内に1件だけ・保存済みの価格が変更前の価格のまま・商品ページURL/アフィリエイトURL/itemCode が検出時と同じ・判定 related。満たさなければ stale にして履歴に「反映せず」と理由。
+  - 却下：確認待ちを却下済み＋履歴（商品は変えない）。同じ組は再取り込みでも却下のまま。別の組は新しい確認待ち（同じ商品の古い確認待ちは superseded）。
+  - 二重操作は状態の条件（pending のときだけ）で1回だけ。同時操作の競合（40001）は「中止（何も変更していない）」。
+- `src/app/api/admin/price-review/route.ts`（新規）：POST。proxy に加えて処理内でもセッションと Origin を確認。入力（ID・価格は整数・範囲、操作者名1〜50文字）をサーバー側で検証。価格更新の実行中（Redis のロック）は承認しない（423）。エラー文は返さない。承認後は人物ページを再検証。
+- `src/app/admin/price-refresh/page.tsx`・`PriceReviewQueue.tsx`（新規）：確認待ち（人物・カテゴリ・商品名・商品ID・保存中の価格・取得した価格・変動額と率・理由・取得日時・承認／却下）をページ分割（30件）で表示。承認（緑の塗り）と却下（赤の枠線）を区別し、確認ダイアログで変更前後の価格を表示。結果を成功・失敗で表示。スマートフォンはカード表示。「承認・却下の履歴」タブ。
+- `docs/price-refresh-runbook.md`：「8. 価格の確認待ちの承認・却下」。
+- テスト：`price-review-store.test.ts`（隔離した Postgres〔PGlite・メモリ上〕で SQL を実行。PGlite が無い環境では DB のテストを飛ばす）、`price-review-route.test.ts`（認証・Origin・入力・実行中・エラー文・表示）、runner のテストに受け取り箱の2件。
+
+### 注意
+- 本番の準備：`/admin/db-init` でテーブル作成が必要（未作成でも価格更新・管理画面の他の表示は動く）。
+- 管理画面を開くと Redis の確認待ちを DB に取り込む（書き込みは price_reviews と受け取り箱の削除だけ）。
+- 承認と、既存の商品の自動更新（/api/cron/refresh）・管理画面の商品編集が同じカテゴリで同時に起きた場合、後から保存した側が items 全体を上書きしうる（既存の仕組みの性質）。価格更新（price-refresh）の実行中は承認しない。
+- PGlite はリポジトリの依存に入れていない（`npm i --no-save @electric-sql/pglite@0.2.17` で DB のテストを実行）。
+
+## Task 128：価格の確認待ち — 商品データの同時更新で上書きしない・画面の表示を読み取りのみに（未commit・本番DB/Redis 未変更・マイグレーション未適用）
+
+### 目的
+Task 127 の承認と、既存の商品の書き込み（新商品の発見・管理画面の編集など）が重なったときに、古い items で上書きして変更が失われないようにする。管理画面を開くだけで DB に書き込む仕組みをやめる。受け取り箱の上限で確認待ちが失われないようにする。
+
+### 調査（既存の商品の書き込み経路）
+すべて「行を読む → items を作り直す → 行ごと保存」で、読んでから保存までの間の他の更新を上書きしていた（後から保存した側の勝ち）。
+- `storeProducts`（定期の新商品の発見 batch-processor・管理画面の再取得）、`appendProductToCategory`・`updateProductInCategory`（管理画面の手動登録・編集 product-manual）、`/api/admin/product-recovery`（復旧）→ `upsertProduct`
+- 価格更新：`savePriceOnlyItems`（カテゴリ検索）・`applyPriceUpdates`（コード指定）→ `updateProductItemsOnly`
+- `storeProducts` は既存行の読み取りに失敗すると、既存の商品を読まずに新しい商品だけで保存していた（既存の商品が消えうる）
+- 既に対策済み：`scripts/manual-affiliate-url-fix/run.ts`（items が読んだ値と一致するときだけ UPDATE）、商品ID移行（行単位の楽観ロック）。対象外：`scripts/price-refresh/backup.ts restore`（意図的に戻す操作）
+- 商品の削除は判定（verdicts）の変更で、products は書かない
+
+### 変更
+- `src/lib/product-write-guard.ts`（新規）：`ProductWriteConflictError`・`retryOnProductWriteConflict`（同時更新で書けなければ最新の行を読み直して作り直す。最大4回、少し待つ。それでも書けなければエラー＝保存しない）。
+- `src/db/write.ts`：`upsertProduct`・`updateProductItemsOnly` に guard（読んだ時点の items）を追加。指定すると `items = 読んだ items` の場合だけ書く（null は「行が無い場合だけ INSERT」）。一致しなければ何も書かずに `ProductWriteConflictError`。guard なしは従来どおり。スキーマ・権限の変更なし（price_refresher は products の SELECT 権限を既に持つ）。
+- `src/lib/product-store.ts`：`storeProducts`・`appendProductToCategory`・`updateProductInCategory`・`applyPriceUpdates` を「読む→作る→guard つきで保存」の再試行で包む。`updateProductInCategory` は読んだ items を直接書き換えずコピーを編集。`savePriceOnlyItems` に読んだ items（expectedItems）を追加。`storeProducts` の読み取り失敗時は「行が無い場合だけ保存」（既存の行があれば保存せず読み直す）。マージの内容・並び・判定の扱いは不変。
+- `src/lib/price-refresh.ts`：カテゴリ検索の保存を、読む→価格の項目だけ反映→guard つきで保存、の再試行で包む（何度も重なれば従来どおり db_error で保存済みの商品は不変）。
+- `src/app/api/admin/product-recovery/route.ts`：カテゴリごとの読む→追記→保存を再試行で包み、guard つきで保存（既存の文字化けしたコメント行はそのまま）。
+- 価格の承認（`price-review-store.ts`）は DB の中で該当商品の price・priceFetchedAt だけを `jsonb_set` で変える（読んで書き戻さない）ため、他の更新と重なっても両方残る。価格更新の実行中の承認の禁止（423）は不要になったため削除。
+- 画面の表示を読み取りのみに：`page.tsx` から取り込みを削除。未取り込みの件数（HLEN）・追加できなかった数（GET）を表示し、「取り込む」ボタン（`PriceReviewSyncButton`）で `/api/admin/price-review` に `{ action: 'sync' }` を POST。承認・却下の POST でも先に取り込む。
+- 受け取り箱：上限を 5,000 → 20,000 件（約300バイト/件）。同じ組は上書きで数を増やさない。満杯なら新しい組は追加せず `price-refresh:review-inbox-dropped` に数え、管理画面に警告。取り込み後の削除は、読んだ値のままの項目だけ（Lua で HGET を比べてから HDEL。取り込み中に価格更新が書き直した項目は残る）。
+- `docs/price-refresh-runbook.md` の 8 を更新。
+- テスト：`product-write-guard.test.ts`（隔離した Postgres で、発見×管理画面の編集、発見×承認、編集×承認、手動登録×手動登録、コード指定×編集、カテゴリ検索の保存、重なり続けたら保存しない、実際の承認が発見の途中に入っても残る、等 13件）、`price-review-inbox.test.ts`（受け取り箱の上限と数え上げ 3件）、`price-review-page.test.ts`（GET の表示で DB は SELECT だけ・Redis は HLEN/GET だけ 3件）、`price-review-store.test.ts`（取り込み中に書き直された項目を消さない、表示の SQL が読み取り専用のトランザクションで動く 等）、`price-review-route.test.ts`（取り込みの POST）、`data-protection.test.ts` の3件の期待値に guard を追加。
+
+### 注意
+- 同時更新が続いて4回とも保存できなかった場合はエラーになる（定期の発見は次回、管理画面はエラー表示で再操作）。どちらの場合も他の更新は消えない。
+- guard の比較は items 全体の一致（jsonb の比較）。書き込み時に読んだ items も送るため、1回の書き込みの送信量は約2倍（Neon の課金対象の転送量〔DB からの送信〕は増えない）。
+
+## Task 129：価格の確認待ち — 本番反映前の確認と、2テーブルだけを作る手順（未commit・本番DB/Redis 未変更・マイグレーション未適用）
+
+### 確認（本番DBは読み取り専用のトランザクションでカタログだけを読む）
+- `/admin/db-init`（POST）は CREATE TABLE 23・CREATE INDEX 32・ADD COLUMN 79 の全文を毎回実行する（トランザクションなし・エラーは記録だけ）。公開予定のコード（HEAD＋今回）で実行した場合に本番で新たに作られるのは price_reviews・price_review_logs と3インデックスだけ（他の文は本番に既にあり何もしない）。U-NEXT の4テーブルは未commit の作業ツリーにしか無く、公開内容に含まれないため作られない。
+- ただし db-init の ALTER TABLE は、何も変えない場合も既存テーブル（persons・works・verdicts 等）に一時的なロックを取る。→ 今回は db-init を使わず、専用の手順で2テーブルだけを作る。
+- 商品の行の最大は約0.97MB（2,160行、99%点 約150KB）。同時更新の防止で書き込み時に読んだ items も送るため最大約2MB/回。
+
+### 変更
+- `scripts/price-review/setup-tables-core.ts`・`setup-tables.ts`（新規）：check（読み取りのみ）／apply（「APPLY」入力時のみ。drizzle/0020 の5文だけを1トランザクション。2テーブルの CREATE TABLE/INDEX IF NOT EXISTS 以外が1文でもあれば拒否）／verify／undo（2テーブルが空のときだけ DROP）。作成の前後で products・verdicts の指紋（DB 側の md5）が同じことを確認。エラー文は出さない（種類とコードだけ）。
+- `docs/price-refresh-runbook.md` の 8 の「本番の準備」を、この手順に変更。
+- テスト：`price-review-setup-tables.test.ts`（隔離した Postgres で、2テーブル・3インデックスだけ作る・2回実行しても同じ・既存データの指紋が同じ・途中で失敗したら何も作らない・空でなければ取り消さない・想定外の文やテーブルで止める 11件）。
+- 本番で `check` を実行（読み取りのみ）：2テーブル・3インデックスとも未作成、products 2,160 行・verdicts 87,141 行、問題なし。
+
+### 本番反映（2026-10-22 19:32 JST）
+- ユーザーが Neon で本番ブランチのスナップショットを作成したことを確認してから実行。
+- `setup-tables.ts check`（問題なし）→ `apply`：price_reviews・price_review_logs と3インデックスを作成（1トランザクション）。作成の前後で products 2,160 行・verdicts 87,141 行の指紋が同じ（既存データは不変）。`verify` OK。本番のカタログで、他のテーブル・列・インデックスの追加なし、U-NEXT の4テーブルは未作成のまま。/admin/db-init は未使用。
+- PRICE_REFRESH_ENABLED=false のまま。承認・却下・価格の変更は未実行。
