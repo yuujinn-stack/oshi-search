@@ -184,7 +184,7 @@ export default async function PriceRefreshAdminPage({ searchParams }: Props) {
         </div>
         <p className="text-xs text-gray-500 mb-3">
           前回の価格から30%以上変わる取得価格（または前回の価格が無い商品）は自動で反映していません。承認すると価格と価格の取得日時だけを更新し、却下すると保存済みの価格はそのままです。
-          {PRICE_REVIEW_MAX_AGE_DAYS}日より前に取得した価格は承認できません。
+          取得から{PRICE_REVIEW_MAX_AGE_DAYS}日以上経った価格は承認できません（却下はできます）。
         </p>
         <div className="flex flex-wrap items-center gap-2 mb-3 text-xs text-slate-600">
           <span>

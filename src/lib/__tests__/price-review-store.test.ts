@@ -15,7 +15,7 @@ vi.mock('@/lib/price-refresh-runner', () => ({
 vi.mock('@/lib/product-store', () => ({ CATEGORIES: ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD', '中古'] }));
 
 import {
-  PRICE_REVIEW_MAX_AGE_DAYS, buildApproveStatements, decidePriceReview, getReviewInboxStatus, listPendingPriceReviews, listPriceReviewLogs,
+  PRICE_REVIEW_MAX_AGE_DAYS, buildApproveStatements, buildRejectStatements, decidePriceReview, isPriceReviewExpired, priceReviewCutoffMs, getReviewInboxStatus, listPendingPriceReviews, listPriceReviewLogs,
   parseDecideInput, parseIncomingReview, syncPriceReviews, syncPriceReviewsFromRedis,
   type DecideInput, type IncomingPriceReview, type ReviewDb,
 } from '../price-review-store';
@@ -221,6 +221,14 @@ describe.runIf(!!PGliteCtor)('価格の確認待ち（隔離した Postgres で 
       expect(await logs()).toHaveLength(1);
     });
 
+    it('同じ承認が同時に2回送られても、更新・履歴は1回だけ', async () => {
+      await syncPriceReviews(dbx, [incoming()]);
+      const rs = await Promise.all([decidePriceReview(dbx, decide(1), NOW), decidePriceReview(dbx, decide(1), NOW)]);
+      expect(rs.map((r) => r.code).sort()).toEqual(['already_decided', 'approved']);
+      expect((await items())[1]).toMatchObject({ price: 14000, priceFetchedAt: NOW - DAY });
+      expect(await logs()).toHaveLength(1);
+    });
+
     it('同時に承認と却下が送られても、どちらか一方だけが成功する', async () => {
       await syncPriceReviews(dbx, [incoming()]);
       const [a, b] = await Promise.all([decidePriceReview(dbx, decide(1), NOW), decidePriceReview(dbx, decide(1, { action: 'reject' }), NOW)]);
@@ -270,7 +278,47 @@ describe.runIf(!!PGliteCtor)('価格の確認待ち（隔離した Postgres で 
       expect(await logs()).toHaveLength(0);
     });
 
-    it(`${PRICE_REVIEW_MAX_AGE_DAYS}日より前に取得した価格は承認できない（却下はできる）`, async () => {
+    it.each([
+      ['14日を超えた', PRICE_REVIEW_MAX_AGE_DAYS * DAY + 1, 'expired'],
+      ['14日ちょうど', PRICE_REVIEW_MAX_AGE_DAYS * DAY, 'expired'],
+      ['14日に1ミリ秒足りない', PRICE_REVIEW_MAX_AGE_DAYS * DAY - 1, null],
+    ] as const)('承認できる期限の境目：取得から%s価格（一覧の表示・承認前の確認が同じ判定）', async (_l, age, blocker) => {
+      await syncPriceReviews(dbx, [incoming({ fetchedAt: NOW - age })]);
+      expect((await listPendingPriceReviews(dbx, 1, NOW)).rows[0].blocker).toBe(blocker);
+      const before = await snapshot();
+      const r = await decidePriceReview(dbx, decide(1), NOW);
+      if (blocker) {
+        expect(r.code).toBe('expired');
+        expect(await snapshot()).toEqual(before);
+        expect((await reviewRow()).status).toBe('pending');
+        expect(await logs()).toHaveLength(0);
+      } else {
+        expect(r.code).toBe('approved');
+        expect((await items())[1]).toMatchObject({ price: 14000, priceFetchedAt: NOW - age });
+      }
+    });
+
+    it('承認の SQL も同じ境目：取得日時が期限ちょうど（14日ちょうど）なら、承認前の確認を通っても更新しない', async () => {
+      await syncPriceReviews(dbx, [incoming({ fetchedAt: NOW - PRICE_REVIEW_MAX_AGE_DAYS * DAY })]);
+      const before = await snapshot();
+      // 承認前の確認（JS）を飛ばして SQL だけを実行：期限ちょうどは fetched_at_ms > 期限 を満たさず、何も更新しない
+      const res = await dbx.transaction(buildApproveStatements(decide(1), NOW - PRICE_REVIEW_MAX_AGE_DAYS * DAY), { serializable: true });
+      expect(res[0]).toHaveLength(0);
+      expect(await snapshot()).toEqual(before);
+      expect((await reviewRow()).status).toBe('pending');
+      // 1ミリ秒新しい取得なら SQL でも承認される
+      const res2 = await dbx.transaction(buildApproveStatements(decide(1), NOW - PRICE_REVIEW_MAX_AGE_DAYS * DAY - 1), { serializable: true });
+      expect(res2[0]).toHaveLength(1);
+    });
+
+    it('期限の判定（isPriceReviewExpired）', () => {
+      expect(isPriceReviewExpired(NOW - PRICE_REVIEW_MAX_AGE_DAYS * DAY, NOW)).toBe(true);
+      expect(isPriceReviewExpired(NOW - PRICE_REVIEW_MAX_AGE_DAYS * DAY - 1, NOW)).toBe(true);
+      expect(isPriceReviewExpired(NOW - PRICE_REVIEW_MAX_AGE_DAYS * DAY + 1, NOW)).toBe(false);
+      expect(priceReviewCutoffMs(NOW)).toBe(NOW - PRICE_REVIEW_MAX_AGE_DAYS * DAY);
+    });
+
+    it(`取得から${PRICE_REVIEW_MAX_AGE_DAYS}日以上経った価格は承認できない（却下はできる）`, async () => {
       await syncPriceReviews(dbx, [incoming({ fetchedAt: NOW - (PRICE_REVIEW_MAX_AGE_DAYS + 1) * DAY })]);
       const before = await snapshot();
       expect((await listPendingPriceReviews(dbx, 1, NOW)).rows[0].blocker).toBe('expired');
@@ -323,6 +371,16 @@ describe.runIf(!!PGliteCtor)('価格の確認待ち（隔離した Postgres で 
       await expect(decidePriceReview(skipProductUpdate, decide(1), NOW)).rejects.toThrow(/division by zero/);
       expect(await snapshot()).toEqual(before);
       expect((await reviewRow()).status).toBe('pending');
+    });
+
+    it('承認・却下が書き込むテーブルは price_reviews・products（承認のみ）・price_review_logs だけ（判定・手動並び順・表示設定・人物は書かない）', () => {
+      const targets = (stmts: { text: string }[]) => stmts.flatMap((s) => [...s.text.matchAll(/\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+(\w+)/gi)].map((m) => m[1])).sort();
+      expect(targets(buildApproveStatements(decide(1), NOW - DAY))).toEqual(['price_review_logs', 'price_reviews', 'products']);
+      expect(targets(buildRejectStatements(decide(1, { action: 'reject' })))).toEqual(['price_review_logs', 'price_reviews']);
+      for (const s of [...buildApproveStatements(decide(1), NOW - DAY), ...buildRejectStatements(decide(1))]) {
+        expect(s.text).not.toMatch(/\b(verdicts|product_display_order|photobook_settings|persons)\b\s*(SET|\()/i);
+        expect(s.text).not.toMatch(/\b(DELETE|DROP|TRUNCATE|ALTER)\b/i);
+      }
     });
 
     it('承認の文は、このトランザクションで承認した確認待ちの商品だけを対象にする', () => {

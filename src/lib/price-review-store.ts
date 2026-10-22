@@ -23,8 +23,18 @@ import { MAX_REVIEW_INBOX, REVIEW_INBOX_DROPPED_KEY, REVIEW_INBOX_KEY, STATE_KEY
 export type PriceReviewStatus = 'pending' | 'approved' | 'rejected' | 'superseded' | 'stale';
 export type PriceReviewAction = 'approve' | 'reject';
 
-/** この日数より前に取得した価格の変更案は承認できない（楽天の価格が変わっている可能性がある。却下はできる） */
+/** 取得からこの日数以上経った価格の変更案は承認できない（14日ちょうども不可。楽天の価格が変わっている可能性がある。却下はできる） */
 export const PRICE_REVIEW_MAX_AGE_DAYS = 14;
+
+/** 承認の期限：取得日時がこれ以前（取得から14日以上）なら承認できない */
+export function priceReviewCutoffMs(nowMs: number): number {
+  return nowMs - PRICE_REVIEW_MAX_AGE_DAYS * DAY_MS;
+}
+
+/** 取得から14日以上経っているか（一覧の表示・承認前の確認・承認の SQL〔fetched_at_ms > 期限〕で同じ境目を使う） */
+export function isPriceReviewExpired(fetchedAtMs: number, nowMs: number): boolean {
+  return fetchedAtMs <= priceReviewCutoffMs(nowMs);
+}
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** 価格の上限（integer 列・明らかな異常値の防止） */
 const MAX_PRICE = 100_000_000;
@@ -228,7 +238,7 @@ export async function listPendingPriceReviews(dbx: ReviewDb, page: number, nowMs
           : !r.same_identity ? 'identity_changed'
             : num(r.current_price) !== num(r.previous_price) ? 'price_changed'
               : !r.related ? 'not_related'
-                : fetchedAtMs < nowMs - PRICE_REVIEW_MAX_AGE_DAYS * DAY_MS ? 'expired'
+                : isPriceReviewExpired(fetchedAtMs, nowMs) ? 'expired'
                   : null;
       return {
         id: num(r.id), personName: String(r.person_name), category: String(r.category), itemId: String(r.item_id),
@@ -309,17 +319,17 @@ export function parseDecideInput(body: unknown): DecideInput | null {
   return { action: b.action, id: b.id, expectedPreviousPrice: b.expectedPreviousPrice, expectedFetchedPrice: b.expectedFetchedPrice, operator };
 }
 
-/** 承認の文（1つの Serializable トランザクション）。$1=id, $2=操作者, $3=変更前の価格, $4=取得した価格, $5=承認できる最も古い取得日時 */
-export function buildApproveStatements(input: DecideInput, minFetchedAtMs: number): SqlStmt[] {
+/** 承認の文（1つの Serializable トランザクション）。$1=id, $2=操作者, $3=変更前の価格, $4=取得した価格, $5=承認の期限（取得日時がこれ以前なら承認しない） */
+export function buildApproveStatements(input: DecideInput, cutoffMs: number): SqlStmt[] {
   const thisDecision = `r.id = $1 AND r.status = 'approved' AND r.decided_at = now() AND r.decided_by = $2`;
   return [
     // 1. 確認待ちを承認済みに（確認待ちのまま・価格が画面と同じ・古すぎない・商品が承認してよい状態のときだけ）
     {
       text: `UPDATE price_reviews r SET status = 'approved', decided_by = $2, decided_at = now(), updated_at = now()
-        WHERE r.id = $1 AND r.status = 'pending' AND r.previous_price = $3 AND r.fetched_price = $4 AND r.fetched_at_ms >= $5
+        WHERE r.id = $1 AND r.status = 'pending' AND r.previous_price = $3 AND r.fetched_price = $4 AND r.fetched_at_ms > $5
           AND EXISTS (SELECT 1 FROM products p WHERE ${ITEM_MATCH_SQL})
         RETURNING r.id`,
-      params: [input.id, input.operator, input.expectedPreviousPrice, input.expectedFetchedPrice, minFetchedAtMs],
+      params: [input.id, input.operator, input.expectedPreviousPrice, input.expectedFetchedPrice, cutoffMs],
     },
     // 2. 商品の price・priceFetchedAt だけを更新（このトランザクションで承認した確認待ちだけ。同じ条件をもう一度確認）
     {
@@ -396,14 +406,14 @@ export async function decidePriceReview(dbx: ReviewDb, input: DecideInput, nowMs
   if (num(cur.previous_price) !== input.expectedPreviousPrice || num(cur.fetched_price) !== input.expectedFetchedPrice) {
     return { ok: false, code: 'price_mismatch', message: '画面の価格と確認待ちの価格が一致しません。画面を再読み込みしてください' };
   }
-  const minFetchedAtMs = nowMs - PRICE_REVIEW_MAX_AGE_DAYS * DAY_MS;
-  if (input.action === 'approve' && num(cur.fetched_at_ms) < minFetchedAtMs) {
-    return { ok: false, code: 'expired', message: `${PRICE_REVIEW_MAX_AGE_DAYS}日より前に取得した価格のため承認できません（次の価格更新で再取得されるのを待つか、却下してください）` };
+  const cutoffMs = priceReviewCutoffMs(nowMs);
+  if (input.action === 'approve' && isPriceReviewExpired(num(cur.fetched_at_ms), nowMs)) {
+    return { ok: false, code: 'expired', message: `取得から${PRICE_REVIEW_MAX_AGE_DAYS}日以上経った価格のため承認できません（次の価格更新で再取得されるのを待つか、却下してください）` };
   }
 
   let results: Row[][];
   try {
-    results = await dbx.transaction(input.action === 'approve' ? buildApproveStatements(input, minFetchedAtMs) : buildRejectStatements(input), { serializable: true });
+    results = await dbx.transaction(input.action === 'approve' ? buildApproveStatements(input, cutoffMs) : buildRejectStatements(input), { serializable: true });
   } catch (e) {
     if (isSerializationFailure(e)) return { ok: false, code: 'conflict', message: '同時に別の操作が行われたため中止しました（何も変更していません）。画面を再読み込みしてください' };
     throw e;

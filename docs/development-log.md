@@ -4306,3 +4306,15 @@ Task 127 の承認と、既存の商品の書き込み（新商品の発見・�
 - ユーザーが Neon で本番ブランチのスナップショットを作成したことを確認してから実行。
 - `setup-tables.ts check`（問題なし）→ `apply`：price_reviews・price_review_logs と3インデックスを作成（1トランザクション）。作成の前後で products 2,160 行・verdicts 87,141 行の指紋が同じ（既存データは不変）。`verify` OK。本番のカタログで、他のテーブル・列・インデックスの追加なし、U-NEXT の4テーブルは未作成のまま。/admin/db-init は未使用。
 - PRICE_REFRESH_ENABLED=false のまま。承認・却下・価格の変更は未実行。
+
+## Task 130：価格の確認待ち — 承認の検証と、承認できる期限の境目の統一（未commit・本番DB/Redis 未変更）
+
+### 検証（本番は変更せず）
+- 隔離した Postgres（PGlite）で承認・却下・二重承認・同時操作・期限・同時更新・履歴・途中のエラーを確認（すべて成功）。
+- 本番の「成田凌」の商品行・判定・手動並び順を読み取り専用で読み、メモリ上の Postgres に写してリハーサル：承認で変わったのは対象商品の price・priceFetchedAt だけ、却下は不変、2回目の承認は already_decided、履歴あり。
+- 期限の境目が「14日ちょうどは承認できる」だったため、ルール（14日以上は承認不可）に合わせて統一。
+
+### 変更
+- `src/lib/price-review-store.ts`：`priceReviewCutoffMs`・`isPriceReviewExpired`（取得日時 ≦ 現在−14日 なら期限切れ）を追加し、一覧の表示（blocker 'expired'）・承認前の確認・承認の SQL（`fetched_at_ms > 期限`）の3か所を同じ境目に。メッセージを「取得から14日以上経った価格」に。
+- `src/app/admin/price-refresh/page.tsx`・`docs/price-refresh-runbook.md`：説明の文言を同じルールに。
+- テスト（`price-review-store.test.ts`）：境目（14日を超えた・14日ちょうど＝承認不可で何も変わらない／14日に1ミリ秒足りない＝承認可）を一覧と承認の両方で確認、承認の SQL 単体でも同じ境目、`isPriceReviewExpired`。前回追加した、書き込むテーブルの検査・同時に2回の承認のテストを含む。
