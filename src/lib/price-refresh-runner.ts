@@ -12,7 +12,7 @@
 import { neonSql } from '@/db/client';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getRedis } from '@/lib/redis';
-import { CATEGORIES, getAllStoredProducts, listPersonsWithProducts, productIdentityKey as productIdentityKeyOf, type PriceReview } from '@/lib/product-store';
+import { CATEGORIES, listPersonsWithProducts, productIdentityKey as productIdentityKeyOf, type PriceReview } from '@/lib/product-store';
 import {
   lookupCodeOf,
   lookupPricesByCode,
@@ -22,6 +22,10 @@ import {
   type LookupCache,
   type LookupResult,
 } from '@/lib/price-refresh';
+import type { CategorySummary } from '@/lib/price-refresh';
+import { countDbRead, snapshotIo } from '@/lib/price-refresh-io';
+import { rakutenApiCallCount } from '@/lib/rakuten-api-gate';
+import type { RakutenItem } from '@/types/rakuten';
 import type { PersonWithConfig, ProductCategory } from '@/types/person';
 
 export const STATE_KEY = 'price-refresh:state';
@@ -70,7 +74,18 @@ export interface PersonLastResult {
   priceReviews?: PriceReview[];
   /** 判定が related でないため更新しなかった商品の数 */
   notEligible?: number;
+  /** この人物の処理で使った量 */
+  usage?: RunUsage;
 }
+
+/** カテゴリの処理の順（進み具合 nextCategory の添字。dry-run の表示用） */
+export const CATEGORIES_ORDER: readonly string[] = CATEGORIES;
+
+/** 1カテゴリの検索で使う楽天APIの回数の上限の目安（検索語・ページ数による。API 回数の上限の判定に使う） */
+export const MAX_CALLS_PER_CATEGORY = 12;
+
+/** 実行で使った量（楽天APIの呼び出し回数・DB から読んだ行数と量の目安） */
+export interface RunUsage { apiCalls: number; dbRowsRead: number; dbBytesRead: number }
 
 /** 人物ごとに記録する確認対象の上限（Redis の容量を抑えるため） */
 export const MAX_REVIEWS_PER_PERSON = 50;
@@ -103,6 +118,8 @@ export interface LastRunInfo {
   stopDetail?: StopDetail;
   /** 確認対象にした商品の数（全人物） */
   priceReviews?: number;
+  /** この実行で使った量 */
+  usage?: RunUsage;
 }
 
 /** 進み具合の保存先（本番は Redis。テスト・ローカルはメモリ） */
@@ -218,6 +235,10 @@ export interface RunOptions {
   minIntervalMs?: number;
   /** 楽天のエラーがこの回数続いたらその回を終える（既定 MAX_CONSECUTIVE_FAILURES） */
   maxConsecutiveFailures?: number;
+  /** 1回の実行で使う楽天APIの回数の上限（次のカテゴリで上限を超えうるなら始めない。続きは次回） */
+  maxApiCalls?: number;
+  /** 1回の実行で楽天を検索するカテゴリ数の上限（続きは次回） */
+  maxCategories?: number;
   store?: RefreshStateStore;
   now?: () => number;
   /** 手動テスト用：この人物だけ処理する（名前の完全一致。再処理の間隔は無視） */
@@ -229,6 +250,65 @@ export interface RunOptions {
   relatedIdsOf?: (personName: string) => Promise<Set<string>>;
   /** 価格以外の変更の検知に使う指紋（テスト用。省略時は DB で計算） */
   fingerprintOf?: (personName: string) => Promise<PersonFingerprint>;
+  /** カテゴリごとの商品数・対象数（テスト用。省略時は DB 側で数える） */
+  categorySummaryOf?: (personName: string) => Promise<CategorySummary>;
+  /** コード指定の候補になりうる商品（テスト用。省略時は DB 側で絞って読む） */
+  lookupItemsOf?: (personName: string, cutoffMs: number, limit: number) => Promise<Partial<Record<ProductCategory, { products: RakutenItem[] }>>>;
+}
+
+/**
+ * カテゴリごとの商品数と、そのうち判定が related の数（DB 側で数える。商品の中身は読まない）。
+ * 人物の全商品を読む代わりに使う（カテゴリに商品・対象があるかの判定用）。
+ */
+export async function categorySummaryFromDb(personName: string): Promise<CategorySummary> {
+  const rows = (await neonSql`
+    SELECT p.category, jsonb_array_length(p.items)::int AS items,
+      (SELECT count(*)::int FROM jsonb_array_elements(p.items) e
+        JOIN verdicts v ON v.person_name = p.person_name AND v.product_id = e->>'id' AND v.verdict = 'related') AS eligible
+    FROM products p WHERE p.person_name = ${personName}`) as { category: ProductCategory; items: number; eligible: number }[];
+  countDbRead(0, rows);
+  return Object.fromEntries(rows.map((r) => [r.category, { items: r.items, eligible: r.eligible }])) as CategorySummary;
+}
+
+// コード指定の候補の並び（従来の selectLookupCandidates と同じ：取得日時の古い順〔不明は最初〕→ カテゴリの順 → 保存の順）
+const CATEGORY_ORDER_SQL = `ARRAY[${CATEGORIES.map((c) => `'${c.replace(/'/g, "''")}'`).join(',')}]::text[]`;
+
+/**
+ * コード指定の候補になりうる商品だけを DB で絞って読む：判定が related、取得日時が無い・cutoffMs 以前、
+ * 楽天ブックスの URL または楽天市場の数字の itemCode を持つ商品を、従来の候補の順で limit 件まで。
+ * 最終的な候補は selectLookupCandidates（lookupCodeOf の判定）で決めるため、ここは広めに絞る（足りなければ続きを読む）。
+ */
+export async function lookupItemsFromDb(personName: string, cutoffMs: number, limit: number): Promise<Partial<Record<ProductCategory, { products: RakutenItem[] }>>> {
+  const out: Partial<Record<ProductCategory, { products: RakutenItem[] }>> = {};
+  if (limit <= 0) return out;
+  const page = Math.max(limit * 2, 50);
+  const text = `
+    SELECT p.category, t.e AS item
+    FROM products p CROSS JOIN LATERAL jsonb_array_elements(p.items) WITH ORDINALITY AS t(e, i)
+    JOIN verdicts v ON v.person_name = p.person_name AND v.product_id = t.e->>'id' AND v.verdict = 'related'
+    WHERE p.person_name = $1
+      AND CASE WHEN jsonb_typeof(t.e->'priceFetchedAt') = 'number' THEN (t.e->>'priceFetchedAt')::numeric <= $2 ELSE true END
+      -- 楽天ブックス（books.rakuten.co.jp/rb/番号、または楽天市場の店舗 book：item.rakuten.co.jp/book/番号。アフィリエイトURLの中でエンコードされていても含む）
+      -- または楽天市場の数字の itemCode。最終的な判定は lookupCodeOf で行うので、ここは広めに絞る
+      AND (coalesce(t.e->>'itemUrl', '') ILIKE '%books.rakuten.co.jp%' OR coalesce(t.e->>'affiliateUrl', '') ILIKE '%books.rakuten.co.jp%'
+           OR coalesce(t.e->>'itemUrl', '') ILIKE '%item.rakuten.co.jp%book%' OR coalesce(t.e->>'affiliateUrl', '') ILIKE '%item.rakuten.co.jp%book%'
+           OR lower(coalesce(t.e->>'itemCode', '')) ~ '^[a-z0-9][a-z0-9_-]*:[0-9]+$')
+    ORDER BY CASE WHEN jsonb_typeof(t.e->'priceFetchedAt') = 'number' THEN (t.e->>'priceFetchedAt')::numeric ELSE 0 END,
+      array_position(${CATEGORY_ORDER_SQL}, p.category), t.i
+    LIMIT $3 OFFSET $4`;
+  let offset = 0;
+  let found = 0;
+  for (;;) {
+    const rows = (await neonSql.query(text, [personName, cutoffMs, page, offset])) as { category: ProductCategory; item: RakutenItem }[];
+    countDbRead(0, rows);
+    for (const r of rows) {
+      (out[r.category] ??= { products: [] }).products.push(r.item);
+      if (lookupCodeOf(r.item)) found++;
+    }
+    if (found >= limit || rows.length < page) break;
+    offset += page;
+  }
+  return out;
 }
 
 /**
@@ -273,11 +353,13 @@ export function fingerprintDiff(a: PersonFingerprint, b: PersonFingerprint): str
 
 export interface RunSummary {
   status: 'ok' | 'locked' | 'no_state_store' | 'config_missing' | 'halted';
-  persons: { name: string; categories: number; updated: number; lookup?: LookupResult; completed: boolean; failedCategories: FailedCategory[]; priceReviews: PriceReview[] }[];
+  persons: { name: string; categories: number; updated: number; lookup?: LookupResult; completed: boolean; failedCategories: FailedCategory[]; priceReviews: PriceReview[]; usage?: RunUsage }[];
   updated: number;
   lookedUp: number;
   lookupApplied: number;
-  stoppedBy: 'budget' | 'max_persons' | 'all_done' | 'rate_limited' | 'upstream_errors' | 'config_missing' | 'locked' | 'no_state_store' | 'halted';
+  stoppedBy: 'budget' | 'max_persons' | 'max_api_calls' | 'max_categories' | 'all_done' | 'rate_limited' | 'upstream_errors' | 'config_missing' | 'locked' | 'no_state_store' | 'halted';
+  /** この実行で使った量 */
+  usage?: RunUsage;
   /** 自動停止したとき（または停止中だったとき）の内容 */
   halt?: HaltInfo;
   /** 楽天のエラー（429、または 503 等の連続）でその回を終えたときの原因と位置 */
@@ -286,6 +368,7 @@ export interface RunSummary {
 
 async function relatedIdsFromDb(personName: string): Promise<Set<string>> {
   const rows = (await neonSql`SELECT product_id FROM verdicts WHERE person_name = ${personName} AND verdict = 'related'`) as { product_id: string }[];
+  countDbRead(0, rows);
   return new Set(rows.map((r) => r.product_id));
 }
 
@@ -306,6 +389,7 @@ export async function runPriceRefreshBatch(opts: RunOptions): Promise<RunSummary
         failedCategories: summary.persons.reduce((n, p) => n + p.failedCategories.length, 0),
         stopDetail: summary.stopDetail,
         priceReviews: summary.persons.reduce((n, p) => n + p.priceReviews.length, 0),
+        usage: summary.usage,
       });
     } catch { /* 表示用の要約が保存できなくても価格更新の結果は変わらない */ }
   }
@@ -316,7 +400,20 @@ function lookupBrief(l: LookupResult): PersonLastResult['lookup'] {
   return { attempted: l.attempted, fromCache: l.fromCache, applied: l.applied, notFound: l.notFound, mismatched: l.mismatched, failed: l.failed, stoppedBy: l.stoppedBy };
 }
 
+/** 実行・人物の処理で使った量（開始時との差） */
+function usageSince(start: { calls: number; io: { dbRowsRead: number; dbBytesRead: number } }): RunUsage {
+  const io = snapshotIo();
+  return { apiCalls: rakutenApiCallCount() - start.calls, dbRowsRead: io.dbRowsRead - start.io.dbRowsRead, dbBytesRead: io.dbBytesRead - start.io.dbBytesRead };
+}
+const usageStart = () => ({ calls: rakutenApiCallCount(), io: snapshotIo() });
+
 async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null): Promise<RunSummary> {
+  const run = usageStart();
+  const summary = await runBatchInner(opts, storeOrNull, run);
+  return { ...summary, usage: usageSince(run) };
+}
+
+async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | null, run: ReturnType<typeof usageStart>): Promise<RunSummary> {
   const now = opts.now ?? (() => Date.now());
   const store = storeOrNull;
   const base: RunSummary = { status: 'ok', persons: [], updated: 0, lookedUp: 0, lookupApplied: 0, stoppedBy: 'all_done' };
@@ -344,6 +441,17 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
     const lookupCache = opts.lookupCache === undefined ? createRedisLookupCache(lookupFreshMs) : opts.lookupCache;
     const relatedIdsOf = opts.relatedIdsOf ?? relatedIdsFromDb;
     const fingerprintOf = opts.fingerprintOf ?? fingerprintFromDb;
+    const categorySummaryOf = opts.categorySummaryOf ?? categorySummaryFromDb;
+    const lookupItemsOf = opts.lookupItemsOf ?? lookupItemsFromDb;
+    // 1回の実行の上限（楽天APIの回数・カテゴリ数）。超えそうなら次の作業を始めず、続きは次回（進み具合は保存済み）
+    const callsUsed = () => rakutenApiCallCount() - run.calls;
+    let categoriesSearched = 0;
+    let limitStop: 'max_api_calls' | 'max_categories' | undefined;
+    const limitReached = (): typeof limitStop => {
+      if (opts.maxApiCalls && callsUsed() + MAX_CALLS_PER_CATEGORY > opts.maxApiCalls) return 'max_api_calls';
+      if (opts.maxCategories && categoriesSearched >= opts.maxCategories) return 'max_categories';
+      return undefined;
+    };
 
     const maxFailures = Math.max(1, opts.maxConsecutiveFailures ?? MAX_CONSECUTIVE_FAILURES);
     // 楽天のエラーの連続回数（人物をまたいで数える。取得できたカテゴリ・商品があれば 0 に戻す）
@@ -352,8 +460,10 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
     for (const name of order) {
       if (now() >= deadline) { base.stoppedBy = 'budget'; break; }
       if (opts.maxPersons && base.persons.length >= opts.maxPersons) { base.stoppedBy = 'max_persons'; break; }
+      if ((limitStop = limitReached())) { base.stoppedBy = limitStop; break; }
       const person = byName.get(name)!;
       const prev = states[name] ?? {};
+      const personStart = usageStart();
       // 処理前の「価格以外」の指紋（処理後と比べ、価格以外が変わっていたら自動停止）
       const before = await fingerprintOf(name);
       const resumeFrom = prev.startedAt && (!prev.completedAt || prev.startedAt > prev.completedAt) ? prev.nextCategory ?? 0 : 0;
@@ -371,11 +481,16 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
       let rateLimited = false;
       let errorStopped = false;
       let stopDetail: StopDetail | undefined;
-      // 保存済み商品は人物ごとに1回だけ読む（カテゴリに商品があるかの判定用。保存時は各カテゴリの最新の行を読み直す）
-      const snapshot = resumeFrom < CATEGORIES.length ? await getAllStoredProducts(name) : undefined;
+      // カテゴリごとの商品数・対象数だけを DB 側で数える（人物の全商品は読まない。保存時は各カテゴリの最新の行を読み直す）
+      const summary = resumeFrom < CATEGORIES.length ? await categorySummaryOf(name) : undefined;
       for (let i = resumeFrom; i < CATEGORIES.length; i++) {
         if (now() >= deadline) break;
-        const r = await refreshPersonPrices(person, [CATEGORIES[i] as ProductCategory], { deadline, now, stored: snapshot, eligibleIds: relatedIds });
+        const sc = summary?.[CATEGORIES[i] as ProductCategory];
+        const willSearch = (sc?.items ?? 0) > 0 && (sc?.eligible ?? 0) > 0;
+        // 楽天を検索するカテゴリだけ、上限を確認してから始める（超えそうなら続きは次回）
+        if (willSearch && (limitStop = limitReached())) break;
+        const r = await refreshPersonPrices(person, [CATEGORIES[i] as ProductCategory], { deadline, now, summary: summary ?? {}, eligibleIds: relatedIds });
+        if (willSearch) categoriesSearched++;
         if (r.configMissing) return { ...base, status: 'config_missing', stoppedBy: 'config_missing' };
         if (r.remaining.length > 0) break;
         updated += r.updated;
@@ -406,11 +521,19 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
 
       // (B) コード指定（取得日時が不明・古い公開中の商品。カテゴリ検索を最後まで終えた人物だけ）
       let lookup: LookupResult | undefined;
-      if (finishedCategories && !rateLimited && !errorStopped && now() < deadline && (opts.lookupPerPerson ?? 0) > 0) {
-        const stored = await getAllStoredProducts(name);
-        const candidates = selectLookupCandidates(stored, {
-          nowMs: now(), freshMs: lookupFreshMs, limit: opts.lookupPerPerson!, onlyIds: relatedIds,
+      let lookupTruncated = false;
+      if (finishedCategories && !limitStop && !rateLimited && !errorStopped && now() < deadline && (opts.lookupPerPerson ?? 0) > 0) {
+        // 候補になりうる商品だけを DB で絞って読む（人物の全商品は読まない）
+        const nowMs = now();
+        const stored = await lookupItemsOf(name, nowMs - lookupFreshMs, opts.lookupPerPerson!);
+        const all = selectLookupCandidates(stored, {
+          nowMs, freshMs: lookupFreshMs, limit: opts.lookupPerPerson!, onlyIds: relatedIds,
         });
+        // 楽天APIの回数の上限の残りの分だけ（1件につき最大1回）。残りは次回
+        const remainingCalls = opts.maxApiCalls ? Math.max(0, opts.maxApiCalls - callsUsed()) : all.length;
+        const candidates = all.slice(0, remainingCalls);
+        lookupTruncated = candidates.length < all.length;
+        if (lookupTruncated) limitStop = 'max_api_calls';
         lookup = await lookupPricesByCode(name, candidates, { deadline, now, cache: lookupCache ?? undefined, cacheMaxAgeMs: lookupFreshMs, maxConsecutiveFailures: maxFailures });
         base.lookedUp += lookup.attempted;
         base.lookupApplied += lookup.applied;
@@ -430,23 +553,29 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
       if (diff.length > 0) {
         const halt: HaltInfo = { at: now(), person: name, reasons: diff };
         await store.setHalt(halt);
-        await store.set(name, { ...cur, last: { at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed: false, halted: true, priceReviews: priceReviews.slice(0, MAX_REVIEWS_PER_PERSON), notEligible } });
-        base.persons.push({ name, categories: categoriesDone, updated, lookup, completed: false, failedCategories, priceReviews });
+        const usage = usageSince(personStart);
+        await store.set(name, { ...cur, last: { at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed: false, halted: true, priceReviews: priceReviews.slice(0, MAX_REVIEWS_PER_PERSON), notEligible, usage } });
+        base.persons.push({ name, categories: categoriesDone, updated, lookup, completed: false, failedCategories, priceReviews, usage });
         return { ...base, status: 'halted', stoppedBy: 'halted', halt };
       }
-      const lookupFinished = !lookup || lookup.stoppedBy === 'done';
+      // 上限でカテゴリ検索の途中・コード指定の前で止めた場合も未完了（次回は続きから）
+      const lookupSkippedByLimit = finishedCategories && !lookup && !!limitStop && (opts.lookupPerPerson ?? 0) > 0;
+      const lookupFinished = (!lookup && !lookupSkippedByLimit) || (!!lookup && lookup.stoppedBy === 'done' && !lookupTruncated);
       const completed = finishedCategories && lookupFinished && !rateLimited && !errorStopped;
+      const usage = usageSince(personStart);
       const last: PersonLastResult = {
         at: now(), updated, categories: categoriesDone, failedCategories, lookup: lookup && lookupBrief(lookup), completed,
-        ...(stopDetail && { stop: stopDetail }), priceReviews: priceReviews.slice(0, MAX_REVIEWS_PER_PERSON), notEligible,
+        ...(stopDetail && { stop: stopDetail }), priceReviews: priceReviews.slice(0, MAX_REVIEWS_PER_PERSON), notEligible, usage,
       };
       if (completed) await store.set(name, { completedAt: now(), startedAt: prev.startedAt, nextCategory: 0, last });
       else await store.set(name, { ...cur, last });
-      base.persons.push({ name, categories: categoriesDone, updated, lookup, completed, failedCategories, priceReviews });
+      base.persons.push({ name, categories: categoriesDone, updated, lookup, completed, failedCategories, priceReviews, usage });
       base.updated += updated;
       if (rateLimited) { base.stoppedBy = 'rate_limited'; base.stopDetail = stopDetail; break; }
       // 楽天のエラー（503 等）が続いた：その回を終える（続きは次回。失敗したカテゴリから取り直す）
       if (errorStopped) { base.stoppedBy = 'upstream_errors'; base.stopDetail = stopDetail; break; }
+      // 1回の上限（楽天APIの回数・カテゴリ数）に達した（続きは次回）
+      if (limitStop) { base.stoppedBy = limitStop; break; }
       // 時間の枠を使い切って人物の途中で止まった（続きは次回）
       if (!completed && now() >= deadline) { base.stoppedBy = 'budget'; break; }
     }
@@ -457,6 +586,23 @@ async function runBatch(opts: RunOptions, storeOrNull: RefreshStateStore | null)
 }
 
 // ── dry-run（読み取りのみ。楽天API・DB・Redis への書き込みは一切しない）──────────────────
+
+/**
+ * 見積もり用に、商品の ID・商品ページURL・アフィリエイトURL・楽天市場の itemCode・価格の取得日時だけを読む
+ * （同一性キー・コード指定の判定に必要な項目。全項目を読むより転送量が少ない）。
+ */
+export async function lightItemsFromDb(personName: string): Promise<Partial<Record<ProductCategory, { products: RakutenItem[] }>>> {
+  const rows = (await neonSql`
+    SELECT p.category,
+      coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+        'id', t.e->'id', 'itemUrl', t.e->'itemUrl', 'affiliateUrl', t.e->'affiliateUrl', 'itemCode', t.e->'itemCode', 'priceFetchedAt', t.e->'priceFetchedAt'
+      )) ORDER BY t.i) FILTER (WHERE t.e IS NOT NULL), '[]'::jsonb) AS items
+    FROM products p LEFT JOIN LATERAL jsonb_array_elements(p.items) WITH ORDINALITY AS t(e, i) ON true
+    WHERE p.person_name = ${personName}
+    GROUP BY p.person_name, p.category`) as { category: ProductCategory; items: RakutenItem[] }[];
+  countDbRead(rows.length, rows);
+  return Object.fromEntries(rows.map((r) => [r.category, { products: r.items }])) as Partial<Record<ProductCategory, { products: RakutenItem[] }>>;
+}
 
 export interface PlanPerson {
   name: string;
@@ -494,6 +640,8 @@ export async function planPriceRefresh(opts: {
   now?: () => number;
   persons?: PersonWithConfig[];
   relatedIdsOf?: (personName: string) => Promise<Set<string>>;
+  /** 見積もりに使う商品の軽い項目（テスト用。省略時は DB から ID・URL・商品コード・取得日時だけを読む） */
+  lightItemsOf?: (personName: string) => Promise<Partial<Record<ProductCategory, { products: RakutenItem[] }>>>;
 } = {}): Promise<PlanSummary> {
   const now = opts.now ?? (() => Date.now());
   const persons = opts.persons ?? (await getAllPersonsMerged());
@@ -501,10 +649,12 @@ export async function planPriceRefresh(opts: {
   const only = opts.onlyPersons?.length ? new Set(opts.onlyPersons) : null;
   const names = persons.map((p) => p.name).filter((n) => withProducts.has(n) && (!only || only.has(n)));
   const relatedIdsOf = opts.relatedIdsOf ?? relatedIdsFromDb;
+  const lightItemsOf = opts.lightItemsOf ?? lightItemsFromDb;
   const out: PlanPerson[] = [];
   const allCodes = new Set<string>();
   for (const name of names) {
-    const stored = await getAllStoredProducts(name);
+    // 見積もりに必要な項目だけを読む（商品名・画像・説明などは読まない）
+    const stored = await lightItemsOf(name);
     const related = await relatedIdsOf(name);
     const cats = CATEGORIES.filter((c) => (stored[c]?.products.length ?? 0) > 0);
     const items = cats.flatMap((c) => stored[c]!.products);

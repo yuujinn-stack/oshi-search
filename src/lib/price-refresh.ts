@@ -40,6 +40,7 @@ import {
   rakutenApiFetch,
   withRakutenApiSession,
 } from '@/lib/rakuten-api-gate';
+import { countDbRead } from '@/lib/price-refresh-io';
 import type { RakutenItem } from '@/types/rakuten';
 import type { PersonWithConfig, ProductCategory } from '@/types/person';
 
@@ -85,6 +86,9 @@ export interface PriceRefreshResult {
   reviews: PriceReview[];
 }
 
+/** カテゴリごとの商品数（items）と更新の対象（related）の数（eligible） */
+export type CategorySummary = Partial<Record<ProductCategory, { items: number; eligible: number }>>;
+
 const empty = (category: ProductCategory, status: PriceRefreshStatus, httpStatus?: number): PriceRefreshCategoryResult =>
   ({ category, status, httpStatus, updated: 0, notReturned: 0, newCandidates: 0, identityMismatches: 0, notEligible: 0, reviews: [] });
 
@@ -97,14 +101,29 @@ export async function refreshPersonPrices(
   opts: {
     deadline?: number;
     now?: () => number;
-    /** 保存済み商品の読み取り結果（カテゴリに商品があるかの判定だけに使う。省略時は読み取る） */
+    /** 保存済み商品の読み取り結果（カテゴリに商品があるかの判定だけに使う。summary も stored も無ければ読み取る） */
     stored?: Partial<Record<ProductCategory, { products: RakutenItem[] }>>;
+    /**
+     * カテゴリごとの商品数と、そのうち更新の対象（related）の数（DB 側で数えた軽い要約。price-refresh-runner が渡す）。
+     * これがあれば人物の全商品は読まない
+     */
+    summary?: CategorySummary;
     /** 更新してよい商品ID（判定が related の商品）。省略時はすべて（price-refresh-runner は必ず渡す） */
     eligibleIds?: ReadonlySet<string>;
   } = {},
 ): Promise<PriceRefreshResult> {
   const now = opts.now ?? (() => Date.now());
-  const stored = opts.stored ?? await getAllStoredProducts(person.name);
+  // カテゴリごとの商品数・対象数（要約があれば人物の全商品は読まない）
+  let summary: CategorySummary;
+  if (opts.summary) summary = opts.summary;
+  else {
+    const stored = opts.stored ?? await getAllStoredProducts(person.name);
+    if (!opts.stored) countDbRead(Object.keys(stored).length, stored);
+    summary = Object.fromEntries(Object.entries(stored).map(([c, v]) => [c, {
+      items: v?.products.length ?? 0,
+      eligible: opts.eligibleIds ? (v?.products ?? []).filter((p) => opts.eligibleIds!.has(p.id)).length : v?.products.length ?? 0,
+    }])) as CategorySummary;
+  }
   const results: PriceRefreshCategoryResult[] = [];
   const remaining: ProductCategory[] = [];
   let configMissing = false;
@@ -114,13 +133,14 @@ export async function refreshPersonPrices(
       remaining.push(...categories.slice(i));
       break;
     }
-    if ((stored[category]?.products.length ?? 0) === 0) {
+    const sc = summary[category];
+    if ((sc?.items ?? 0) === 0) {
       results.push(empty(category, 'no_existing'));
       continue;
     }
     // 更新の対象（判定が related）の商品が無いカテゴリは楽天APIを呼ばない
-    if (opts.eligibleIds && !stored[category]!.products.some((p) => opts.eligibleIds!.has(p.id))) {
-      results.push({ ...empty(category, 'no_eligible'), notEligible: stored[category]!.products.length });
+    if (opts.eligibleIds && (sc?.eligible ?? 0) === 0) {
+      results.push({ ...empty(category, 'no_eligible'), notEligible: sc!.items });
       continue;
     }
     // 1カテゴリ分の検索（複数ページ・複数キーワード）は、楽天APIの共通の使用権（src/lib/rakuten-api-gate.ts：
@@ -142,6 +162,7 @@ export async function refreshPersonPrices(
       // 保存直前の最新の行に対して、価格の項目だけを反映（並び・件数・ID・商品名・URL・アフィリエイトURL等は不変）
       const fetchedAt = now();
       const row = await getStoredCategoryRow(person.name, category);
+      countDbRead(row ? 1 : 0, row?.items);
       if (!row || row.items.length === 0) { results.push(empty(category, 'no_existing')); continue; }
       const merged = mergePriceFieldsOnly(row.items, res.products, fetchedAt, { eligibleIds: opts.eligibleIds });
       if (merged.updated > 0) await savePriceOnlyItems(person.name, category, merged.items, fetchedAt);

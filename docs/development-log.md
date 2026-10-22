@@ -4197,3 +4197,37 @@ Task 107〜113 の価格更新（GitHub Actions・OpenAI 不使用）を、既�
 ### 注意点
 - カテゴリ行の `fetched_at` は、そのカテゴリで1件以上反映したときだけ新しくなる。価格更新は毎回すべてのカテゴリを検索し、コード指定の候補は商品ごとの `priceFetchedAt` で選ぶため、行の `fetched_at` は確認対象・取得失敗の商品の再確認を妨げない（新商品の発見・公開サイトもこの値を使っていない）。
 - 確認対象の商品は、自動では反映されない（価格の変動が続く限り毎回確認対象になる）。反映の方法（管理画面からの承認等）は今回は用意していない。
+
+---
+
+## Task 126：価格更新 — DB 読み込みの削減と1回の処理量の上限（未commit・本番DB/Redis 未変更）
+
+### 調査（変更前の1人あたりの DB 読み込み）
+指紋（DB 側で計算・小）×2、related の商品ID（小）、**人物の全カテゴリの全商品**（カテゴリに商品があるかの判定だけに使用）、カテゴリごとの保存直前の行の読み直し（反映に必要）、**コード指定の候補選びのための人物の全商品（2回目）**、コード指定の反映直前の行の読み直し（必要）。dry-run の見積もりも人物ごとに全商品を読んでいた。
+
+### 変更
+- `src/lib/price-refresh-io.ts`（新規）：DB から読んだ行数・量（JSON の長さ）の数え上げ（プロセス内のみ）。
+- `src/lib/rakuten-api-gate.ts`：共通の使用権を通した楽天APIの呼び出し回数を数える `rakutenApiCallCount()`（表示用の数え上げだけ。呼び出しの制御は不変）。
+- `src/lib/price-refresh-runner.ts`：
+  - `categorySummaryFromDb`：カテゴリごとの商品数と related の数を DB 側で数える（商品の中身は読まない）。人物の全商品の読み込みを置き換え。
+  - `lookupItemsFromDb`：related・取得日時が無い／古い・楽天ブックス（books.rakuten.co.jp/rb、または item.rakuten.co.jp/book）か楽天市場の数字の itemCode を持つ商品だけを、従来の候補の順（取得日時の古い順→カテゴリの順→保存の順）で上限まで読む（足りなければ続きを読む）。最終的な候補は従来どおり `selectLookupCandidates`（lookupCodeOf）で決める。人物の全商品の2回目の読み込みを置き換え。
+  - 1回の上限：`maxApiCalls`（次のカテゴリで最大12回使いうるなら始めない。コード指定は残りの回数まで）、`maxCategories`（楽天を検索するカテゴリ数）、既存の `maxPersons`。上限に達したら `stoppedBy: 'max_api_calls' | 'max_categories' | 'max_persons'` で終了し、進み具合（nextCategory・コード指定の途中）は従来どおり保存して次回続きから。
+  - 使った量：人物ごと（`last.usage`）・実行ごと（`RunSummary.usage`・実行の要約）に、楽天APIの呼び出し回数・DB から読んだ行数・量。
+  - dry-run の見積もり（`planPriceRefresh`）は `lightItemsFromDb`（ID・商品ページURL・アフィリエイトURL・itemCode・取得日時だけ）を使う。
+- `src/lib/price-refresh.ts`：`refreshPersonPrices` に `summary`（カテゴリの要約）を追加。要約があれば人物の全商品は読まない。保存直前の行の読み込み量を数える。
+- `src/lib/product-store.ts`：`applyPriceUpdates` の行の読み込み量を数える（1行の追加のみ）。
+- `scripts/price-refresh/run.ts`：上限を環境変数で設定（`PRICE_REFRESH_MAX_PERSONS` 既定30・`PRICE_REFRESH_MAX_API_CALLS` 既定800・`PRICE_REFRESH_MAX_CATEGORIES` 既定200。上限・下限つき）。開始時に上限、終了時に使った量（API 回数・DB の行数・量 KB）を出力。手動テストでは人物ごとの使った量も出力。
+- `src/app/admin/price-refresh/page.tsx`：直近の実行に「使った量」、人物の行に API 回数・DB の量。
+- テスト：runner 5件（全商品を読まない、API 回数の上限で止まり次回は止まったカテゴリから、カテゴリ数の上限、対象の無いカテゴリは数えない、コード指定が上限で途中なら未完了）、price-refresh 1件（要約があれば読む商品の行は保存直前の1行だけ）。既存のテストの DB の偽物に `query` を追加、dry-run のテストに軽い読み込みを渡す。
+
+### 検証（本番DBを読み取りのみ）
+- 71人（成田凌・賀喜遥香・商品の多い15人・無作為の60人）で、新しい方法のコード指定の候補（順序まで）が従来と 71/71 一致、カテゴリの要約が 71/71 一致、dry-run の見積もりが完全に一致。※最初は item.rakuten.co.jp/book の楽天ブックスを絞り込みで落として3人で不一致 → 条件を修正して一致。
+- 人物ごとの読み込み量（保存直前の行の読み直しは前後で同じなので除く）：71人で 32.3MB → 3.3MB（-90%）。dry-run の見積もり：16.1MB → 7.8MB（-52%）。全員1回の全商品は 51.6MB、軽い項目は 28.1MB。
+- tsc OK、npm test 132ファイル・2,244件 OK、dry-run（成田凌・賀喜遥香）OK。
+
+### 追加：dry-run の出力（GitHub Actions の dry-run で確認できるように。すべて読み取りのみ）
+- `limits`：1回の上限の設定値（dry-run でも出力）。
+- `usage`：dry-run で使った量（楽天APIは呼ばないので 0回、DB の行数・量 KB）。
+- `estimate`：実際に更新するときの楽天APIの回数の見込み（カテゴリ検索 3〜12回/カテゴリ＋コード指定の候補）と、上限に対して何回の実行に分かれるか。
+- `progress`（Redis 設定時）：対象人物ごとの進み具合を `HMGET price-refresh:state` で読む（never_run／in_progress＋続きのカテゴリ／completed、直近の結果の API・DB の量、確認待ち・取得失敗の数、自動停止の有無）。Redis へのコマンドは GET・EXISTS・HMGET のみ（偽の Upstash で確認）。
+- `src/lib/price-refresh-runner.ts`：表示用に `CATEGORIES_ORDER`（nextCategory の添字の順）を export。

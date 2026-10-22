@@ -10,6 +10,9 @@
 //   PRICE_REFRESH_REQUIRE_PERSONS=1  … 人物の指定を必須にし、2人までに限る（GitHub Actions の manual-test）
 //   PRICE_REFRESH_BUDGET_MIN         … 1回の実行で作業を始めてよい時間（既定 20 分）
 //   PRICE_REFRESH_LOOKUP_PER_PERSON  … 1人あたりのコード指定の取得の上限（既定 60）
+//   PRICE_REFRESH_MAX_PERSONS        … 1回に処理する人物の上限（既定 30。続きは次回）
+//   PRICE_REFRESH_MAX_API_CALLS      … 1回に使う楽天APIの回数の上限（既定 800＝20分で使える回数の目安。続きは次回）
+//   PRICE_REFRESH_MAX_CATEGORIES     … 1回に楽天を検索するカテゴリ数の上限（既定 200。続きは次回）
 //   PRICE_REFRESH_VERBOSE=1          … 詳細ログも表示（ローカル専用。公開リポジトリの Actions では使わない）
 //
 // ログ：公開リポジトリの Actions ログは誰でも見られるため、既定ではこのスクリプトの件数の要約だけを出し、
@@ -57,8 +60,23 @@ async function main() {
   if (missing.length) { out({ error: 'missing_env', missing }); process.exit(1); }
   if (process.env.OPENAI_API_KEY) out({ warning: 'OPENAI_API_KEY は不要です（この処理は OpenAI を使いません）' });
 
-  const { planPriceRefresh, runPriceRefreshBatch, HALT_KEY, LOCK_KEY } = await import('@/lib/price-refresh-runner');
+  const { planPriceRefresh, runPriceRefreshBatch, HALT_KEY, LOCK_KEY, STATE_KEY, CATEGORIES_ORDER } = await import('@/lib/price-refresh-runner');
   const { getRedis } = await import('@/lib/redis');
+  const { snapshotIo } = await import('@/lib/price-refresh-io');
+  const { rakutenApiCallCount } = await import('@/lib/rakuten-api-gate');
+  const budgetMin = Math.min(Math.max(Number(process.env.PRICE_REFRESH_BUDGET_MIN ?? 20), 1), 300);
+  // 1回の上限（安全のため上限・下限を設ける。続きは次回、進み具合は Redis に保存済み）
+  const intEnv = (k: string, def: number, min: number, max: number) => {
+    const v = Number(process.env[k] ?? def);
+    return Number.isFinite(v) ? Math.min(Math.max(Math.floor(v), min), max) : def;
+  };
+  const limits = {
+    maxPersons: intEnv('PRICE_REFRESH_MAX_PERSONS', 30, 1, 400),
+    maxApiCalls: intEnv('PRICE_REFRESH_MAX_API_CALLS', 800, 20, 3000),
+    maxCategories: intEnv('PRICE_REFRESH_MAX_CATEGORIES', 200, 1, 2000),
+  };
+  out({ limits: { budgetMin, lookupPerPerson, ...limits } });
+  const kb = (bytes: number) => Math.round(bytes / 102.4) / 10;
   // Redis（Upstash）への読み取りだけの接続確認。設定の形（値は出さない）と、読み取れるかを出す
   const redisConfigured = !!(process.env.UPSTASH_REDIS_REST_URL ?? '').trim() && !!(process.env.UPSTASH_REDIS_REST_TOKEN ?? '').trim();
   const checkRedis = async (): Promise<boolean> => {
@@ -72,7 +90,9 @@ async function main() {
   };
 
   if (dryRun) {
+    const io0 = snapshotIo(), calls0 = rakutenApiCallCount();
     const plan = await planPriceRefresh({ onlyPersons, lookupPerPerson });
+    const io1 = snapshotIo();
     out({ mode: 'dry-run', onlyPersons: onlyPersons.length ? onlyPersons : 'all', totals: plan.totals, dbRowsToUpdate: plan.dbRowsToUpdate, note: plan.note });
     // 人物ごとの件数（人物名は公開情報。商品の情報は出さない）
     const shown = onlyPersons.length ? plan.persons : plan.persons.slice(0, 20);
@@ -81,18 +101,54 @@ async function main() {
     if (onlyPersons.length && plan.persons.length < onlyPersons.length) {
       out({ warning: '指定した人物の一部に商品が無い、または名前が一致しません', found: plan.persons.map((p) => p.name) });
     }
+    // dry-run で使った量（楽天APIは呼ばないので0回）と、実際に更新するときの楽天APIの回数の見込み（上限に対して何回の実行に分かれるか）
+    out({ usage: { apiCalls: rakutenApiCallCount() - calls0, dbRowsRead: io1.dbRowsRead - io0.dbRowsRead, dbReadKB: kb(io1.dbBytesRead - io0.dbBytesRead) } });
+    const t = plan.totals;
+    const callsMin = t.searchCallsMin + t.lookupUniqueCodesAll, callsMax = t.searchCallsMax + t.lookupUniqueCodesAll;
+    out({ estimate: {
+      apiCalls: { min: callsMin, max: callsMax, note: 'カテゴリ検索の見込み（1カテゴリ3〜12回）＋コード指定の候補。related の無いカテゴリは呼ばないため実際はこれ以下' },
+      runsNeeded: {
+        byApiCalls: { min: Math.max(1, Math.ceil(callsMin / limits.maxApiCalls)), max: Math.max(1, Math.ceil(callsMax / limits.maxApiCalls)) },
+        byCategories: Math.max(1, Math.ceil(t.categories / limits.maxCategories)),
+        byPersons: Math.max(1, Math.ceil(t.persons / limits.maxPersons)),
+      },
+    } });
     // dry-run でも Redis の設定を読み取りだけで確認する（manual-test の前に Secrets の誤りに気づけるように。書き込みはしない）
-    if (redisConfigured) { if (!(await checkRedis())) process.exitCode = 1; }
-    else out({ redisCheck: 'not_configured', note: 'dry-run は Redis を使わない（manual-test・定期実行では必須）' });
+    if (redisConfigured) {
+      if (!(await checkRedis())) { process.exitCode = 1; return; }
+      // 人物ごとの進み具合（読み取りのみ）：完了済みか、途中ならどのカテゴリから続けるか、直近の結果
+      const redis = getRedis()!;
+      const names = (onlyPersons.length ? plan.persons.map((p) => p.name) : plan.persons.slice(0, 20).map((p) => p.name));
+      if (names.length) {
+        const raw = (await redis.hmget<Record<string, unknown>>(STATE_KEY, ...names)) ?? {};
+        for (const name of names) {
+          const v = raw[name];
+          const st = (typeof v === 'string' ? JSON.parse(v) : v) as { completedAt?: number; startedAt?: number; nextCategory?: number; last?: { at?: number; completed?: boolean; halted?: boolean; failedCategories?: unknown[]; usage?: unknown; priceReviews?: unknown[]; stop?: unknown } } | null;
+          const inProgress = !!st?.startedAt && (!st.completedAt || st.startedAt > st.completedAt);
+          out({ progress: {
+            person: name,
+            state: !st ? 'never_run' : inProgress ? 'in_progress' : st.completedAt ? 'completed' : 'never_completed',
+            nextCategory: inProgress ? (CATEGORIES_ORDER[st!.nextCategory ?? 0] ?? 'コード指定') : null,
+            completedAt: st?.completedAt ? new Date(st.completedAt).toISOString() : null,
+            lastAt: st?.last?.at ? new Date(st.last.at).toISOString() : null,
+            lastCompleted: st?.last?.completed ?? null,
+            lastUsage: st?.last?.usage ?? null,
+            lastPriceReviews: st?.last?.priceReviews?.length ?? 0,
+            lastFailedCategories: st?.last?.failedCategories?.length ?? 0,
+            lastHalted: !!st?.last?.halted,
+            lastStop: st?.last?.stop ?? null,
+          } });
+        }
+      }
+    } else out({ redisCheck: 'not_configured', note: 'dry-run は Redis を使わない（manual-test・定期実行では必須）' });
     return;
   }
 
   // 価格の更新を始める前に Redis を読み取りだけで確認する（失敗したら DB・楽天API・Redis に何もせず終了）
   if (!(await checkRedis())) process.exit(1);
 
-  const budgetMin = Math.min(Math.max(Number(process.env.PRICE_REFRESH_BUDGET_MIN ?? 20), 1), 300);
   const t0 = Date.now();
-  const s = await runPriceRefreshBatch({ budgetMs: budgetMin * 60_000, lookupPerPerson, onlyPersons });
+  const s = await runPriceRefreshBatch({ budgetMs: budgetMin * 60_000, lookupPerPerson, onlyPersons, ...limits });
   // 楽天から取得できなかったカテゴリ（保存済みの商品は変更していない）を、HTTP ステータスごとに数える（503 等の確認用）
   const failedByStatus: Record<string, number> = {};
   for (const p of s.persons) for (const f of p.failedCategories) {
@@ -111,6 +167,8 @@ async function main() {
     failedCategories: failedByStatus,
     // 前回の価格から30%以上の変動などで反映せず確認対象にした商品の数（保存済みの商品は変更していない）
     priceReviews: s.persons.reduce((n, p) => n + p.priceReviews.length, 0),
+    // 使った量：楽天APIの呼び出し回数・DB から読んだ行数と量の目安（KB）
+    usage: s.usage ? { apiCalls: s.usage.apiCalls, dbRowsRead: s.usage.dbRowsRead, dbReadKB: Math.round(s.usage.dbBytesRead / 102.4) / 10 } : null,
     minutes: Math.round((Date.now() - t0) / 6000) / 10,
     suppressedLogs: suppressed,
     // 自動停止（価格以外の変更を検知）したときの人物と理由（カテゴリ名と種類だけ。商品の情報は含まない）
@@ -121,7 +179,7 @@ async function main() {
   if (s.stoppedBy === 'upstream_errors') out({ alert: '楽天のエラーが続いたため、この回の処理を終えました（取得できなかった商品は変更していません）。原因を確認してください', stopDetail: s.stopDetail });
   if (s.status === 'halted') out({ alert: '自動停止しました。原因を確認するまで定期実行は何もしません（docs/price-refresh-runbook.md の「自動停止したとき」）' });
   if (onlyPersons.length) {
-    for (const p of s.persons) out({ person: p.name, categories: p.categories, updated: p.updated, lookup: p.lookup, completed: p.completed, failedCategories: p.failedCategories });
+    for (const p of s.persons) out({ person: p.name, categories: p.categories, updated: p.updated, lookup: p.lookup, completed: p.completed, failedCategories: p.failedCategories, usage: p.usage ? { apiCalls: p.usage.apiCalls, dbRowsRead: p.usage.dbRowsRead, dbReadKB: Math.round(p.usage.dbBytesRead / 102.4) / 10 } : null });
     // 確認対象（商品ID・変更前の価格・取得した価格・変動率・理由。価格と商品IDは公開情報で、認証情報は含まない）
     for (const p of s.persons) for (const r of p.priceReviews) {
       out({ priceReview: { person: p.name, category: r.category, id: r.id, previousPrice: r.previousPrice, fetchedPrice: r.fetchedPrice, changePercent: r.changeRate == null ? null : Math.round(r.changeRate * 1000) / 10, reason: r.reason } });

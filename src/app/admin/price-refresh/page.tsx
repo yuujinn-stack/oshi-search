@@ -96,6 +96,9 @@ export default async function PriceRefreshAdminPage({ searchParams }: Props) {
                   ['価格を更新した商品', `検索 ${run.lastRun.updated} ／ コード指定 ${run.lastRun.lookupApplied}`],
                   ['コード指定の取得', `${run.lastRun.lookedUp} 回`],
                   ['取得できなかったカテゴリ', `${run.lastRun.failedCategories} 件`],
+                  ...(run.lastRun.usage
+                    ? [['使った量', `楽天API ${run.lastRun.usage.apiCalls} 回 ／ DB ${run.lastRun.usage.dbRowsRead} 行・約${Math.round(run.lastRun.usage.dbBytesRead / 1024)}KB`]]
+                    : []),
                   ...(run.lastRun.stopDetail
                     ? [['楽天のエラーで終えた位置', `${run.lastRun.stopDetail.person} / ${run.lastRun.stopDetail.category}（${run.lastRun.stopDetail.reasons.join('、')}）`]]
                     : []),
@@ -242,7 +245,7 @@ export default async function PriceRefreshAdminPage({ searchParams }: Props) {
                       <td className="px-2 py-1 whitespace-nowrap">{fmt(r.completedAt)}</td>
                       <td className="px-2 py-1">
                         {r.last
-                          ? `${fmt(r.last.at)} 更新 ${r.last.updated}${r.last.lookup ? ` ／ コード指定 ${r.last.lookup.applied}` : ''}${r.last.halted ? ' ／ 自動停止' : ''}${r.last.stop ? ` ／ ${r.last.stop.category}で終了` : ''}${r.last.priceReviews?.length ? ` ／ 確認待ち ${r.last.priceReviews.length}` : ''}${failedLabel(r.last) ? ` ／ 取得できず：${failedLabel(r.last)}` : ''}`
+                          ? `${fmt(r.last.at)} 更新 ${r.last.updated}${r.last.lookup ? ` ／ コード指定 ${r.last.lookup.applied}` : ''}${r.last.halted ? ' ／ 自動停止' : ''}${r.last.stop ? ` ／ ${r.last.stop.category}で終了` : ''}${r.last.priceReviews?.length ? ` ／ 確認待ち ${r.last.priceReviews.length}` : ''}${r.last.usage ? ` ／ API ${r.last.usage.apiCalls}回・DB 約${Math.round(r.last.usage.dbBytesRead / 1024)}KB` : ''}${failedLabel(r.last) ? ` ／ 取得できず：${failedLabel(r.last)}` : ''}`
                           : '—'}
                       </td>
                     </tr>

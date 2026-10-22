@@ -7,6 +7,7 @@ import { products as productsTable, batchMeta as batchMetaTable } from '@/db/sch
 import { and, eq, sql } from 'drizzle-orm';
 import { upsertProduct, updateProductItemsOnly } from '@/db/write';
 import type { RakutenItem } from '@/types/rakuten';
+import { countDbRead } from '@/lib/price-refresh-io';
 import type { ProductCategory } from '@/types/person';
 import { isLegacyIchibaId, isNewIchibaId } from '@/lib/rakuten-item-id';
 import { normalizeItemUrl } from '@/lib/legacy-ichiba-verdict';
@@ -401,6 +402,7 @@ export async function applyPriceUpdates(
   const rows = await db.select().from(productsTable)
     .where(and(eq(productsTable.personName, personName), eq(productsTable.category, category)));
   const row = rows.find((r) => r.category === category);
+  countDbRead(row ? 1 : 0, row?.items); // 価格更新の読み込み量の記録（表示用）
   if (!row) return { applied: 0, skipped: updates.size, reviews: [] };
   const { items, applied, reviews } = applyPriceUpdatesToItems(row.items as RakutenItem[], updates);
   // 既存行の items だけを UPDATE（INSERT しない）。カテゴリの再検索日時（fetched_at）は元の値のまま

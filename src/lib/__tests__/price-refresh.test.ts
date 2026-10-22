@@ -507,3 +507,23 @@ describe('更新の対象は related の商品だけ・30%以上の変動は確�
     });
   });
 });
+
+describe('カテゴリの要約を渡されたら人物の全商品は読まない', () => {
+  it('要約（商品数・対象数）だけでカテゴリを判定し、楽天APIを呼ぶのは対象のあるカテゴリだけ。保存の直前の行の読み直しは行う', async () => {
+    const rel = ichiba('ich-s1:rel', 's1', 'rel');
+    seed('グッズ', [rel]);
+    seed('CD', [ichiba('ich-s1:unrel', 's1', 'unrel')]);
+    const { priceRefreshIo } = await import('../price-refresh-io');
+    const rowsBefore = priceRefreshIo.dbRowsRead;
+    rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === 'グッズ' ? ok([ichiba('ich-s1:rel', 's1', 'rel', { price: 1100 })]) : { status: 'empty' }));
+    const r = await refreshPersonPrices(PERSON, undefined, {
+      eligibleIds: new Set(['ich-s1:rel']),
+      summary: { グッズ: { items: 1, eligible: 1 }, CD: { items: 1, eligible: 0 } },
+    });
+    // 読んだ商品の行は、保存の直前に読み直したグッズの1行だけ（人物の全カテゴリは読んでいない）
+    expect(priceRefreshIo.dbRowsRead - rowsBefore).toBe(1);
+    expect(rakuten.getProductsByCategory.mock.calls.map((c) => c[2])).toEqual(['グッズ']);
+    expect(r.categories.find((c) => c.category === 'CD')).toMatchObject({ status: 'no_eligible', notEligible: 1 });
+    expect(rowItems('グッズ')[0]).toMatchObject({ price: 1100 });
+  });
+});

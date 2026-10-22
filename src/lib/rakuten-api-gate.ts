@@ -167,6 +167,7 @@ export function createRakutenApiSession(opts: SessionOptions, depsOverride?: Par
         const wait = localLastAt + deps.intervalMs - deps.now();
         if (wait > 0) await deps.sleep(wait);
         localLastAt = deps.now();
+        callCount++;
         return doFetch();
       });
       localChain = run.catch(() => undefined);
@@ -178,6 +179,7 @@ export function createRakutenApiSession(opts: SessionOptions, depsOverride?: Par
     await ensureLease();
     if (expiresAt - deps.now() <= SAFETY_MARGIN_MS) throw new RakutenApiLeaseLostError('lease expiring');
     lastCallAt = deps.now();
+    callCount++;
     return doFetch();
   }
 
@@ -215,6 +217,10 @@ export function createRakutenApiSession(opts: SessionOptions, depsOverride?: Par
     },
   };
 }
+
+// このプロセスで共通の使用権を通して楽天APIを呼んだ回数（価格更新の呼び出し回数の記録用。表示のための数え上げだけ）
+let callCount = 0;
+export function rakutenApiCallCount(): number { return callCount; }
 
 // ── rakuten.ts の既存の呼び出し口から使う：処理単位（1カテゴリ取得など）のセッションを引き継ぐ ──
 const sessionStore = new AsyncLocalStorage<RakutenApiSession>();

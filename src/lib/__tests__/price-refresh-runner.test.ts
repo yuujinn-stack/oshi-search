@@ -34,7 +34,10 @@ vi.mock('@/lib/product-store', () => ({
 vi.mock('@/db/write', () => ({ upsertProduct: storeSpies.upsert }));
 vi.mock('@/lib/persons', () => ({ getAllPersonsMerged: vi.fn().mockResolvedValue([]) }));
 vi.mock('@/lib/redis', () => ({ getRedis: () => null }));
-vi.mock('@/db/client', () => ({ neonSql: vi.fn().mockResolvedValue([]), db: {} }));
+vi.mock('@/db/client', () => ({ neonSql: Object.assign(vi.fn().mockResolvedValue([]), { query: vi.fn().mockResolvedValue([]) }), db: {} }));
+// 楽天APIの呼び出し回数（テストでは数を直接動かす）
+const gateSpies = vi.hoisted(() => ({ calls: 0 }));
+vi.mock('@/lib/rakuten-api-gate', () => ({ rakutenApiCallCount: () => gateSpies.calls }));
 
 import { runPriceRefreshBatch, orderPersons, createMemoryStateStore, planPriceRefresh, fingerprintDiff, type PersonFingerprint } from '../price-refresh-runner';
 import type { PersonWithConfig } from '@/types/person';
@@ -222,7 +225,8 @@ describe('dry-run（planPriceRefresh）', () => {
       : {});
     spies.selectLookupCandidates.mockReturnValue([{ code: 'book:1' }, { code: 'book:2' }, { code: 'book:1' }]);
     const fetchSpy = vi.spyOn(global, 'fetch');
-    const plan = await planPriceRefresh({ persons: [P('a'), P('b')], relatedIdsOf: async () => new Set(['bk-1', 'bk-2', 'ic-4', 'ic-5']) });
+    // 見積もりは軽い項目だけを読む（ここでは同じデータを渡す）
+    const plan = await planPriceRefresh({ persons: [P('a'), P('b')], relatedIdsOf: async () => new Set(['bk-1', 'bk-2', 'ic-4', 'ic-5']), lightItemsOf: storeSpies.getAllStoredProducts });
     expect(plan.persons.map((p) => p.name)).toEqual(['a', 'b']);
     expect(plan.persons[0]).toMatchObject({ categories: 2, searchCallsMin: 6, searchCallsMax: 24, storedItems: 6, manualItems: 1, lookupCandidates: 3, lookupUniqueCodes: 2, searchOnlyRelated: 1, unidentifiableRelated: 1 });
     expect(plan.dbRowsToUpdate).toBe(2);
@@ -411,5 +415,73 @@ describe('related の商品だけを更新・30%以上の変動は確認対象�
     spies.refreshPersonPrices.mockImplementation(async () => { clock += 10_000; return { ...okCategory(0), reviews: many.slice(0, 20) }; });
     await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], relatedIdsOf: async () => new Set() });
     expect(store.states.a.last?.priceReviews).toHaveLength(50);
+  });
+});
+
+describe('DB の読み込みの削減と1回の上限', () => {
+  const ALL = { 写真集: { items: 1, eligible: 1 }, '本・雑誌': { items: 1, eligible: 1 }, 'Blu-ray・DVD': { items: 1, eligible: 1 }, グッズ: { items: 1, eligible: 1 }, CD: { items: 1, eligible: 1 }, 中古: { items: 1, eligible: 1 } };
+  beforeEach(() => {
+    gateSpies.calls = 0;
+    // 1カテゴリの検索で楽天APIを3回使う
+    spies.refreshPersonPrices.mockImplementation(async () => { clock += 10_000; gateSpies.calls += 3; return okCategory(1); });
+  });
+
+  it('人物の全商品は読まない（カテゴリの要約と、コード指定の候補だけを読む）', async () => {
+    const store = createMemoryStateStore();
+    const summaryOf = vi.fn(async () => ALL);
+    const lookupItemsOf = vi.fn(async () => ({}));
+    await runPriceRefreshBatch({ budgetMs: 600_000, lookupPerPerson: 10, store, now, persons: [P('a')], relatedIdsOf: async () => new Set(['bk-1']), categorySummaryOf: summaryOf, lookupItemsOf });
+    expect(storeSpies.getAllStoredProducts).not.toHaveBeenCalled();
+    expect(summaryOf).toHaveBeenCalledTimes(1);
+    expect(lookupItemsOf).toHaveBeenCalledWith('a', expect.any(Number), 10);
+    for (const call of spies.refreshPersonPrices.mock.calls) expect(call[2]).toMatchObject({ summary: ALL });
+  });
+
+  it('楽天APIの回数の上限：次のカテゴリで超えうるなら始めず、次回は止まったカテゴリから続ける', async () => {
+    const store = createMemoryStateStore();
+    const opts = { budgetMs: 600_000, maxApiCalls: 20, store, now, persons: [P('a')], relatedIdsOf: async () => new Set<string>(), categorySummaryOf: async () => ALL };
+    const r1 = await runPriceRefreshBatch(opts);
+    // 0+12, 3+12, 6+12 は20以下で開始、9+12=21 は超えるので4カテゴリ目を始めない
+    expect(spies.refreshPersonPrices).toHaveBeenCalledTimes(3);
+    expect(r1.stoppedBy).toBe('max_api_calls');
+    expect(r1.persons[0].completed).toBe(false);
+    expect(store.states.a.nextCategory).toBe(3);
+    expect(r1.usage).toMatchObject({ apiCalls: 9 });
+    expect(store.states.a.last?.usage).toMatchObject({ apiCalls: 9 });
+    expect(store.lastRun?.usage).toMatchObject({ apiCalls: 9 });
+    spies.refreshPersonPrices.mockClear();
+    const r2 = await runPriceRefreshBatch(opts);
+    expect(spies.refreshPersonPrices.mock.calls.map((c) => c[1][0])).toEqual(['グッズ', 'CD', '中古']);
+    expect(r2.persons[0].completed).toBe(true);
+  });
+
+  it('カテゴリ数の上限：上限まで検索したら次の人物・カテゴリに進まない（続きは次回）', async () => {
+    const store = createMemoryStateStore();
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, maxCategories: 4, store, now, persons: [P('a'), P('b')], relatedIdsOf: async () => new Set<string>(), categorySummaryOf: async () => ALL });
+    expect(spies.refreshPersonPrices).toHaveBeenCalledTimes(4);
+    expect(r.stoppedBy).toBe('max_categories');
+    expect(r.persons.map((p) => p.name)).toEqual(['a']);
+    expect(store.states.a.nextCategory).toBe(4);
+  });
+
+  it('対象の無いカテゴリ（商品なし・related なし）は上限の数に入れない', async () => {
+    const store = createMemoryStateStore();
+    const summary = { ...ALL, 写真集: { items: 0, eligible: 0 }, '本・雑誌': { items: 5, eligible: 0 } };
+    spies.refreshPersonPrices.mockImplementation(async (_p, cats: string[]) => { clock += 1000; if (summary[cats[0] as keyof typeof summary].eligible > 0) gateSpies.calls += 3; return okCategory(0); });
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, maxCategories: 4, store, now, persons: [P('a')], relatedIdsOf: async () => new Set<string>(), categorySummaryOf: async () => summary });
+    expect(r.persons[0].completed).toBe(true); // 検索するのは4カテゴリだけなので上限内で完了
+  });
+
+  it('コード指定が楽天APIの回数の上限で途中になったら未完了（次回はコード指定から）', async () => {
+    const store = createMemoryStateStore();
+    spies.refreshPersonPrices.mockImplementation(async () => { clock += 1000; return okCategory(0); }); // 検索は0回
+    spies.selectLookupCandidates.mockReturnValue(Array.from({ length: 20 }, (_, i) => ({ code: `book:${i}` })));
+    spies.lookupPricesByCode.mockImplementation(async (_n, cands: unknown[]) => { gateSpies.calls += cands.length; return { attempted: cands.length, fromCache: 0, applied: cands.length, notFound: 0, mismatched: 0, failed: 0, stoppedBy: 'done', reviews: [] }; });
+    // 上限14回：人物の開始時は 0+12≦14 で開始。検索は0回なので、コード指定は残りの14件まで（候補20件のうち）
+    const r = await runPriceRefreshBatch({ budgetMs: 600_000, maxApiCalls: 14, lookupPerPerson: 20, store, now, persons: [P('a')], relatedIdsOf: async () => new Set<string>(), categorySummaryOf: async () => ({}), lookupItemsOf: async () => ({}) });
+    expect(spies.lookupPricesByCode.mock.calls[0][1]).toHaveLength(14);
+    expect(r.stoppedBy).toBe('max_api_calls');
+    expect(r.persons[0].completed).toBe(false);
+    expect(store.states.a.nextCategory).toBe(6);
   });
 });
