@@ -79,7 +79,7 @@ export interface PersonLastResult {
   /** 今回処理したカテゴリ数 */
   categories: number;
   failedCategories: FailedCategory[];
-  lookup?: Pick<LookupResult, 'attempted' | 'fromCache' | 'applied' | 'notFound' | 'mismatched' | 'failed' | 'stoppedBy'>;
+  lookup?: Pick<LookupResult, 'attempted' | 'fromCache' | 'applied' | 'notFound' | 'mismatched' | 'failed' | 'unavailable' | 'stoppedBy'>;
   completed: boolean;
   /** 価格以外の変更を検知して自動停止した */
   halted?: boolean;
@@ -443,7 +443,7 @@ export async function runPriceRefreshBatch(opts: RunOptions): Promise<RunSummary
 }
 
 function lookupBrief(l: LookupResult): PersonLastResult['lookup'] {
-  return { attempted: l.attempted, fromCache: l.fromCache, applied: l.applied, notFound: l.notFound, mismatched: l.mismatched, failed: l.failed, stoppedBy: l.stoppedBy };
+  return { attempted: l.attempted, fromCache: l.fromCache, applied: l.applied, notFound: l.notFound, mismatched: l.mismatched, failed: l.failed, unavailable: l.unavailable ?? 0, stoppedBy: l.stoppedBy };
 }
 
 /** 実行・人物の処理で使った量（開始時との差） */

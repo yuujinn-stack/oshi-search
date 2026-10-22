@@ -295,9 +295,10 @@ describe('コード指定の取得', () => {
       fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
     });
-    const api = (itemCode: string, price: number) => ({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemCode, itemPrice: price, reviewCount: 3, reviewAverage: 4 } }] }) });
+    // 楽天ブックス総合検索APIの結果（商品ページURLの商品番号で照合する。availability 1＝在庫あり）
+    const api = (code: string, price: number, availability = '1') => ({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemUrl: `https://books.rakuten.co.jp/rb/${code.replace('book:', '')}/`, itemPrice: price, availability } }] }) });
 
-    it('返ってきた itemCode が一致した商品だけ価格の項目を更新（カテゴリ行の再検索日時・ID・商品名・URLは変えない）。0件・不一致は変更しない', async () => {
+    it('商品番号が完全一致した商品だけ価格の項目を更新（カテゴリ行の再検索日時・ID・商品名・URLは変えない）。0件・別の商品番号だけは変更しない', async () => {
       const a = book('1', { id: 'mn-1', title: '手動の名前' }), b = book('2'), c = book('3', { priceFetchedAt: OLD, price: 999 });
       seed('写真集', [a, b, c]);
       fetchMock
@@ -392,7 +393,7 @@ describe('コード指定の共有キャッシュ（同じ商品が複数の人�
   });
 
   it('期限切れ・別コードのキャッシュは使わず楽天APIで取得し、結果をキャッシュに保存する', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemCode: 'book:9', itemPrice: 1900 } }] }) });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemUrl: 'https://books.rakuten.co.jp/rb/9/', itemPrice: 1900, availability: '1' } }] }) });
     vi.stubGlobal('fetch', fetchMock);
     seed('CD', [book('9', { category: 'CD' })]);
     const { m, cache } = memCache();
@@ -404,7 +405,7 @@ describe('コード指定の共有キャッシュ（同じ商品が複数の人�
   });
 
   it('同じ実行で同じコードが複数カテゴリにあっても楽天APIは1回', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemCode: 'book:9', itemPrice: 1900 } }] }) });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemUrl: 'https://books.rakuten.co.jp/rb/9/', itemPrice: 1900, availability: '1' } }] }) });
     vi.stubGlobal('fetch', fetchMock);
     seed('CD', [book('9', { category: 'CD' })]);
     seed('写真集', [book('9')]);
@@ -496,8 +497,8 @@ describe('更新の対象は related の商品だけ・30%以上の変動は確�
     it('取得価格が前回から30%以上変わる商品は反映しない（reviews に入る）', async () => {
       seed('写真集', [book('1'), book('2')]);
       const fetchMock = vi.fn()
-        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemCode: 'book:1', itemPrice: 900 } }] }) }) // -40%
-        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemCode: 'book:2', itemPrice: 1600 } }] }) }); // +6.7%
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemUrl: 'https://books.rakuten.co.jp/rb/1/', itemPrice: 900, availability: '1' } }] }) }) // -40%
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ Items: [{ Item: { itemUrl: 'https://books.rakuten.co.jp/rb/2/', itemPrice: 1600, availability: '1' } }] }) }); // +6.7%
       vi.stubGlobal('fetch', fetchMock);
       const r = await lookupPricesByCode(PERSON.name, selectLookupCandidates({ '写真集': { products: [book('1'), book('2')] } }, { nowMs: Date.now(), freshMs: 0, limit: 10 }));
       expect(r.applied).toBe(1);

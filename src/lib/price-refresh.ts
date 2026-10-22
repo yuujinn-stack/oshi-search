@@ -221,6 +221,52 @@ export function lookupCodeOf(item: Pick<RakutenItem, 'itemUrl' | 'affiliateUrl' 
 
 interface IchibaApiItem { itemCode?: string; itemPrice?: number }
 
+// 楽天ブックスの商品は楽天市場商品検索APIの itemCode（book:<番号>）では取得できない（常に0件）。
+// 楽天ブックス総合検索APIを商品名で検索し、結果の商品ページURLの商品番号が保存中の商品と完全に一致したものだけを使う
+// （商品番号で直接検索するパラメータは無い。商品名が似ているだけの別の版・別の商品は採用しない）。
+const BOOKS_TOTAL_ENDPOINT = 'https://openapi.rakuten.co.jp/services/api/BooksTotal/Search/20170404';
+/**
+ * 楽天ブックスで今購入できる在庫状況（availability）：1 在庫あり・2 3〜7日で発送・3 3〜9日で発送・4 メーカー取り寄せ・5 予約受付中。
+ * 6（メーカーに在庫確認）と空（品切れ・販売終了）は購入できると確認できないため、価格を反映しない（保存中の価格のまま）。
+ */
+const BOOKS_PURCHASABLE = new Set(['1', '2', '3', '4', '5']);
+
+interface BooksApiItem { itemUrl?: string; itemPrice?: number | string; availability?: number | string }
+
+/** 楽天ブックス総合検索APIに渡す検索語（保存中の商品名から。【】[]（）の補足・記号を除き、最大4語・40文字。作れなければ null） */
+export function booksSearchKeyword(title: string | undefined): string | null {
+  const words = String(title ?? '')
+    .replace(/【[^】]*】|\[[^\]]*\]|［[^］]*］|\([^)]*\)|（[^）]*）/g, ' ')
+    .replace(/[「」『』〜～/／:：!！?？・,，.。、"“”'’<>＜＞|｜#＃*＊]/g, ' ')
+    .split(/\s+/)
+    // 1語は2文字以上（半角1文字・かな1文字は API の条件を満たさない）。漢字1文字は可
+    .filter((w) => w.length >= 2 || /^[\u4e00-\u9fff]$/.test(w));
+  const out: string[] = [];
+  for (const w of words) {
+    if (out.length >= 4 || [...out, w].join(' ').length > 40) break;
+    out.push(w);
+  }
+  return out.length ? out.join(' ') : null;
+}
+
+export type BooksMatch =
+  | { kind: 'found'; price: number }
+  | { kind: 'not_found' }
+  | { kind: 'mismatched' }
+  | { kind: 'unavailable' };
+
+/** 楽天ブックス総合検索APIの結果から、保存中の商品と商品番号が完全一致する商品を選ぶ（純粋関数） */
+export function matchBooksResult(items: readonly BooksApiItem[], stored: Pick<RakutenItem, 'itemUrl' | 'affiliateUrl' | 'itemCode'>): BooksMatch {
+  const key = productIdentityKey(stored);
+  if (!key.startsWith('books:')) return { kind: 'mismatched' };
+  if (items.length === 0) return { kind: 'not_found' };
+  const hit = items.find((x) => productIdentityKey({ itemUrl: String(x.itemUrl ?? ''), affiliateUrl: '' }) === key);
+  if (!hit) return { kind: 'mismatched' }; // 似た商品はあるが同じ商品番号は無い：採用しない
+  const price = Number(hit.itemPrice);
+  if (!BOOKS_PURCHASABLE.has(String(hit.availability ?? '')) || !(Number.isInteger(price) && price > 0)) return { kind: 'unavailable' };
+  return { kind: 'found', price };
+}
+
 export interface LookupCandidate {
   category: ProductCategory;
   item: RakutenItem;
@@ -252,7 +298,13 @@ export function selectLookupCandidates(
  * コード指定の取得結果の共有キャッシュ（同じ商品が複数の人物に保存されているため。例：グループのCDは全メンバーに保存）。
  * 値は楽天APIから実際に取得した価格と取得日時。期限内に同じコードが出たら API を呼ばずにその値（取得日時もそのまま）を使う。
  */
-export interface CachedLookup { itemCode: string; price: number; fetchedAt: number }
+export interface CachedLookup {
+  itemCode: string;
+  price: number;
+  fetchedAt: number;
+  /** 楽天ブックスで取得できなかった結果（見つからない・同じ商品番号が無い・購入できない）。price は 0。期限内は同じ商品の API を呼ばない */
+  status?: 'not_found' | 'mismatched' | 'unavailable';
+}
 export interface LookupCache {
   getMany(codes: readonly string[]): Promise<Map<string, CachedLookup>>;
   setMany(entries: readonly CachedLookup[]): Promise<void>;
@@ -267,6 +319,8 @@ export interface LookupResult {
   notFound: number;
   mismatched: number;
   failed: number;
+  /** 楽天ブックスで同じ商品は見つかったが、品切れ・販売終了等で購入できると確認できず反映しなかった件数 */
+  unavailable?: number;
   stoppedBy: 'done' | 'deadline' | 'rate_limited' | 'gate' | 'config_missing' | 'upstream_errors';
   /** 前回の価格から30%以上の変動などで反映せず確認対象にした商品（変更しない） */
   reviews: PriceReview[];
@@ -289,7 +343,7 @@ export async function lookupPricesByCode(
   opts: { deadline?: number; now?: () => number; cache?: LookupCache; cacheMaxAgeMs?: number; maxConsecutiveFailures?: number } = {},
 ): Promise<LookupResult> {
   const now = opts.now ?? (() => Date.now());
-  const result: LookupResult = { attempted: 0, fromCache: 0, applied: 0, notFound: 0, mismatched: 0, failed: 0, stoppedBy: 'done', reviews: [] };
+  const result: LookupResult = { attempted: 0, fromCache: 0, applied: 0, notFound: 0, mismatched: 0, failed: 0, unavailable: 0, stoppedBy: 'done', reviews: [] };
   if (candidates.length === 0) return result;
 
   const updatesByCategory = new Map<ProductCategory, Map<string, PriceUpdate>>();
@@ -311,7 +365,10 @@ export async function lookupPricesByCode(
       const maxAge = opts.cacheMaxAgeMs ?? 3 * 24 * 60 * 60 * 1000;
       pending = pending.filter((c) => {
         const v = cached.get(c.code);
-        if (!v || v.itemCode !== c.code || !(v.price > 0) || now() - v.fetchedAt > maxAge) return true;
+        if (!v || v.itemCode !== c.code || now() - v.fetchedAt > maxAge) return true;
+        // 楽天ブックスで取得できなかった結果（期限内）：API を呼ばず、価格も変えない
+        if (v.status && c.code.startsWith('book:')) { result.fromCache++; return false; }
+        if (!(v.price > 0)) return true;
         if (c.item.priceFetchedAt && c.item.priceFetchedAt >= v.fetchedAt) { result.fromCache++; return false; }
         addUpdate(c, v);
         result.fromCache++;
@@ -346,11 +403,20 @@ export async function lookupPricesByCode(
       // 同じ実行内で同じコードを取得済みなら API を呼ばない（同じ人物の複数カテゴリなど）
       if (doneByCode.has(c.code)) { const v = doneByCode.get(c.code); if (v) addUpdate(c, v); result.fromCache++; continue; }
       if (opts.deadline && now() >= opts.deadline) { result.stoppedBy = 'deadline'; break; }
+      const isBooks = c.code.startsWith('book:');
+      let reqUrl: string;
+      if (isBooks) {
+        // 楽天ブックス：商品名で総合検索（品切れ・販売終了も含めて返させ、在庫状況で区別する）。検索語が作れなければ取得しない
+        const keyword = booksSearchKeyword(c.item.title);
+        if (!keyword) { result.notFound++; doneByCode.set(c.code, null); continue; }
+        reqUrl = `${BOOKS_TOTAL_ENDPOINT}?${new URLSearchParams({ applicationId: appId, accessKey, keyword, hits: '30', outOfStockFlag: '1', elements: 'itemUrl,itemPrice,availability' })}`;
+      } else {
+        reqUrl = `${ICHIBA_ENDPOINT}?${new URLSearchParams({ applicationId: appId, accessKey, itemCode: c.code, hits: '1' })}`;
+      }
       result.attempted++;
-      const params = new URLSearchParams({ applicationId: appId, accessKey, itemCode: c.code, hits: '1' });
       let res: Response;
       try {
-        res = await rakutenApiFetch(`${ICHIBA_ENDPOINT}?${params}`, { cache: 'no-store', headers: { Origin: origin, accessKey } },
+        res = await rakutenApiFetch(reqUrl, { cache: 'no-store', headers: { Origin: origin, accessKey } },
           { label: 'price-lookup', maxWaitMs: 60_000, onUnavailable: 'local' });
       } catch (err) {
         if (GATE_ERRORS.some((E) => err instanceof E)) { result.stoppedBy = err instanceof RakutenApiCooldownError ? 'rate_limited' : 'gate'; result.failed++; break; }
@@ -365,6 +431,24 @@ export async function lookupPricesByCode(
       }
       if (!res.ok) { if (failOnce(String(res.status))) break; continue; } // 503 等：この商品は変更しない
       streak = 0;
+      if (isBooks) {
+        const data = (await res.json()) as { Items?: ({ Item?: BooksApiItem } & BooksApiItem)[] };
+        const m = matchBooksResult((data.Items ?? []).map((x) => x.Item ?? x), c.item);
+        if (m.kind !== 'found') {
+          if (m.kind === 'not_found') result.notFound++;
+          else if (m.kind === 'mismatched') result.mismatched++;
+          else result.unavailable = (result.unavailable ?? 0) + 1;
+          doneByCode.set(c.code, null);
+          // 取得できなかった結果も共有キャッシュに残す（期限内は他の人物の同じ商品で API を呼ばない。価格は変えない）
+          fetchedNow.push({ itemCode: c.code, price: 0, fetchedAt: Date.now(), status: m.kind });
+          continue;
+        }
+        const v: CachedLookup = { itemCode: c.code, price: m.price, fetchedAt: Date.now() };
+        doneByCode.set(c.code, v);
+        fetchedNow.push(v);
+        addUpdate(c, v);
+        continue;
+      }
       const data = (await res.json()) as { Items?: { Item: IchibaApiItem }[] };
       const it = data.Items?.[0]?.Item;
       if (!it) { result.notFound++; doneByCode.set(c.code, null); continue; } // 販売終了・在庫切れ等：変更しない
