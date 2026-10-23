@@ -273,18 +273,25 @@ export interface LookupCandidate {
   code: string;
 }
 
+/** コード指定の候補から除く商品のキー（カテゴリと商品ID。同じ回のカテゴリ検索で確認待ちにした商品など） */
+export function lookupExcludeKey(category: string, id: string): string {
+  return JSON.stringify([category, id]);
+}
+
 /**
  * 更新の候補を選ぶ：コード指定で取得できる商品のうち、priceFetchedAt が freshMs 以内でないもの。
  * 取得日時が不明な商品を最優先、その後は古い順（日時は推測で補わない）。onlyIds を渡すとその商品だけ。
+ * excludeKeys（lookupExcludeKey）の商品は候補にしない（上限の枠は他の商品に回る）。
  */
 export function selectLookupCandidates(
   stored: Partial<Record<ProductCategory, { products: RakutenItem[] }>>,
-  opts: { nowMs: number; freshMs: number; limit: number; onlyIds?: ReadonlySet<string> },
+  opts: { nowMs: number; freshMs: number; limit: number; onlyIds?: ReadonlySet<string>; excludeKeys?: ReadonlySet<string> },
 ): LookupCandidate[] {
   const list: LookupCandidate[] = [];
   for (const category of CATEGORIES) {
     for (const item of stored[category]?.products ?? []) {
       if (opts.onlyIds && !opts.onlyIds.has(item.id)) continue;
+      if (opts.excludeKeys?.has(lookupExcludeKey(category, item.id))) continue;
       if (item.priceFetchedAt && opts.nowMs - item.priceFetchedAt < opts.freshMs) continue;
       const code = lookupCodeOf(item);
       if (code) list.push({ category, item, code });

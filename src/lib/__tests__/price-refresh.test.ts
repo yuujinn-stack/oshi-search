@@ -252,7 +252,7 @@ describe('価格更新専用モード：保存の内容', () => {
   });
 });
 
-import { lookupCodeOf, selectLookupCandidates, lookupPricesByCode } from '../price-refresh';
+import { lookupCodeOf, lookupExcludeKey, selectLookupCandidates, lookupPricesByCode } from '../price-refresh';
 import { __resetRakutenApiGateForTests } from '../rakuten-api-gate';
 import { withPriceFreshness } from '../price-freshness';
 
@@ -285,6 +285,17 @@ describe('コード指定の取得', () => {
     ] } };
     const list = selectLookupCandidates(stored, { nowMs: NOW, freshMs: 3 * 86400000, limit: 10, onlyIds: new Set(['bk-1', 'bk-2', 'bk-3', 'bk-4']) });
     expect(list.map((c) => c.item.id)).toEqual(['bk-2', 'bk-4', 'bk-1']);
+  });
+
+  it('候補から除く商品（同じ回に確認待ちにした商品）：そのカテゴリのその商品だけ除き、上限の枠は他の商品に回す', () => {
+    const NOW = Date.UTC(2026, 9, 20);
+    const stored = { '写真集': { products: [book('1'), book('2'), book('3')] }, CD: { products: [book('1')] } };
+    const excludeKeys = new Set([lookupExcludeKey('写真集', 'bk-1')]);
+    const list = selectLookupCandidates(stored, { nowMs: NOW, freshMs: 3 * 86400000, limit: 3, excludeKeys });
+    // 写真集の bk-1 は除く。別のカテゴリ（CD）の同じ商品IDは除かない。枠3件は bk-2・bk-3・CD の bk-1 で埋まる
+    expect(list.map((c) => `${c.category}/${c.item.id}`)).toEqual(['写真集/bk-2', '写真集/bk-3', 'CD/bk-1']);
+    // 除く商品が無ければ従来どおり
+    expect(selectLookupCandidates(stored, { nowMs: NOW, freshMs: 3 * 86400000, limit: 3 }).map((c) => c.item.id)).toEqual(['bk-1', 'bk-2', 'bk-3']);
   });
 
   describe('取得と反映', () => {

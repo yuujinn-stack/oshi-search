@@ -15,6 +15,7 @@ import { getRedis } from '@/lib/redis';
 import { CATEGORIES, listPersonsWithProducts, productIdentityKey as productIdentityKeyOf, type PriceReview } from '@/lib/product-store';
 import {
   lookupCodeOf,
+  lookupExcludeKey,
   lookupPricesByCode,
   refreshPersonPrices,
   selectLookupCandidates,
@@ -533,8 +534,22 @@ async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | 
       // 更新の対象は判定が related の商品だけ（判定・表示設定は読むだけで変えない）
       const relatedIds = await relatedIdsOf(name);
       const priceReviews: TimedPriceReview[] = [];
-      // 確認待ちに楽天から価格を取得した日時を付ける（承認時に priceFetchedAt にする）
-      const timed = (rs?: readonly PriceReview[]) => (rs ?? []).map((x) => ({ ...x, fetchedAt: now() }));
+      // 確認待ちに楽天から価格を取得した日時を付ける（承認時に priceFetchedAt にする）。
+      // 同じ組（受け取り箱のキー＝人物・カテゴリ・商品ID・変更前の価格・取得した価格）は1回の処理で1件だけ数える
+      const reviewKeys = new Set<string>();
+      const addReviews = (rs?: readonly PriceReview[]) => {
+        for (const x of rs ?? []) {
+          const key = reviewInboxField(name, x);
+          if (reviewKeys.has(key)) continue;
+          reviewKeys.add(key);
+          priceReviews.push({ ...x, fetchedAt: now() });
+        }
+      };
+      // コード指定で取り直さない商品：この回のカテゴリ検索で確認待ちにした商品と、続きから再開する場合は前回の途中までに
+      // 確認待ちにした商品（取得から lookupFreshMs 以内のものだけ。古いものは取り直して価格の変化・期限を確かめる）
+      const resumedReviews = resumeFrom > 0
+        ? (prev.last?.priceReviews ?? []).filter((x) => x.fetchedAt != null && now() - x.fetchedAt < lookupFreshMs)
+        : [];
       // 確認待ちを受け取り箱にも残す（失敗しても価格更新は続ける。人物の直近の結果にも残っている）
       const keepReviews = async () => {
         if (priceReviews.length && store.addReviews) await store.addReviews(name, priceReviews).catch(() => {});
@@ -561,7 +576,7 @@ async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | 
         if (r.remaining.length > 0) break;
         updated += r.updated;
         categoriesDone++;
-        priceReviews.push(...timed(r.reviews));
+        addReviews(r.reviews);
         notEligible += r.categories.reduce((n, c) => n + (c.notEligible ?? 0), 0);
         let categoryFailed = false;
         for (const c of r.categories) {
@@ -591,9 +606,14 @@ async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | 
       if (finishedCategories && !limitStop && !rateLimited && !errorStopped && now() < deadline && (opts.lookupPerPerson ?? 0) > 0) {
         // 候補になりうる商品だけを DB で絞って読む（人物の全商品は読まない）
         const nowMs = now();
-        const stored = await lookupItemsOf(name, nowMs - lookupFreshMs, opts.lookupPerPerson!);
+        // 確認待ちにした商品は、同じ内容を楽天APIで取り直して同じ確認待ちを作らない（除いた分の枠は他の商品に回す）
+        const excludeKeys = new Set(
+          [...priceReviews, ...resumedReviews].filter((x) => x.category).map((x) => lookupExcludeKey(x.category!, x.id)),
+        );
+        const stored = await lookupItemsOf(name, nowMs - lookupFreshMs, opts.lookupPerPerson! + excludeKeys.size);
         const all = selectLookupCandidates(stored, {
           nowMs, freshMs: lookupFreshMs, limit: opts.lookupPerPerson!, onlyIds: relatedIds,
+          ...(excludeKeys.size ? { excludeKeys } : {}),
         });
         // 楽天APIの回数の上限の残りの分だけ（1件につき最大1回）。残りは次回
         const remainingCalls = opts.maxApiCalls ? Math.max(0, opts.maxApiCalls - callsUsed()) : all.length;
@@ -603,7 +623,7 @@ async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | 
         lookup = await lookupPricesByCode(name, candidates, { deadline, now, cache: lookupCache ?? undefined, cacheMaxAgeMs: lookupFreshMs, maxConsecutiveFailures: maxFailures });
         base.lookedUp += lookup.attempted;
         base.lookupApplied += lookup.applied;
-        priceReviews.push(...timed(lookup.reviews));
+        addReviews(lookup.reviews);
         if (lookup.attempted > lookup.failed) { failureStreak = 0; recentFailures.length = 0; }
         if (lookup.stoppedBy === 'rate_limited') {
           rateLimited = true;

@@ -23,6 +23,7 @@ vi.mock('@/lib/price-refresh', () => ({
   lookupPricesByCode: spies.lookupPricesByCode,
   selectLookupCandidates: spies.selectLookupCandidates,
   lookupCodeOf: (p: { id: string }) => (p.id.startsWith('bk-') ? `book:${p.id.slice(3)}` : null),
+  lookupExcludeKey: (category: string, id: string) => JSON.stringify([category, id]),
 }));
 const storeSpies = vi.hoisted(() => ({ getAllStoredProducts: vi.fn(), upsert: vi.fn() }));
 vi.mock('@/lib/product-store', () => ({
@@ -413,7 +414,9 @@ describe('related の商品だけを更新・30%以上の変動は確認対象�
   it('記録する確認対象は人物ごとに上限まで（Redis の容量を抑える）', async () => {
     const store = createMemoryStateStore();
     const many = Array.from({ length: 80 }, (_, i) => ({ category: 'CD', id: `x-${i}`, previousPrice: 1000, fetchedPrice: 2000, changeRate: 1, reason: 'price_change_30pct' }));
-    spies.refreshPersonPrices.mockImplementation(async () => { clock += 10_000; return { ...okCategory(0), reviews: many.slice(0, 20) }; });
+    // カテゴリごとに別の20件（同じ組は1件と数えるため、重複しない確認待ちで上限を確かめる）
+    let call = 0;
+    spies.refreshPersonPrices.mockImplementation(async () => { clock += 10_000; const i = call++; return { ...okCategory(0), reviews: many.slice(i * 20, i * 20 + 20) }; });
     await runPriceRefreshBatch({ budgetMs: 600_000, store, now, persons: [P('a')], relatedIdsOf: async () => new Set() });
     expect(store.states.a.last?.priceReviews).toHaveLength(50);
   });
@@ -508,5 +511,95 @@ describe('DB の読み込みの削減と1回の上限', () => {
     expect(r.stoppedBy).toBe('max_api_calls');
     expect(r.persons[0].completed).toBe(false);
     expect(store.states.a.nextCategory).toBe(6);
+  });
+});
+
+describe('確認待ちの重複を作らない（同じ回のカテゴリ検索とコード指定）', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const key = (category: string, id: string) => JSON.stringify([category, id]);
+  const review = { category: '写真集', id: 'bk-13516177', previousPrice: 704, fetchedPrice: 990, changeRate: 0.406, reason: 'price_change_30pct' as const };
+  // カテゴリ検索の写真集で確認待ちを1件返す
+  const searchFlags = (rv = review) => spies.refreshPersonPrices.mockImplementation(async (_p, cats: string[]) => {
+    clock += 10_000;
+    return cats[0] === rv.category ? { ...okCategory(0), reviews: [rv] } : okCategory(1);
+  });
+  const lookupReturns = (reviews: unknown[]) => spies.lookupPricesByCode.mockResolvedValue({ attempted: 1, fromCache: 0, applied: 0, notFound: 0, mismatched: 0, failed: 0, stoppedBy: 'done', reviews });
+  const run = (store: ReturnType<typeof createMemoryStateStore>, extra: Record<string, unknown> = {}) =>
+    runPriceRefreshBatch({ budgetMs: 600_000, lookupPerPerson: 60, store, now, persons: [P('a')], relatedIdsOf: async () => new Set([review.id]), lookupItemsOf: async () => ({}), ...extra });
+
+  it('カテゴリ検索で確認待ちにした商品は、コード指定の候補から除く（楽天APIで取り直さない）', async () => {
+    const store = createMemoryStateStore();
+    searchFlags();
+    await run(store);
+    const opts = spies.selectLookupCandidates.mock.calls[0][1];
+    expect(opts.excludeKeys).toEqual(new Set([key('写真集', 'bk-13516177')]));
+    expect(opts).toMatchObject({ limit: 60 }); // 枠は減らさない（除いた分は他の商品に回る）
+  });
+
+  it('同じ組（人物・カテゴリ・商品ID・変更前の価格・取得した価格）は1回の処理で1件だけ数える（記録・要約・受け取り箱）', async () => {
+    const store = createMemoryStateStore();
+    searchFlags();
+    lookupReturns([review]); // 仮にコード指定からも同じ内容が返っても
+    const r = await run(store);
+    expect(r.persons[0].priceReviews).toHaveLength(1);
+    expect(store.states.a.last?.priceReviews).toHaveLength(1);
+    expect(store.lastRun?.priceReviews).toBe(1);
+    expect(Object.keys(store.reviewInbox)).toEqual([JSON.stringify(['a', '写真集', 'bk-13516177', 704, 990])]);
+  });
+
+  it('同じ商品でも取得した価格が違う確認待ちは別に残す', async () => {
+    const store = createMemoryStateStore();
+    searchFlags();
+    lookupReturns([{ ...review, fetchedPrice: 1100, changeRate: 0.5625 }]);
+    const r = await run(store);
+    expect(r.persons[0].priceReviews.map((x) => x.fetchedPrice)).toEqual([990, 1100]);
+    expect(Object.keys(store.reviewInbox)).toHaveLength(2);
+  });
+
+  it('別の人物の同じ商品は除かず、確認待ちも人物ごとに別に残す', async () => {
+    const store = createMemoryStateStore();
+    searchFlags();
+    lookupReturns([]);
+    const r = await run(store, { persons: [P('オードリー'), P('若林正恭')] });
+    // 人物ごとに除く商品を作り直す（どちらもその人物のカテゴリ検索で確認待ちにした分だけ）
+    for (const call of spies.selectLookupCandidates.mock.calls) expect(call[1].excludeKeys).toEqual(new Set([key('写真集', 'bk-13516177')]));
+    expect(r.persons.map((p) => p.priceReviews.length)).toEqual([1, 1]);
+    expect(Object.keys(store.reviewInbox).sort()).toEqual([
+      JSON.stringify(['オードリー', '写真集', 'bk-13516177', 704, 990]),
+      JSON.stringify(['若林正恭', '写真集', 'bk-13516177', 704, 990]),
+    ].sort());
+  });
+
+  it('確認待ちが無ければ除く商品も渡さない（従来どおり）', async () => {
+    const store = createMemoryStateStore();
+    await run(store);
+    expect(spies.selectLookupCandidates.mock.calls[0][1].excludeKeys).toBeUndefined();
+  });
+
+  it('続きから再開する場合：前回の途中までに確認待ちにした商品（3日以内）も除く。古い確認待ちは取り直す', async () => {
+    const fresh = { ...review, fetchedAt: clock - 3600_000 };
+    const old = { ...review, category: 'CD', id: 'bk-2', fetchedAt: clock - 4 * DAY };
+    const store = createMemoryStateStore({ a: { startedAt: clock - 7200_000, nextCategory: 3, last: { at: clock - 7200_000, updated: 0, categories: 3, failedCategories: [], completed: false, priceReviews: [fresh, old] } } });
+    await run(store);
+    expect(spies.refreshPersonPrices.mock.calls.map((c) => c[1][0])).toEqual(['グッズ', 'CD', '中古']); // 続きのカテゴリから
+    expect(spies.selectLookupCandidates.mock.calls[0][1].excludeKeys).toEqual(new Set([key('写真集', 'bk-13516177')]));
+  });
+
+  it('前回を最後まで終えた人物（新しい巡回）は、前回の確認待ちを除かない（価格の変化・期限を確かめるため取り直す）', async () => {
+    const store = createMemoryStateStore({ a: { completedAt: clock - 4 * DAY, startedAt: clock - 4 * DAY - 1000, nextCategory: 0, last: { at: clock - 4 * DAY, updated: 0, categories: 6, failedCategories: [], completed: true, priceReviews: [{ ...review, fetchedAt: clock - 4 * DAY }] } } });
+    await run(store);
+    expect(spies.selectLookupCandidates.mock.calls[0][1].excludeKeys).toBeUndefined();
+  });
+
+  it('除く商品があっても、コード指定の 429 ではその回を終え、確認待ちは残す', async () => {
+    const store = createMemoryStateStore();
+    searchFlags();
+    spies.lookupPricesByCode.mockResolvedValue({ attempted: 1, fromCache: 0, applied: 0, notFound: 0, mismatched: 0, failed: 1, stoppedBy: 'rate_limited', reviews: [] });
+    const r = await run(store, { persons: [P('a'), P('b')] });
+    expect(r.stoppedBy).toBe('rate_limited');
+    expect(r.persons.map((p) => p.name)).toEqual(['a']); // 次の人物に進まない
+    expect(r.persons[0].completed).toBe(false);
+    expect(r.persons[0].priceReviews).toHaveLength(1);
+    expect(Object.keys(store.reviewInbox)).toHaveLength(1);
   });
 });
