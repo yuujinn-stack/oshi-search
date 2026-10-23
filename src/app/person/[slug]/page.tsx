@@ -29,6 +29,8 @@ import StreamingNowSection from '@/components/site/StreamingNowSection';
 import FeaturedProductsSection from '@/components/site/FeaturedProductsSection';
 import OshiVodEntryCta from '@/components/oshi-vod/OshiVodEntryCta';
 import { buildOshiVodWithPath } from '@/lib/oshi-vod/params';
+import OshiShoppingEntryCta from '@/components/oshi-shopping/OshiShoppingEntryCta';
+import { buildOshiShoppingStartPath } from '@/lib/oshi-shopping/params';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
@@ -719,6 +721,16 @@ export default async function PersonPage({ params }: Props) {
             totalProductCount={totalProductCount}
             categoryCounts={countProductsByTab(allProductItems)}
           />
+
+          {/* 推し活お買い物診断への導線（関連商品がある人物のみ）。この人物を選択済みの状態で /oshi-shopping を開く */}
+          {hasProducts && (
+            <OshiShoppingEntryCta
+              href={buildOshiShoppingStartPath(person.name)}
+              title="この推しのアイテムを診断"
+              description={`用途と予算を選ぶだけで、${person.name}の関連商品と推し活グッズを提案`}
+              style={{ marginBottom: '32px' }}
+            />
+          )}
 
           {/* ━━━ 関連商品 ━━━ */}
           <section id="products" aria-labelledby="products-heading">

@@ -88,4 +88,14 @@ describe('trackRakutenClick', () => {
     trackRakutenClick({ ...base, placement: 'long', title: 'あ'.repeat(150) });
     expect(gtagMock.mock.calls[0][2].item_name).toHaveLength(100);
   });
+
+  test('countInRanking=false（一般商品）は /api/track に送らず GA4 だけに送る', () => {
+    trackRakutenClick({
+      ...base, productId: 'general:sample-shop:10000001', personSlug: '', pageType: 'oshi_shopping',
+      placement: 'oshi_shopping_general', countInRanking: false,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(gtagMock).toHaveBeenCalledTimes(1);
+    expect(gtagMock.mock.calls[0][2]).toMatchObject({ affiliate_name: 'rakuten', page_type: 'oshi_shopping', placement: 'oshi_shopping_general' });
+  });
 });

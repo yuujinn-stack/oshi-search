@@ -19,6 +19,7 @@ import { getPhotobookHomeItems } from '@/lib/photobook-store';
 import PhotobookHomeSection from '@/components/site/PhotobookHomeSection';
 import HomeGroupSection from '@/components/site/HomeGroupSection';
 import OshiVodEntryCta from '@/components/oshi-vod/OshiVodEntryCta';
+import OshiShoppingEntryCta from '@/components/oshi-shopping/OshiShoppingEntryCta';
 import type { HomeGroupItem } from '@/components/site/HomeGroupSection';
 import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
 import './home-graphic.css';
@@ -288,6 +289,16 @@ export default async function HomePage() {
           description="推しを選ぶだけで、一番多く見られるサービスがわかる"
           note="無料・登録不要"
           className="home-oshivod-cta"
+          style={{ marginBottom: '32px' }}
+        />
+
+        {/* 推し活お買い物診断への導線（サブスク診断の直後に同じ形で置く。<aside> で描画） */}
+        <OshiShoppingEntryCta
+          href="/oshi-shopping"
+          title="推し活お買い物診断"
+          description="推し・用途・予算を選ぶだけで、推しの関連商品と推し活グッズがわかる"
+          note="無料・登録不要"
+          className="home-oshishopping-cta"
           style={{ marginBottom: '32px' }}
         />
 

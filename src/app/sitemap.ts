@@ -38,6 +38,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'weekly' as const,
       priority: 0.7,
     },
+    // 推し活お買い物診断も本体ページのみ（人物×用途×予算の結果URL・人物選択済みURLは noindex のため含めない）
+    {
+      url: `${BASE_URL}/oshi-shopping`,
+      changeFrequency: 'weekly' as const,
+      priority: 0.7,
+    },
     // 応援広告ガイド（静的ページ。内容を更新したら lastModified も更新する）
     {
       url: `${BASE_URL}/support-ads`,

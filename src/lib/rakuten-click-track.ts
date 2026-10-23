@@ -11,7 +11,7 @@
 // リンク自体（href・target・rel）には一切手を加えないため、アフィリエイトリンクの動作に影響しない。
 import { sendGaEvent } from '@/lib/ga-event';
 
-export type RakutenPageType = 'home' | 'person' | 'group' | 'work' | 'photobooks';
+export type RakutenPageType = 'home' | 'person' | 'group' | 'work' | 'photobooks' | 'oshi_shopping';
 export type RakutenLinkElement = 'image' | 'title' | 'cta' | 'card';
 
 export interface RakutenClickInfo {
@@ -35,6 +35,12 @@ export interface RakutenClickInfo {
    * 人物ページ由来のメタデータ（personSlug 等）を空値で上書きしないようにする（クリック数は加算する）。
    */
   saveMeta?: boolean;
+  /**
+   * /api/track（Redis のクリック数。トップ「人気商品」の集計元）に送るか。既定 true。
+   * 人物の関連商品ではない一般商品（推し活お買い物診断の一般商品）は false にして GA4 だけに送り、
+   * 人物の商品ランキングに混ざらないようにする。
+   */
+  countInRanking?: boolean;
 }
 
 const DEDUPE_WINDOW_MS = 1000;
@@ -55,28 +61,30 @@ export function trackRakutenClick(info: RakutenClickInfo): void {
   recentClicks.set(dedupeKey, now);
 
   const saveMeta = info.saveMeta !== false;
-  try {
-    fetch('/api/track', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // 別タブで開くリンクでも送信が中断されないよう keepalive を付ける
-      keepalive: true,
-      body: JSON.stringify(
-        saveMeta
-          ? {
-              type: 'product',
-              productId: info.productId,
-              slug: info.personSlug,
-              title: info.title,
-              category: info.category,
-              imageUrl: info.imageUrl,
-              affiliateUrl: info.affiliateUrl,
-            }
-          : { type: 'product', productId: info.productId, slug: info.personSlug },
-      ),
-    }).catch(() => {});
-  } catch {
-    // 計測失敗で画面操作を妨げない
+  if (info.countInRanking !== false) {
+    try {
+      fetch('/api/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // 別タブで開くリンクでも送信が中断されないよう keepalive を付ける
+        keepalive: true,
+        body: JSON.stringify(
+          saveMeta
+            ? {
+                type: 'product',
+                productId: info.productId,
+                slug: info.personSlug,
+                title: info.title,
+                category: info.category,
+                imageUrl: info.imageUrl,
+                affiliateUrl: info.affiliateUrl,
+              }
+            : { type: 'product', productId: info.productId, slug: info.personSlug },
+        ),
+      }).catch(() => {});
+    } catch {
+      // 計測失敗で画面操作を妨げない
+    }
   }
 
   sendGaEvent('affiliate_click', {

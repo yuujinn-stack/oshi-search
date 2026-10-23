@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { RakutenItem } from '@/types/rakuten';
 import { getBestProductImageUrl, getRenderableProductTitle } from '@/lib/product-image';
 import { stripPromoTags } from '@/lib/product-curation';
+import { STALE_PRICE_LABEL } from '@/lib/price-freshness';
 import { trackRakutenClick, type RakutenLinkElement, type RakutenPageType } from '@/lib/rakuten-click-track';
 
 // ─── 星レーティング ───────────────────────────────────────────────────────────
@@ -136,14 +137,29 @@ export default function ProductCard({
       {/* ─ テキスト情報 ─ */}
       <div className="p-3 flex flex-col flex-1 gap-2">
 
-        {/* 価格（Visual Hierarchy 最優先） */}
-        {price > 0 && (
-          <p className="font-black text-[18px] leading-none" style={{ color: 'var(--ds-cta)' }}>
-            ¥{price.toLocaleString()}
-            <span className="text-[10px] font-normal ml-1" style={{ color: 'var(--ds-muted)' }}>
-              税込
-            </span>
-          </p>
+        {/* 価格（Visual Hierarchy 最優先）
+            取得日時が分かる場合は「M/D時点」を添え、取得から日数がたった価格は表示せず楽天での確認を案内する
+            （判定・表示文字列はサーバー側で付与済み。src/lib/price-freshness.ts） */}
+        {product.priceStale ? (
+          <div className="leading-tight">
+            <p className="font-bold text-[13px]" style={{ color: 'var(--ds-text)' }}>{STALE_PRICE_LABEL}</p>
+            {product.priceDateLabel && (
+              <p className="text-[10px] mt-0.5" style={{ color: 'var(--ds-muted)' }}>情報取得 {product.priceDateLabel}</p>
+            )}
+          </div>
+        ) : price > 0 && (
+          <div>
+            <p className="font-black text-[18px] leading-none" style={{ color: 'var(--ds-cta)' }}>
+              ¥{price.toLocaleString()}
+              <span className="text-[10px] font-normal ml-1" style={{ color: 'var(--ds-muted)' }}>
+                税込
+              </span>
+            </p>
+            {/* 取得日は狭いカードでも途中で折り返さないよう別の行に出す */}
+            {product.priceDateLabel && (
+              <p className="text-[10px] mt-1 leading-none" style={{ color: 'var(--ds-muted)' }}>{product.priceDateLabel}</p>
+            )}
+          </div>
         )}
 
         {/* 商品名（2行まで） */}

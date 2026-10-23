@@ -1,0 +1,152 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   推し活お買い物診断（/oshi-shopping）専用スタイル。
+   公開ページ共通の C案「Graphic Pop」（graphic-site.css・GraphicPageStyles）を前提に、
+   診断固有の部品（.os-*）だけをここで定義する。スコープは .os-page 配下のみ。
+   スマホ最優先（基準 360〜430px）。PC は max-w-3xl の1カラム。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshishopping { --graphic-page-label: 'DIAGNOSIS / SHOPPING'; }
+
+.os-page { overflow-wrap: anywhere; }
+.os-page .os-h1 { font-size: clamp(26px, 6.4vw, 36px); line-height: 1.25; margin: 0 0 8px; }
+.os-page .os-h2 { font-size: 18px; line-height: 1.4; margin: 0 0 8px; }
+.os-page .os-pr { margin: 0 0 12px; font-size: 11px; color: var(--graphic-muted); }
+.os-page .os-sections { display: flex; flex-direction: column; gap: 32px; }
+.os-page .os-sections > section { border-top: 1.5px solid var(--graphic-rule); padding-top: 18px; }
+.os-page .os-lead { font-size: 14px; line-height: 1.8; color: var(--graphic-body); margin: 0; }
+.os-page .os-note { font-size: 12px; line-height: 1.7; color: var(--graphic-muted); margin: 6px 0 0; }
+.os-page .os-notice {
+  font-size: 13px; line-height: 1.6; margin: 8px 0;
+  padding: 8px 12px; background: var(--graphic-orange-soft);
+  border-left: 3px solid var(--graphic-orange); color: var(--graphic-text);
+}
+.os-page .os-empty {
+  margin: 12px 0 0; padding: 14px; font-size: 14px; line-height: 1.7;
+  background: var(--graphic-panel); border: 1px dashed var(--graphic-border-strong); color: var(--graphic-body);
+}
+
+/* ── フォーム ── */
+.os-page .os-form { display: flex; flex-direction: column; gap: 18px; }
+.os-page .os-q { margin: 0; padding: 14px; border: 1.5px solid var(--graphic-ink); background: #FFFFFF; min-width: 0; }
+.os-page .os-q-title { display: flex; align-items: center; gap: 8px; padding: 0; margin: 0 0 10px; font-family: var(--graphic-font-jp); font-weight: 900; font-size: 16px; color: var(--graphic-ink); }
+.os-page .os-q-num {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 32px; height: 24px; padding: 0 6px;
+  font-family: var(--graphic-font-mono); font-size: 12px; font-weight: 700; background: var(--graphic-ink); color: #FFFFFF;
+}
+.os-page .os-label { display: block; font-size: 12px; font-weight: 700; color: var(--graphic-body); margin: 0 0 6px; }
+.os-page .os-input {
+  width: 100%; min-height: 48px; padding: 10px 12px;
+  border: 2px solid var(--graphic-ink); border-radius: 0 !important; background: #FFFFFF; color: var(--graphic-text);
+}
+.os-page .os-input:focus { outline: 2px solid var(--graphic-orange); outline-offset: 1px; }
+.os-page .os-dropdown {
+  position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; z-index: 50;
+  background: #FFFFFF; border: 1.5px solid var(--graphic-ink); box-shadow: 4px 4px 0 var(--graphic-ink);
+  max-height: 320px; overflow-y: auto;
+}
+.os-page .os-option {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 8px 12px;
+  text-align: left; background: #FFFFFF; border: 0; border-bottom: 1px solid var(--graphic-border); cursor: pointer;
+}
+.os-page .os-option.is-active { background: var(--graphic-orange-soft); }
+.os-page .os-option-kind { flex-shrink: 0; min-width: 22px; text-align: center; font-family: var(--graphic-font-mono); font-size: 10px; font-weight: 700; color: var(--graphic-orange-text); }
+.os-page .os-option-label { display: block; font-size: 14px; font-weight: 700; color: var(--graphic-text); }
+.os-page .os-option-sub { display: block; font-size: 11px; color: var(--graphic-muted); }
+.os-page .os-group-panel { margin-top: 12px; padding: 12px; background: var(--graphic-panel); border: 1px solid var(--graphic-border); }
+.os-page .os-group-title { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--graphic-ink); }
+.os-page .os-selected { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 12px; background: var(--graphic-orange-soft); border: 1.5px solid var(--graphic-orange); }
+.os-page .os-selected-name { font-family: var(--graphic-font-jp); font-weight: 900; font-size: 18px; color: var(--graphic-ink); }
+.os-page .os-selected-sub { font-size: 12px; color: var(--graphic-muted); }
+.os-page .os-selected .os-btn-sub { margin-left: auto; }
+.os-page .os-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.os-page .os-chip {
+  min-height: 44px; padding: 8px 12px; font-size: 14px; font-weight: 700;
+  background: #FFFFFF; color: var(--graphic-text); border: 1.5px solid var(--graphic-border-strong); cursor: pointer;
+}
+.os-page .os-chip.is-on { background: var(--graphic-ink); color: #FFFFFF; border-color: var(--graphic-ink); }
+.os-page .os-choices { display: grid; gap: 8px; }
+.os-page .os-choice {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-height: 56px; padding: 10px 12px;
+  text-align: left; background: #FFFFFF; border: 1.5px solid var(--graphic-border-strong); cursor: pointer;
+}
+.os-page .os-choice.is-on { background: var(--graphic-ink); border-color: var(--graphic-ink); box-shadow: 3px 3px 0 var(--graphic-orange); }
+.os-page .os-choice-label { font-size: 15px; font-weight: 800; color: var(--graphic-ink); }
+.os-page .os-choice-desc { font-size: 12px; color: var(--graphic-muted); }
+.os-page .os-choice.is-on .os-choice-label,
+.os-page .os-choice.is-on .os-choice-desc { color: #FFFFFF; }
+
+.os-page .os-btn-main {
+  display: flex; align-items: center; justify-content: center; width: 100%;
+  min-height: 52px; padding: 12px 16px;
+  font-family: var(--graphic-font-jp); font-weight: 900; font-size: 17px;
+  background: var(--graphic-ink); color: #FFFFFF; border: 0;
+  box-shadow: 4px 4px 0 var(--graphic-orange); cursor: pointer;
+}
+.os-page .os-btn-main:disabled { background: #9A9993; box-shadow: none; cursor: not-allowed; }
+.os-page .os-btn-main:not(:disabled):active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--graphic-orange); }
+.os-page .os-btn-sub {
+  min-height: 40px; padding: 6px 12px; font-size: 13px; font-weight: 700;
+  background: #FFFFFF; color: var(--graphic-ink); border: 1.5px solid var(--graphic-ink); cursor: pointer;
+}
+.os-page .os-btn-sub:hover { background: var(--graphic-ink); color: #FFFFFF; }
+.os-page .os-btn-link {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 8px 14px; font-weight: 800; font-size: 14px;
+  background: #FFFFFF; color: var(--graphic-ink); border: 2px solid var(--graphic-ink); box-shadow: 3px 3px 0 var(--graphic-orange); text-decoration: none;
+}
+
+/* ── 結果 ── */
+/* 一般商品の部分（Suspense でストリーミング）は親の .os-sections の並びにそのまま入れる */
+.os-page .os-sections--stream { display: contents; }
+.os-page .os-sections--stream > section { border-top: 1.5px solid var(--graphic-rule); padding-top: 18px; }
+.os-page .os-loading { margin: 12px 0 0; font-size: 13px; color: var(--graphic-muted); }
+.os-page .os-skeleton { aspect-ratio: 3 / 5; background: var(--graphic-panel); border: 1px solid var(--graphic-border); animation: os-pulse 1.4s ease-in-out infinite; }
+@keyframes os-pulse { 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { .os-page .os-skeleton { animation: none; } }
+/* 既存の商品カード（ProductCard）の商品名欄は最小高さ 2.5rem が2行分（約30px）より高く、3行目の上半分が見えてしまう。
+   人物ページには手を入れず、この診断ページ内だけ高さをちょうど2行分にそろえる（文字の内容は変えない） */
+.os-page .os-grid-item--person a.line-clamp-2 { flex: none; min-height: 2.75em !important; max-height: 2.75em; }
+.os-page .os-summary { border-top: 0 !important; padding: 14px !important; background: #FFFFFF; border: 2px solid var(--graphic-ink) !important; box-shadow: 5px 5px 0 var(--graphic-orange); }
+.os-page .os-summary-head { margin: 0; font-family: var(--graphic-font-jp); font-weight: 900; font-size: clamp(18px, 5vw, 22px); line-height: 1.45; color: var(--graphic-ink); }
+.os-page .os-summary-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; }
+.os-page .os-summary-tags li { padding: 2px 8px; font-size: 12px; font-weight: 700; background: var(--graphic-panel); border: 1px solid var(--graphic-ink); }
+.os-page .os-general-lead {
+  margin: 0 0 4px; padding: 8px 10px; font-size: 13px; line-height: 1.6; font-weight: 700;
+  background: var(--graphic-panel); border-left: 3px solid var(--graphic-ink); color: var(--graphic-text);
+}
+.os-page .os-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0 0; padding: 0; list-style: none; }
+.os-page .os-grid-item { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.os-page .os-grid-item > div:last-child, .os-page .os-grid-item > .os-card { flex: 1; }
+.os-page .os-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.os-page .os-badge { display: inline-block; padding: 1px 6px; font-size: 10px; font-weight: 700; background: #FFFFFF; border: 1px solid var(--graphic-ink); color: var(--graphic-ink); }
+.os-page .os-badge--rel { background: var(--graphic-orange-soft); border-color: var(--graphic-orange); }
+.os-page .os-seller { margin: 0; font-size: 11px; line-height: 1.5; color: var(--graphic-muted); }
+
+.os-page .os-card { display: flex; flex-direction: column; background: #FFFFFF; border: 1.5px solid var(--graphic-border); }
+.os-page .os-card-img { position: relative; display: block; aspect-ratio: 1 / 1; background: #F8F9FA; }
+.os-page .os-card-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; padding: 8px; }
+.os-page .os-card-noimg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--graphic-muted); }
+.os-page .os-card-body { display: flex; flex-direction: column; flex: 1; gap: 6px; padding: 10px; }
+.os-page .os-card-tag { margin: 0; font-size: 11px; font-weight: 800; color: var(--graphic-orange-text); }
+.os-page .os-card-price { margin: 0; font-weight: 900; font-size: 18px; line-height: 1; color: var(--ds-cta, var(--graphic-ink)); }
+.os-page .os-card-tax { margin-left: 4px; font-size: 10px; font-weight: 400; color: var(--graphic-muted); }
+/* 楽天の商品名は省略・改変せず全文を表示する（楽天ウェブサービス規約 第10条1項(7)） */
+.os-page .os-card-title { display: block; font-size: 12px; line-height: 1.6; color: var(--graphic-text); text-decoration: none; word-break: break-all; }
+.os-page .os-card-title:hover { text-decoration: underline; }
+.os-page .os-card-meta { display: flex; flex-direction: column; gap: 2px; margin: 0; font-size: 11px; color: var(--graphic-muted); }
+.os-page .os-card-cta {
+  display: flex; align-items: center; justify-content: center; min-height: 44px; margin-top: auto;
+  font-size: 13px; font-weight: 700; color: #FFFFFF; background: #BF0000; text-decoration: none;
+}
+.os-page .os-card-cta:hover { background: #A60000; }
+
+.os-page .os-links { margin-top: 10px; }
+.os-page .os-share { display: flex; flex-wrap: wrap; gap: 8px; }
+.os-page .os-about { margin: 0; padding-left: 1.2em; list-style: disc; font-size: 13px; line-height: 1.9; color: var(--graphic-body); }
+
+.os-page .os-foot { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--graphic-border); font-size: 11px; line-height: 1.8; color: var(--graphic-muted); }
+.os-page .os-foot p { margin: 0 0 10px; }
+
+@media (min-width: 640px) {
+  .os-page .os-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .os-page .os-choices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

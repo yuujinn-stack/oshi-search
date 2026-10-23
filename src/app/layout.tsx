@@ -5,6 +5,7 @@ import './globals.css';
 import Header from '@/components/Header';
 import DesignPreviewToggle from '@/components/site/DesignPreviewToggle';
 import AnalyticsGate from '@/components/site/AnalyticsGate';
+import { RAKUTEN_CREDIT_HTML } from '@/lib/rakuten-credit';
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp'),
@@ -39,6 +40,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <p className="text-xs text-gray-400 mb-4">
             本サイトはアフィリエイト広告を利用しています。
           </p>
+          {/* 楽天ウェブサービスのクレジット（APIを利用するサイトに表示が必要）。規定のHTMLソースは改変できないため
+              そのまま埋め込み、見やすさのための色・下線は外側の要素のCSSだけで指定する（src/lib/rakuten-credit.ts） */}
+          <div
+            className="rakuten-credit text-xs text-gray-400 mb-4 [&_a]:text-inherit [&_a]:underline [&_a]:underline-offset-2"
+            dangerouslySetInnerHTML={{ __html: RAKUTEN_CREDIT_HTML }}
+          />
           <nav aria-label="フッターナビゲーション">
             <ul className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-gray-400">
               <li>

@@ -4344,3 +4344,40 @@ Task 127 の承認と、既存の商品の書き込み（新商品の発見・�
 - 販売終了・品切れの商品の扱いが、カテゴリ検索とコード指定で異なる。カテゴリ検索（`refreshPersonPrices`・楽天ブックスは outOfStockFlag=1）は販売終了の商品も検索結果の価格で更新する（例：上白石萌歌の「まばたき」は availability が空＝販売終了だが、2026-10-22 の manual-test でカテゴリ検索により価格の取得日時が付いた）。一方、コード指定は availability が 1〜5 の商品だけを更新する。揃える場合は、カテゴリ検索でも在庫状況を見て、購入できない商品の価格を更新しない（または表示側で区別する）変更を別途検討する。
 - availability 6（メーカーに在庫確認）は購入できると確認できないため反映していない。必要なら購入可能に含めるか検討する。
 - 同じ商品番号が見つからない約2%は、検索語に人物名を加えた再検索（Step 2）で減らせる見込み。
+
+## Task 132：推し活お買い物診断（/oshi-shopping）— 公開準備（判定が不確かな商品・価格の確認待ち・販売終了の除外、古い価格を表示しない）（未commit・本番DB/Redis 未変更）
+
+### 調査
+- 実装（Task 101〜105）は完成済みで未commit。公開に必要なファイル：診断のページ・部品・ライブラリ・テスト、`src/lib/rakuten-credit.ts`（未追跡）と `src/app/layout.tsx` のフッターのクレジット、`src/lib/rakuten-click-track.ts`（一般商品はランキングに数えない）、`src/components/ProductCard.tsx`（priceStale の表示。priceStale を付けないページは表示が変わらない）。最新の commit にこれだけを足した状態で tsc・テスト・build が通ることを確認（トップ・人物ページの未commit の変更〔U-NEXT・価格の古さ表示〕は不要）。
+- 旧商品IDの重複（グッズ＋中古の257組・162人）：判定が商品ID単位のため、どちらの商品の判定か分からない。診断はグッズを対象にするため混入しうる。
+- 価格：診断は保存中の価格を表示していた（price-freshness の既定 legacy では取得日時不明の価格も表示）。取得日時があるのは価格更新を試した人物だけで、ほとんどの人物は全商品が取得日時不明。
+
+### 変更
+- `src/lib/oshi-shopping/core.ts`：`ambiguousProductIds`（同じ人物で同じIDが別の商品〔同一性キーが違う〕に付いている）を除外。`priceReviewIds`（価格の確認待ち）・`unavailableIds`（価格更新が楽天ブックスで品切れ・販売終了を確認）を除外。価格の表示は strict（取得から30日以内の価格だけ「M/D時点」つきで表示、取得日時不明・古い価格は「価格は楽天で確認」）。予算の判定は保存中の価格。除外件数を `excluded` で返す（表示には使わない）。判定・商品データは変更しない。
+- `src/lib/oshi-shopping/data.ts`：確認待ち（`price_reviews` の pending、読み取りのみ。読めなければ除外なし）と、価格更新の共有キャッシュ（Redis `price-lookup:book:*` の status=unavailable、MGET 読み取りのみ。読めなければ除外なし）を読む。選定結果のキャッシュの版を 2 に。
+- `src/app/oshi-shopping/page.tsx`：関連商品欄の説明に、関連の確認が不確かな商品・販売終了を確認した商品を除いていること、価格の扱い（取得時点・30日超／不明は非表示・予算は取得時点の価格で判定・最新は楽天で確認）を追記。
+- テスト：`oshi-shopping-core.test.ts` +4（旧IDの重複は除外・同じ商品の複数カテゴリは除外しない・確認待ち／販売終了の除外・価格の表示と予算）、`oshi-shopping-data.test.ts`（新規2：読み取りだけで除外・読めない場合も従来どおり）。
+
+### 検証（本番DBは読み取りのみ）
+- 実データ（旧IDの重複が多い3人・上白石萌歌・井口眞緒 × 用途4 × 予算5）：表示した商品はすべて related・判定が不確かな商品なし・楽天のリンクのみ・予算内。重複の除外：河田陽菜6・小坂菜緒6・佐々木久美5・井口眞緒1。価格更新をしていない人物は表示した価格がすべて「価格は楽天で確認」。
+- ローカルの本番ビルド（最新の commit＋公開対象のファイルのみ）と Playwright（390/360/1280px）：フォーム・結果（上白石萌歌・河田陽菜・井口眞緒）・人物不明・条件不足で、横はみ出し0・コンソールエラー0、結果は noindex・canonical は本体、商品欄のリンクは楽天のみ（target=_blank・rel=sponsored）、PR表記・クレジット1回。
+- tsc OK、テスト 135ファイル・2,264件 OK、next build OK。
+
+### 残り
+- 価格更新をしていない人物は価格がすべて非表示になる（予算は取得時点の価格で判定）。定期の価格更新を始めると価格の表示が増える。
+- 販売終了の判定は、価格更新のコード指定で確認した商品だけ（カテゴリ検索は販売終了も更新するため、例：上白石萌歌「まばたき」は販売終了だが価格・取得日時あり）。
+- 本番の環境変数 `OSHI_SHOPPING_GENERAL_ITEMS`（一般商品の選定リスト）が未設定なら一般商品欄は「準備中」。
+- トップ・人物ページからの導線、sitemap への追加は未実施（提案のみ）。
+
+### 追記：本番の一般商品の読み込みと、診断への導線（未commit・本番DB/Redis/環境変数 未変更）
+- **一般商品の選定リスト**：`OSHI_SHOPPING_GENERAL_ITEMS` はファイルのパスではなく、選定リストの JSON そのもの（32件・約2.2KB）を値に入れる方式（Vercel 上でファイルは読まない）。Vercel の Production には未設定（`vercel env ls` で確認。値は読んでいない）。
+  - `src/lib/oshi-shopping/general-items.ts`：値の前後の空白・値全体を囲む引用符（.env の書き方のまま貼った場合）を外し、`base64:` 形式も読む（Vercel の画面・シェルで JSON の引用符が崩れないように）。値はあるのに読めない・一部が不正なら件数だけを警告ログに出す（値・itemCode は出さない）。
+  - `scripts/oshi-shopping-general/env-value.ts`（新規）：ローカルの選定リスト（tmp/oshi-shopping-general/general-items.json、git 管理外）をアプリと同じ検証に通し、`base64:` 形式の値を tmp/oshi-shopping-general/vercel-env-value.txt（git 管理外・権限600）に書く。画面には件数・長さだけ。読み戻しの一致を確認。32件すべて有効（live 7・display 9・collection 9・gift 7）、ローカルの .env.local の値と同じ内容。
+- **導線**：
+  - `src/components/oshi-shopping/OshiShoppingEntryCta.tsx`（新規）：サブスク診断の導線カードと同じ C案の見た目（kicker「SHOPPING DIAGNOSIS」、<aside>）。
+  - トップ（`src/app/page.tsx`）：サブスク診断の導線の直後に「推し活お買い物診断」（無料・登録不要）。
+  - 人物ページ（`src/app/person/[slug]/page.tsx`）：関連商品ピックアップの直後に、関連商品がある人物だけ「この推しのアイテムを診断」（人物を選択済みの `/oshi-shopping?p=<人物名>`）。
+  - `src/lib/oshi-shopping/params.ts`：`buildOshiShoppingStartPath`。`src/app/oshi-shopping/page.tsx`：人物だけを指定したURLは「条件が足りない」と出さず人物を選択済みで表示（登録されていない名前なら案内）。結果と同じく noindex。
+  - `src/app/sitemap.ts`：`/oshi-shopping`（本体のみ）。
+  - トップ・人物ページの別セッションの未commit の変更（U-NEXT・価格の古さ表示）は含めず、公開用の変更は最新の commit に導線の追加だけを当てて作る。
+- テスト：`oshi-shopping-params.test.ts` +4（引用符・base64・壊れた値・ファイルのパスは「準備中」、人物を選択済みのURL）。
