@@ -21,6 +21,8 @@ interface Candidate {
   year: number | null;
   role: string | null;
   flatServices: string[];
+  /** まず見る3作の候補にならない理由（古い応答には無い） */
+  excludedReason?: string | null;
 }
 
 export default function First3WorkSlots({
@@ -152,7 +154,16 @@ export default function First3WorkSlots({
                       <ul className="max-h-64 overflow-y-auto divide-y divide-gray-200 rounded border border-gray-200 bg-white">
                         {shown.map((c) => {
                           const key = normalizeFirst3Title(c.title);
-                          const reason = key === currentKey ? '変更前の作品' : otherKeys.has(key) ? '選定中の作品と同じ' : c.flatServices.length === 0 ? '見放題の配信先なし' : null;
+                          const reason =
+                            key === currentKey
+                              ? '変更前の作品'
+                              : otherKeys.has(key)
+                                ? '選定中の作品と同じ'
+                                : c.excludedReason
+                                  ? c.excludedReason
+                                  : c.flatServices.length === 0
+                                    ? '見放題の配信先なし'
+                                    : null;
                           return (
                             <li key={c.id}>
                               <button

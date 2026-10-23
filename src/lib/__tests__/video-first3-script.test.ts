@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkReadingInput, countScriptStatuses, groupUnresolvedReadings, kanaOnlyAliases, normalizeFirst3Title } from '../video-first3-script';
+import { checkReadingInput, countScriptStatuses, groupUnresolvedReadings, kanaOnlyAliases, normalizeFirst3Title, first3CandidateExclusion } from '../video-first3-script';
 
 describe('まず見る3作の台本準備（管理画面）', () => {
   it('同じ未登録語が複数人物にあっても1件にまとめ、使用人物を集める', () => {
@@ -49,5 +49,20 @@ describe('normalizeFirst3Title（oshi-video-maker の normalizeFirst3Title と�
     expect(normalizeFirst3Title('民王R')).not.toBe(normalizeFirst3Title('民王'));
     expect(normalizeFirst3Title('ヤンキー君と科学ガール')).not.toBe(normalizeFirst3Title('ヤンキー君と科学ガール2'));
     expect(normalizeFirst3Title('記号だけ!?')).not.toBe('');
+  });
+});
+
+describe('first3CandidateExclusion（oshi-video-maker の orderFirst3Candidates と同じ条件）', () => {
+  const c = (kind: string, role: string | null, streaming = true) => first3CandidateExclusion({ kind, role, streaming });
+  it('本人出演・ゲスト・配信中でない・役の無いドラマは対象外、それ以外は対象', () => {
+    expect(c('映画', 'Self (Naniwa Danshi)')).toBe('本人出演・ゲスト等');
+    expect(c('ドラマ', '本人（SixTONES）')).toBe('本人出演・ゲスト等');
+    expect(c('ドラマ', '林田裕紀（第1話ゲスト）')).toBe('本人出演・ゲスト等');
+    expect(c('ドラマ', null)).toBe('役の表示がないドラマ（音楽・トーク番組等）');
+    expect(c('映画', '役名', false)).toBe('配信中ではない');
+    expect(c('ライブ・コンサート', '役名')).toBe('ドラマ・映画ではない');
+    expect(c('映画', null)).toBeNull();
+    expect(c('ドラマ', 'Kouta Kirigaya')).toBeNull();
+    expect(c('ドラマ', '神崎幸一（主演）')).toBeNull();
   });
 });

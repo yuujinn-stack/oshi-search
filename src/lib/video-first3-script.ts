@@ -73,3 +73,19 @@ export function normalizeFirst3Title(title: string): string {
   const key = t.replace(/[^\p{L}\p{N}]/gu, '');
   return key || t.replace(/\s+/g, '');
 }
+
+/** 本人出演・ゲスト等の役（正本は oshi-video-maker の first3Selection.ts の SELF_ROLE と同じ） */
+const FIRST3_SELF_ROLE = /^(self\b|himself|herself|本人)|\(self|（本人|本人（|本人\(|ゲスト|司会|mc\b|パーソナリティ|ナレーター/i;
+
+/**
+ * まず見る3作の候補にならない理由（候補になるならnull）。正本は oshi-video-maker の orderFirst3Candidates
+ * （ドラマ・映画で「配信中」、本人出演・ゲスト等でない。ドラマは役の表示があるもの）。手動選択の一覧で
+ * 選べない作品に理由を表示するために同じ条件を使う（最終判定は Worker が行う）。
+ */
+export function first3CandidateExclusion(card: { kind: string; streaming: boolean; role: string | null }): string | null {
+  if (card.kind !== 'ドラマ' && card.kind !== '映画') return 'ドラマ・映画ではない';
+  if (!card.streaming) return '配信中ではない';
+  const role = card.role?.trim() ?? '';
+  if (!role) return card.kind === '映画' ? null : '役の表示がないドラマ（音楽・トーク番組等）';
+  return FIRST3_SELF_ROLE.test(role) ? '本人出演・ゲスト等' : null;
+}

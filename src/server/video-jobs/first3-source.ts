@@ -9,6 +9,7 @@ import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName
 import { filterAndSortWorks, DEFAULT_WORK_FILTER } from '@/lib/work-filter';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
 import { getWorkPublicUrl } from '@/lib/work-url';
+import { first3CandidateExclusion } from '@/lib/video-first3-script';
 import { VOD_TYPE_CONFIG, VOD_TYPE_ORDER } from '@/lib/vod-cta';
 import type { WorkRecord } from '@/types/work';
 
@@ -63,6 +64,8 @@ export interface First3ManualCandidate {
   role: string | null;
   /** 見放題の配信先（表示名）。空なら動画に使えない（「どのサブスクで見られる」の場面を作れない） */
   flatServices: string[];
+  /** まず見る3作の候補にならない理由（本人出演・配信中でない等）。null なら選べる */
+  excludedReason: string | null;
 }
 
 /**
@@ -80,6 +83,7 @@ export async function getFirst3ManualCandidates(personName: string): Promise<{ p
       kind: card.kind,
       year: card.year,
       role: card.role,
+      excludedReason: first3CandidateExclusion(card),
       flatServices: [
         ...new Set(
           deduplicateProviders((work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p)))
