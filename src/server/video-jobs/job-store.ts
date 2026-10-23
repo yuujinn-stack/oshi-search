@@ -102,6 +102,10 @@ export interface CapcutStoreEntry {
   selectedAt?: string | null;
   /** 直近の「再選定」の結果（変えられなかった場合はその理由） */
   reselectNote?: { at: string; changed: boolean; message: string } | null;
+  /** 台本に使っている3作品（1作品だけ変更の画面用） */
+  works?: Array<{ id: string | null; title: string; kind: string | null; year: number | null }> | null;
+  /** 1作品だけ変更した3作品（生成時もこの3作品。自動では選び直さない） */
+  fixedWorks?: boolean;
 }
 export type First3ScriptStatus = 'ready_script' | 'needs_reading' | 'insufficient_works' | 'pending' | 'error';
 /** まず見る3作: Workerの台本準備キュー（全人物の台本準備）の進捗 */

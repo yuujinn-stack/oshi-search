@@ -51,6 +51,8 @@ function sanitizeEntries(raw: unknown[]): CapcutStoreEntry[] {
             scriptError: str(e.scriptError, 500),
             selectedAt: str(e.selectedAt, 40),
             reselectNote: sanitizeReselectNote(e.reselectNote),
+            works: sanitizeFirst3Works(e.works),
+            fixedWorks: e.fixedWorks === true,
           }
         : {}),
     }));
@@ -61,6 +63,14 @@ function sanitizeReselectNote(raw: unknown): { at: string; changed: boolean; mes
   const n = raw as Record<string, unknown> | null | undefined;
   if (!n || typeof n.changed !== 'boolean' || typeof n.message !== 'string') return null;
   return { at: str(n.at, 40) ?? '', changed: n.changed, message: str(n.message, 300)! };
+}
+
+/** まず見る3作: 台本に使っている3作品 */
+function sanitizeFirst3Works(raw: unknown): Array<{ id: string | null; title: string; kind: string | null; year: number | null }> | null {
+  if (!Array.isArray(raw) || raw.length !== 3) return null;
+  const works = raw.map((w) => w as Record<string, unknown>).filter((w) => typeof w.title === 'string');
+  if (works.length !== 3) return null;
+  return works.map((w) => ({ id: str(w.id, 200), title: str(w.title, 200)!, kind: str(w.kind, 20), year: num(w.year) }));
 }
 
 /** まず見る3作の台本準備キューの進捗 */

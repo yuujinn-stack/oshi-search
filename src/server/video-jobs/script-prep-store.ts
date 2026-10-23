@@ -16,7 +16,8 @@ export type ScriptRequestAction = 'prepare_all' | 'stop' | 'reselect';
 export interface ScriptRequest {
   id: number;
   templateId: string;
-  action: ScriptRequestAction;
+  /** ScriptRequestAction、または1作品だけ変更の replaceOneAction() */
+  action: string;
   personName: string | null;
   personSlug: string | null;
 }
@@ -60,13 +61,33 @@ export async function upsertPronunciationReading(sourceText: string, reading: st
   }
 }
 
+/**
+ * 1作品だけ変更の依頼の action（依頼テーブルに列を足さないため action に入れる）:
+ *   "replace_one|{1〜3}|{作品ID(encodeURIComponent)。空=おすすめに自動変更}"
+ * oshi-video-maker の parseReplaceAction（scripts/worker/first3ScriptQueue.ts）と同じ形式。
+ */
+export function replaceOneAction(slot: number, workId: string | null): string {
+  if (![1, 2, 3].includes(slot)) throw new VideoJobError('変更する作品の番号が不正です。', 400);
+  if (workId !== null && (!workId.trim() || workId.length > 200)) throw new VideoJobError('作品IDが不正です。', 400);
+  return `replace_one|${slot}|${workId === null ? '' : encodeURIComponent(workId)}`;
+}
+
+/** 1作品だけ変更の依頼を追加する（同じ内容の未処理の依頼があれば追加しない）。追加した件数を返す */
+export async function createReplaceOneRequest(personName: string, slot: number, workId: string | null): Promise<number> {
+  return insertScriptRequests(replaceOneAction(slot, workId), [personName]);
+}
+
 /** 台本準備の依頼を追加する（同じ内容の未処理の依頼があれば追加しない）。追加した件数を返す */
 export async function createScriptRequest(action: ScriptRequestAction, personNames: string[] = []): Promise<number> {
+  return insertScriptRequests(action, action === 'reselect' ? personNames : []);
+}
+
+async function insertScriptRequests(action: string, personNames: string[]): Promise<number> {
   try {
     const pending = await db.select().from(videoScriptRequests).where(isNull(videoScriptRequests.handledAt));
     const exists = (personName: string | null) =>
       pending.some((r) => r.templateId === FIRST3_TEMPLATE_ID && r.action === action && (r.personName ?? null) === personName);
-    const values = (action === 'reselect' ? personNames : [null])
+    const values = (personNames.length > 0 ? personNames : [null])
       .filter((p) => !exists(p))
       .map((personName) => ({ templateId: FIRST3_TEMPLATE_ID, action, personName }));
     if (values.length > 0) await db.insert(videoScriptRequests).values(values);
@@ -89,7 +110,7 @@ export async function listPendingScriptRequests(): Promise<ScriptRequest[]> {
     return rows.map((r) => ({
       id: r.id,
       templateId: r.templateId,
-      action: r.action as ScriptRequestAction,
+      action: r.action,
       personName: r.personName ?? null,
       personSlug: r.personName ? personVideoSlug(r.personName) : null,
     }));

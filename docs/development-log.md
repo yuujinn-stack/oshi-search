@@ -4519,3 +4519,45 @@ oshi-search
 - 台本形式（7区分・約18秒・CapCut向け）は変更なし。保存済みCapCut音声がある人物を再選定すると台本が変わるため「録り直し」状態になる（既存の確認ダイアログどおり）。
 - 反映：oshi-search・oshi-video-maker はどちらの順で反映しても安全（`reselectNote` は任意項目）。Worker は再起動が必要。大橋和也の現在の selection.json は旧ロジックの結果のまま残っている。
 - tsc OK（両リポジトリ）、oshi-video-maker テスト151件すべて成功。
+## Task 138 追記：本番反映（2026-10-24）
+- oshi-search: commit 35f0940（Task 138 の6ファイルのみ。開発ログは Task 138 の節だけ）を main へ push → Vercel Production Ready（oshi-search.jp）。HEAD+この変更だけの状態で tsc・next build を確認済み。
+- oshi-video-maker: commit da948a6（Task 138 の8ファイルのみ。リモートなし）。HEAD+この変更だけで tsc・first3テスト30件成功。他の未commitの変更はすべて Worker 起動（10/19）より前のもので、再起動で新たに有効になったのは今回の修正だけ。
+- Worker: ジョブの合間（藤原丈一郎の完了直後）に `launchctl kickstart -k gui/$(id -u)/jp.oshi-search.video-worker` で再起動。
+- 本番確認（管理画面と同じAPI）: 大橋和也を再選定 → 銭天堂 / 俺の可愛いはもうすぐ消費期限!? / 民王R、続けて再選定 → 僕の可愛いはまだまだ発展途上!? / ジモダン / 関西ジャニーズJr.の目指せ♪ドリームステージ！。正式台本・音声用台本とも新しい3作品に更新、重複なし。処理前にもう一度押すと alreadyPending。
+- CapCut音声の安全性: 保存済み音声のある人物（テスト用slugに森本慎太郎の音声を複製）で再選定 → 音声・字幕・完成動画7ファイルは変更・削除なし、状態は stale（録り直しの表示）。本番確認の前後で Worker の assets/audio-capcut・out/posts の1651ファイルに差分なし。
+- `.git/refs/remotes/origin/main 2`（iCloud の重複コピー。fetch を失敗させていた）を退避して fetch を復旧。
+
+---
+
+## Task 139：動画メーカー「まず見る3作 ショートV1」— 1作品だけ変更（おすすめに自動変更・候補から手動選択）
+
+### 目的
+「再選定」は3作品すべてが変わるため、2作品は残して1作品だけ変えたい場合に対応する。既存の再選定は「3作品まとめて再選定」として残す。
+
+### 変更したファイル
+oshi-search
+- `src/app/admin/video-maker/First3WorkSlots.tsx`（新規）— 選定中の3作品と各作品の「変更」。変更を開くと「おすすめ作品に自動変更」「候補作品から手動選択」（作品名・公開年・種別・見放題の配信先、作品名で検索。変更前の作品・他の2作品と同名・見放題なしは選べない）。保存済みCapCut音声があれば録り直しが必要になる旨を表示。
+- `src/app/admin/video-maker/VideoMakerClient.tsx` — 台本カードに上の一覧を表示。依頼前の確認ダイアログ（音声ありなら録り直しの説明つき）。「再選定」→「3作品まとめて再選定」。
+- `src/app/api/admin/video-jobs/first3-prepare/route.ts` — `action: 'replace_one'`（personName・slot・workId=null でおすすめ）。
+- `src/app/api/admin/video-jobs/first3-candidates/route.ts`（新規）— 手動選択の候補（読み取りのみ）。
+- `src/server/video-jobs/first3-source.ts` — `getFirst3ManualCandidates`（人物ページの「出演作品」と同じ作品カードのうちドラマ・映画＋見放題の配信先。作品カードの作成は既存の処理を共通化）。
+- `src/server/video-jobs/script-prep-store.ts` — `replaceOneAction`・`createReplaceOneRequest`。
+- `src/app/api/worker/heartbeat/route.ts`・`src/server/video-jobs/job-store.ts` — `works`（台本に使っている3作品）・`fixedWorks`。
+- `src/lib/video-first3-script.ts` — `normalizeFirst3Title`（oshi-video-maker と同じ判定。手動選択で他の2作品と同名を選べなくする）。
+- テスト: `src/server/video-jobs/__tests__/script-prep-replace.test.ts`（新規）、`src/lib/__tests__/video-first3-script.test.ts`。
+
+oshi-video-maker（commit 7cd8deb）
+- `first3Selection.ts` — `pickFirst3Replacement`（残す2作品・変更前と同名を除き、既存の優先順で1作品。枠ごとの履歴で押すたびに別の候補）。
+- `scripts/worker/first3ScriptPrep.ts` — `applyFirst3Replace`（純粋関数。残りの2作品は作品ID・順番・内容をそのまま。手動選択はドラマ・映画・見放題あり・他の2作品と同名でないことを作品ページと同じ値で確認）、依頼の処理（通信エラーは3回まで再試行）。
+- `scripts/worker/first3ScriptQueue.ts` — 依頼の形式 `parseReplaceAction`・依頼の保存（Worker再起動後も続ける）・変更できなかった結果。1作品だけ変更した3作品は自動で選び直さない。
+- `scripts/prototypes/first3/captureFirst3Pages.ts` — selection.json に作品ID・`fixedWorkIds`・`slotHistory`。生成時は `fixedWorkIds` の3作品をこの順番で使う（見放題が無くなっていれば作品を替えずに生成を止める）。
+- `scripts/capcutStore.ts`・`videoWorker.ts`・`first3ServerSource.ts`・`searchApiClient.ts` — 台本に使っている3作品（ID付き）の報告、変更できなかった結果の報告、候補の取得。
+- テスト: `src/lib/__tests__/first3ReplaceOne.test.ts`（新規8件）。
+
+### 設計上の判断・注意点
+- 依頼テーブル（video_script_requests）に列を足さず、action に `replace_one|{1〜3}|{作品ID}` を入れる（本番のスキーマ変更なし。両リポジトリで同じ形式をテスト）。
+- 変更できない場合（候補不足・同名・見放題なし・通信エラー）は selection.json を書き換えず、理由だけを画面に表示する（他の作品は変えない）。成功時は一時ファイルから置き換えるため、途中で止まっても前の選定が残る。同じ依頼が処理待ちなら追加しない。
+- 以前の選定結果には作品IDが無いため、作品名＋種別で候補から特定する（見つからなければ推測せず変更しない）。
+- 1作品だけ変更すると3作品は固定（生成時もこの3作品、7日ごとの自動の選び直しなし）。「3作品まとめて再選定」で固定は解除される。
+- 台本は既存の仕組みどおり selection.json から作るため、正式台本・音声生成用台本は変更した1作品の行だけ変わる（7区分・約18秒・CapCut向けのまま）。保存済み音声・字幕・完成動画・生成履歴は削除・上書きしない（台本が変わると「録り直しが必要」の表示になるだけ）。
+- 反映順: oshi-video-maker（Worker再起動）→ oshi-search。旧Workerは未知の依頼を処理済みにするため、先にWorkerを更新する。

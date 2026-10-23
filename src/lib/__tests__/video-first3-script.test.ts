@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkReadingInput, countScriptStatuses, groupUnresolvedReadings, kanaOnlyAliases } from '../video-first3-script';
+import { checkReadingInput, countScriptStatuses, groupUnresolvedReadings, kanaOnlyAliases, normalizeFirst3Title } from '../video-first3-script';
 
 describe('まず見る3作の台本準備（管理画面）', () => {
   it('同じ未登録語が複数人物にあっても1件にまとめ、使用人物を集める', () => {
@@ -37,5 +37,17 @@ describe('まず見る3作の台本準備（管理画面）', () => {
 
   it('人物名の読みの候補は別名のうちひらがな・カタカナだけ（愛称も混ざるため候補止まり。英字・漢字は除く）', () => {
     expect(kanaOnlyAliases([['まつだいらりこ', 'りこぴ', 'Riko', '松平'], ['りこぴ'], null])).toEqual(['まつだいらりこ', 'りこぴ']);
+  });
+});
+
+describe('normalizeFirst3Title（oshi-video-maker の normalizeFirst3Title と同じ判定）', () => {
+  it('表記揺れ・先頭の「劇場版」は同じ作品、語が違えば別作品', () => {
+    expect(normalizeFirst3Title('君が トクベツ')).toBe(normalizeFirst3Title('君がトクベツ'));
+    expect(normalizeFirst3Title('ＳＰＹ×ＦＡＭＩＬＹ')).toBe(normalizeFirst3Title('spy family'));
+    expect(normalizeFirst3Title('リベンジ・スパイ')).toBe(normalizeFirst3Title('リベンジスパイ'));
+    expect(normalizeFirst3Title('劇場版 君がトクベツ')).toBe(normalizeFirst3Title('君がトクベツ'));
+    expect(normalizeFirst3Title('民王R')).not.toBe(normalizeFirst3Title('民王'));
+    expect(normalizeFirst3Title('ヤンキー君と科学ガール')).not.toBe(normalizeFirst3Title('ヤンキー君と科学ガール2'));
+    expect(normalizeFirst3Title('記号だけ!?')).not.toBe('');
   });
 });

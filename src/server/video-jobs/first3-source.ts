@@ -50,6 +50,48 @@ const SITE_ORIGIN = 'https://oshi-search.jp';
 
 /** 人物ページの「出演作品」と同じ作品カード（人物が存在しなければnull） */
 export async function getFirst3SourceCards(personName: string): Promise<{ personName: string; pageUrl: string; cards: First3SourceCard[] } | null> {
+  const r = await loadPersonWorkCards(personName);
+  return r ? { personName: r.personName, pageUrl: r.pageUrl, cards: r.items.map((i) => i.card) } : null;
+}
+
+/** 動画メーカーの「1作品だけ変更 → 候補から手動選択」に表示する作品（人物ページの「出演作品」のうちドラマ・映画） */
+export interface First3ManualCandidate {
+  id: string;
+  title: string;
+  kind: string;
+  year: number | null;
+  role: string | null;
+  /** 見放題の配信先（表示名）。空なら動画に使えない（「どのサブスクで見られる」の場面を作れない） */
+  flatServices: string[];
+}
+
+/**
+ * 手動選択の候補一覧（読み取りのみ）。並びは人物ページと同じ。
+ * 選べるかどうかの最終判定（ドラマ・映画・見放題・他の2作品と同じ作品でない）は Worker が作品ページと同じ値で行う。
+ */
+export async function getFirst3ManualCandidates(personName: string): Promise<{ personName: string; candidates: First3ManualCandidate[] } | null> {
+  const r = await loadPersonWorkCards(personName);
+  if (!r) return null;
+  const candidates = r.items
+    .filter(({ card }) => card.kind === 'ドラマ' || card.kind === '映画')
+    .map(({ work, card }) => ({
+      id: decodeURIComponent(card.href.replace(/^\/work\//, '')),
+      title: card.title,
+      kind: card.kind,
+      year: card.year,
+      role: card.role,
+      flatServices: [
+        ...new Set(
+          deduplicateProviders((work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p)))
+            .filter((p) => p.type === 'flatrate')
+            .map((p) => getVodProviderDisplayInfo(p.providerName).displayName),
+        ),
+      ],
+    }));
+  return { personName: r.personName, candidates };
+}
+
+async function loadPersonWorkCards(personName: string): Promise<{ personName: string; pageUrl: string; items: Array<{ work: WorkRecord; card: First3SourceCard }> } | null> {
   const person = await getPersonWithConfigMerged(personName);
   if (!person) return null;
   const [publishedWorks, inactiveSlugs] = await Promise.all([getPublishedWorksOrThrow(person.name), getInactiveProviderSlugs()]);
@@ -61,7 +103,7 @@ export async function getFirst3SourceCards(personName: string): Promise<{ person
       }))
     : publishedWorks;
   const sorted = filterAndSortWorks(forClient, DEFAULT_WORK_FILTER);
-  const cards: First3SourceCard[] = [];
+  const items: Array<{ work: WorkRecord; card: First3SourceCard }> = [];
   sorted.forEach((work, order) => {
     // WorkCardと同じリンク先。/work/ 以外（公開URLが無い作品）は作品ページが無いため含めない
     const href = getWorkPublicUrl({ workId: work.id, canonicalWorkId: work.canonicalWorkId });
@@ -69,7 +111,7 @@ export async function getFirst3SourceCards(personName: string): Promise<{ person
     // WorkCardと同じ「配信中」判定（確認済み・重複除去後に見放題/無料/広告付きがある）
     const streaming = deduplicateProviders((work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p)))
       .some((p) => ['flatrate', 'free', 'ads'].includes(p.type));
-    cards.push({
+    items.push({ work, card: {
       href,
       kind: DISPLAY_WORK_TYPE_LABEL[getDisplayWorkType(work)],
       streaming,
@@ -77,9 +119,9 @@ export async function getFirst3SourceCards(personName: string): Promise<{ person
       year: work.releaseYear ?? null,
       role: work.roleName ? work.roleName : null,
       order,
-    });
+    } });
   });
-  return { personName: person.name, pageUrl: `${SITE_ORIGIN}/person/${encodeURIComponent(person.name)}`, cards };
+  return { personName: person.name, pageUrl: `${SITE_ORIGIN}/person/${encodeURIComponent(person.name)}`, items };
 }
 
 function formatCheckedAt(ts: number | undefined): string | null {

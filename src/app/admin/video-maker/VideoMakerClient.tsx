@@ -13,6 +13,7 @@ import {
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import { matchesQuery } from '@/lib/person-group-filter';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
+import First3WorkSlots, { type First3SlotWork } from './First3WorkSlots';
 import VodCompareTrioPicker, { EMPTY_TRIO, completeTrio, type TrioCapcutCheck, type TrioSlots } from './VodCompareTrioPicker';
 import { OSHI_VOD_COMPARE_INPUT_KIND } from '@/lib/video-template-input';
 import { countHashtags, validateCaption, INSTAGRAM_CAPTION_MAX_LENGTH, INSTAGRAM_HASHTAG_MAX_COUNT } from '@/lib/instagram-caption-rules';
@@ -75,6 +76,10 @@ interface CapcutEntry {
   selectedAt?: string | null;
   /** まず見る3作だけ: 直近の「再選定」の結果（変えられなかった場合はその理由） */
   reselectNote?: { at: string; changed: boolean; message: string } | null;
+  /** まず見る3作だけ: 台本に使っている3作品（古いWorkerの報告には無い） */
+  works?: First3SlotWork[] | null;
+  /** まず見る3作だけ: 1作品だけ変更した3作品 */
+  fixedWorks?: boolean;
 }
 
 interface CapcutStoreReport {
@@ -437,6 +442,33 @@ export default function VideoMakerClient({
               : res.alreadyPending
                 ? '前回の再選定の依頼がまだWorkerで処理されていません。処理が終わり台本が更新されてから、もう一度押してください。'
                 : '再選定をWorkerへ依頼しました（Workerが選び直すと、3作品・正式台本・音声生成用台本がこの画面で更新されます）。',
+      });
+      await load();
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setScriptRequestBusy(false);
+    }
+  }
+
+  // まず見る3作: 1作品だけ変更をWorkerへ依頼する（残りの2作品は変わらない）
+  async function requestReplace(entry: CapcutEntry, slot: 1 | 2 | 3, workId: string | null) {
+    const target = entry.works?.[slot - 1]?.title ?? `${slot}作目`;
+    const audioNote = entry.status !== 'missing' ? '\n\n保存済みのCapCut音声があります。台本が変わるため音声の録り直しが必要になります（保存済みの音声・完成動画は削除されません）。' : '';
+    const how = workId === null ? 'おすすめ作品に自動変更' : '選んだ作品に変更';
+    if (!window.confirm(`${entry.personName} の${slot}作目「${target}」を${how}します。ほかの2作品は変わりません。${audioNote}\n\nよろしいですか？`)) return;
+    setScriptRequestBusy(true);
+    try {
+      const res = await fetchJson<{ alreadyPending?: boolean }>('/api/admin/video-jobs/first3-prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'replace_one', personName: entry.personName, slot, workId }),
+      });
+      setMessage({
+        kind: 'ok',
+        text: res.alreadyPending
+          ? '同じ変更の依頼がまだWorkerで処理されていません。処理が終わり台本が更新されてから、もう一度押してください。'
+          : `${slot}作目の変更をWorkerへ依頼しました（Workerが変更すると、3作品・正式台本・音声生成用台本がこの画面で更新されます）。`,
       });
       await load();
     } catch (err) {
@@ -1166,6 +1198,8 @@ export default function VideoMakerClient({
                       groupName={personByName.get(pickedCapcut.personName)?.currentGroupName || personByName.get(pickedCapcut.personName)?.group}
                       isNext={nextCapcut === pickedCapcut}
                       onReselect={pickedCapcut.scriptStatus ? () => void requestScripts('reselect', [pickedCapcut.personName]) : undefined}
+                      onReplace={pickedCapcut.scriptStatus ? (slot, workId) => requestReplace(pickedCapcut, slot, workId) : undefined}
+                      busy={scriptRequestBusy}
                     />
                     <div className="flex items-center justify-between gap-2 text-xs">
                       <button
@@ -1205,6 +1239,8 @@ export default function VideoMakerClient({
                   templateName={template.name}
                   isNext={nextCapcut === e}
                   onReselect={e.scriptStatus ? () => void requestScripts('reselect', [e.personName]) : undefined}
+                  onReplace={e.scriptStatus ? (slot, workId) => requestReplace(e, slot, workId) : undefined}
+                  busy={scriptRequestBusy}
                 />
               ))}
             </div>
@@ -1327,6 +1363,8 @@ function CapcutCard({
   groupName,
   isNext,
   onReselect,
+  onReplace,
+  busy = false,
 }: {
   entry: CapcutEntry;
   templateName: string;
@@ -1335,6 +1373,9 @@ function CapcutCard({
   isNext: boolean;
   /** まず見る3作: 3作品の再選定を依頼する */
   onReselect?: () => void;
+  /** まず見る3作: 1作品だけ変更を依頼する */
+  onReplace?: (slot: 1 | 2 | 3, workId: string | null) => Promise<void>;
+  busy?: boolean;
 }) {
   const view = CAPCUT_STATUS_VIEW[entry.status];
   const scriptView = entry.scriptStatus ? SCRIPT_STATUS_VIEW[entry.scriptStatus] : null;
@@ -1365,11 +1406,21 @@ function CapcutCard({
             {entry.selectedAt ? `（3作品の選定 ${formatJst(entry.selectedAt)}）` : ''}
           </span>
           {onReselect && entry.scriptStatus !== 'pending' && (
-            <button type="button" onClick={onReselect} className="px-2 py-0.5 rounded border border-gray-300 text-gray-600">
-              再選定
+            <button type="button" onClick={onReselect} disabled={busy} className="px-2 py-0.5 rounded border border-gray-300 text-gray-600 disabled:opacity-50">
+              3作品まとめて再選定
             </button>
           )}
         </div>
+      )}
+      {onReplace && entry.works && entry.works.length === 3 && (
+        <First3WorkSlots
+          personName={entry.personName}
+          works={entry.works}
+          fixedWorks={!!entry.fixedWorks}
+          hasSavedAudio={entry.status !== 'missing'}
+          busy={busy}
+          onReplace={onReplace}
+        />
       )}
       <div>
         <div className="flex items-center justify-between mb-1">

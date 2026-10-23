@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { maskSecrets } from '@/lib/mask-secrets';
 import { VideoJobError } from '@/server/video-jobs/job-store';
-import { createScriptRequest, type ScriptRequestAction } from '@/server/video-jobs/script-prep-store';
+import { createReplaceOneRequest, createScriptRequest, type ScriptRequestAction } from '@/server/video-jobs/script-prep-store';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,9 +14,27 @@ const MAX_RESELECT = 50;
  *   prepare_all: 推しサーチの全登録人物の3作品を順に選定し、台本を準備する（選定済みで新しい人物はWorkerがskip）
  *   stop:        全人物の台本準備を止める
  *   reselect:    指定した人物だけ3作品を選び直す（CapCut音声を作った後に選び直すと録り直しになることがある）
+ *   replace_one: 指定した人物の1作品だけを変更する（personName・slot=1〜3・workId=手動で選んだ作品ID、null=おすすめに自動変更）
  */
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => ({}))) as { action?: unknown; personNames?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { action?: unknown; personNames?: unknown; personName?: unknown; slot?: unknown; workId?: unknown };
+  if (body.action === 'replace_one') {
+    try {
+      const personName = typeof body.personName === 'string' ? body.personName.trim() : '';
+      if (!personName) return NextResponse.json({ error: '人物が選択されていません。' }, { status: 400 });
+      if (!(await getAllPersonsMerged()).some((p) => p.name === personName)) {
+        return NextResponse.json({ error: `登録されていない人物です: ${personName}` }, { status: 400 });
+      }
+      const slot = typeof body.slot === 'number' ? body.slot : NaN;
+      const workId = typeof body.workId === 'string' ? body.workId : body.workId === null || body.workId === undefined ? null : undefined;
+      if (workId === undefined) return NextResponse.json({ error: '作品IDが不正です。' }, { status: 400 });
+      const added = await createReplaceOneRequest(personName, slot, workId);
+      return NextResponse.json({ ok: true, alreadyPending: added === 0 });
+    } catch (err) {
+      if (err instanceof VideoJobError) return NextResponse.json({ error: err.message }, { status: err.status });
+      return NextResponse.json({ error: maskSecrets(String(err instanceof Error ? err.message : err)) }, { status: 500 });
+    }
+  }
   const action = body.action as ScriptRequestAction;
   if (!ACTIONS.has(action)) return NextResponse.json({ error: '不正な操作です。' }, { status: 400 });
   try {

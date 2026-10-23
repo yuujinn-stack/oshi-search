@@ -62,3 +62,14 @@ export function kanaOnlyAliases(lists: unknown[]): string[] {
   }
   return out;
 }
+
+/**
+ * 同じ作品かどうかを判定するための作品名（全角・半角・大文字小文字・空白・記号・先頭の「劇場版」の違いを除く）。
+ * 正本は oshi-video-maker の normalizeFirst3Title（first3Selection.ts）。管理画面の手動選択で、選ばれている他の
+ * 2作品と同じ作品を選べなくするために同じ処理を使う（最終判定は Worker が行う）。
+ */
+export function normalizeFirst3Title(title: string): string {
+  const t = title.normalize('NFKC').toLowerCase().trim().replace(/^劇場版[\s　:：・\-－]*/u, '');
+  const key = t.replace(/[^\p{L}\p{N}]/gu, '');
+  return key || t.replace(/\s+/g, '');
+}
