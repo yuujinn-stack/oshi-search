@@ -127,13 +127,15 @@ describe('一般商品のキャッシュ（本番は Redis に保存し、保存
   const env = { ...process.env };
   const quiet = { log: () => {} };
   const memCache = () => {
+    // 値は商品（または null）。保存日時は savedAt に持つ（既定は「いま」＝新しいキャッシュ）
     const m = new Map<string, unknown>();
+    const savedAt = new Map<string, number>();
     const sets: string[] = [];
     return {
-      m, sets,
+      m, sets, savedAt,
       cache: {
-        getMany: async (codes: readonly string[]) => new Map(codes.filter((c) => m.has(c)).map((c) => [c, m.get(c) as never])),
-        set: async (code: string, item: unknown) => { await new Promise((r) => setTimeout(r, 5)); m.set(code, item); sets.push(code); },
+        getMany: async (codes: readonly string[]) => new Map(codes.filter((c) => m.has(c)).map((c) => [c, { item: m.get(c) as never, savedAt: savedAt.get(c) ?? Date.now() }])),
+        set: async (code: string, item: unknown) => { await new Promise((r) => setTimeout(r, 5)); m.set(code, item); savedAt.set(code, Date.now()); sets.push(code); },
       },
     };
   };
@@ -181,7 +183,7 @@ describe('一般商品のキャッシュ（本番は Redis に保存し、保存
     const { m, cache } = memCache();
     fetchMock.mockImplementationOnce(async () => {
       // 1件目を取得している間に、別の表示が 2件目を取得・保存した
-      m.set('b:2', { itemCode: 'b:2', itemName: '別の表示が保存', price: 900, imageUrl: 'i', affiliateUrl: 'u', shopName: '', reviewCount: 0, fetchedAt: 1 });
+      (m as Map<string, unknown>).set('b:2', { itemCode: 'b:2', itemName: '別の表示が保存', price: 900, imageUrl: 'i', affiliateUrl: 'u', shopName: '', reviewCount: 0, fetchedAt: 1 });
       return { ok: true, status: 200, json: async () => okItem('a:1') };
     });
     const r = await lookupGeneralItems(['a:1', 'b:2'], { redis: createFakeGateRedis(), ...quiet }, cache);
@@ -207,6 +209,24 @@ describe('一般商品のキャッシュ（本番は Redis に保存し、保存
     expect(r.items.get('a:1')).toMatchObject({ itemCode: 'a:1', price: 1000, affiliateUrl: okItem('a:1').Items[0].Item.affiliateUrl });
     expect(r.items.get('b:2')).toBeNull();
     expect(m.get('b:2')).toBeNull();
+  }, 15000);
+
+  test('24時間より古いキャッシュは取り直す。取り直せなければ（429・使用権を取れない等）古いキャッシュを表示する（失敗に数えない）', async () => {
+    const { m, savedAt, cache } = memCache();
+    const old = { itemCode: 'a:1', itemName: '前回の取得', price: 800, imageUrl: 'i', affiliateUrl: 'u', shopName: '', reviewCount: 0, fetchedAt: Date.now() - 2 * 86400000 };
+    m.set('a:1', old); savedAt.set('a:1', Date.now() - 2 * 86400000);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockResolvedValue({ ok: false, status: 429, headers: { get: () => null } });
+    const r = await lookupGeneralItems(['a:1'], { redis: createFakeGateRedis(), ...quiet }, cache);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(r.items.get('a:1')).toEqual(old);
+    expect(r.failed).toBe(0);
+    // 取り直せた場合は新しい結果で置き換える
+    __resetRakutenApiGateForTests();
+    fetchMock.mockReset().mockResolvedValueOnce({ ok: true, status: 200, json: async () => okItem('a:1') });
+    const r2 = await lookupGeneralItems(['a:1'], { redis: createFakeGateRedis(), ...quiet }, cache);
+    expect(r2.items.get('a:1')?.itemName).toBe('商品 a:1');
+    expect((m.get('a:1') as { itemName: string }).itemName).toBe('商品 a:1');
   }, 15000);
 
   test('キャッシュを読めなくても API で取得して表示する', async () => {

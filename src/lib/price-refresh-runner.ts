@@ -254,6 +254,21 @@ export function createMemoryStateStore(initial: Record<string, PersonRefreshStat
   };
 }
 
+/**
+ * その回に処理する人物と順番（純粋関数。実行と dry-run の予定表示で同じものを使う）。
+ * 途中で止まった人物 → 未完了 → 完了が古い順。最後に完了してから minIntervalMs 未満の人物は除く（only を指定したら除かない）。
+ */
+export function selectRunOrder(
+  names: readonly string[],
+  states: Record<string, PersonRefreshState>,
+  nowMs: number,
+  minIntervalMs: number,
+  only?: ReadonlySet<string> | null,
+): string[] {
+  return orderPersons(names.filter((n) => !only || only.has(n)), states)
+    .filter((n) => only || !(states[n]?.completedAt && (!states[n].startedAt || states[n].completedAt! >= states[n].startedAt!) && nowMs - states[n].completedAt! < minIntervalMs));
+}
+
 /** 処理する順番：途中で止まった人物 → 未完了 → 完了が古い順 */
 export function orderPersons(names: readonly string[], states: Record<string, PersonRefreshState>): string[] {
   const rank = (n: string) => {
@@ -481,8 +496,7 @@ async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | 
     const states = await store.getAll();
     const minInterval = opts.minIntervalMs ?? DAY_MS;
     const only = opts.onlyPersons?.length ? new Set(opts.onlyPersons) : null;
-    const order = orderPersons([...byName.keys()].filter((n) => !only || only.has(n)), states)
-      .filter((n) => only || !(states[n]?.completedAt && (!states[n].startedAt || states[n].completedAt! >= states[n].startedAt!) && now() - states[n].completedAt! < minInterval));
+    const order = selectRunOrder([...byName.keys()], states, now(), minInterval, only);
     const lookupFreshMs = opts.lookupFreshMs ?? 3 * DAY_MS;
     const lookupCache = opts.lookupCache === undefined ? createRedisLookupCache(lookupFreshMs) : opts.lookupCache;
     const relatedIdsOf = opts.relatedIdsOf ?? relatedIdsFromDb;

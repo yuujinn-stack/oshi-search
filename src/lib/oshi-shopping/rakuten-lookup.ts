@@ -31,14 +31,25 @@ const REVALIDATE_SECONDS = 60 * 60 * 24;
 const RENDER_API_BUDGET_MS = 12_000;
 export const OSHI_SHOPPING_GENERAL_CACHE_TAG = 'oshi-shopping-general';
 
-/** 一般商品のキャッシュ（取得できた商品は24時間、販売終了・在庫なし等の null は6時間） */
+/**
+ * 一般商品のキャッシュ。取得できた商品は24時間で取り直す（取り直しに失敗した場合は、最長7日前までの取得結果を表示し、
+ * 取得日時を表示に添える）。販売終了・在庫なし等の null は6時間。
+ * 価格更新・新商品の取得の実行中や楽天APIの 429 で取り直せないときも、一般商品欄が空にならないようにする。
+ */
+export interface CachedGeneralItem {
+  item: GeneralItemData | null;
+  /** 保存した日時（epoch ms。古い形式の値には無い＝新しい扱い） */
+  savedAt?: number;
+}
 export interface GeneralItemCache {
   /** キャッシュにある商品だけを返す（無い商品は含めない） */
-  getMany(codes: readonly string[]): Promise<Map<string, GeneralItemData | null>>;
+  getMany(codes: readonly string[]): Promise<Map<string, CachedGeneralItem>>;
   set(code: string, item: GeneralItemData | null): Promise<void>;
 }
 export const GENERAL_ITEM_CACHE_PREFIX = 'oshi-shopping:general-item:v1:';
-const FOUND_TTL_SECONDS = 60 * 60 * 24;
+/** 取得できた商品を取り直すまでの時間（これより古いものは取り直す。失敗したら古いものを表示） */
+export const GENERAL_ITEM_FRESH_MS = 24 * 60 * 60 * 1000;
+const FOUND_TTL_SECONDS = 60 * 60 * 24 * 7;
 const NULL_TTL_SECONDS = 60 * 60 * 6;
 
 /** Redis（Upstash）のキャッシュ。Redis が無ければ null */
@@ -47,18 +58,18 @@ export function createRedisGeneralItemCache(): GeneralItemCache | null {
   if (!redis) return null;
   return {
     async getMany(codes) {
-      const out = new Map<string, GeneralItemData | null>();
+      const out = new Map<string, CachedGeneralItem>();
       if (codes.length === 0) return out;
       const values = await redis.mget<unknown[]>(...codes.map((c) => GENERAL_ITEM_CACHE_PREFIX + c));
       values.forEach((v, i) => {
-        let x: { item?: GeneralItemData | null } | null = null;
-        try { x = typeof v === 'string' ? JSON.parse(v) : (v as { item?: GeneralItemData | null } | null); } catch { /* 壊れた値はキャッシュ無し扱い */ }
-        if (x && 'item' in x) out.set(codes[i], x.item ?? null);
+        let x: { item?: GeneralItemData | null; savedAt?: number } | null = null;
+        try { x = typeof v === 'string' ? JSON.parse(v) : (v as { item?: GeneralItemData | null; savedAt?: number } | null); } catch { /* 壊れた値はキャッシュ無し扱い */ }
+        if (x && 'item' in x) out.set(codes[i], { item: x.item ?? null, savedAt: typeof x.savedAt === 'number' ? x.savedAt : undefined });
       });
       return out;
     },
     async set(code, item) {
-      await redis.set(GENERAL_ITEM_CACHE_PREFIX + code, JSON.stringify({ item }), { ex: item ? FOUND_TTL_SECONDS : NULL_TTL_SECONDS });
+      await redis.set(GENERAL_ITEM_CACHE_PREFIX + code, JSON.stringify({ item, savedAt: Date.now() }), { ex: item ? FOUND_TTL_SECONDS : NULL_TTL_SECONDS });
     },
   };
 }
@@ -204,29 +215,44 @@ export async function lookupGeneralItems(
   }
 }
 
+/** 取り直さずに使ってよいキャッシュか（null は期限〔6時間〕まで、取得できた商品は保存から24時間以内） */
+function isFresh(c: CachedGeneralItem, nowMs: number): boolean {
+  return c.item === null || c.savedAt === undefined || nowMs - c.savedAt < GENERAL_ITEM_FRESH_MS;
+}
+
 /**
- * キャッシュ（Redis）を使う取得：キャッシュにある商品は API を呼ばない。無い商品だけを共通の使用権で1件ずつ順に取得する。
+ * キャッシュ（Redis）を使う取得：新しいキャッシュがある商品は API を呼ばない。無い・古い商品だけを共通の使用権で1件ずつ順に取得する。
  * - 送信の直前にもう一度キャッシュを確かめ（同時に開かれた別の表示が先に取得・保存していれば API を呼ばない）、
  *   取得できた結果（販売終了・在庫なし等の null を含む）はすぐに保存する（保存の完了を待つ。失敗しても表示は続ける）。
- * - 429・503・通信エラー・使用権を取れない等の一時的な失敗は保存しない（次の表示で取り直す）。
+ * - 429・503・通信エラー・使用権を取れない等の一時的な失敗は保存しない（次の表示で取り直す）。古いキャッシュがあればそれを表示する
+ *   （取得日時は商品ごとに持ち、表示に添える）。
  */
 async function lookupWithCache(
   itemCodes: readonly string[],
   cache: GeneralItemCache,
   gateDeps?: Partial<GateDeps>,
 ): Promise<{ items: Map<string, GeneralItemData | null>; failed: number }> {
-  let hits = new Map<string, GeneralItemData | null>();
+  const clock = gateDeps?.now ?? (() => Date.now());
+  let cached = new Map<string, CachedGeneralItem>();
   try {
-    hits = await cache.getMany(itemCodes);
+    cached = await cache.getMany(itemCodes);
   } catch (err) {
     console.warn('[oshi-shopping] 一般商品のキャッシュを読めませんでした:', err instanceof Error ? err.name : 'error');
   }
-  const items = new Map<string, GeneralItemData | null>(hits);
-  const misses = itemCodes.filter((c) => !hits.has(c));
+  const items = new Map<string, GeneralItemData | null>();
+  const stale = new Map<string, GeneralItemData>();
+  const misses: string[] = [];
+  for (const code of itemCodes) {
+    const c = cached.get(code);
+    if (c && isFresh(c, clock())) items.set(code, c.item);
+    else {
+      if (c?.item) stale.set(code, c.item);
+      misses.push(code);
+    }
+  }
   if (misses.length === 0) return { items, failed: 0 };
 
-  const now = gateDeps?.now ?? (() => Date.now());
-  const deadline = now() + RENDER_API_BUDGET_MS;
+  const deadline = clock() + RENDER_API_BUDGET_MS;
   const session = createRakutenApiSession(
     { label: 'oshi-shopping', maxWaitMs: 3_000, onUnavailable: process.env.VERCEL ? 'skip' : 'local' },
     gateDeps,
@@ -234,23 +260,29 @@ async function lookupWithCache(
   let stopped: string | null = null;
   let failed = 0;
   let filledByOthers = 0;
+  let servedStale = 0;
+  // 取り直せなかった商品：古いキャッシュがあればそれを表示する（失敗として数えない）。無ければ表示しない
+  const giveUp = (code: string) => {
+    const old = stale.get(code);
+    if (old) { items.set(code, old); servedStale++; } else { failed++; items.set(code, null); }
+  };
   try {
     for (const code of misses) {
-      if (stopped) { failed++; items.set(code, null); continue; }
-      // 送信の直前の再確認（別の表示が取得・保存済みなら使う）
-      const again = await cache.getMany([code]).catch(() => new Map<string, GeneralItemData | null>());
-      if (again.has(code)) { items.set(code, again.get(code) ?? null); filledByOthers++; continue; }
+      if (stopped) { giveUp(code); continue; }
+      // 送信の直前の再確認（別の表示が新しく取得・保存済みなら使う）
+      const again = await cache.getMany([code]).catch(() => new Map<string, CachedGeneralItem>());
+      const a = again.get(code);
+      if (a && isFresh(a, clock())) { items.set(code, a.item); filledByOthers++; continue; }
       try {
-        const item = await fetchOne(code, session, deadline, now, () => !!stopped);
+        const item = await fetchOne(code, session, deadline, clock, () => !!stopped);
         items.set(code, item);
         await cache.set(code, item).catch(() => { /* 保存できなくても表示は続ける */ });
       } catch (err) {
         if (err instanceof StopLookup) stopped = err.message;
-        failed++;
-        items.set(code, null);
+        giveUp(code);
       }
     }
-    if (stopped) console.warn(`[oshi-shopping] 一般商品の取得を打ち切りました（理由: ${stopped}・未取得 ${failed}件）`);
+    if (stopped) console.warn(`[oshi-shopping] 一般商品の取得を打ち切りました（理由: ${stopped}・未取得 ${failed}件・前回の取得結果を表示 ${servedStale}件）`);
     if (filledByOthers) console.info(`[oshi-shopping] 一般商品 ${filledByOthers}件は別の表示が取得済みのキャッシュを使いました`);
     return { items, failed };
   } finally {

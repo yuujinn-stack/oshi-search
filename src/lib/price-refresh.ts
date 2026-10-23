@@ -330,6 +330,15 @@ export interface LookupResult {
 
 const GATE_ERRORS = [RakutenApiBusyError, RakutenApiCooldownError, RakutenApiLeaseLostError, RakutenApiUnavailableError];
 
+/** コード指定で使用権を続けて持つ最大件数（これを超えたら返して取り直す） */
+export const LOOKUP_CHUNK = 10;
+/**
+ * 使用権を返してから取り直すまでの間（ミリ秒）。返却後は呼び出しの間隔（1.1秒）の間だれも取れず、待っている側は0.5秒ごとに
+ * 取りに来るため、それより長く空けて他の処理が先に取れるようにする。
+ */
+export const LEASE_YIELD_MS = 2_000;
+const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 /** 楽天のエラー（503 等・通信エラー・保存失敗）がこの回数続いたら、その回の処理を終える（429 は1回で終える） */
 export const DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
 
@@ -340,7 +349,7 @@ export const DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
 export async function lookupPricesByCode(
   personName: string,
   candidates: readonly LookupCandidate[],
-  opts: { deadline?: number; now?: () => number; cache?: LookupCache; cacheMaxAgeMs?: number; maxConsecutiveFailures?: number } = {},
+  opts: { deadline?: number; now?: () => number; cache?: LookupCache; cacheMaxAgeMs?: number; maxConsecutiveFailures?: number; leaseYieldMs?: number } = {},
 ): Promise<LookupResult> {
   const now = opts.now ?? (() => Date.now());
   const result: LookupResult = { attempted: 0, fromCache: 0, applied: 0, notFound: 0, mismatched: 0, failed: 0, unavailable: 0, stoppedBy: 'done', reviews: [] };
@@ -398,8 +407,14 @@ export async function lookupPricesByCode(
     result.errors = recentErrors.slice(-maxFailures);
     return true;
   };
-  if (pending.length > 0) await withRakutenApiSession({ label: 'price-lookup', maxWaitMs: 60_000, onUnavailable: 'local' }, async () => {
-    for (const c of pending) {
+  // 楽天APIの共通の使用権は LOOKUP_CHUNK 件ごとに返して取り直し、その間を少し空ける（価格更新の実行中でも、
+  // 推し活お買い物診断・新商品の取得・管理画面などが使用権を取れるように。1人分のコード指定で使用権を持ち続けない）
+  for (let start = 0; start < pending.length; start += LOOKUP_CHUNK) {
+    if (result.stoppedBy !== 'done') break;
+    if (start > 0) await sleepMs(opts.leaseYieldMs ?? LEASE_YIELD_MS);
+    if (opts.deadline && now() >= opts.deadline) { result.stoppedBy = 'deadline'; break; }
+    await withRakutenApiSession({ label: 'price-lookup', maxWaitMs: 60_000, onUnavailable: 'local' }, async () => {
+    for (const c of pending.slice(start, start + LOOKUP_CHUNK)) {
       // 同じ実行内で同じコードを取得済みなら API を呼ばない（同じ人物の複数カテゴリなど）
       if (doneByCode.has(c.code)) { const v = doneByCode.get(c.code); if (v) addUpdate(c, v); result.fromCache++; continue; }
       if (opts.deadline && now() >= opts.deadline) { result.stoppedBy = 'deadline'; break; }
@@ -462,7 +477,8 @@ export async function lookupPricesByCode(
       fetchedNow.push(v);
       addUpdate(c, v);
     }
-  });
+    });
+  }
   if (opts.cache && fetchedNow.length > 0) {
     try { await opts.cache.setMany(fetchedNow); } catch { /* 共有できなくても反映は続ける */ }
   }

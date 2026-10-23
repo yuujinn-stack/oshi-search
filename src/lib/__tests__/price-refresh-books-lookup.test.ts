@@ -58,7 +58,14 @@ vi.mock('@/db/client', () => ({
 }));
 
 
-import { booksSearchKeyword, lookupPricesByCode, matchBooksResult, selectLookupCandidates, type CachedLookup } from '../price-refresh';
+// 使用権（セッション）の数を数えるため、共通の呼び出し制御は本物を使いつつ withRakutenApiSession だけ包む
+const gate = vi.hoisted(() => ({ sessions: 0 }));
+vi.mock('@/lib/rakuten-api-gate', async () => {
+  const actual = await vi.importActual<typeof import('../rakuten-api-gate')>('../rakuten-api-gate');
+  return { ...actual, withRakutenApiSession: (...args: Parameters<typeof actual.withRakutenApiSession>) => { gate.sessions++; return actual.withRakutenApiSession(...args); } };
+});
+
+import { LOOKUP_CHUNK, booksSearchKeyword, lookupPricesByCode, matchBooksResult, selectLookupCandidates, type CachedLookup } from '../price-refresh';
 import { __resetRakutenApiGateForTests } from '../rakuten-api-gate';
 
 // 楽天ブックスの商品のコード指定（楽天ブックス総合検索APIで商品名検索 → 商品番号が完全一致したものだけ。src/lib/price-refresh.ts）
@@ -225,4 +232,51 @@ describe('コード指定の取得（楽天ブックス）', () => {
     expect(u.searchParams.get('itemCode')).toBe('shop:10001');
     expect(r.applied).toBe(1);
   });
+});
+
+describe('価格更新中でも他の処理が楽天APIを使えるよう、使用権を短く区切る', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    db.rows.length = 0; db.upserts = 0; gate.sessions = 0;
+    __resetRakutenApiGateForTests();
+    process.env.RAKUTEN_APP_ID = 'test-app'; process.env.RAKUTEN_ACCESS_KEY = 'test-key';
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  const many = (n: number) => Array.from({ length: n }, (_, i) => book(String(1000 + i), { title: `上白石萌歌 作品 ${1000 + i}` }));
+
+  it(`コード指定は ${LOOKUP_CHUNK} 件ごとに使用権を返して取り直す（25件なら3回）。すべて処理する`, async () => {
+    const items = many(25);
+    seed('写真集', items);
+    fetchMock.mockImplementation(async (url: string) => {
+      const kw = new URL(url).searchParams.get('keyword')!;
+      const num = kw.match(/(\d{4})$/)![1];
+      return okRes([booksItem(num, 2100, '1')]);
+    });
+    const r = await lookupPricesByCode(PERSON, cands(items), { leaseYieldMs: 0 });
+    expect(gate.sessions).toBe(3);
+    expect(r).toMatchObject({ attempted: 25, applied: 25, stoppedBy: 'done' });
+  }, 60000);
+
+  it('429 を受けたら残りの区切りも呼ばない', async () => {
+    const items = many(25);
+    seed('写真集', items);
+    let n = 0;
+    fetchMock.mockImplementation(async () => (++n === 12 ? { ok: false, status: 429, headers: { get: () => null } } : okRes([])));
+    const r = await lookupPricesByCode(PERSON, cands(items), { leaseYieldMs: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(12);
+    expect(r.stoppedBy).toBe('rate_limited');
+    expect(gate.sessions).toBe(2);
+    expect(db.upserts).toBe(0);
+  }, 60000);
+
+  it('503 の連続は区切りをまたいでも数える（10・11・12件目で止まる）', async () => {
+    const items = many(25);
+    seed('写真集', items);
+    let n = 0;
+    fetchMock.mockImplementation(async () => (++n >= 10 ? { ok: false, status: 503, headers: { get: () => null } } : okRes([])));
+    const r = await lookupPricesByCode(PERSON, cands(items), { leaseYieldMs: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(12);
+    expect(r).toMatchObject({ stoppedBy: 'upstream_errors', failed: 3 });
+  }, 60000);
 });
