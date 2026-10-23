@@ -122,6 +122,113 @@ describe('lookupGeneralItems（推し活お買い物診断の一般商品）', (
   });
 });
 
+describe('一般商品のキャッシュ（本番は Redis に保存し、保存の完了を待つ）', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const env = { ...process.env };
+  const quiet = { log: () => {} };
+  const memCache = () => {
+    const m = new Map<string, unknown>();
+    const sets: string[] = [];
+    return {
+      m, sets,
+      cache: {
+        getMany: async (codes: readonly string[]) => new Map(codes.filter((c) => m.has(c)).map((c) => [c, m.get(c) as never])),
+        set: async (code: string, item: unknown) => { await new Promise((r) => setTimeout(r, 5)); m.set(code, item); sets.push(code); },
+      },
+    };
+  };
+  beforeEach(() => {
+    __resetRakutenApiGateForTests();
+    process.env.RAKUTEN_APP_ID = 'test-app-id-value';
+    process.env.RAKUTEN_ACCESS_KEY = 'test-access-key-value';
+    delete process.env.VERCEL;
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    process.env = { ...env };
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  test('キャッシュにある商品（null＝販売終了等も含む）は API を呼ばない', async () => {
+    const { m, cache } = memCache();
+    m.set('a:1', { itemCode: 'a:1', itemName: 'x', price: 1, imageUrl: 'i', affiliateUrl: 'u', shopName: '', reviewCount: 0, fetchedAt: 1 });
+    m.set('b:2', null);
+    const r = await lookupGeneralItems(['a:1', 'b:2'], { redis: createFakeGateRedis(), ...quiet }, cache);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(r.items.get('a:1')?.itemName).toBe('x');
+    expect(r.items.get('b:2')).toBeNull();
+    expect(r.failed).toBe(0);
+  });
+
+  test('キャッシュに無い商品だけを取得し、結果（null を含む）を保存し終えてから返す。失敗した商品は保存しない', async () => {
+    const { m, sets, cache } = memCache();
+    m.set('a:1', null);
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => okItem('b:2') })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ Items: [] }) })
+      .mockResolvedValueOnce({ ok: false, status: 503, headers: { get: () => null } });
+    const r = await lookupGeneralItems(['a:1', 'b:2', 'c:3', 'd:4'], { redis: createFakeGateRedis(), ...quiet }, cache);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(sets.sort()).toEqual(['b:2', 'c:3']); // 返る前に保存済み
+    expect(m.get('c:3')).toBeNull();
+    expect(m.has('d:4')).toBe(false);
+    expect(r.failed).toBe(1);
+  }, 15000);
+
+  test('取得の途中で別の表示が保存した商品は API を呼ばない（キャッシュが空のときの同時アクセスでも呼び出しが重ならない）', async () => {
+    const { m, cache } = memCache();
+    fetchMock.mockImplementationOnce(async () => {
+      // 1件目を取得している間に、別の表示が 2件目を取得・保存した
+      m.set('b:2', { itemCode: 'b:2', itemName: '別の表示が保存', price: 900, imageUrl: 'i', affiliateUrl: 'u', shopName: '', reviewCount: 0, fetchedAt: 1 });
+      return { ok: true, status: 200, json: async () => okItem('a:1') };
+    });
+    const r = await lookupGeneralItems(['a:1', 'b:2'], { redis: createFakeGateRedis(), ...quiet }, cache);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(r.items.get('b:2')?.itemName).toBe('別の表示が保存');
+    expect(m.get('a:1')).toMatchObject({ itemCode: 'a:1', price: 1000 }); // 取得できた商品はすぐ保存
+  });
+
+  test('保存に失敗しても表示は続ける（診断全体はエラーにならない）', async () => {
+    const cache = { getMany: async () => new Map(), set: async () => { throw new Error('redis write failed'); } };
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => okItem('a:1') });
+    const r = await lookupGeneralItems(['a:1'], { redis: createFakeGateRedis(), ...quiet }, cache);
+    expect(r.items.get('a:1')?.itemName).toBe('商品 a:1');
+    expect(r.failed).toBe(0);
+  });
+
+  test('価格・商品コード・アフィリエイトURLは楽天の応答のまま（itemCode が違う応答は採用せず null）', async () => {
+    const { m, cache } = memCache();
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => okItem('a:1') })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => okItem('other:9') });
+    const r = await lookupGeneralItems(['a:1', 'b:2'], { redis: createFakeGateRedis(), ...quiet }, cache);
+    expect(r.items.get('a:1')).toMatchObject({ itemCode: 'a:1', price: 1000, affiliateUrl: okItem('a:1').Items[0].Item.affiliateUrl });
+    expect(r.items.get('b:2')).toBeNull();
+    expect(m.get('b:2')).toBeNull();
+  }, 15000);
+
+  test('キャッシュを読めなくても API で取得して表示する', async () => {
+    const cache = { getMany: async () => { throw new Error('redis down'); }, set: async () => {} };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => okItem('a:1') });
+    const r = await lookupGeneralItems(['a:1'], { redis: createFakeGateRedis(), ...quiet }, cache);
+    expect(r.items.get('a:1')?.itemName).toBe('商品 a:1');
+  });
+
+  test('打ち切った理由（429 等）をログに出す（認証情報は出さない）', async () => {
+    const { cache } = memCache();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockResolvedValue({ ok: false, status: 429, headers: { get: () => null } });
+    await lookupGeneralItems(['a:1', 'b:2'], { redis: createFakeGateRedis(), ...quiet }, cache);
+    const logged = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(logged).toContain('一般商品の取得を打ち切りました（理由: 429');
+    expect(logged).not.toContain('test-access-key-value');
+    expect(logged).not.toContain('test-app-id-value');
+  });
+});
+
 describe('楽天ウェブサービスのクレジット', () => {
   test('規定のHTMLソース（テキスト形式）と完全に一致する（改変禁止）', () => {
     expect(RAKUTEN_CREDIT_HTML).toBe(
