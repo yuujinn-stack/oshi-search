@@ -4483,3 +4483,39 @@ Google 検索結果で灰色の地球マーク（ファビコン未設定時の�
 - robots.txt はアイコンを Disallow しておらず、proxy の matcher（`/admin`・`/api/admin`）の対象外。
 - 32px では「推」の字が読める。16px では字が潰れるが、紺地と青い円弧でアイコンとして見分けられる（デザインを変えないため、そのまま）。
 - tsc OK、`npm run build` OK。
+
+---
+
+## Task 138：動画メーカー「まず見る3作 ショートV1」— 同じ作品の重複禁止と「再選定」の修正（未commit・本番DB/Redis 未変更）
+
+### 目的
+大橋和也で「君がトクベツ / リベンジ・スパイ / 君がトクベツ」と同じ作品が2回選ばれ、「再選定」を押しても3作品が変わらなかった。動画メーカー全体の共通処理として、重複を禁止し、再選定で直前と別の3作品を選べるようにする。
+
+### 原因（実データで確認）
+- 推しサーチには「君がトクベツ」がドラマ版（tmdb-tv-296060）と映画版（tmdb-movie-1469230）の別IDで登録され、どちらも2025年・Disney+見放題。選定（oshi-video-maker `first3Selection.ts` の `pickFirst3`）は作品カード単位で、作品名の重複を見ていなかった。
+- `pickFirst3` は入力だけで決まる固定の順位付けで、直前の選定結果を受け取らない。再選定の依頼はWorkerまで届き selection.json も書き直されていた（selectedAt は更新）が、同じデータからは毎回同じ3作品になっていた（キャッシュではない）。
+- 加えて、生成済み（data.json あり）の人物は管理画面の「再選定」も無視していた（ボタンは表示されるが何も変わらない）。台本も data.json を常に優先していた。
+- 既存の選定ファイル233件を調べ、同名重複は大橋和也の1件だけ。
+
+### 変更したファイル
+oshi-video-maker（選定ルールの正本）
+- `src/compositions/prototypes/first3/first3Selection.ts` — `normalizeFirst3Title`（NFKC・大文字小文字・空白・記号・先頭の「劇場版」を除いて比較。語が違う続編・シリーズ違いは別作品のまま）。`pickFirst3` で同じ作品名は既存の優先順で先に来る1件だけ使い、異なる作品が3件に満たなければ null。再選定の履歴 `rotation`（各回の3作品、最大10回）を渡すと「最近選ばれていない作品」から順に使う（各グループの中は既存の評価基準：最新作 → 直近3年で見放題の多い順 → それ以前）。種別の偏り補正で最近選んだ作品へ戻さない。`isSameFirst3Set`・`countDistinctFirst3Eligible`。
+- `scripts/prototypes/first3/captureFirst3Pages.ts` — 選定処理に `rotation` を通す。作品確認の打ち切り条件を1作品目の公開年基準に（再選定で有力な候補を確認せずに打ち切らない。履歴なしでは従来と同じ）。selection.json に `rotation`・`reselect`（結果の文言）を保存。生成時（first3Produce の STEP2）も selection.json の `rotation` で選ぶ（台本・CapCut音声と同じ3作品になる）。作品不足の件数は異なる作品の数。
+- `scripts/first3/first3ServerSource.ts` — `rotation` を受け取る。
+- `scripts/worker/first3ScriptQueue.ts` — 管理画面の再選定は生成済みの人物でも行う（自動の選び直しは従来どおり生成済みを除く）。`select(person, manual)`。
+- `scripts/worker/first3ScriptPrep.ts` — 再選定はいま台本に使っている3作品を履歴に足して選ぶ。自動の選び直しは保存済みの履歴のまま（7日ごとの自動選び直しで元に戻らない）。結果の文言 `reselectNote`（変更・変えられなかった理由・作品不足）。
+- `scripts/capcutStore.ts` — 生成後に再選定した場合（selection.json に reselect があり data.json より新しい）は selection.json から正式台本・音声生成用台本を作る。報告に `reselectNote`。作品不足の文言に「同じ作品名は1作品」。
+- テスト: `src/lib/__tests__/first3Reselect.test.ts`（新規8件。大橋和也の実データの形）、`first3ScriptPrep.test.ts`（生成済みでも手動の再選定は行う、に更新）。
+
+oshi-search
+- `src/app/api/worker/heartbeat/route.ts`・`src/server/video-jobs/job-store.ts` — `reselectNote` を検証して保存。
+- `src/server/video-jobs/script-prep-store.ts`・`src/app/api/admin/video-jobs/first3-prepare/route.ts` — 追加した依頼数を返し、未処理の同じ再選定があれば `alreadyPending`。
+- `src/app/admin/video-maker/VideoMakerClient.tsx` — 台本カードに再選定の結果（変えられなかった場合は⚠と理由）を表示。連続で押して前の依頼が未処理ならその旨を表示。
+
+### 設計上の判断・注意点
+- 同名判定は「正規化した作品名の完全一致」だけ（部分一致にしない）。民王 / 民王R、僕の可愛いは… / 俺の可愛いは… は別作品。
+- 再選定は単純なランダムではなく、履歴に基づく順番の入れ替え（LRU）。別の候補が1つでもあれば直前と同じ組み合わせにはならない。異なる作品がちょうど3件なら変わらず、理由を表示。2件以下は選ばず（水増し・AIでの補完なし）、作品不足として表示。
+- 実データ確認（本番API読み取りのみ）：大橋和也 通常=君がトクベツ / リベンジ・スパイ / ふしぎ駄菓子屋 銭天堂、再選定1回目=銭天堂 / 俺の可愛いはもうすぐ消費期限!? / 民王R、2回目・3回目も直前と別。ほか9人は従来と同じ3作品。
+- 台本形式（7区分・約18秒・CapCut向け）は変更なし。保存済みCapCut音声がある人物を再選定すると台本が変わるため「録り直し」状態になる（既存の確認ダイアログどおり）。
+- 反映：oshi-search・oshi-video-maker はどちらの順で反映しても安全（`reselectNote` は任意項目）。Worker は再起動が必要。大橋和也の現在の selection.json は旧ロジックの結果のまま残っている。
+- tsc OK（両リポジトリ）、oshi-video-maker テスト151件すべて成功。

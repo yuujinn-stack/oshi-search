@@ -73,6 +73,8 @@ interface CapcutEntry {
   scriptStatus?: ScriptStatus;
   scriptError?: string | null;
   selectedAt?: string | null;
+  /** まず見る3作だけ: 直近の「再選定」の結果（変えられなかった場合はその理由） */
+  reselectNote?: { at: string; changed: boolean; message: string } | null;
 }
 
 interface CapcutStoreReport {
@@ -420,7 +422,7 @@ export default function VideoMakerClient({
     if (action === 'reselect' && !window.confirm(`${personNames.join('、')} の3作品を選び直します。CapCut音声を作成済みの場合は録り直しになることがあります。よろしいですか？`)) return;
     setScriptRequestBusy(true);
     try {
-      await fetchJson('/api/admin/video-jobs/first3-prepare', {
+      const res = await fetchJson<{ alreadyPending?: boolean }>('/api/admin/video-jobs/first3-prepare', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, personNames }),
@@ -432,7 +434,9 @@ export default function VideoMakerClient({
             ? '全人物の台本準備をWorkerへ依頼しました（動画は生成しません。進捗はこの画面に表示されます）。'
             : action === 'stop'
               ? '台本準備の停止をWorkerへ依頼しました。'
-              : '再選定をWorkerへ依頼しました。',
+              : res.alreadyPending
+                ? '前回の再選定の依頼がまだWorkerで処理されていません。処理が終わり台本が更新されてから、もう一度押してください。'
+                : '再選定をWorkerへ依頼しました（Workerが選び直すと、3作品・正式台本・音声生成用台本がこの画面で更新されます）。',
       });
       await load();
     } catch (err) {
@@ -1348,6 +1352,12 @@ function CapcutCard({
         </span>
       </div>
       {entry.status !== 'ready' && entry.status !== 'missing' && <p className="text-xs text-gray-600">{entry.message}</p>}
+      {entry.reselectNote && (
+        <p className={`text-xs rounded px-2 py-1 ${entry.reselectNote.changed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>
+          {entry.reselectNote.changed ? '再選定' : '⚠ 再選定'}
+          {entry.reselectNote.at ? `（${formatJst(entry.reselectNote.at)}）` : ''}: {entry.reselectNote.message}
+        </p>
+      )}
       {scriptView && (
         <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
           <span className={`rounded px-2 py-0.5 ${scriptView.cls}`}>

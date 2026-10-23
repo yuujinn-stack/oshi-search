@@ -60,8 +60,8 @@ export async function upsertPronunciationReading(sourceText: string, reading: st
   }
 }
 
-/** 台本準備の依頼を追加する（同じ内容の未処理の依頼があれば追加しない） */
-export async function createScriptRequest(action: ScriptRequestAction, personNames: string[] = []): Promise<void> {
+/** 台本準備の依頼を追加する（同じ内容の未処理の依頼があれば追加しない）。追加した件数を返す */
+export async function createScriptRequest(action: ScriptRequestAction, personNames: string[] = []): Promise<number> {
   try {
     const pending = await db.select().from(videoScriptRequests).where(isNull(videoScriptRequests.handledAt));
     const exists = (personName: string | null) =>
@@ -70,6 +70,7 @@ export async function createScriptRequest(action: ScriptRequestAction, personNam
       .filter((p) => !exists(p))
       .map((personName) => ({ templateId: FIRST3_TEMPLATE_ID, action, personName }));
     if (values.length > 0) await db.insert(videoScriptRequests).values(values);
+    return values.length;
   } catch (err) {
     if (isMissingTable(err)) throw new VideoJobError('台本準備の依頼の保存先（video_script_requests）が未作成です。/admin/db-init でテーブルを作成してください。', 503);
     throw err;

@@ -100,6 +100,8 @@ export interface CapcutStoreEntry {
   scriptError?: string | null;
   /** 3作品を選んだ日時 */
   selectedAt?: string | null;
+  /** 直近の「再選定」の結果（変えられなかった場合はその理由） */
+  reselectNote?: { at: string; changed: boolean; message: string } | null;
 }
 export type First3ScriptStatus = 'ready_script' | 'needs_reading' | 'insufficient_works' | 'pending' | 'error';
 /** まず見る3作: Workerの台本準備キュー（全人物の台本準備）の進捗 */

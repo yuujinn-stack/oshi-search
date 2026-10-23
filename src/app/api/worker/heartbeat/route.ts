@@ -46,9 +46,21 @@ function sanitizeEntries(raw: unknown[]): CapcutStoreEntry[] {
       updatedAt: str(e.updatedAt, 40),
       fileBaseName: str(e.fileBaseName, 200) ?? '',
       ...(scriptStatuses.has(e.scriptStatus as First3ScriptStatus)
-        ? { scriptStatus: e.scriptStatus as First3ScriptStatus, scriptError: str(e.scriptError, 500), selectedAt: str(e.selectedAt, 40) }
+        ? {
+            scriptStatus: e.scriptStatus as First3ScriptStatus,
+            scriptError: str(e.scriptError, 500),
+            selectedAt: str(e.selectedAt, 40),
+            reselectNote: sanitizeReselectNote(e.reselectNote),
+          }
         : {}),
     }));
+}
+
+/** まず見る3作: 直近の「再選定」の結果 */
+function sanitizeReselectNote(raw: unknown): { at: string; changed: boolean; message: string } | null {
+  const n = raw as Record<string, unknown> | null | undefined;
+  if (!n || typeof n.changed !== 'boolean' || typeof n.message !== 'string') return null;
+  return { at: str(n.at, 40) ?? '', changed: n.changed, message: str(n.message, 300)! };
 }
 
 /** まず見る3作の台本準備キューの進捗 */

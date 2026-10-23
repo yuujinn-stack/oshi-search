@@ -31,8 +31,9 @@ export async function POST(req: NextRequest) {
       const unknown = personNames.filter((p) => !registered.has(p));
       if (unknown.length > 0) return NextResponse.json({ error: `登録されていない人物です: ${unknown.join(', ')}` }, { status: 400 });
     }
-    await createScriptRequest(action, personNames);
-    return NextResponse.json({ ok: true });
+    const added = await createScriptRequest(action, personNames);
+    // 同じ依頼がまだWorkerで処理されていない（連続で押した）場合は追加しない。その旨を画面に出す
+    return NextResponse.json({ ok: true, alreadyPending: added === 0 });
   } catch (err) {
     if (err instanceof VideoJobError) return NextResponse.json({ error: err.message }, { status: err.status });
     return NextResponse.json({ error: maskSecrets(String(err instanceof Error ? err.message : err)) }, { status: 500 });
