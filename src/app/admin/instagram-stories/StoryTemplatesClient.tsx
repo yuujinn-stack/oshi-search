@@ -15,6 +15,8 @@ import {
   type StoryZone,
 } from '@/lib/instagram-story-templates';
 import { StoryDesignFrame, hasStoryDesign } from './StoryDesignPreview';
+import { downloadBlob, renderStorySlidePng, storyPngFileName } from './story-image-export';
+import { createStoreZip } from '@/lib/zip-store';
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -34,6 +36,51 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       {state === 'copied' ? 'コピーしました' : state === 'failed' ? 'コピー失敗' : label}
     </button>
   );
+}
+
+/** PNG保存ボタン（処理中は「保存中...」で二重クリックを防ぐ） */
+function SaveButton({ label, onSave }: { label: string; onSave: () => Promise<void> }) {
+  const [state, setState] = useState<'idle' | 'saving' | 'failed'>('idle');
+  const handleClick = async () => {
+    setState('saving');
+    try {
+      await onSave();
+      setState('idle');
+    } catch (e) {
+      console.error('[instagram-stories] PNG保存に失敗', e);
+      setState('failed');
+      setTimeout(() => setState('idle'), 4000);
+    }
+  };
+  return (
+    <span className="inline-flex flex-col items-center">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={state === 'saving'}
+        className="px-3 py-1.5 rounded-lg border border-violet-600 bg-violet-600 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-60 disabled:cursor-wait"
+      >
+        {state === 'saving' ? '保存中...' : label}
+      </button>
+      {state === 'failed' && <span role="alert" className="mt-1 text-[11px] font-semibold text-red-600">画像の保存に失敗しました</span>}
+    </span>
+  );
+}
+
+async function saveSlidePng(template: StoryTemplate, index: number) {
+  const blob = await renderStorySlidePng(template.id, index, template.slides[index]);
+  downloadBlob(blob, storyPngFileName(index));
+}
+
+/** 全スライドを PNG にして instagram-stories.zip にまとめる（1枚ずつ順に描く） */
+async function saveAllSlidesZip(template: StoryTemplate) {
+  const entries = [];
+  for (let i = 0; i < template.slides.length; i++) {
+    const blob = await renderStorySlidePng(template.id, i, template.slides[i]);
+    entries.push({ name: storyPngFileName(i), data: new Uint8Array(await blob.arrayBuffer()) });
+  }
+  const zip = createStoreZip(entries);
+  downloadBlob(new Blob([zip.buffer as ArrayBuffer], { type: 'application/zip' }), 'instagram-stories.zip');
 }
 
 /** 1080×1920 上の縦範囲を、プレビュー枠内の % 指定に変換する */
@@ -147,9 +194,13 @@ function SlideCard({ slide, index, template, showGuide, onOpen }: { slide: Story
       <button type="button" onClick={onOpen} className="block w-full cursor-zoom-in" aria-label={`${index + 1}枚目を拡大プレビュー`}>
         <SlidePreview template={template} slide={slide} index={index} showGuide={showGuide} />
       </button>
-      <button type="button" onClick={onOpen} className="mt-2 self-center text-xs font-semibold text-violet-600 hover:text-violet-700">
-        拡大プレビュー
-      </button>
+      <div className="mt-2 flex items-start justify-center gap-3 flex-wrap">
+        <button type="button" onClick={onOpen} className="py-1.5 text-xs font-semibold text-violet-600 hover:text-violet-700">
+          拡大プレビュー
+        </button>
+        {/* 完成イメージがあるスライドだけ保存できる（配置図は投稿用画像ではないため） */}
+        {hasStoryDesign(template.id, index) && <SaveButton label="PNGで保存" onSave={() => saveSlidePng(template, index)} />}
+      </div>
 
       <p className="text-xs font-semibold text-gray-500 mt-4 mb-1">本文</p>
       <pre className="whitespace-pre-wrap font-sans text-sm text-slate-800 bg-gray-50 rounded-lg p-3 leading-relaxed">{slide.text}</pre>
@@ -194,7 +245,12 @@ function TemplateDetail({ template }: { template: StoryTemplate }) {
           </h2>
           <p className="text-xs text-gray-500 mt-1">目的：{template.purpose}</p>
         </div>
-        <CopyButton text={formatStoryTemplateForCopy(template)} label={`${template.slides.length}枚まとめてコピー`} />
+        <div className="flex items-start gap-2 flex-wrap">
+          <CopyButton text={formatStoryTemplateForCopy(template)} label={`${template.slides.length}枚まとめてコピー`} />
+          {template.slides.every((_, i) => hasStoryDesign(template.id, i)) && (
+            <SaveButton label={`${template.slides.length}枚まとめて保存`} onSave={() => saveAllSlidesZip(template)} />
+          )}
+        </div>
       </div>
 
       {template.isPR && (

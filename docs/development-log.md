@@ -4656,3 +4656,26 @@ oshi-search
 - ほかの3テンプレートは従来の配置図のまま（`STORY_DESIGNS` に登録すれば同じ仕組みで完成イメージにできる）。
 - ローカル dev（一時的なセッション秘密鍵、.env は未変更）＋ Playwright で 1280px / 390px を確認：各ブロックが範囲内、子要素のはみ出し・文字切れなし、横スクロールなし、スマホは1列、コピー（本文・CTA・URL・3枚まとめて）の内容、拡大プレビューの開閉。
 - 1・2枚目のモックアップ内ボタン（「診断する」「選んだ人で診断する」）は `MockButton muted`（白地・細いグレー枠・グレーの小さめの文字、オレンジ装飾なし）。画面内のボタンと分かる程度に弱め、実際に押してほしい下のリンクステッカーCTAと視線が競合しないようにした。
+
+---
+
+## Task 144：ストーリーズテンプレートの画像保存（PNG 1080×1920・3枚まとめてZIP）
+
+### 目的
+- `/admin/instagram-stories` の完成イメージを、そのまま Instagram ストーリーズへアップできる PNG で保存する（リンクスタンプは Instagram アプリ側で CTA の位置に重ねる）。
+
+### 変更したファイル
+- `src/app/admin/instagram-stories/story-image-export.ts`（新規）— `renderStorySlidePng`：画面外に幅 1080px で `StoryDesignFrame`（`showGuide=false`）を描き、その DOM を SVG の foreignObject に入れて 1080×1920 の canvas に等倍で描画 → PNG。ページから受け継ぐ文字の値（line-height は倍率に戻す）と Tailwind preflight 相当の基本 CSS を SVG 内にそろえる。`<img>` があれば data URL に埋め込んでから描く（取得失敗はエラー）。`downloadBlob`・`storyPngFileName`。
+- `src/lib/zip-store.ts`（新規）— 依存なしの無圧縮 ZIP（CRC-32 付き）。PNG は圧縮済みのため STORE で十分。
+- `src/app/admin/instagram-stories/StoryTemplatesClient.tsx` — 各スライドの「拡大プレビュー」の横に「PNGで保存」（`instagram-story-{n}.png`）、「3枚まとめてコピー」の横に「3枚まとめて保存」（`instagram-stories.zip`）。処理中は「保存中...」で無効化、失敗時は「画像の保存に失敗しました」。完成イメージがあるテンプレート（現状は推しからサブスク診断）だけに表示（配置図は投稿用画像ではないため）。
+- `src/app/admin/instagram-stories/StoryDesignPreview.tsx` — 見た目は変えずに、保存画像がプレビューと一致するよう3点修正：①枠線の太さを `ub()`（+0.02px）にして、SVG 内で 4px が 3px に切り捨てられるのを防ぐ ②等幅フォントに実在書体名（Osaka-Mono 等）を先に並べ、総称 monospace が SVG 内で別書体になるのを防ぐ ③ずらし影を box-shadow から背面の箱（`HardShadow`）に変更（Safari は SVG 画像内の box-shadow を描かない）。
+- テスト: `src/lib/__tests__/zip-store.test.ts`（新規。CRC-32、ZIP 構造・各ファイルの中身）。
+
+### 確認（ローカル dev＋Playwright、Chromium と WebKit）
+- 1〜3枚目それぞれ・3枚まとめて保存できる。PNG は 1080×1920、ZIP 内の3枚は個別保存と同一画像。
+- ガイド表示 ON のまま保存しても、紫の点線・ガイド文字・灰色の Instagram UI は入らない（上下の UI 範囲は背景色のみ）。CTA デザインは残る。
+- 画面のプレビュー（幅 1080px）と保存 PNG の差：Chromium 0.08〜0.24%、WebKit 0.23〜0.33% の画素（文字の縁のアンチエイリアス程度）。修正前後でプレビュー自体の見た目は画素単位で同一。
+- 現状のデザインは外部画像を使っていない（CSS で描いたモックアップと絵文字のみ）。
+
+### 注意点
+- iPhone の Safari での保存（ダウンロード）は未確認。
