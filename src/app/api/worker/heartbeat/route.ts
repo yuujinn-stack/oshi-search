@@ -53,6 +53,7 @@ function sanitizeEntries(raw: unknown[]): CapcutStoreEntry[] {
             reselectNote: sanitizeReselectNote(e.reselectNote),
             works: sanitizeFirst3Works(e.works),
             fixedWorks: e.fixedWorks === true,
+            ...(e.videoStatus === 'current' || e.videoStatus === 'outdated' || e.videoStatus === 'none' ? { videoStatus: e.videoStatus } : {}),
           }
         : {}),
     }));

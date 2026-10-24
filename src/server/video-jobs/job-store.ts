@@ -106,6 +106,8 @@ export interface CapcutStoreEntry {
   works?: Array<{ id: string | null; title: string; kind: string | null; year: number | null }> | null;
   /** 1作品だけ変更した3作品（生成時もこの3作品。自動では選び直さない） */
   fixedWorks?: boolean;
+  /** 完成動画が現在の台本に対応しているか（current=現在の3作品で生成済み / outdated=作品変更後は未生成 / none=未生成） */
+  videoStatus?: 'current' | 'outdated' | 'none';
 }
 export type First3ScriptStatus = 'ready_script' | 'needs_reading' | 'insufficient_works' | 'pending' | 'error';
 /** まず見る3作: Workerの台本準備キュー（全人物の台本準備）の進捗 */

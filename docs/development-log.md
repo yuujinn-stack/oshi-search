@@ -4585,3 +4585,27 @@ oshi-video-maker（commit 560506f）
 ### 設計上の判断・注意点
 - 出演関係は既存の人物ページと同じデータ（`getPublishedWorksOrThrow(人物名)` → 作品カード）だけを使う。グループ名や作品名から出演者を推測せず、出演関係を新たに作らない。
 - 人物の識別は既存の動画メーカーと同じく人物名（persons の name。依頼・Worker の slug も人物名から作る）。
+
+---
+
+## Task 141：動画メーカー「まず見る3作」— 作品変更後に録り直し・再生成しても「使用可能」に戻らない不具合
+
+### 原因（道枝駿佑の実データで確認）
+- 「使用可能」＝保存済みCapCut音声の scriptHash が現在の正式台本のハッシュと一致し、取り込みチェックに合格。「台本変更あり・再作成必要」（stale）＝一致しない。動画の生成（ジョブ作成）は「使用可能」の人物だけ受け付ける。
+- 11:40 に3作目を「恋するキャスター → 消えた初恋」に変更（selection.json）。11:49 に録り直した WAV・SRT（字幕は「3作目は 消えた罰恋」＝新しい台本の音声）を取り込んだが、保存された scriptHash は**変更前の台本**（恋するキャスター）のものだった。
+- 取り込んだのは Worker ではなく、10/6 から起動したままの oshi-video-maker の管理画面サーバー（`npm run ui` = localhost:4321、受信フォルダを5秒ごとに取り込む）。Task 138・139 より前のプログラムのまま動いており、「完成動画の data.json を常に優先する」古い処理で現在の台本を作ったため、古い台本のハッシュで保存した（取り込みチェックは作品名1つの違いでは不合格にならず合格）。
+- その結果、音声は「台本変更あり」のままになり、動画の再生成も受け付けられなかった（10/23 以降、道枝駿佑の生成ジョブは無い）。
+
+### 変更したファイル
+oshi-video-maker（commit 58ba948）
+- `scripts/capcutStore.ts` — 起動後に台本に関わるプログラム（capcutStore・captureFirst3Pages・importFirst3CapcutNarration・first3Selection・first3Script・capcutScript）の内容が変わったプロセスは、CapCut受信フォルダを取り込まない（最新のプロセスが取り込む）。data.json の `selectionRevision` で「どの選定結果から作った動画か」を判定（生成途中に作品を変えても、古い生成の完了で新しい台本を上書きしない）。「台本変更あり」に保存済み音声の台本との違い（行）を表示。完成動画が現在の台本に対応しているか（`videoStatus`）を報告。
+- `scripts/prototypes/first3/captureFirst3Pages.ts`・`src/compositions/prototypes/first3/first3Data.ts` — data.json に `selectionRevision`（生成開始時の selection.json の selectedAt）。
+- テスト: `src/lib/__tests__/first3RemakeState.test.ts`（新規。A〜G の状態の移り変わり。F は以前の日時比較では失敗することを確認）。
+
+oshi-search
+- `src/app/admin/video-maker/VideoMakerClient.tsx`・`src/app/api/worker/heartbeat/route.ts`・`src/server/video-jobs/job-store.ts` — 「動画: 現在の台本で生成済み / 作品変更後は未生成 / 未生成」を表示。
+
+### 設計上の判断・注意点
+- 「使用可能」の意味（現在の台本に対応する音声が保存済み＝生成できる）は変えない。無条件に使用可能へ書き換えない。完成動画の状態は別の表示にした（生成の受け付け条件は従来どおり）。
+- 起動したままの localhost:4321 を再起動した（Worker と同じく、今後はデプロイ時に再起動が必要。再起動していなければ取り込みをせず Worker が取り込む）。
+- 過去の WAV・SRT（_inbox/_done）・完成動画・生成履歴は削除しない。

@@ -80,7 +80,16 @@ interface CapcutEntry {
   works?: First3SlotWork[] | null;
   /** まず見る3作だけ: 1作品だけ変更した3作品 */
   fixedWorks?: boolean;
+  /** まず見る3作だけ: 完成動画が現在の台本に対応しているか（古いWorkerの報告には無い） */
+  videoStatus?: 'current' | 'outdated' | 'none';
 }
+
+// まず見る3作: 完成動画の状態（CapCut音声の状態とは別。音声が「使用可能」になったら生成できる）
+const VIDEO_STATUS_VIEW: Record<'current' | 'outdated' | 'none', { label: string; cls: string }> = {
+  current: { label: '動画: 🟢 現在の台本で生成済み', cls: 'bg-emerald-50 text-emerald-700' },
+  outdated: { label: '動画: 🟡 作品変更後は未生成（音声が使用可能になったら再生成）', cls: 'bg-amber-50 text-amber-700' },
+  none: { label: '動画: ⚪ 未生成', cls: 'bg-gray-100 text-gray-600' },
+};
 
 interface CapcutStoreReport {
   inboxDir: string;
@@ -1393,6 +1402,9 @@ function CapcutCard({
         </span>
       </div>
       {entry.status !== 'ready' && entry.status !== 'missing' && <p className="text-xs text-gray-600">{entry.message}</p>}
+      {entry.videoStatus && (
+        <p className={`text-xs rounded px-2 py-0.5 inline-block ${VIDEO_STATUS_VIEW[entry.videoStatus].cls}`}>{VIDEO_STATUS_VIEW[entry.videoStatus].label}</p>
+      )}
       {entry.reselectNote && (
         <p className={`text-xs rounded px-2 py-1 ${entry.reselectNote.changed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>
           {entry.reselectNote.changed ? '再選定' : '⚠ 再選定'}
