@@ -27,7 +27,7 @@ describe('instagram story templates', () => {
 
   it('every slide (not only the last) has text, CTA, link position and asset', () => {
     for (const t of STORY_TEMPLATES) {
-      expect(t.slides.length).toBeGreaterThanOrEqual(3);
+      expect(t.slides.length).toBeGreaterThanOrEqual(2);
       for (const s of t.slides) {
         expect(s.text.trim()).not.toBe('');
         expect(s.linkCTA.trim()).not.toBe('');
@@ -51,7 +51,8 @@ describe('instagram story templates', () => {
     expect(ctas['oshikatsu-mendoi']).toEqual(['推しから探してみる ↓', '推しサーチを使ってみる ↓', '推しの出演作・配信先を探す ↓']);
     expect(ctas['oshi-vod-diagnosis']).toEqual(['今すぐ診断してみる ↓', '気になる人を選んでみる ↓', 'あなたの推しでも診断する ↓']);
     expect(ctas['oshi-search-features']).toEqual(['推しサーチを見てみる ↓', '気になる人から探す ↓', '推しサーチを使ってみる ↓']);
-    expect(ctas['support-ads-oshiad']).toEqual(['応援広告を見てみる ↓', '仕組み・始め方を見る ↓', '費用・始め方を確認 ↓']);
+    // 推しアドは2枚構成（旧2枚目「応援広告って知ってる？」は1枚目と重複するため削除）
+    expect(ctas['support-ads-oshiad']).toEqual(['応援広告を見てみる ↓', '費用・始め方を確認 ↓']);
   });
 
   it('marks only the 推しアド template as PR and keeps ※PR in its text', () => {
@@ -75,7 +76,7 @@ describe('instagram story templates', () => {
       'https://oshi-search.jp/search',
     ]);
     // 推しアドは自サイトの応援広告ガイドへ（AccessTrade の計測リンクは直接使わない）
-    expect(urls['support-ads-oshiad']).toEqual(Array(3).fill('https://oshi-search.jp/support-ads'));
+    expect(urls['support-ads-oshiad']).toEqual(Array(2).fill('https://oshi-search.jp/support-ads'));
   });
 
   it('slide linkUrl overrides the template default, including null (未設定)', () => {

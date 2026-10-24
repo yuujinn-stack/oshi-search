@@ -78,7 +78,7 @@ const CARDS: InstagramHubCard[] = [
   {
     icon: '📱',
     title: 'ストーリーズテンプレート',
-    description: '3枚構成のストーリーズ用テンプレートです。各スライドの本文とリンクCTAをコピーして使います（全スライドにリンクを設置）。',
+    description: 'ストーリーズ用テンプレート（2〜3枚構成）です。各スライドの本文とリンクCTAをコピーして使います（全スライドにリンクを設置）。',
     href: '/admin/instagram-stories',
     cta: 'テンプレートを見る',
   },

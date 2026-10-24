@@ -4803,3 +4803,23 @@ oshi-search
 ### 設計上の判断・注意点
 - 書体は Mac 標準の Snell Roundhand・Didot を優先し、ない環境では一般的な筆記体・セリフ体になる（保存は管理画面を開いたブラウザで行うため、その環境の書体で描かれる）。
 - 本文・ビジュアル・CTAの配置（270〜756／780〜1440／1470〜1608）は前回と同じ。2・3枚目とサブスク診断の保存PNGは画素単位で同一。
+
+---
+
+## Task 151：推しアド（PR）ストーリーズを2枚構成に（興味を引く → 費用と始め方）
+
+### 目的
+- 旧2枚目「応援広告って知ってる？」は1枚目と内容が重なるため削除し、旧3枚目を新しい2枚目として、費用と始め方が一瞬で分かるデザインに作り直す（リンクタップを増やす）。
+
+### 変更したファイル
+- `src/lib/instagram-story-templates.ts` — `support-ads-oshiad` の slides から旧2枚目を削除（2枚：CTA「応援広告を見てみる ↓」「費用・始め方を確認 ↓」）。本文・リンク先は従来どおり、全スライド末尾に「※PR」。
+- `src/app/admin/instagram-stories/StoryDesignPreview.tsx` — `STORY_DESIGNS['support-ads-oshiad'] = [SupportAdSlide1, SupportAdCostSlide]`。旧 SupportAdSlide2・3 と、それだけが使っていた IllustrationCard・IllustrationTag・BirthdayPoster・CREAM を削除。
+  - `SupportAdCostSlide`：見出し「応援広告、いくらかかるの？」＋補足＋「まずは推しアドで費用や始め方をチェック。」。画像ブロック（780〜1418）に「費用の目安（7日間）」パネル（駅ポスター（B1）4万〜8万円／駅サイネージ 5万〜50万円／屋外ビジョン 30万円〜 を SVG アイコン付きの大きなカードで、「場所・媒体・時期で変わります」バッジ、出典「推しアド公式の費用ガイド（更新日）。税込・税抜の記載なし」）と「始め方は4ステップ」パネル（掲載場所を選ぶ／申し込み・支払い／書類とデザインを提出／審査のあと掲載スタート）。CTA はオレンジ＋「1タップで応援広告ガイドへ」。
+  - `SUPPORT_AD_START_STEPS`：content.ts の FLOW_STEPS（6段階）を順番どおりにまとめた4ステップ（各ステップが元の段階の添字を持つ）。
+- `src/app/admin/instagram-stories/StoryTemplatesClient.tsx` — 2枚のテンプレートはデスクトップで2列表示（3枚は従来どおり3列）。「N枚まとめてコピー／保存」・PNG/ZIP のファイル名はもともと枚数に追従。
+- `src/app/admin/instagram/page.tsx` — 入口カードの説明を「ストーリーズ用テンプレート（2〜3枚構成）」に。
+- テスト：`instagram-story-templates.test.ts`（枚数は2枚以上、推しアドの CTA・URL を2枚に）、`instagram-story-design.test.tsx`（2枚構成・旧2枚目なし、テンプレート枚数を超えるデザインを持たない、4ステップが FLOW_STEPS を1回ずつ順番どおり含む、費用・出典・「場所・媒体・時期で変わります」）。
+
+### 設計上の判断・注意点
+- 金額は content.ts（推しアド公式で確認済み）の priceNote と一致するものだけ（テストで照合）。料金の変動・出典日・税込/税抜の記載なしを画像内に明記。
+- 1枚目は前回（Task 150）と画素単位で同一。サブスク診断など3枚組の保存PNGも変更なし。ZIP は2ファイルのみ（instagram-story-1.png・instagram-story-2.png）。

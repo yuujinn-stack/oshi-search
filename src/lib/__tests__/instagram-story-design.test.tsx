@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { STORY_TEMPLATES, getStoryTemplate } from '@/lib/instagram-story-templates';
 import { MEDIA_GUIDES, FLOW_STEPS, COST_GUIDE_UPDATED_AT } from '@/lib/support-ads/content';
-import { StoryDesignFrame, hasStoryDesign, SUPPORT_AD_PRICE_ROWS } from '@/app/admin/instagram-stories/StoryDesignPreview';
+import { StoryDesignFrame, hasStoryDesign, SUPPORT_AD_PRICE_ROWS, SUPPORT_AD_START_STEPS } from '@/app/admin/instagram-stories/StoryDesignPreview';
 
 const template = getStoryTemplate('oshi-vod-diagnosis')!;
 const render = (i: number, showGuide = false) =>
@@ -13,6 +13,8 @@ describe('instagram story design preview', () => {
     const designed = ['oshi-vod-diagnosis', 'support-ads-oshiad'];
     for (const t of STORY_TEMPLATES) {
       t.slides.forEach((_, i) => expect(hasStoryDesign(t.id, i)).toBe(designed.includes(t.id)));
+      // テンプレートの枚数より多いデザインは持たない（削除した旧スライドが出力に混ざらない）
+      expect(hasStoryDesign(t.id, t.slides.length)).toBe(false);
     }
   });
 
@@ -50,16 +52,25 @@ describe('instagram story design preview', () => {
       });
     });
 
+    it('is a 2-slide set: hook → cost and how to start', () => {
+      expect(ads.slides.map((s) => s.linkCTA)).toEqual(['応援広告を見てみる ↓', '費用・始め方を確認 ↓']);
+      expect(ads.slides.some((s) => s.text.includes('応援広告って知ってる？'))).toBe(false);
+    });
+
     it('uses only the verified prices and flow from the support-ads guide content', () => {
       for (const row of SUPPORT_AD_PRICE_ROWS) {
         const guide = MEDIA_GUIDES.find((m) => m.key === row.key)!;
         expect(guide.priceNote).toContain(row.price);
         expect(guide.priceNote).toContain('7日間');
       }
-      const html = renderAd(2);
-      for (const step of FLOW_STEPS) expect(html).toContain(step.title);
+      // 4ステップは FLOW_STEPS の6段階を順番どおり1回ずつ含む
+      expect(SUPPORT_AD_START_STEPS.flatMap((s) => [...s.steps])).toEqual(FLOW_STEPS.map((_, i) => i));
+      const html = renderAd(1);
+      for (const row of SUPPORT_AD_PRICE_ROWS) expect(html).toContain(row.price);
+      for (const step of SUPPORT_AD_START_STEPS) expect(html).toContain(step.label);
       expect(html).toContain(COST_GUIDE_UPDATED_AT);
       expect(html).toContain('目安');
+      expect(html).toContain('場所・媒体・時期で変わります');
     });
 
     it('does not use photos or external images (CSS illustrations only)', () => {

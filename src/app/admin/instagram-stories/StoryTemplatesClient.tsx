@@ -269,7 +269,7 @@ function TemplateDetail({ template }: { template: StoryTemplate }) {
         Instagram UI・リンクステッカー位置のガイドを重ねて表示
       </label>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 ${template.slides.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'} gap-4`}>
         {template.slides.map((slide, i) => (
           <SlideCard key={i} slide={slide} index={i} template={template} showGuide={showGuide} onOpen={() => setOpenIndex(i)} />
         ))}
