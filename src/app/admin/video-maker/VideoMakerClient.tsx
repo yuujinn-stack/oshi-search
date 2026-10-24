@@ -1414,6 +1414,8 @@ function CapcutCard({
       )}
       {onReplace && entry.works && entry.works.length === 3 && (
         <First3WorkSlots
+          // 人物を切り替えたら作り直す（前の人物の候補一覧・検索・開いている枠を残さない）
+          key={entry.personName}
           personName={entry.personName}
           works={entry.works}
           fixedWorks={!!entry.fixedWorks}

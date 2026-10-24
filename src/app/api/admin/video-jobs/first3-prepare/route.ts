@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllPersonsMerged } from '@/lib/persons';
+import { getFirst3ManualCandidates } from '@/server/video-jobs/first3-source';
 import { maskSecrets } from '@/lib/mask-secrets';
 import { VideoJobError } from '@/server/video-jobs/job-store';
 import { createReplaceOneRequest, createScriptRequest, type ScriptRequestAction } from '@/server/video-jobs/script-prep-store';
@@ -28,6 +29,13 @@ export async function POST(req: NextRequest) {
       const slot = typeof body.slot === 'number' ? body.slot : NaN;
       const workId = typeof body.workId === 'string' ? body.workId : body.workId === null || body.workId === undefined ? null : undefined;
       if (workId === undefined) return NextResponse.json({ error: '作品IDが不正です。' }, { status: 400 });
+      // 手動選択の作品は、その人物の出演作品（人物ページの「出演作品」と同じデータ）にあるものだけ受け付ける
+      if (workId !== null) {
+        const own = await getFirst3ManualCandidates(personName);
+        if (!own?.candidates.some((c) => c.id === workId)) {
+          return NextResponse.json({ error: `選んだ作品は ${personName} の出演作品ではありません。候補一覧を開き直してください。` }, { status: 400 });
+        }
+      }
       const added = await createReplaceOneRequest(personName, slot, workId);
       return NextResponse.json({ ok: true, alreadyPending: added === 0 });
     } catch (err) {

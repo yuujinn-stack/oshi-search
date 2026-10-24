@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeFirst3Title } from '@/lib/video-first3-script';
 
 // まず見る3作 ショートV1: 選定中の3作品と、1作品だけ変更（おすすめに自動変更・候補から手動選択）。
@@ -45,9 +45,20 @@ export default function First3WorkSlots({
 }) {
   const [openSlot, setOpenSlot] = useState<1 | 2 | 3 | null>(null);
   const [mode, setMode] = useState<'menu' | 'manual'>('menu');
-  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  // 候補一覧はどの人物のものかと一緒に持つ（別の人物の一覧を表示・選択しない）
+  const [loaded, setLoaded] = useState<{ personName: string; list: Candidate[] } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const currentPerson = useRef(personName);
+  useEffect(() => {
+    currentPerson.current = personName;
+    setLoaded(null);
+    setLoadError(null);
+    setOpenSlot(null);
+    setMode('menu');
+    setQuery('');
+  }, [personName]);
+  const candidates = loaded && loaded.personName === personName ? loaded.list : null;
 
   function toggle(slot: 1 | 2 | 3) {
     setOpenSlot(openSlot === slot ? null : slot);
@@ -58,18 +69,22 @@ export default function First3WorkSlots({
   async function openManual() {
     setMode('manual');
     if (candidates) return;
+    const requested = personName;
     setLoadError(null);
     try {
-      const res = await fetch(`/api/admin/video-jobs/first3-candidates?personName=${encodeURIComponent(personName)}`);
-      const data = (await res.json().catch(() => ({}))) as { candidates?: Candidate[]; error?: string };
+      const res = await fetch(`/api/admin/video-jobs/first3-candidates?personName=${encodeURIComponent(requested)}`, { cache: 'no-store' });
+      const data = (await res.json().catch(() => ({}))) as { personName?: string; candidates?: Candidate[]; error?: string };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setCandidates(data.candidates ?? []);
+      // 応答が届く前に人物を切り替えた場合や、別の人物の応答は使わない
+      if (currentPerson.current !== requested || data.personName !== requested) return;
+      setLoaded({ personName: requested, list: data.candidates ?? [] });
     } catch (err) {
-      setLoadError(String(err instanceof Error ? err.message : err));
+      if (currentPerson.current === requested) setLoadError(String(err instanceof Error ? err.message : err));
     }
   }
 
   async function submit(slot: 1 | 2 | 3, workId: string | null) {
+    if (currentPerson.current !== personName) return;
     await onReplace(slot, workId);
     setOpenSlot(null);
   }
@@ -79,6 +94,7 @@ export default function First3WorkSlots({
     [works, openSlot],
   );
   const currentKey = openSlot ? normalizeFirst3Title(works[openSlot - 1].title) : '';
+  const selectableCount = (candidates ?? []).filter((c) => !c.excludedReason && c.flatServices.length > 0 && !otherKeys.has(normalizeFirst3Title(c.title)) && normalizeFirst3Title(c.title) !== currentKey).length;
   const shown = useMemo(() => {
     const q = normalizeFirst3Title(query);
     return (candidates ?? []).filter((c) => !q || normalizeFirst3Title(c.title).includes(q));
@@ -149,7 +165,8 @@ export default function First3WorkSlots({
                     />
                     {loadError && <p className="text-red-600">候補を読み込めませんでした: {loadError}</p>}
                     {!candidates && !loadError && <p className="text-gray-500">読み込み中…</p>}
-                    {candidates && shown.length === 0 && <p className="text-gray-500">該当する作品がありません。</p>}
+                    {candidates && selectableCount === 0 && <p className="text-amber-700">変更可能な候補作品がありません。</p>}
+                    {candidates && selectableCount > 0 && shown.length === 0 && <p className="text-gray-500">該当する作品がありません。</p>}
                     {candidates && shown.length > 0 && (
                       <ul className="max-h-64 overflow-y-auto divide-y divide-gray-200 rounded border border-gray-200 bg-white">
                         {shown.map((c) => {
