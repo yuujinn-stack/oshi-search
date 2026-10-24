@@ -51,7 +51,7 @@ describe('instagram story templates', () => {
     expect(ctas['oshikatsu-mendoi']).toEqual(['推しから探してみる ↓', '推しサーチを使ってみる ↓', '推しの出演作・配信先を探す ↓']);
     expect(ctas['oshi-vod-diagnosis']).toEqual(['今すぐ診断してみる ↓', '気になる人を選んでみる ↓', 'あなたの推しでも診断する ↓']);
     expect(ctas['oshi-search-features']).toEqual(['推しサーチを見てみる ↓', '気になる人から探す ↓', '推しサーチを使ってみる ↓']);
-    expect(ctas['support-ads-oshiad']).toEqual(['応援広告を見てみる ↓', '費用・始め方を見る ↓', '初めての応援広告を見る ↓']);
+    expect(ctas['support-ads-oshiad']).toEqual(['応援広告を見てみる ↓', '仕組み・始め方を見る ↓', '費用・始め方を確認 ↓']);
   });
 
   it('marks only the 推しアド template as PR and keeps ※PR in its text', () => {

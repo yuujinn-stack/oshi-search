@@ -19,6 +19,7 @@ import {
   type StorySlide,
   type StoryZone,
 } from '@/lib/instagram-story-templates';
+import { COST_GUIDE_UPDATED_AT, FLOW_STEPS } from '@/lib/support-ads/content';
 
 /** 1080 基準の px → 枠幅に対する cqw */
 const u = (px: number) => `calc(${px} * 100cqw / ${STORY_CANVAS.width})`;
@@ -68,7 +69,7 @@ function zoneBox(zone: StoryZone, inset = SIDE): CSSProperties {
 }
 
 /** 上部ラベル行（小さめの補足ラベル＋推しサーチのロゴ文字） */
-function LabelRow({ label, tone }: { label: string; tone: 'orange' | 'ink' | 'outline' }) {
+function LabelRow({ label, tone, pr = false }: { label: string; tone: 'orange' | 'ink' | 'outline'; pr?: boolean }) {
   const chip: CSSProperties =
     tone === 'orange'
       ? { background: C.orange, color: '#FFF', border: `${ub(3)} solid ${C.orange}` }
@@ -80,8 +81,16 @@ function LabelRow({ label, tone }: { label: string; tone: 'orange' | 'ink' | 'ou
       <span style={{ ...chip, fontSize: u(34), fontWeight: 800, padding: `${u(8)} ${u(22)}`, lineHeight: 1.3, whiteSpace: 'nowrap' }}>
         {label}
       </span>
-      <span style={{ fontSize: u(30), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap', letterSpacing: '0.02em' }}>
-        推しサーチ
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: u(18) }}>
+        {/* 広告であることが一目で分かるよう、ラベル行に常に表示する */}
+        {pr && (
+          <span style={{ fontSize: u(30), fontWeight: 900, color: C.ink, background: C.surface, border: `${ub(3)} solid ${C.ink}`, padding: `${u(2)} ${u(14)}`, lineHeight: 1.3, letterSpacing: '0.06em' }}>
+            PR
+          </span>
+        )}
+        <span style={{ fontSize: u(30), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap', letterSpacing: '0.02em' }}>
+          推しサーチ
+        </span>
       </span>
     </div>
   );
@@ -96,9 +105,9 @@ function Mark({ children }: { children: ReactNode }) {
   );
 }
 
-function Headline({ size, children }: { size: number; children: ReactNode }) {
+function Headline({ size, children, mt = 44 }: { size: number; children: ReactNode; mt?: number }) {
   return (
-    <h3 style={{ margin: `${u(44)} 0 0`, fontSize: u(size), fontWeight: 900, lineHeight: 1.28, color: C.ink, letterSpacing: '-0.01em', whiteSpace: 'pre' }}>
+    <h3 style={{ margin: `${u(mt)} 0 0`, fontSize: u(size), fontWeight: 900, lineHeight: 1.28, color: C.ink, letterSpacing: '-0.01em', whiteSpace: 'pre' }}>
       {children}
     </h3>
   );
@@ -241,6 +250,30 @@ function MockButton({ children, muted = false }: { children: ReactNode; muted?: 
 
 const AVATAR_COLORS = ['#F2994A', '#6C9BD2', '#5DB383'];
 
+/** CTAのすぐ上に添える小さなラベル（画像ブロックの下端〜リンクステッカー上端のすき間 1420〜1470 に収める） */
+function CtaHint({ children }: { children: ReactNode }) {
+  return (
+    <span
+      data-story-zone="cta-hint"
+      style={{
+        position: 'absolute',
+        left: u(150),
+        top: u(STORY_LAYOUT.image.bottom + 4),
+        height: u(42),
+        lineHeight: u(42),
+        background: C.ink,
+        color: '#FFF',
+        fontSize: u(26),
+        fontWeight: 800,
+        padding: `0 ${u(18)}`,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
 // ── 推しからサブスク診断 ────────────────────────────────────────────────
 
 function OshiVodSlide1({ slide }: { slide: StorySlide }) {
@@ -289,25 +322,7 @@ function OshiVodSlide1({ slide }: { slide: StorySlide }) {
       </div>
 
       {/* 1枚目だけ「1タップで診断」の小さなラベルを添えて、その場で押せることを強調する */}
-      <span
-        data-story-zone="cta-hint"
-        style={{
-          position: 'absolute',
-          left: u(150),
-          // 画像ブロックの下端〜リンクステッカー上端のすき間（1420〜1470）に収める
-          top: u(STORY_LAYOUT.image.bottom + 4),
-          height: u(42),
-          lineHeight: u(42),
-          background: C.ink,
-          color: '#FFF',
-          fontSize: u(26),
-          fontWeight: 800,
-          padding: `0 ${u(18)}`,
-          whiteSpace: 'nowrap',
-        }}
-      >
-        1タップで診断ページへ
-      </span>
+      <CtaHint>1タップで診断ページへ</CtaHint>
       <StickerCta slide={slide} tone="primary" size={54} />
     </>
   );
@@ -428,9 +443,227 @@ function OshiVodSlide3({ slide }: { slide: StorySlide }) {
   );
 }
 
+// ── 応援広告・推しアド（PR） ─────────────────────────────────────────────
+//
+// 人物写真・他社の広告画像・推しアドのバナー画像（計測用の外部画像）は使わず、CSS で描いたイラストと
+// 推しサーチの応援広告ガイド（/support-ads）の画面イメージで構成する。
+// 費用・流れは src/lib/support-ads/content.ts（推しアド公式で確認済みの内容）と同じ値だけを使う。
+
+/** 費用の目安（7日間）。値は content.ts の MEDIA_GUIDES.priceNote と一致すること（テストで確認） */
+export const SUPPORT_AD_PRICE_ROWS = [
+  { key: 'poster', media: '駅ポスター（B1）', price: '4万〜8万円' },
+  { key: 'signage', media: '駅サイネージ', price: '5万〜50万円' },
+  { key: 'vision', media: '屋外ビジョン', price: '30万円〜' },
+] as const;
+
+const CREAM = '#FFF7EE';
+
+function IllustrationTag({ children }: { children: ReactNode }) {
+  return (
+    <span style={{ position: 'absolute', top: u(18), right: u(18), zIndex: 1, fontSize: u(22), fontWeight: 800, color: C.amberText, background: C.amberSoft, padding: `${u(2)} ${u(12)}`, whiteSpace: 'nowrap' }}>
+      {children}
+    </span>
+  );
+}
+
+/** イラスト用の外枠（MockCard と同じ黒枠・ずらし影。中身はクリーム地） */
+function IllustrationCard({ children, tag }: { children: ReactNode; tag: string }) {
+  return (
+    <div style={{ position: 'relative', height: `calc(100% - ${u(14)})`, width: `calc(100% - ${u(14)})` }}>
+      <HardShadow offset={14} color={C.ink} />
+      <div style={{ position: 'relative', height: '100%', width: '100%', background: CREAM, border: `${ub(4)} solid ${C.ink}`, overflow: 'hidden' }}>
+        <IllustrationTag>{tag}</IllustrationTag>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** 紙吹雪（位置は 852×598 の枠内の px） */
+const CONFETTI: { x: number; y: number; w: number; h: number; r: number; c: string; round?: boolean }[] = [
+  { x: 60, y: 70, w: 22, h: 10, r: -20, c: C.orange },
+  { x: 140, y: 150, w: 14, h: 14, r: 0, c: '#6C9BD2', round: true },
+  { x: 90, y: 300, w: 24, h: 10, r: 35, c: '#5DB383' },
+  { x: 70, y: 470, w: 16, h: 16, r: 0, c: C.orange, round: true },
+  { x: 180, y: 520, w: 22, h: 9, r: -40, c: '#F2C94C' },
+  { x: 700, y: 90, w: 22, h: 10, r: 25, c: '#5DB383' },
+  { x: 760, y: 220, w: 15, h: 15, r: 0, c: C.orange, round: true },
+  { x: 720, y: 400, w: 24, h: 10, r: -30, c: '#6C9BD2' },
+  { x: 650, y: 520, w: 16, h: 16, r: 0, c: '#F2C94C', round: true },
+  { x: 560, y: 60, w: 12, h: 12, r: 0, c: '#6C9BD2', round: true },
+];
+
+function Confetti() {
+  return (
+    <>
+      {CONFETTI.map((p, i) => (
+        <span
+          key={i}
+          aria-hidden
+          style={{ position: 'absolute', left: u(p.x), top: u(p.y), width: u(p.w), height: u(p.h), background: p.c, borderRadius: p.round ? '50%' : u(2), transform: `rotate(${p.r}deg)` }}
+        />
+      ))}
+    </>
+  );
+}
+
+/** お祝いメッセージ入りの応援広告（イラスト）。名前は「推しの名前」のまま（実在の人物は描かない） */
+function BirthdayPoster({ width, height, title = 'HAPPY BIRTHDAY' }: { width: number; height: number; title?: string }) {
+  return (
+    <div style={{ width: u(width), height: u(height), background: `linear-gradient(160deg, #FFE3CF 0%, #FFF7EE 55%, #FFD9BF 100%)`, border: `${ub(3)} solid ${C.ink}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: u(height * 0.04), position: 'relative' }}>
+      <span style={{ fontFamily: MONO, fontSize: u(width * 0.085), fontWeight: 700, color: C.orangeText, letterSpacing: '0.12em', whiteSpace: 'nowrap' }}>{title}</span>
+      <span style={{ fontSize: u(width * 0.3), lineHeight: 1 }} aria-hidden>🎂</span>
+      <span style={{ fontSize: u(width * 0.11), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap' }}>推しの名前</span>
+      <span style={{ fontSize: u(width * 0.065), fontWeight: 700, color: C.body, whiteSpace: 'nowrap' }}>おめでとう！</span>
+    </div>
+  );
+}
+
+function SupportAdSlide1({ slide }: { slide: StorySlide }) {
+  return (
+    <>
+      <div data-story-zone="text" style={zoneBox(TEXT_ZONE)}>
+        <LabelRow label="記念日の推し活" tone="orange" pr />
+        <Headline size={64} mt={30}>
+          {'推しの記念日、\nいつもと違う形で\n'}
+          <Mark>お祝い</Mark>
+          {'しない？'}
+        </Headline>
+        <Sub mt={24}>
+          {'誕生日や周年に、\n'}
+          <span style={{ color: C.orangeText, fontWeight: 900 }}>『応援広告』</span>
+          {'という推し活。'}
+        </Sub>
+      </div>
+
+      <div data-story-zone="image" style={zoneBox(STORY_LAYOUT.image, 110)}>
+        <IllustrationCard tag="イメージ（イラスト）">
+          <Confetti />
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: u(36) }}>
+            <BirthdayPoster width={300} height={424} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: u(18) }}>
+              {[
+                ['🎉', '誕生日'],
+                ['✨', '周年・記念日'],
+                ['🎤', 'ライブ記念'],
+              ].map(([icon, label]) => (
+                <span key={label} style={{ display: 'flex', alignItems: 'center', gap: u(12), background: C.surface, border: `${ub(3)} solid ${C.ink}`, padding: `${u(12)} ${u(20)}`, fontSize: u(30), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap' }}>
+                  <span aria-hidden>{icon}</span>
+                  {label}
+                </span>
+              ))}
+            </div>
+          </div>
+        </IllustrationCard>
+      </div>
+
+      <StickerCta slide={slide} tone="primary" size={54} />
+    </>
+  );
+}
+
+function SupportAdSlide2({ slide }: { slide: StorySlide }) {
+  return (
+    <>
+      <div data-story-zone="text" style={zoneBox(TEXT_ZONE)}>
+        <LabelRow label="応援広告とは" tone="ink" pr />
+        <Headline size={84}>
+          {'応援広告って\n'}
+          <Mark>知ってる？</Mark>
+        </Headline>
+        <Sub>{'推しを応援する気持ちを、\n広告という形に。'}</Sub>
+      </div>
+
+      <div data-story-zone="image" style={zoneBox(STORY_LAYOUT.image, 110)}>
+        <IllustrationCard tag="掲載イメージ（イラスト）">
+          {/* 駅の壁面：路線カラーの帯＋ポスター枠＋サイネージ */}
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: u(70), background: '#EDEBE4', borderBottom: `${ub(3)} solid ${C.ink}`, display: 'flex', alignItems: 'center', padding: `0 ${u(28)}`, gap: u(14) }}>
+            <span style={{ width: u(18), height: u(18), borderRadius: '50%', background: '#5DB383' }} />
+            <span style={{ fontFamily: MONO, fontSize: u(24), fontWeight: 700, color: C.body, letterSpacing: '0.1em', whiteSpace: 'nowrap' }}>STATION</span>
+          </div>
+          <div style={{ position: 'absolute', left: 0, right: 0, top: u(70), bottom: u(96), display: 'flex', alignItems: 'center', justifyContent: 'center', gap: u(56) }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: u(12) }}>
+              <BirthdayPoster width={220} height={310} />
+              <span style={{ fontSize: u(26), fontWeight: 900, color: C.ink }}>駅ポスター</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: u(12) }}>
+              <div style={{ background: C.ink, padding: u(14), borderRadius: u(10) }}>
+                <div style={{ width: u(300), height: u(190), background: `linear-gradient(135deg, ${C.orange} 0%, #FF8A3D 100%)`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: u(8), color: '#FFF' }}>
+                  <span style={{ fontFamily: MONO, fontSize: u(22), fontWeight: 700, letterSpacing: '0.12em', whiteSpace: 'nowrap' }}>CONGRATULATIONS</span>
+                  <span style={{ fontSize: u(36), fontWeight: 900, whiteSpace: 'nowrap' }}>推しの名前</span>
+                  <span style={{ fontSize: u(22), fontWeight: 700, whiteSpace: 'nowrap' }}>デビュー◯周年</span>
+                </div>
+              </div>
+              <span style={{ fontSize: u(26), fontWeight: 900, color: C.ink }}>駅サイネージ</span>
+            </div>
+          </div>
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: u(96), background: C.surface, borderTop: `${ub(3)} solid ${C.ink}`, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: `0 ${u(20)}` }}>
+            <span style={{ fontSize: u(30), fontWeight: 800, color: C.ink, whiteSpace: 'nowrap' }}>
+              誕生日・周年・ライブ記念など、<span style={{ color: C.orangeText }}>特別な日の応援</span>に。
+            </span>
+          </div>
+        </IllustrationCard>
+      </div>
+
+      <StickerCta slide={slide} tone="outline" size={46} />
+    </>
+  );
+}
+
+function SupportAdSlide3({ slide }: { slide: StorySlide }) {
+  const sectionLabel: CSSProperties = { margin: 0, fontSize: u(24), fontWeight: 800, color: C.muted, whiteSpace: 'nowrap' };
+  return (
+    <>
+      <div data-story-zone="text" style={zoneBox(TEXT_ZONE)}>
+        <LabelRow label="費用と始め方" tone="outline" pr />
+        <Headline size={74}>
+          {'応援広告、\n'}
+          <Mark>いくらかかるの？</Mark>
+        </Headline>
+        <Sub>{'何から始める？費用はどれくらい？'}</Sub>
+        <p style={{ margin: `${u(14)} 0 0`, display: 'inline-block', fontSize: u(34), fontWeight: 800, color: C.ink, background: C.orangeSoft, borderLeft: `${ub(8)} solid ${C.orange}`, padding: `${u(8)} ${u(18)}`, whiteSpace: 'nowrap' }}>
+          まずは推しアドで費用や始め方をチェック。
+        </p>
+      </div>
+
+      <div data-story-zone="image" style={zoneBox(STORY_LAYOUT.image, 110)}>
+        <MockCard url="oshi-search.jp/support-ads" tag="画面イメージ">
+          <p style={{ margin: 0, fontSize: u(36), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap' }}>はじめての応援広告ガイド</p>
+          <p style={{ ...sectionLabel, marginTop: u(10) }}>費用の目安（7日間）</p>
+          <div style={{ marginTop: u(6), borderTop: `${ub(3)} solid ${C.ink}` }}>
+            {SUPPORT_AD_PRICE_ROWS.map((r) => (
+              <div key={r.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: `${u(6)} 0`, borderBottom: `${ub(2)} solid ${C.border}`, fontSize: u(27), whiteSpace: 'nowrap' }}>
+                <span style={{ fontWeight: 800, color: C.ink }}>{r.media}</span>
+                <span style={{ fontWeight: 900, color: C.orangeText }}>{r.price}</span>
+              </div>
+            ))}
+          </div>
+          <p style={{ ...sectionLabel, marginTop: u(12) }}>掲載までの流れ</p>
+          <div style={{ marginTop: u(8), display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: u(8) }}>
+            {FLOW_STEPS.map((step, i) => (
+              <span key={step.title} style={{ display: 'flex', alignItems: 'center', gap: u(8), background: C.blueSoft, color: C.blueText, fontSize: u(21), fontWeight: 800, padding: `${u(6)} ${u(10)}`, whiteSpace: 'nowrap' }}>
+                <span style={{ fontFamily: MONO, color: C.orangeText }}>{i + 1}</span>
+                {step.title}
+              </span>
+            ))}
+          </div>
+          <p style={{ margin: 'auto 0 0', paddingTop: u(8), fontSize: u(20), color: C.muted, lineHeight: 1.4 }}>
+            {`※推しアド公式の費用ガイド（${COST_GUIDE_UPDATED_AT}更新）の目安。媒体・時期・空き状況で変わります。`}
+          </p>
+        </MockCard>
+      </div>
+
+      {/* 3枚の中で最も目立たせる：オレンジのCTA＋「1タップで」ラベル */}
+      <CtaHint>1タップで応援広告ガイドへ</CtaHint>
+      <StickerCta slide={slide} tone="primary" size={50} />
+    </>
+  );
+}
+
 /** デザイン済みのテンプレート（テンプレートID → スライドごとの描画） */
 const STORY_DESIGNS: Record<string, ((props: { slide: StorySlide }) => ReactNode)[]> = {
   'oshi-vod-diagnosis': [OshiVodSlide1, OshiVodSlide2, OshiVodSlide3],
+  'support-ads-oshiad': [SupportAdSlide1, SupportAdSlide2, SupportAdSlide3],
 };
 
 export function hasStoryDesign(templateId: string, slideIndex: number): boolean {
