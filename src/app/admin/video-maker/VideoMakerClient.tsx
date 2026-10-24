@@ -20,6 +20,7 @@ import { countHashtags, validateCaption, INSTAGRAM_CAPTION_MAX_LENGTH, INSTAGRAM
 import { HOURLY_TIME_OPTIONS } from '@/lib/instagram-post-times';
 import { addDaysJst, formatJst as formatJstDateTime, jstWallClockToUtcDate, nowJstParts } from '@/lib/jst-time';
 import { getStatusLabel, getStatusStyle } from '@/lib/instagram-schedule-status';
+import { captionGroupName, getInstagramCaption, type CaptionPerson } from '@/lib/video-instagram-caption';
 
 /**
  * /admin/video-maker のクライアント部分。
@@ -1299,6 +1300,7 @@ export default function VideoMakerClient({
                   {open && job.status === 'completed' && (
                     <CompletedDetail
                       job={job}
+                      captionPerson={{ name: job.personName, groupName: captionGroupName(personByName.get(job.personName)) }}
                       onRetry={() => void jobAction(job.id, 'retry')}
                       reelSchedule={reelSchedules[job.id] ?? null}
                       reelAutopublishEnabled={reelAutopublishEnabled}
@@ -1490,12 +1492,15 @@ function CapcutCard({
 
 function CompletedDetail({
   job,
+  captionPerson,
   onRetry,
   reelSchedule,
   reelAutopublishEnabled,
   onReelChanged,
 }: {
   job: VideoJob;
+  /** Instagram投稿文に差し込む人物（ジョブの人物名と、人物データのグループ名） */
+  captionPerson: CaptionPerson;
   onRetry: () => void;
   reelSchedule: ReelSchedule | null;
   reelAutopublishEnabled: boolean;
@@ -1586,6 +1591,7 @@ function CompletedDetail({
         </div>
       </div>
     </div>
+    <InstagramCaptionSection templateId={job.templateId} person={captionPerson} />
     {igReelUrl && (
       <InstagramReelSection
         job={job}
@@ -1596,6 +1602,81 @@ function CompletedDetail({
       />
     )}
     </>
+  );
+}
+
+/**
+ * Instagram投稿文（テンプレートごとの投稿文に人物名・グループ名を差し込んだもの。src/lib/video-instagram-caption.ts）。
+ * 画面の中だけで編集してコピーできる（保存はしない。再読み込みで初期の投稿文に戻る）。投稿文が未設定のテンプレートは出さない
+ */
+function InstagramCaptionSection({ templateId, person }: { templateId: string; person: CaptionPerson }) {
+  const initial = useMemo(() => getInstagramCaption(templateId, person), [templateId, person.name, person.groupName]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [text, setText] = useState(initial ?? '');
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 2500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  if (initial === null) return null;
+  const problem = validateCaption(text);
+
+  async function copy() {
+    setCopyError(false);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      // クリップボードAPIが使えない環境（古いブラウザ等）は、選択してコピーする
+      const el = areaRef.current;
+      if (el) {
+        el.focus();
+        el.select();
+        el.setSelectionRange(0, el.value.length);
+      }
+      const ok = typeof document.execCommand === 'function' && document.execCommand('copy');
+      if (ok) setCopied(true);
+      else setCopyError(true);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-gray-200 p-3 min-w-0">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+        <h3 className="text-sm font-bold text-slate-700">Instagram投稿文</h3>
+        <span className={`text-xs ${problem ? 'text-red-600' : 'text-gray-400'}`}>
+          {text.length.toLocaleString()} / {INSTAGRAM_CAPTION_MAX_LENGTH.toLocaleString()}文字・ハッシュタグ {countHashtags(text)} / {INSTAGRAM_HASHTAG_MAX_COUNT}
+        </span>
+      </div>
+      <textarea
+        ref={areaRef}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        className="block w-full max-w-full box-border h-72 text-sm leading-relaxed border border-gray-200 rounded p-2 resize-y"
+        aria-label="Instagram投稿文（編集してからコピーできます）"
+      />
+      {problem && <p className="mt-1 text-xs text-red-600">{problem}</p>}
+      <div className="mt-2 flex items-center gap-3 flex-wrap">
+        <button
+          type="button"
+          onClick={() => void copy()}
+          aria-live="polite"
+          className={`w-full sm:w-auto text-sm px-4 py-2 rounded font-bold border ${
+            copied ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-violet-500 bg-violet-600 text-white hover:bg-violet-700'
+          }`}
+        >
+          {copied ? 'コピーしました ✓' : '投稿文をコピー'}
+        </button>
+        {text !== initial && (
+          <button type="button" onClick={() => setText(initial)} className="text-xs text-gray-500 hover:text-violet-600">
+            元の投稿文に戻す
+          </button>
+        )}
+        {copyError && <span className="text-xs text-red-600">コピーできませんでした。投稿文を選択してコピーしてください。</span>}
+      </div>
+    </div>
   );
 }
 

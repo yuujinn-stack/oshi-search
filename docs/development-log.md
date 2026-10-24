@@ -4710,3 +4710,25 @@ oshi-search
 ### 確認
 - 16px でも「推」の形と赤い星が見分けられる（黄色地に紺で、Task 137 の紺地アイコンより小さいサイズでの視認性が高い）。
 - tsc OK、`npm run build` OK。
+
+## Task 148：動画生成（/admin/video-maker）の完了ジョブに「Instagram投稿文」（表示・編集・コピー）（未commit・DB/Worker 無変更）
+
+### 目的
+動画生成後、そのまま Instagram Reels 投稿まで進めるよう、完了ジョブの詳細に投稿文を表示してコピーできるようにする。まず「推し活お買い物診断 ショートV1」（oshi-shopping-intro-v1）。
+
+### 変更したファイル
+- 新規 `src/lib/video-instagram-caption.ts`：`getInstagramCaption(templateId, { name, groupName })`（テンプレートIDごとの投稿文テンプレートの表。未設定は null）、`captionGroupName`（人物選択データの currentGroupName → group の順。activityStatus=graduated は付けない）、`toHashtag`（空白だけ詰める。それ以外の記号〔! ＝ / ☆ . 等〕を含む名前はタグにしない＝記号を消して別の名前にしない）。
+- `src/app/admin/video-maker/VideoMakerClient.tsx`：`InstagramCaptionSection`（動画・ダウンロード・再生成の下、Instagramリールの上）。textarea で編集（保存しない・「元の投稿文に戻す」）、「投稿文をコピー」→「コピーしました ✓」（2.5秒で戻る。クリップボードAPIが使えない環境は選択してコピー）、既存の文字数・ハッシュタグ数の基準（instagram-caption-rules）で表示。投稿文が未設定のテンプレートは欄を出さない。人物名はジョブの person_name、グループは page.tsx が渡している人物選択データ（DB）から。
+- テスト：`src/lib/__tests__/video-instagram-caption.test.ts`（6件）。
+
+### 確認（ローカル dev・DB は読み取りのみ、本番と同じDBのジョブを表示）
+- 本番の管理画面で作られた目黒蓮×推し活お買い物診断×CapCut のジョブ（completed）：「今回は目黒蓮さんで診断してみました。」「#推し活 #推し活グッズ #推しサーチ #目黒蓮 #SnowMan」。コピーで全文（278文字）がクリップボードに一致、編集後のコピー・元に戻す、「コピーしました ✓」は約2.5秒で戻る。
+- 別人物（画面の中だけ person_name を松村北斗に差し替え）：「今回は松村北斗さんで…」「#松村北斗 #SixTONES」、他の文は同じ。
+- まず見る3作の完了ジョブには欄が出ず、既存の投稿文欄はそのまま。動画・ダウンロード・再生成・Instagramリールの部品もそのまま。375px で横はみ出しなし、タップでコピー可。
+- tsc OK、vitest 148ファイル・2,427件 OK。
+
+## Task 148 追記：卒業・脱退済みの人物にもグループのハッシュタグを付ける
+
+- `src/lib/video-instagram-caption.ts`：`captionGroupName` から activityStatus=graduated の除外を削除。人物についての投稿のため、DBに登録されているグループ名（currentGroupName → group）があれば活動状態に関係なく付ける。登録が無ければ付けない（推測しない）。記号を含む名前をタグにしない扱いは同じ。
+- テスト：山下美月（乃木坂46・卒業）→ `#山下美月 #乃木坂46`（7件 OK、tsc OK）。
+- 管理画面（ローカル dev）：目黒蓮 `#目黒蓮 #SnowMan`、松村北斗 `#松村北斗 #SixTONES`、山下美月 `#山下美月 #乃木坂46`（松村北斗・山下美月は画面の中だけジョブの人物名を差し替え。グループはDBの人物データ）、コピーは全文一致。
