@@ -4609,3 +4609,28 @@ oshi-search
 - 「使用可能」の意味（現在の台本に対応する音声が保存済み＝生成できる）は変えない。無条件に使用可能へ書き換えない。完成動画の状態は別の表示にした（生成の受け付け条件は従来どおり）。
 - 起動したままの localhost:4321 を再起動した（Worker と同じく、今後はデプロイ時に再起動が必要。再起動していなければ取り込みをせず Worker が取り込む）。
 - 過去の WAV・SRT（_inbox/_done）・完成動画・生成履歴は削除しない。
+
+---
+
+## Task 142：Instagram管理「ストーリーズテンプレート」（全スライドにリンクCTA）
+
+### 目的
+- 3枚構成のストーリーズを、テンプレートを選ぶ → 各スライドを見る → 本文・CTAをコピーする、の流れで手動作成できるようにする。
+- ストーリーズは最後まで見られるとは限らないため、3枚目だけにリンクを置かない。1枚目（フック・自然なCTA）／途中（説明とつながるCTA）／最後（最も明確なCTA）の3段階で、すべてのスライドにリンクCTAを持たせる。
+
+### 変更したファイル
+- `src/lib/instagram-story-templates.ts`（新規）— 静的テンプレート定義。`StoryTemplate { id, title, purpose, isPR, slides: StorySlide[] }`、`StorySlide { text, linkCTA, ctaRole, linkPosition, recommendedAsset }`。`linkPosition` は `{ placement: 'bottom-center', bottomOffsetMinPx: 300, bottomOffsetMaxPx: 450 }`。1080×1920 の簡易レイアウト `STORY_LAYOUT`（上部UI 0–220／本文 240–760／画像 800–1420／リンクステッカー 1470–1620／下部UI 1720–1920）、`getLinkStickerZone`・`describeLinkPosition`・`formatStoryTemplateForCopy`（まとめてコピー用）。4テンプレート（めんどい解決／サブスク診断／できること／応援広告・推しアド＝isPR）。
+- `src/app/admin/instagram-stories/page.tsx`・`StoryTemplatesClient.tsx`（新規）— カード一覧 → 選択したテンプレートの目的と各スライド（1080×1920 配置プレビュー、本文、リンクCTA、リンク推奨位置、おすすめ素材、本文をコピー／CTAをコピー）、「N枚まとめてコピー」。PRテンプレートはバッジ・注意書き・プレビューにPR表示。
+- `src/app/admin/instagram/page.tsx` — 入口カード「ストーリーズテンプレート」を1件追加（CARDS 配列への追加のみ）。
+- テスト: `src/lib/__tests__/instagram-story-templates.test.ts`（新規。全スライドにCTA、役割の順序、指定CTA、PR、リンク位置が本文・画像・Instagram UIと重ならないこと、まとめてコピー）。
+
+### 設計上の判断・注意点
+- DB・Instagram API・予約投稿・自動投稿・動画生成には接続しない（静的定義の閲覧とクリップボードコピーのみ）。認証は既存の middleware（`/admin/:path*`）で保護される。
+- テンプレート追加は `STORY_TEMPLATES` に1件追加するだけ。`slides` は配列なので4枚以上にも対応（役割は先頭=hook、末尾=final、間=detail をテストで検証）。
+- 推しアドは1枚目からリンクを置くため、1〜3枚目すべての本文の末尾に「※PR」を入れている（コピーする本文そのものに含める）。
+
+## Task 142 追記：リンク先URL（linkUrl）と推しアド全スライドのPR表記
+- `StoryTemplate.linkUrl`（全スライド共通の既定値）と `StorySlide.linkUrl?`（スライド単位の上書き、null＝未設定）を追加。`resolveSlideLinkUrl` で解決。管理画面に「リンク先URL」表示と「URLをコピー」、まとめてコピーにも `リンク先URL：` を出力（未設定なら「未設定」）。
+- URLはコード上で確認できる正式ページだけ：本番オリジン `https://oshi-search.jp`（robots.ts・sitemap と同じ値を `STORY_LINK_ORIGIN` に固定。プレビューの NEXT_PUBLIC_SITE_URL に引きずられないため）＋ `/search`（推し・有名人を検索）／`OSHI_VOD_PATH`／`SUPPORT_ADS_PATH`／`/`。
+  - めんどい解決：全スライド /search、サブスク診断：全スライド /oshi-vod、できること：1枚目 /（トップ）・2〜3枚目 /search、推しアド：全スライド /support-ads（はじめての応援広告ガイド）。
+  - 推しアドの AccessTrade 計測リンク（oshi-ad-link.ts）はバナーHTMLとして改変禁止で保持されているもので、ストーリーズのリンクには使わない。

@@ -75,6 +75,13 @@ const CARDS: InstagramHubCard[] = [
     href: '/admin/instagram-schedule?template=watch-and-buy',
     cta: 'H投稿を作成する',
   },
+  {
+    icon: '📱',
+    title: 'ストーリーズテンプレート',
+    description: '3枚構成のストーリーズ用テンプレートです。各スライドの本文とリンクCTAをコピーして使います（全スライドにリンクを設置）。',
+    href: '/admin/instagram-stories',
+    cta: 'テンプレートを見る',
+  },
 ];
 
 /** published / (published + failed + needs_review)。分母が0件なら「—」を返す */
