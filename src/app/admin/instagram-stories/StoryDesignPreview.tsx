@@ -479,34 +479,6 @@ function IllustrationCard({ children, tag }: { children: ReactNode; tag: string 
   );
 }
 
-/** 紙吹雪（位置は 852×598 の枠内の px） */
-const CONFETTI: { x: number; y: number; w: number; h: number; r: number; c: string; round?: boolean }[] = [
-  { x: 60, y: 70, w: 22, h: 10, r: -20, c: C.orange },
-  { x: 140, y: 150, w: 14, h: 14, r: 0, c: '#6C9BD2', round: true },
-  { x: 90, y: 300, w: 24, h: 10, r: 35, c: '#5DB383' },
-  { x: 70, y: 470, w: 16, h: 16, r: 0, c: C.orange, round: true },
-  { x: 180, y: 520, w: 22, h: 9, r: -40, c: '#F2C94C' },
-  { x: 700, y: 90, w: 22, h: 10, r: 25, c: '#5DB383' },
-  { x: 760, y: 220, w: 15, h: 15, r: 0, c: C.orange, round: true },
-  { x: 720, y: 400, w: 24, h: 10, r: -30, c: '#6C9BD2' },
-  { x: 650, y: 520, w: 16, h: 16, r: 0, c: '#F2C94C', round: true },
-  { x: 560, y: 60, w: 12, h: 12, r: 0, c: '#6C9BD2', round: true },
-];
-
-function Confetti() {
-  return (
-    <>
-      {CONFETTI.map((p, i) => (
-        <span
-          key={i}
-          aria-hidden
-          style={{ position: 'absolute', left: u(p.x), top: u(p.y), width: u(p.w), height: u(p.h), background: p.c, borderRadius: p.round ? '50%' : u(2), transform: `rotate(${p.r}deg)` }}
-        />
-      ))}
-    </>
-  );
-}
-
 /** お祝いメッセージ入りの応援広告（イラスト）。名前は「推しの名前」のまま（実在の人物は描かない） */
 function BirthdayPoster({ width, height, title = 'HAPPY BIRTHDAY' }: { width: number; height: number; title?: string }) {
   return (
@@ -519,50 +491,132 @@ function BirthdayPoster({ width, height, title = 'HAPPY BIRTHDAY' }: { width: nu
   );
 }
 
+/** 1枚目は駅広告のビジュアルを主役にするため、本文を短くまとめて画像ブロックを広げる（CTA は2・3枚目と同じ高さ） */
+const AD1_TEXT: StoryZone = { top: TEXT_ZONE.top, bottom: 756 };
+const AD1_VISUAL: StoryZone = { top: 780, bottom: 1440 };
+
+/** 駅の壁面に貼られた広告枠（左右の枠は奥行きを出すための脇役） */
+function AdFrame({ x, y, w, h, dim = false, children }: { x: number; y: number; w: number; h: number; dim?: boolean; children?: ReactNode }) {
+  return (
+    <div style={{ position: 'absolute', left: u(x), top: u(y), width: u(w), height: u(h), background: '#2E2C28', padding: u(dim ? 10 : 14), opacity: dim ? 0.55 : 1 }}>
+      <div style={{ width: '100%', height: '100%', background: dim ? '#F3EEE6' : 'linear-gradient(170deg, #FFF8EF 0%, #FFE4D6 55%, #FFE9C2 100%)', position: 'relative', overflow: 'hidden' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** 掲出例のラベル（誕生日・周年・デビュー記念） */
+function OccasionTag({ x, y, rotate, label }: { x: number; y: number; rotate: number; label: string }) {
+  return (
+    <div style={{ position: 'absolute', left: u(x), top: u(y), transform: `rotate(${rotate}deg)` }}>
+      <div style={{ position: 'relative' }}>
+        <HardShadow offset={6} color={C.ink} radius={u(999)} />
+        <span style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: u(10), background: C.surface, border: `${ub(3)} solid ${C.ink}`, borderRadius: u(999), padding: `${u(10)} ${u(24)}`, fontSize: u(30), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap' }}>
+          <span style={{ width: u(14), height: u(14), borderRadius: '50%', background: C.orange }} />
+          {label}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+const AD1_CONFETTI: { x: number; y: number; w: number; h: number; r: number; c: string; round?: boolean }[] = [
+  { x: 320, y: 40, w: 20, h: 9, r: -25, c: C.orange },
+  { x: 410, y: 22, w: 12, h: 12, r: 0, c: '#E8B44A', round: true },
+  { x: 560, y: 34, w: 22, h: 9, r: 30, c: '#F4A7B9' },
+  { x: 650, y: 52, w: 12, h: 12, r: 0, c: C.orange, round: true },
+  { x: 250, y: 300, w: 18, h: 8, r: 40, c: '#E8B44A' },
+  { x: 720, y: 280, w: 20, h: 9, r: -35, c: '#F4A7B9' },
+  { x: 230, y: 470, w: 12, h: 12, r: 0, c: '#F4A7B9', round: true },
+  { x: 735, y: 500, w: 12, h: 12, r: 0, c: '#E8B44A', round: true },
+];
+
+function StationAdVisual() {
+  const W = 960;
+  const floor = 92;
+  const frame = { w: 400, h: 500 };
+  const fx = (W - frame.w) / 2;
+  const fy = 40;
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', border: `${ub(4)} solid ${C.ink}`, background: `repeating-linear-gradient(90deg, rgba(0,0,0,0.045) 0 ${u(2)}, transparent ${u(2)} ${u(120)}), repeating-linear-gradient(0deg, rgba(0,0,0,0.045) 0 ${u(2)}, transparent ${u(2)} ${u(120)}), linear-gradient(180deg, #F1ECE3 0%, #E4DDD1 100%)` }}>
+      {/* 天井の照明 */}
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: u(14), background: '#FFFFFF', borderBottom: `${ub(2)} solid #D8D1C4` }} />
+      {/* 主役の広告枠のまわりの明るさ（照明に照らされた掲出面） */}
+      <div style={{ position: 'absolute', left: u(fx - 140), top: u(fy - 90), width: u(frame.w + 280), height: u(frame.h + 180), background: 'radial-gradient(closest-side, rgba(255,214,170,0.75), rgba(255,214,170,0))' }} />
+
+      {/* 左右の広告枠（奥行き用） */}
+      <AdFrame x={-120} y={110} w={230} h={330} dim />
+      <AdFrame x={W - 110} y={110} w={230} h={330} dim />
+
+      {/* 駅名標 */}
+      <div style={{ position: 'absolute', left: u(28), top: u(34), display: 'flex', alignItems: 'center', gap: u(10), background: C.ink, color: '#FFF', padding: `${u(8)} ${u(18)}`, borderRadius: u(6) }}>
+        <span style={{ width: u(22), height: u(22), borderRadius: '50%', border: `${ub(5)} solid #5DB383`, background: '#FFF' }} />
+        <span style={{ fontSize: u(26), fontWeight: 900, whiteSpace: 'nowrap' }}>◯◯駅</span>
+      </div>
+      <span style={{ position: 'absolute', top: u(34), right: u(28), zIndex: 2, fontSize: u(24), fontWeight: 900, color: C.amberText, background: C.amberSoft, border: `${ub(2)} solid #E8B44A`, padding: `${u(4)} ${u(14)}`, whiteSpace: 'nowrap' }}>
+        掲載イメージ
+      </span>
+
+      {/* 主役：誕生日の駅ポスター */}
+      <AdFrame x={fx} y={fy} w={frame.w} h={frame.h}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: u(26) }}>
+          <span style={{ fontSize: u(26), fontWeight: 900, color: C.orangeText, letterSpacing: '0.32em', whiteSpace: 'nowrap', paddingLeft: '0.32em' }}>HAPPY</span>
+          <span style={{ fontSize: u(54), fontWeight: 900, color: C.ink, letterSpacing: '0.06em', lineHeight: 1.1, whiteSpace: 'nowrap' }}>BIRTHDAY</span>
+          {/* 写真やイラストを入れる場所（人物は描かない） */}
+          <div style={{ marginTop: u(16), width: u(160), height: u(160), borderRadius: '50%', background: 'radial-gradient(circle at 35% 30%, #FFFFFF 0%, #FFD3B8 60%, #FFB98F 100%)', border: `${ub(6)} solid #E8B44A`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <span style={{ fontSize: u(80), color: '#E8B44A', lineHeight: 1 }} aria-hidden>★</span>
+          </div>
+          <span style={{ marginTop: u(20), fontSize: u(50), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap' }}>推しの名前</span>
+          <span style={{ marginTop: u(6), fontFamily: MONO, fontSize: u(22), fontWeight: 700, color: C.body, letterSpacing: '0.1em', whiteSpace: 'nowrap' }}>2026.◯◯.◯◯</span>
+        </div>
+        {/* ポスターの帯（オレンジ） */}
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: u(16), background: C.orange }} />
+      </AdFrame>
+
+      {AD1_CONFETTI.map((p, i) => (
+        <span key={i} aria-hidden style={{ position: 'absolute', left: u(p.x), top: u(p.y), width: u(p.w), height: u(p.h), background: p.c, borderRadius: p.round ? '50%' : u(2), transform: `rotate(${p.r}deg)` }} />
+      ))}
+
+      <OccasionTag x={56} y={170} rotate={-6} label="誕生日" />
+      <OccasionTag x={710} y={300} rotate={5} label="周年" />
+      <OccasionTag x={40} y={430} rotate={4} label="デビュー記念" />
+
+      {/* 床：照明の映り込みと、補足のひとこと */}
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: u(floor), background: 'linear-gradient(180deg, #3A3733 0%, #22201D 100%)', borderTop: `${ub(3)} solid ${C.ink}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ position: 'absolute', left: u(fx + 30), width: u(frame.w - 60), top: 0, height: u(26), background: 'linear-gradient(180deg, rgba(255,214,170,0.35), rgba(255,214,170,0))' }} />
+        <span style={{ position: 'relative', fontSize: u(34), fontWeight: 900, color: '#FFFFFF', whiteSpace: 'nowrap', letterSpacing: '0.02em' }}>
+          誕生日・周年・<span style={{ color: '#FFB27A' }}>デビュー記念</span>にも。
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function SupportAdSlide1({ slide }: { slide: StorySlide }) {
   return (
     <>
-      <div data-story-zone="text" style={zoneBox(TEXT_ZONE)}>
+      <div data-story-zone="text" style={zoneBox(AD1_TEXT)}>
         <LabelRow label="はじめての応援広告" tone="orange" pr />
-        {/* 2行目（17字）を1行にすると文字が小さくなるため、3行に分けて大きく見せる */}
-        <Headline size={68} mt={24}>
-          {'推しの誕生日や周年、\n'}
-          <Mark>駅広告</Mark>
-          {'でお祝い\nできるって知ってる？'}
-        </Headline>
-        <Sub mt={20}>
-          <span style={{ color: C.orangeText, fontWeight: 900 }}>“応援広告”</span>
+        {/* 3行。いちばん伝えたい「駅広告でお祝い」だけを大きく、オレンジの下線で強調する */}
+        <h3 style={{ margin: `${u(24)} 0 0`, fontWeight: 900, color: C.ink, letterSpacing: '-0.01em', whiteSpace: 'pre' }}>
+          <span style={{ display: 'block', fontSize: u(58), lineHeight: 1.25 }}>推しの誕生日や周年、</span>
+          <span style={{ display: 'inline-block', fontSize: u(94), lineHeight: 1.18, borderBottom: `${ub(14)} solid ${C.orange}`, paddingBottom: u(2) }}>
+            <span style={{ color: C.orange }}>駅広告</span>でお祝い
+          </span>
+          <span style={{ display: 'block', marginTop: u(8), fontSize: u(58), lineHeight: 1.25 }}>できるって知ってた？</span>
+        </h3>
+        <p style={{ margin: `${u(18)} 0 0`, fontSize: u(32), fontWeight: 700, lineHeight: 1.5, color: C.body, whiteSpace: 'pre' }}>
+          <span style={{ color: C.orangeText, fontWeight: 900 }}>「応援広告」</span>
           {'は、\n推しへのお祝いを広告として出せる推し活。'}
-        </Sub>
+        </p>
       </div>
 
-      <div data-story-zone="image" style={zoneBox(STORY_LAYOUT.image, 110)}>
-        <IllustrationCard tag="イメージ（イラスト）">
-          <Confetti />
-          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: u(86), display: 'flex', alignItems: 'center', justifyContent: 'center', gap: u(36) }}>
-            <BirthdayPoster width={280} height={396} />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: u(18) }}>
-              {[
-                ['🎂', '誕生日'],
-                ['✨', 'デビュー周年'],
-                ['🚉', '駅に掲載'],
-              ].map(([icon, label]) => (
-                <span key={label} style={{ display: 'flex', alignItems: 'center', gap: u(12), background: C.surface, border: `${ub(3)} solid ${C.ink}`, padding: `${u(12)} ${u(20)}`, fontSize: u(30), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap' }}>
-                  <span aria-hidden>{icon}</span>
-                  {label}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: u(86), background: C.surface, borderTop: `${ub(3)} solid ${C.ink}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontSize: u(30), fontWeight: 800, color: C.ink, whiteSpace: 'nowrap' }}>
-              <span style={{ color: C.orangeText }}>費用や始め方</span>もチェックできます。
-            </span>
-          </div>
-        </IllustrationCard>
+      <div data-story-zone="image" style={zoneBox(AD1_VISUAL, 60)}>
+        <StationAdVisual />
       </div>
 
-      <StickerCta slide={slide} tone="primary" size={54} />
+      <StickerCta slide={slide} tone="primary" size={56} />
     </>
   );
 }
