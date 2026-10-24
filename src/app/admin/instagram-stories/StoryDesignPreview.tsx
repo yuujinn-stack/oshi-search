@@ -523,29 +523,29 @@ function SupportAdSlide1({ slide }: { slide: StorySlide }) {
   return (
     <>
       <div data-story-zone="text" style={zoneBox(TEXT_ZONE)}>
-        <LabelRow label="記念日の推し活" tone="orange" pr />
-        <Headline size={64} mt={30}>
-          {'推しの記念日、\nいつもと違う形で\n'}
-          <Mark>お祝い</Mark>
-          {'しない？'}
+        <LabelRow label="はじめての応援広告" tone="orange" pr />
+        {/* 2行目（17字）を1行にすると文字が小さくなるため、3行に分けて大きく見せる */}
+        <Headline size={68} mt={24}>
+          {'推しの誕生日や周年、\n'}
+          <Mark>駅広告</Mark>
+          {'でお祝い\nできるって知ってる？'}
         </Headline>
-        <Sub mt={24}>
-          {'誕生日や周年に、\n'}
-          <span style={{ color: C.orangeText, fontWeight: 900 }}>『応援広告』</span>
-          {'という推し活。'}
+        <Sub mt={20}>
+          <span style={{ color: C.orangeText, fontWeight: 900 }}>“応援広告”</span>
+          {'は、\n推しへのお祝いを広告として出せる推し活。'}
         </Sub>
       </div>
 
       <div data-story-zone="image" style={zoneBox(STORY_LAYOUT.image, 110)}>
         <IllustrationCard tag="イメージ（イラスト）">
           <Confetti />
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: u(36) }}>
-            <BirthdayPoster width={300} height={424} />
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: u(86), display: 'flex', alignItems: 'center', justifyContent: 'center', gap: u(36) }}>
+            <BirthdayPoster width={280} height={396} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: u(18) }}>
               {[
-                ['🎉', '誕生日'],
-                ['✨', '周年・記念日'],
-                ['🎤', 'ライブ記念'],
+                ['🎂', '誕生日'],
+                ['✨', 'デビュー周年'],
+                ['🚉', '駅に掲載'],
               ].map(([icon, label]) => (
                 <span key={label} style={{ display: 'flex', alignItems: 'center', gap: u(12), background: C.surface, border: `${ub(3)} solid ${C.ink}`, padding: `${u(12)} ${u(20)}`, fontSize: u(30), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap' }}>
                   <span aria-hidden>{icon}</span>
@@ -553,6 +553,11 @@ function SupportAdSlide1({ slide }: { slide: StorySlide }) {
                 </span>
               ))}
             </div>
+          </div>
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: u(86), background: C.surface, borderTop: `${ub(3)} solid ${C.ink}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <span style={{ fontSize: u(30), fontWeight: 800, color: C.ink, whiteSpace: 'nowrap' }}>
+              <span style={{ color: C.orangeText }}>費用や始め方</span>もチェックできます。
+            </span>
           </div>
         </IllustrationCard>
       </div>
