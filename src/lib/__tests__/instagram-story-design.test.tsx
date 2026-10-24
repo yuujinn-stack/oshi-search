@@ -63,7 +63,8 @@ describe('instagram story design preview', () => {
     });
 
     it('does not use photos or external images (CSS illustrations only)', () => {
-      ads.slides.forEach((_, i) => expect(renderAd(i)).not.toMatch(/<img|url\(/));
+      // SVG 内のグラデーション参照（url(#id)）は可。外部の画像・URLは使わない
+      ads.slides.forEach((_, i) => expect(renderAd(i)).not.toMatch(/<img|<image|url\((?!#)|https?:\/\//));
     });
   });
 });

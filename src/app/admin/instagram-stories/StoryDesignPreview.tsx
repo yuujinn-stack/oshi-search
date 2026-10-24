@@ -495,25 +495,14 @@ function BirthdayPoster({ width, height, title = 'HAPPY BIRTHDAY' }: { width: nu
 const AD1_TEXT: StoryZone = { top: TEXT_ZONE.top, bottom: 756 };
 const AD1_VISUAL: StoryZone = { top: 780, bottom: 1440 };
 
-/** 駅の壁面に貼られた広告枠（左右の枠は奥行きを出すための脇役） */
-function AdFrame({ x, y, w, h, dim = false, children }: { x: number; y: number; w: number; h: number; dim?: boolean; children?: ReactNode }) {
-  return (
-    <div style={{ position: 'absolute', left: u(x), top: u(y), width: u(w), height: u(h), background: '#2E2C28', padding: u(dim ? 10 : 14), opacity: dim ? 0.55 : 1 }}>
-      <div style={{ width: '100%', height: '100%', background: dim ? '#F3EEE6' : 'linear-gradient(170deg, #FFF8EF 0%, #FFE4D6 55%, #FFE9C2 100%)', position: 'relative', overflow: 'hidden' }}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
 /** 掲出例のラベル（誕生日・周年・デビュー記念） */
 function OccasionTag({ x, y, rotate, label }: { x: number; y: number; rotate: number; label: string }) {
   return (
-    <div style={{ position: 'absolute', left: u(x), top: u(y), transform: `rotate(${rotate}deg)` }}>
+    <div style={{ position: 'absolute', left: u(x), top: u(y), transform: `rotate(${rotate}deg)`, zIndex: 3 }}>
       <div style={{ position: 'relative' }}>
         <HardShadow offset={6} color={C.ink} radius={u(999)} />
-        <span style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: u(10), background: C.surface, border: `${ub(3)} solid ${C.ink}`, borderRadius: u(999), padding: `${u(10)} ${u(24)}`, fontSize: u(30), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap' }}>
-          <span style={{ width: u(14), height: u(14), borderRadius: '50%', background: C.orange }} />
+        <span style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: u(10), background: C.surface, border: `${ub(3)} solid ${C.ink}`, borderRadius: u(999), padding: `${u(9)} ${u(22)}`, fontSize: u(28), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap' }}>
+          <span style={{ width: u(13), height: u(13), borderRadius: '50%', background: C.orange }} />
           {label}
         </span>
       </div>
@@ -521,71 +510,207 @@ function OccasionTag({ x, y, rotate, label }: { x: number; y: number; rotate: nu
   );
 }
 
-const AD1_CONFETTI: { x: number; y: number; w: number; h: number; r: number; c: string; round?: boolean }[] = [
-  { x: 320, y: 40, w: 20, h: 9, r: -25, c: C.orange },
-  { x: 410, y: 22, w: 12, h: 12, r: 0, c: '#E8B44A', round: true },
-  { x: 560, y: 34, w: 22, h: 9, r: 30, c: '#F4A7B9' },
-  { x: 650, y: 52, w: 12, h: 12, r: 0, c: C.orange, round: true },
-  { x: 250, y: 300, w: 18, h: 8, r: 40, c: '#E8B44A' },
-  { x: 720, y: 280, w: 20, h: 9, r: -35, c: '#F4A7B9' },
-  { x: 230, y: 470, w: 12, h: 12, r: 0, c: '#F4A7B9', round: true },
-  { x: 735, y: 500, w: 12, h: 12, r: 0, c: '#E8B44A', round: true },
+/** ポスター用の書体。Mac に標準である書体を優先し、ない環境では一般的なセリフ体・筆記体になる */
+const SCRIPT_FONT = "'Snell Roundhand', 'Apple Chancery', 'Brush Script MT', 'Times New Roman', cursive";
+const SERIF_FONT = "Didot, 'Bodoni 72', 'Times New Roman', serif";
+const GOLD = '#B8862B';
+const GOLD_LIGHT = '#E7C77A';
+const BLUSH = '#F4A7B9';
+
+/** 4方向に光るきらめき（SVG） */
+function Sparkle({ x, y, size, color = GOLD_LIGHT }: { x: number; y: number; size: number; color?: string }) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden style={{ position: 'absolute', left: u(x - size / 2), top: u(y - size / 2), width: u(size), height: u(size) }}>
+      <path d="M10 0 C11 7 13 9 20 10 C13 11 11 13 10 20 C9 13 7 11 0 10 C7 9 9 7 10 0 Z" fill={color} />
+    </svg>
+  );
+}
+
+/** 風船（SVG） */
+function Balloon({ x, y, w, color, dark }: { x: number; y: number; w: number; color: string; dark: string }) {
+  const id = `bl-${x}-${y}`;
+  return (
+    <svg viewBox="0 0 40 70" aria-hidden style={{ position: 'absolute', left: u(x), top: u(y), width: u(w), height: u((w * 70) / 40) }}>
+      <defs>
+        <radialGradient id={id} cx="35%" cy="30%" r="70%">
+          <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.9" />
+          <stop offset="35%" stopColor={color} />
+          <stop offset="100%" stopColor={dark} />
+        </radialGradient>
+      </defs>
+      <path d="M20 42 C 21 50, 15 56, 21 70" stroke={dark} strokeWidth="1.2" fill="none" />
+      <ellipse cx="20" cy="20" rx="17" ry="21" fill={`url(#${id})`} />
+      <path d="M17 41 L23 41 L20 45 Z" fill={dark} />
+    </svg>
+  );
+}
+
+const POSTER_CONFETTI: { x: number; y: number; w: number; h: number; r: number; c: string; round?: boolean }[] = [
+  // 文字に重ならないよう、ポスターの左右の余白と上部だけに置く
+  { x: 40, y: 150, w: 14, h: 6, r: -30, c: C.orange },
+  { x: 345, y: 170, w: 14, h: 6, r: 35, c: BLUSH },
+  { x: 26, y: 300, w: 9, h: 9, r: 0, c: GOLD_LIGHT, round: true },
+  { x: 372, y: 290, w: 9, h: 9, r: 0, c: C.orange, round: true },
+  { x: 30, y: 430, w: 13, h: 6, r: 20, c: GOLD_LIGHT },
+  { x: 360, y: 440, w: 13, h: 6, r: -25, c: BLUSH },
 ];
+
+/** 主役：誕生日のお祝いポスター（402×512）。人物は描かず、名前と装飾で華やかさを出す */
+function BirthdayAdPoster() {
+  return (
+    <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(165deg, #FFFAF4 0%, #FFE9E6 48%, #FFE4C8 100%)', overflow: 'hidden' }}>
+      {/* うすい光のすじ */}
+      <div style={{ position: 'absolute', left: u(-60), top: u(-40), width: u(260), height: u(620), transform: 'rotate(22deg)', background: 'linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.55) 50%, rgba(255,255,255,0) 100%)' }} />
+      {/* 金の細い内枠 */}
+      <div style={{ position: 'absolute', left: u(14), top: u(14), right: u(14), bottom: u(30), border: `${ub(2)} solid ${GOLD_LIGHT}` }} />
+
+      <Balloon x={-6} y={-8} w={70} color={BLUSH} dark="#D9788F" />
+      <Balloon x={44} y={-26} w={56} color="#FFB27A" dark="#E07A35" />
+      <Balloon x={290} y={-20} w={62} color={GOLD_LIGHT} dark="#C9962E" />
+      <Balloon x={338} y={2} w={58} color={BLUSH} dark="#D9788F" />
+
+      {POSTER_CONFETTI.map((p, i) => (
+        <span key={i} aria-hidden style={{ position: 'absolute', left: u(p.x), top: u(p.y), width: u(p.w), height: u(p.h), background: p.c, borderRadius: p.round ? '50%' : u(2), transform: `rotate(${p.r}deg)` }} />
+      ))}
+      <Sparkle x={30} y={236} size={24} />
+      <Sparkle x={374} y={226} size={20} />
+      <Sparkle x={200} y={112} size={16} color={C.orange} />
+
+      <div style={{ position: 'absolute', left: 0, right: 0, top: u(108), display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <span style={{ fontFamily: SCRIPT_FONT, fontStyle: 'italic', fontSize: u(84), lineHeight: 1, color: '#E8692E', whiteSpace: 'nowrap' }}>Happy</span>
+        <span style={{ marginTop: u(4), fontFamily: SERIF_FONT, fontSize: u(46), fontWeight: 700, letterSpacing: '0.2em', paddingLeft: '0.2em', color: GOLD, whiteSpace: 'nowrap' }}>BIRTHDAY</span>
+        <span style={{ marginTop: u(16), display: 'flex', alignItems: 'center', gap: u(10) }}>
+          <span style={{ width: u(70), height: u(2), background: GOLD_LIGHT }} />
+          <span style={{ width: u(8), height: u(8), transform: 'rotate(45deg)', background: GOLD }} />
+          <span style={{ width: u(70), height: u(2), background: GOLD_LIGHT }} />
+        </span>
+        <span style={{ marginTop: u(22), fontSize: u(66), fontWeight: 900, color: C.ink, letterSpacing: '0.02em', whiteSpace: 'nowrap' }}>推しの名前</span>
+        <span style={{ marginTop: u(14), fontFamily: SERIF_FONT, fontSize: u(24), letterSpacing: '0.16em', color: C.body, whiteSpace: 'nowrap' }}>2026.◯◯.◯◯</span>
+      </div>
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: u(16), background: `linear-gradient(90deg, ${C.orange} 0%, #FF8A5B 50%, ${C.orange} 100%)` }} />
+    </div>
+  );
+}
+
+/**
+ * 駅構内の背景（SVG・一点透視）。奥の壁に主役の広告を正面から掲出し、天井の照明・床のタイル・左右の壁で奥行きを出す。
+ * 背景は彩度を落として、主役のポスターが目立つようにする。
+ */
+function StationScene({ W, H, back }: { W: number; H: number; back: { x1: number; x2: number; y1: number; y2: number } }) {
+  const vx = W / 2;
+  const floorLines = [-1.2, -0.75, -0.4, -0.12, 0.12, 0.4, 0.75, 1.2].map((t) => vx + t * W);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+      <defs>
+        <linearGradient id="st-back" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#F2EDE5" />
+          <stop offset="100%" stopColor="#E3DBCF" />
+        </linearGradient>
+        <linearGradient id="st-ceil" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#CFC8BC" />
+          <stop offset="100%" stopColor="#E9E3D9" />
+        </linearGradient>
+        <linearGradient id="st-floor" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#4A4640" />
+          <stop offset="100%" stopColor="#24211E" />
+        </linearGradient>
+        <linearGradient id="st-left" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#CFC7BA" />
+          <stop offset="100%" stopColor="#E4DDD2" />
+        </linearGradient>
+        <linearGradient id="st-right" x1="1" y1="0" x2="0" y2="0">
+          <stop offset="0%" stopColor="#CFC7BA" />
+          <stop offset="100%" stopColor="#E4DDD2" />
+        </linearGradient>
+        <radialGradient id="st-glow" cx="50%" cy="48%" r="55%">
+          <stop offset="0%" stopColor="#FFE2C4" stopOpacity="0.95" />
+          <stop offset="60%" stopColor="#FFE2C4" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="#FFE2C4" stopOpacity="0" />
+        </radialGradient>
+        <linearGradient id="st-reflect" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#FFD9B5" stopOpacity="0.45" />
+          <stop offset="100%" stopColor="#FFD9B5" stopOpacity="0" />
+        </linearGradient>
+        <pattern id="st-tile" width="44" height="44" patternUnits="userSpaceOnUse">
+          <path d="M44 0 L0 0 0 44" fill="none" stroke="#000" strokeOpacity="0.05" strokeWidth="1.5" />
+        </pattern>
+      </defs>
+
+      {/* 天井・左右の壁・床（一点透視） */}
+      <polygon points={`0,0 ${W},0 ${back.x2},${back.y1} ${back.x1},${back.y1}`} fill="url(#st-ceil)" />
+      <polygon points={`0,0 ${back.x1},${back.y1} ${back.x1},${back.y2} 0,${H}`} fill="url(#st-left)" />
+      <polygon points={`${W},0 ${back.x2},${back.y1} ${back.x2},${back.y2} ${W},${H}`} fill="url(#st-right)" />
+      <polygon points={`0,${H} ${W},${H} ${back.x2},${back.y2} ${back.x1},${back.y2}`} fill="url(#st-floor)" />
+      {/* 床のタイル目地（消失点へ向かう線） */}
+      {floorLines.map((x, i) => (
+        <line key={i} x1={x} y1={H} x2={vx + (x - vx) * ((back.x2 - back.x1) / W)} y2={back.y2} stroke="#FFFFFF" strokeOpacity="0.07" strokeWidth="2" />
+      ))}
+      {/* 天井の照明（奥へ向かう光の帯） */}
+      {[0.3, 0.7].map((t, i) => {
+        const xb = back.x1 + (back.x2 - back.x1) * t;
+        const xf = W * t;
+        return <polygon key={i} points={`${xf - 34},0 ${xf + 34},0 ${xb + 10},${back.y1} ${xb - 10},${back.y1}`} fill="#FFFFFF" fillOpacity="0.85" />;
+      })}
+      {/* 左右の壁の広告枠（奥行きの手がかり） */}
+      <polygon points={`22,${back.y1 + 40} ${back.x1 - 26},${back.y1 + 70} ${back.x1 - 26},${back.y2 - 120} 22,${back.y2 - 60}`} fill="#2E2C28" fillOpacity="0.55" />
+      <polygon points={`32,${back.y1 + 52} ${back.x1 - 34},${back.y1 + 79} ${back.x1 - 34},${back.y2 - 128} 32,${back.y2 - 72}`} fill="#F6F1EA" fillOpacity="0.8" />
+      <polygon points={`${W - 22},${back.y1 + 40} ${back.x2 + 26},${back.y1 + 70} ${back.x2 + 26},${back.y2 - 120} ${W - 22},${back.y2 - 60}`} fill="#2E2C28" fillOpacity="0.55" />
+      <polygon points={`${W - 32},${back.y1 + 52} ${back.x2 + 34},${back.y1 + 79} ${back.x2 + 34},${back.y2 - 128} ${W - 32},${back.y2 - 72}`} fill="#F6F1EA" fillOpacity="0.8" />
+
+      {/* 奥の壁（タイルと照明のあたり） */}
+      <rect x={back.x1} y={back.y1} width={back.x2 - back.x1} height={back.y2 - back.y1} fill="url(#st-back)" />
+      <rect x={back.x1} y={back.y1} width={back.x2 - back.x1} height={back.y2 - back.y1} fill="url(#st-tile)" />
+      <rect x={back.x1} y={back.y1} width={back.x2 - back.x1} height={back.y2 - back.y1} fill="url(#st-glow)" />
+      {/* 壁と床の境目の幅木 */}
+      <rect x={back.x1} y={back.y2 - 10} width={back.x2 - back.x1} height={10} fill="#8C857A" />
+      {/* 床への映り込み */}
+      <polygon points={`${vx - 190},${back.y2} ${vx + 190},${back.y2} ${vx + 250},${H} ${vx - 250},${H}`} fill="url(#st-reflect)" />
+    </svg>
+  );
+}
 
 function StationAdVisual() {
   const W = 960;
-  const floor = 92;
-  const frame = { w: 400, h: 500 };
+  const H = 660;
+  // 奥の壁（ここに主役の広告を正面から掲出する）
+  const back = { x1: 150, x2: 810, y1: 34, y2: 566 };
+  const frame = { w: 430, h: 520 };
   const fx = (W - frame.w) / 2;
-  const fy = 40;
+  const fy = 30;
+  const bezel = 14;
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', border: `${ub(4)} solid ${C.ink}`, background: `repeating-linear-gradient(90deg, rgba(0,0,0,0.045) 0 ${u(2)}, transparent ${u(2)} ${u(120)}), repeating-linear-gradient(0deg, rgba(0,0,0,0.045) 0 ${u(2)}, transparent ${u(2)} ${u(120)}), linear-gradient(180deg, #F1ECE3 0%, #E4DDD1 100%)` }}>
-      {/* 天井の照明 */}
-      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: u(14), background: '#FFFFFF', borderBottom: `${ub(2)} solid #D8D1C4` }} />
-      {/* 主役の広告枠のまわりの明るさ（照明に照らされた掲出面） */}
-      <div style={{ position: 'absolute', left: u(fx - 140), top: u(fy - 90), width: u(frame.w + 280), height: u(frame.h + 180), background: 'radial-gradient(closest-side, rgba(255,214,170,0.75), rgba(255,214,170,0))' }} />
+    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', border: `${ub(4)} solid ${C.ink}`, background: '#E8E1D6' }}>
+      <StationScene W={W} H={H} back={back} />
 
-      {/* 左右の広告枠（奥行き用） */}
-      <AdFrame x={-120} y={110} w={230} h={330} dim />
-      <AdFrame x={W - 110} y={110} w={230} h={330} dim />
-
-      {/* 駅名標 */}
-      <div style={{ position: 'absolute', left: u(28), top: u(34), display: 'flex', alignItems: 'center', gap: u(10), background: C.ink, color: '#FFF', padding: `${u(8)} ${u(18)}`, borderRadius: u(6) }}>
-        <span style={{ width: u(22), height: u(22), borderRadius: '50%', border: `${ub(5)} solid #5DB383`, background: '#FFF' }} />
-        <span style={{ fontSize: u(26), fontWeight: 900, whiteSpace: 'nowrap' }}>◯◯駅</span>
+      {/* 駅名標（天井から下がる案内サイン） */}
+      <div style={{ position: 'absolute', left: u(22), top: u(22), display: 'flex', alignItems: 'center', gap: u(10), background: C.ink, color: '#FFF', padding: `${u(7)} ${u(16)}`, borderRadius: u(6), zIndex: 2 }}>
+        <span style={{ width: u(20), height: u(20), borderRadius: '50%', border: `${ub(5)} solid #5DB383`, background: '#FFF' }} />
+        <span style={{ fontSize: u(24), fontWeight: 900, whiteSpace: 'nowrap' }}>◯◯駅</span>
       </div>
-      <span style={{ position: 'absolute', top: u(34), right: u(28), zIndex: 2, fontSize: u(24), fontWeight: 900, color: C.amberText, background: C.amberSoft, border: `${ub(2)} solid #E8B44A`, padding: `${u(4)} ${u(14)}`, whiteSpace: 'nowrap' }}>
+      <span style={{ position: 'absolute', top: u(22), right: u(22), zIndex: 4, fontSize: u(24), fontWeight: 900, color: C.amberText, background: C.amberSoft, border: `${ub(2)} solid #E8B44A`, padding: `${u(4)} ${u(14)}`, whiteSpace: 'nowrap' }}>
         掲載イメージ
       </span>
 
-      {/* 主役：誕生日の駅ポスター */}
-      <AdFrame x={fx} y={fy} w={frame.w} h={frame.h}>
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: u(26) }}>
-          <span style={{ fontSize: u(26), fontWeight: 900, color: C.orangeText, letterSpacing: '0.32em', whiteSpace: 'nowrap', paddingLeft: '0.32em' }}>HAPPY</span>
-          <span style={{ fontSize: u(54), fontWeight: 900, color: C.ink, letterSpacing: '0.06em', lineHeight: 1.1, whiteSpace: 'nowrap' }}>BIRTHDAY</span>
-          {/* 写真やイラストを入れる場所（人物は描かない） */}
-          <div style={{ marginTop: u(16), width: u(160), height: u(160), borderRadius: '50%', background: 'radial-gradient(circle at 35% 30%, #FFFFFF 0%, #FFD3B8 60%, #FFB98F 100%)', border: `${ub(6)} solid #E8B44A`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontSize: u(80), color: '#E8B44A', lineHeight: 1 }} aria-hidden>★</span>
-          </div>
-          <span style={{ marginTop: u(20), fontSize: u(50), fontWeight: 900, color: C.ink, whiteSpace: 'nowrap' }}>推しの名前</span>
-          <span style={{ marginTop: u(6), fontFamily: MONO, fontSize: u(22), fontWeight: 700, color: C.body, letterSpacing: '0.1em', whiteSpace: 'nowrap' }}>2026.◯◯.◯◯</span>
+      {/* 広告パネルの落ち影（box-shadow は PNG 保存時に Safari で消えるため、グラデーションで描く） */}
+      <div style={{ position: 'absolute', left: u(fx - 14), top: u(fy + frame.h - 6), width: u(frame.w + 28), height: u(26), background: 'radial-gradient(closest-side, rgba(30,20,10,0.45), rgba(30,20,10,0))' }} />
+      {/* 主役の広告パネル（金属の枠＋内照明） */}
+      <div style={{ position: 'absolute', left: u(fx), top: u(fy), width: u(frame.w), height: u(frame.h), padding: u(bezel), background: 'linear-gradient(180deg, #5A5650 0%, #2C2A27 100%)', borderRadius: u(6), zIndex: 1 }}>
+        <div style={{ position: 'relative', width: '100%', height: '100%', outline: `${ub(2)} solid rgba(255,255,255,0.35)` }}>
+          <BirthdayAdPoster />
+          {/* パネル表面の映り込み */}
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(115deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0) 30%, rgba(255,255,255,0) 100%)' }} />
         </div>
-        {/* ポスターの帯（オレンジ） */}
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: u(16), background: C.orange }} />
-      </AdFrame>
+        {/* 上部の照明バー */}
+        <div style={{ position: 'absolute', left: u(40), right: u(40), top: u(3), height: u(5), borderRadius: u(4), background: '#FFF6E8' }} />
+      </div>
 
-      {AD1_CONFETTI.map((p, i) => (
-        <span key={i} aria-hidden style={{ position: 'absolute', left: u(p.x), top: u(p.y), width: u(p.w), height: u(p.h), background: p.c, borderRadius: p.round ? '50%' : u(2), transform: `rotate(${p.r}deg)` }} />
-      ))}
+      <OccasionTag x={22} y={150} rotate={-6} label="誕生日" />
+      <OccasionTag x={760} y={250} rotate={5} label="周年" />
+      <OccasionTag x={14} y={392} rotate={4} label="デビュー記念" />
 
-      <OccasionTag x={56} y={170} rotate={-6} label="誕生日" />
-      <OccasionTag x={710} y={300} rotate={5} label="周年" />
-      <OccasionTag x={40} y={430} rotate={4} label="デビュー記念" />
-
-      {/* 床：照明の映り込みと、補足のひとこと */}
-      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: u(floor), background: 'linear-gradient(180deg, #3A3733 0%, #22201D 100%)', borderTop: `${ub(3)} solid ${C.ink}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ position: 'absolute', left: u(fx + 30), width: u(frame.w - 60), top: 0, height: u(26), background: 'linear-gradient(180deg, rgba(255,214,170,0.35), rgba(255,214,170,0))' }} />
-        <span style={{ position: 'relative', fontSize: u(34), fontWeight: 900, color: '#FFFFFF', whiteSpace: 'nowrap', letterSpacing: '0.02em' }}>
+      {/* 床の帯：補足のひとこと */}
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: u(H - back.y2), display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+        <span style={{ fontSize: u(34), fontWeight: 900, color: '#FFFFFF', whiteSpace: 'nowrap', letterSpacing: '0.02em' }}>
           誕生日・周年・<span style={{ color: '#FFB27A' }}>デビュー記念</span>にも。
         </span>
       </div>
