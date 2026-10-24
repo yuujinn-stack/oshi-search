@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import {
   STORY_TEMPLATES,
   STORY_CANVAS,
@@ -14,6 +14,7 @@ import {
   type StoryTemplate,
   type StoryZone,
 } from '@/lib/instagram-story-templates';
+import { StoryDesignFrame, hasStoryDesign } from './StoryDesignPreview';
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -43,11 +44,11 @@ function zoneStyle(zone: StoryZone): CSSProperties {
   };
 }
 
-function StoryPreview({ slide, isPR }: { slide: StorySlide; isPR: boolean }) {
+function StoryPreview({ slide, isPR, sizeClass = 'max-w-[180px]' }: { slide: StorySlide; isPR: boolean; sizeClass?: string }) {
   const sticker = getLinkStickerZone(slide.linkPosition);
   return (
     <div
-      className="relative w-full max-w-[180px] mx-auto bg-slate-50 border border-gray-300 rounded-lg overflow-hidden text-[10px]"
+      className={`relative w-full ${sizeClass} mx-auto bg-slate-50 border border-gray-300 rounded-lg overflow-hidden text-[10px]`}
       style={{ aspectRatio: `${STORY_CANVAS.width} / ${STORY_CANVAS.height}` }}
       aria-label="1080×1920 配置イメージ"
     >
@@ -75,8 +76,66 @@ function StoryPreview({ slide, isPR }: { slide: StorySlide; isPR: boolean }) {
   );
 }
 
-function SlideCard({ slide, index, template }: { slide: StorySlide; index: number; template: StoryTemplate }) {
-  const isPR = template.isPR;
+/** デザイン済みのテンプレートは完成イメージ、それ以外は従来の配置図 */
+function SlidePreview({ template, slide, index, showGuide, large = false }: { template: StoryTemplate; slide: StorySlide; index: number; showGuide: boolean; large?: boolean }) {
+  if (hasStoryDesign(template.id, index)) {
+    return (
+      <div className={`w-full ${large ? '' : 'max-w-[280px]'} mx-auto border border-gray-300 rounded-lg overflow-hidden shadow-sm`}>
+        <StoryDesignFrame templateId={template.id} slideIndex={index} slide={slide} showGuide={showGuide} />
+      </div>
+    );
+  }
+  return <StoryPreview slide={slide} isPR={template.isPR} sizeClass={large ? 'max-w-none' : undefined} />;
+}
+
+/** 1080×1920 比率の拡大プレビュー（前後のスライドへ移動できる） */
+function StoryLightbox({
+  template,
+  index,
+  showGuide,
+  onToggleGuide,
+  onNavigate,
+  onClose,
+}: {
+  template: StoryTemplate;
+  index: number;
+  showGuide: boolean;
+  onToggleGuide: () => void;
+  onNavigate: (index: number) => void;
+  onClose: () => void;
+}) {
+  const count = template.slides.length;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowLeft' && index > 0) onNavigate(index - 1);
+      if (e.key === 'ArrowRight' && index < count - 1) onNavigate(index + 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [index, count, onClose, onNavigate]);
+
+  const navBtn = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/90 text-slate-800 disabled:opacity-30';
+  return (
+    <div role="dialog" aria-modal="true" aria-label={`${template.title} ${index + 1}枚目の拡大プレビュー`} className="fixed inset-0 z-50 bg-black/75 flex flex-col items-center justify-center p-3 gap-3" onClick={onClose}>
+      <div className="flex items-center gap-2 flex-wrap justify-center" onClick={(e) => e.stopPropagation()}>
+        <button type="button" className={navBtn} disabled={index === 0} onClick={() => onNavigate(index - 1)}>← 前へ</button>
+        <span className="text-xs font-semibold text-white">{index + 1} / {count}枚目</span>
+        <button type="button" className={navBtn} disabled={index === count - 1} onClick={() => onNavigate(index + 1)}>次へ →</button>
+        <label className="flex items-center gap-1 text-xs text-white ml-2">
+          <input type="checkbox" checked={showGuide} onChange={onToggleGuide} /> ガイド表示
+        </label>
+        <button type="button" className={navBtn} onClick={onClose}>閉じる</button>
+      </div>
+      {/* 画面の高さに合わせて 9:16 の最大サイズで表示する */}
+      <div style={{ width: 'min(94vw, calc((100vh - 80px) * 9 / 16))' }} onClick={(e) => e.stopPropagation()}>
+        <SlidePreview template={template} slide={template.slides[index]} index={index} showGuide={showGuide} large />
+      </div>
+    </div>
+  );
+}
+
+function SlideCard({ slide, index, template, showGuide, onOpen }: { slide: StorySlide; index: number; template: StoryTemplate; showGuide: boolean; onOpen: () => void }) {
   const linkUrl = resolveSlideLinkUrl(template, slide);
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col">
@@ -85,7 +144,12 @@ function SlideCard({ slide, index, template }: { slide: StorySlide; index: numbe
         <span className="text-[11px] text-gray-500">{CTA_ROLE_LABELS[slide.ctaRole]}</span>
       </div>
 
-      <StoryPreview slide={slide} isPR={isPR} />
+      <button type="button" onClick={onOpen} className="block w-full cursor-zoom-in" aria-label={`${index + 1}枚目を拡大プレビュー`}>
+        <SlidePreview template={template} slide={slide} index={index} showGuide={showGuide} />
+      </button>
+      <button type="button" onClick={onOpen} className="mt-2 self-center text-xs font-semibold text-violet-600 hover:text-violet-700">
+        拡大プレビュー
+      </button>
 
       <p className="text-xs font-semibold text-gray-500 mt-4 mb-1">本文</p>
       <pre className="whitespace-pre-wrap font-sans text-sm text-slate-800 bg-gray-50 rounded-lg p-3 leading-relaxed">{slide.text}</pre>
@@ -118,6 +182,8 @@ function SlideCard({ slide, index, template }: { slide: StorySlide; index: numbe
 }
 
 function TemplateDetail({ template }: { template: StoryTemplate }) {
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5">
       <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
@@ -142,11 +208,27 @@ function TemplateDetail({ template }: { template: StoryTemplate }) {
         ステッカーは画面最下部ではなく、下端から約300〜450px上（返信欄と重ならない位置）に置き、本文・画像と重ねないでください。
       </p>
 
+      <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 mb-4">
+        <input type="checkbox" checked={showGuide} onChange={() => setShowGuide((v) => !v)} />
+        Instagram UI・リンクステッカー位置のガイドを重ねて表示
+      </label>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {template.slides.map((slide, i) => (
-          <SlideCard key={i} slide={slide} index={i} template={template} />
+          <SlideCard key={i} slide={slide} index={i} template={template} showGuide={showGuide} onOpen={() => setOpenIndex(i)} />
         ))}
       </div>
+
+      {openIndex !== null && (
+        <StoryLightbox
+          template={template}
+          index={openIndex}
+          showGuide={showGuide}
+          onToggleGuide={() => setShowGuide((v) => !v)}
+          onNavigate={setOpenIndex}
+          onClose={() => setOpenIndex(null)}
+        />
+      )}
     </div>
   );
 }
