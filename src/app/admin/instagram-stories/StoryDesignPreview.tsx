@@ -57,6 +57,12 @@ const MONO = "'Space Mono', 'Osaka-Mono', Osaka, Menlo, Consolas, monospace";
 
 const SIDE = 80;
 
+/**
+ * 完成イメージの本文ブロック。CTA（リンクステッカー位置）は動かさず、見出しを Instagram 上部UIから少し離して
+ * 本文→画面→CTA の間隔をそろえる（2枚目の本文が最も長く、+30px で画面モックとの間隔が約45px）。
+ */
+const TEXT_ZONE: StoryZone = { top: STORY_LAYOUT.text.top + 30, bottom: STORY_LAYOUT.text.bottom };
+
 function zoneBox(zone: StoryZone, inset = SIDE): CSSProperties {
   return { position: 'absolute', top: u(zone.top), height: u(zone.bottom - zone.top), left: u(inset), right: u(inset) };
 }
@@ -240,7 +246,7 @@ const AVATAR_COLORS = ['#F2994A', '#6C9BD2', '#5DB383'];
 function OshiVodSlide1({ slide }: { slide: StorySlide }) {
   return (
     <>
-      <div data-story-zone="text" style={zoneBox(STORY_LAYOUT.text)}>
+      <div data-story-zone="text" style={zoneBox(TEXT_ZONE)}>
         <LabelRow label="推しから選べる" tone="orange" />
         <Headline size={74}>
           {'推しから\n'}
@@ -326,7 +332,7 @@ function OshiVodSlide2({ slide }: { slide: StorySlide }) {
   );
   return (
     <>
-      <div data-story-zone="text" style={zoneBox(STORY_LAYOUT.text)}>
+      <div data-story-zone="text" style={zoneBox(TEXT_ZONE)}>
         <LabelRow label="使い方はかんたん" tone="ink" />
         <Headline size={88}>
           {'気になる人を\n'}
@@ -365,7 +371,7 @@ function OshiVodSlide3({ slide }: { slide: StorySlide }) {
   const grid: CSSProperties = { display: 'grid', gridTemplateColumns: `${u(250)} 1fr ${u(170)}`, alignItems: 'center', columnGap: u(20) };
   return (
     <>
-      <div data-story-zone="text" style={zoneBox(STORY_LAYOUT.text)}>
+      <div data-story-zone="text" style={zoneBox(TEXT_ZONE)}>
         <LabelRow label="診断でわかること" tone="outline" />
         <Headline size={76}>
           {'「この人を見るなら\n'}
