@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { sendGaEvent } from '@/lib/ga-event';
 import { OSHI_VOD_MAX_PERSONS, buildOshiVodResultPath } from '@/lib/oshi-vod/params';
+import { readShareAttribution } from '@/lib/oshi-vod/share';
 import {
   canSelectWholeGroup,
   searchPickerSuggestions,
@@ -138,7 +139,15 @@ export default function OshiVodPersonPicker({
         if (ref && ref.origin === window.location.origin && ref.pathname === '/') src = 'top';
       } catch { /* ignore */ }
     }
-    sendGaEvent('diagnosis_start', { person_count: selected.length, source: src });
+    // 共有リンク経由で訪れたタブなら、元の共有画像のデザイン・共有方法を付ける（共有経由の新規診断の計測）
+    const shared = readShareAttribution();
+    sendGaEvent('diagnosis_start', {
+      person_count: selected.length,
+      source: src,
+      via_share: !!shared,
+      share_variant: shared?.variant,
+      share_method: shared?.method,
+    });
     setSubmitting(true);
     router.push(buildOshiVodResultPath(selected));
   };

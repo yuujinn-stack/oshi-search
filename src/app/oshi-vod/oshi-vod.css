@@ -223,11 +223,53 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshivod { --g
    AffiliateSlot の判定（oshi_vod_result → work_provider → 公式）は変更しない。 */
 .ov-page .ov-cta:empty { display: none; }
 
-/* ── シェア ── */
-.ov-page .ov-share-image {
-  display: block; width: 100%; max-width: 360px; height: auto; margin: 0 auto 14px;
-  border: 1.5px solid var(--graphic-ink); background: #FFFFFF;
+/* ページ内リンク（#oshi-vod-picker）で移動したとき、見出しが固定ヘッダー（約60px）の下に隠れないようにする */
+.ov-page #oshi-vod-picker { scroll-margin-top: 76px; }
+
+/* ── 共有リンクから来た人への案内（OshiVodShareVisitTracker） ── */
+.ov-page .ov-share-visit {
+  display: flex; flex-direction: column; gap: 10px; margin: 0 0 18px; padding: 14px 16px;
+  background: #FFFFFF; border: 1.5px solid var(--graphic-ink); box-shadow: 4px 4px 0 var(--graphic-orange);
 }
+.ov-page .ov-share-visit-text { margin: 0; font-size: 14px; line-height: 1.7; color: var(--graphic-body); }
+.ov-page .ov-share-visit-text strong { display: block; font-size: 15px; color: var(--graphic-text); }
+.ov-page .ov-share-visit-btn {
+  display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 8px 12px;
+  font-size: 15px; font-weight: 800; text-align: center; text-decoration: none;
+  background: var(--graphic-ink); color: #FFFFFF; border: 1.5px solid var(--graphic-ink);
+}
+.ov-page .ov-share-visit-btn:focus-visible { outline: 2px solid var(--graphic-ink); outline-offset: 2px; }
+@media (min-width: 640px) {
+  .ov-page .ov-share-visit { flex-direction: row; align-items: center; justify-content: space-between; }
+  .ov-page .ov-share-visit-btn { flex: none; }
+}
+
+/* ── シェア ── */
+/* 画像デザインの切り替え（かっこいい／可愛い）。見本色は画像テーマ（server/oshi-vod/result-image.tsx）と同じ */
+.ov-page .ov-share-variant { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-width: 360px; margin: 0 auto 12px; }
+.ov-page .ov-share-variant-btn {
+  display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 8px 10px; text-align: left;
+  background: #FFFFFF; color: var(--graphic-ink); border: 1.5px solid var(--graphic-border-strong); cursor: pointer;
+}
+.ov-page .ov-share-variant-btn[aria-checked="true"] { border: 2.5px solid var(--graphic-ink); box-shadow: 3px 3px 0 var(--graphic-ink); }
+.ov-page .ov-share-variant-btn:focus-visible { outline: 2px solid var(--graphic-ink); outline-offset: 2px; }
+.ov-page .ov-share-variant-swatch { flex: none; width: 28px; height: 28px; position: relative; }
+.ov-page .ov-share-variant-btn--cool .ov-share-variant-swatch { background: #0C0E13; border-radius: 4px; box-shadow: inset 5px 0 0 #FEE34F; }
+.ov-page .ov-share-variant-btn--cute .ov-share-variant-swatch { background: #FEE34F; border: 3px solid #FF8FB1; border-radius: 999px; box-shadow: 2px 2px 0 #1A2147; }
+.ov-page .ov-share-variant-text { display: flex; flex-direction: column; min-width: 0; }
+.ov-page .ov-share-variant-label { font-size: 14px; font-weight: 800; line-height: 1.3; }
+.ov-page .ov-share-variant-hint { font-size: 10.5px; line-height: 1.35; color: var(--graphic-muted); }
+.ov-page .ov-share-variant-btn[aria-checked="true"] .ov-share-variant-label::after { content: ' ✓'; }
+/* プレビューは2枚とも読み込んで同じ位置に重ね、選択中のデザインだけを見せる（切り替えを即時にする） */
+.ov-page .ov-share-preview { display: grid; max-width: 360px; margin: 0 auto 14px; }
+.ov-page .ov-share-preview > * { grid-area: 1 / 1; }
+.ov-page .ov-share-image {
+  display: block; width: 100%; height: auto; aspect-ratio: 1080 / 1350;
+  border: 1.5px solid var(--graphic-ink); background: var(--graphic-panel);
+}
+.ov-page img.ov-share-image:not(.is-active) { visibility: hidden; }
+.ov-page .ov-share-image--placeholder { background: var(--graphic-panel); }
+.ov-page .ov-share-image-error { margin: 0; padding: 24px 12px; text-align: center; font-size: 13px; color: var(--graphic-muted); border: 1.5px dashed var(--graphic-border-strong); }
 .ov-page .ov-share-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .ov-page .ov-share-btn {
   display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 8px;
@@ -237,6 +279,7 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshivod { --g
 .ov-page .ov-share-btn--main { grid-column: 1 / -1; background: var(--graphic-orange); border-color: var(--graphic-orange); color: #FFFFFF; }
 .ov-page .ov-share-btn--x { background: #0A0A0A; color: #FFFFFF; }
 .ov-page .ov-share-btn--line { background: #06C755; border-color: #06C755; color: #FFFFFF; }
+.ov-page .ov-share-note { margin: 10px 0 0; font-size: 12px; line-height: 1.6; text-align: center; color: var(--graphic-muted); }
 .ov-page .ov-share-downloads { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 16px; margin-top: 12px; font-size: 13px; }
 
 /* ── 説明・FAQ・注意 ── */

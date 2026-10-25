@@ -4823,3 +4823,157 @@ oshi-search
 ### 設計上の判断・注意点
 - 金額は content.ts（推しアド公式で確認済み）の priceNote と一致するものだけ（テストで照合）。料金の変動・出典日・税込/税抜の記載なしを画像内に明記。
 - 1枚目は前回（Task 150）と画素単位で同一。サブスク診断など3枚組の保存PNGも変更なし。ZIP は2ファイルのみ（instagram-story-1.png・instagram-story-2.png）。
+
+---
+
+## Task 152：サブスク診断（/oshi-vod）のシェア画像を「かっこいい／可愛い」から選べるように
+
+### 目的
+診断結果のシェア画像を2デザイン（かっこいい＝cool／可愛い＝cute）から選んで共有できるようにする。デザインごとの共有率・共有経由の訪問・新規診断を GA4 で比べられるようにする。診断ロジック・VODデータ・SEO・静的OGは変更しない。
+
+### 変更したファイル
+- `src/lib/oshi-vod/share-variant.ts`（新規）：`OshiVodShareVariant`（cool / cute）・表示名・解析（不正値・未指定は cool）。
+- `src/lib/oshi-vod/params.ts`：`buildOshiVodImagePath(names, size, variant)`。cool は従来と同じURL（`v` なし）、cute は `&v=cute`。以前の共有画像URLは cool で描画される。
+- `src/server/oshi-vod/result-image.tsx`：レイアウト関数は1つのまま、色・角丸・装飾だけをテーマ（`THEMES.cool / cute`）で切り替え。推しサーチの正式アイコンの黄色 `#FEE34F`・紺 `#112A5A` を使用（旧画像のオレンジは廃止）。
+  - cool：ダーク背景＋黄色の差し色（上端の線・カードの左帯・カバー率・CTA）。装飾は右上の淡い光のみ。
+  - cute：淡い黄色の背景、丸いタグ・カード（黄色の影）、紺のCTA。小さなきらめき・丸だけを添える。
+  - 共通の情報：診断名・「わたしの推し」＋名前・「推しの作品数 1位」（サービス・作品数・カバー率・料金）・根拠「推しの出演作品のうち、有料サブスクで見放題のN作品で比較」・2サービス・推しサーチ名＋アイコン（図形で描画）・oshi-search.jp/oshi-vod・CTA「あなたの推しでも調べてみて →」・注意書き。
+  - フッターは story でも拡大しない（CTAが折り返していたため）。
+- `src/app/api/oshi-vod/image/route.tsx`：`v` を受け取りテンプレートへ渡す（計算は従来どおり）。
+- `src/lib/oshi-vod/share.ts`：共有URLに `sv`（デザイン）・`sm`（x / line / copy / native）を付ける `buildSharedResultUrl`、訪問時の判定 `parseShareAttribution`、sessionStorage への引き継ぎ `rememberShareAttribution` / `readShareAttribution`。
+- `src/components/oshi-vod/OshiVodShare.tsx`：デザイン切り替え（role=radiogroup、見本色つき）。2枚のプレビューは欄が近づいた時点（rootMargin 600px）でまとめて読み込み、重ねて visibility だけを切り替える（display:none の画像は Chrome が読み込まず切り替え直後に空白になったため）。X・LINE・コピー・ネイティブ共有（添付画像も）・画像保存（feed / story）すべてに選択中のデザインを反映。画像パスは親から受け取らずコンポーネント内で組み立てる（props の imageFeedPath / imageStoryPath を削除）。
+- `src/components/oshi-vod/OshiVodShareVisitTracker.tsx`（新規）：共有リンク経由の訪問を計測し、`sv` / `sm` を URL から除去（`history.replaceState`）、sessionStorage に引き継ぐ。
+- `src/app/oshi-vod/page.tsx`：`parseShareAttribution(sp)` があれば上記を描画。OshiVodShare の props 変更。metadata・canonical・noindex は従来どおり（`sv` / `sm` は p と同じく noindex 対象の結果URLにだけ付く）。
+- `src/components/oshi-vod/OshiVodPersonPicker.tsx`：`diagnosis_start` に `via_share`・`share_variant`・`share_method` を追加。
+- `src/app/oshi-vod/oshi-vod.css`：切り替えボタン・プレビューの重ね表示。
+- テスト：`src/lib/__tests__/oshi-vod-share-variant.test.ts`（新規）— 解析、画像URL（cool は従来と同一）、**両デザインで画像の文字・数値が完全一致**（feed / story・1位なし）、共有URLの sv / sm、訪問判定、sv / sm が診断の人物解析に影響しないこと。
+
+### 計測（GA4。すべて variant を含む）
+| イベント | 主なパラメータ |
+|---|---|
+| `diagnosis_share_view`（シェア欄が30%見えた時点で1回） | variant, variant_chosen, person_count |
+| `diagnosis_share_variant_select` | variant, from_variant |
+| `diagnosis_share`（既存。method = x / line / copy / native / image_save_feed / image_save_story） | method, variant, variant_chosen |
+| `diagnosis_share_visit`（共有リンク経由の訪問） | variant, share_method, has_result |
+| `diagnosis_start`（既存） | source, via_share, share_variant, share_method |
+
+GA4 でデザイン別に集計するには、管理画面でカスタムディメンション（variant・variant_chosen・share_variant・share_method・via_share）の登録が必要。
+
+### 設計上の判断・注意点
+- 初期デザインは、以前に選んだもの（localStorage `oshi-vod-share-variant`）、なければ50%ずつ無作為に割り当てる（最初に見せるデザインの偏りで比較が歪まないように）。`variant_chosen` で「自分で選んだ」か「割り当てのまま」かを区別。
+- 共有経由の判定はタブ単位（sessionStorage）。共有リンクで来たタブで始めた診断はすべて `via_share: true`。
+- X のシェア文は従来どおり（デザインで文言を変えない）。
+- 確認：ローカル本番ビルド（外部通信は遮断、GA は記録のみ）、390px・1280pxで切り替え（約50ms）・2枚とも読み込み済み・横はみ出しなし、各リンクと保存ファイル名に variant が付く、共有リンク訪問で sv / sm が URL から消え再読み込みで二重計測されない、noindex・canonical 変化なし。`tsc` 0件、`npm test` 149ファイル/2438件合格。ESLint はリポジトリに設定ファイルが無く未実行。
+
+## Task 152 追記：シェア画像のデザイン修正と、結果URLの X・LINE カード画像（OG）をデザイン別に
+
+### 目的
+共有リンクを X・LINE に貼ったときにも、共有した人が選んだデザイン（かっこいい／可愛い）と診断結果のカードが出るようにする。あわせて、スマホのタイムラインでの読みやすさ・インパクトを改善する（レビューの指摘①〜④）。
+
+### デザイン修正（src/server/oshi-vod/result-image.tsx）
+- 部品を共通化（Kicker・NameTags・ResultCard・Basis・Brand・Cta・Frame）。縦長（feed / story）と横長（og）の2レイアウトで同じ部品を使う。
+- ① 配色が登録されていないサービス（のぎ動画など。`VOD_SERVICE_STYLE` に無い）は既定の灰色 #374151 を使わず、デザインの色で描く（cool＝白地に黒、cute＝紺地に白）。ブランド色・ロゴは推測しない。登録済みサービスは従来どおり。cool は1位カードを黄色の枠で囲み、作品数を黄色の大きな数字（108px）／総数を小さく（44px）して強弱をつけた。
+- ② タイムライン幅（約1/3に縮小）で読めるよう、根拠を34px・ラベル28px・推し名30〜44px（最大8人＋ほかN人）に。情報を絞り、「登録出演作品・無料で見られる作品」の行を削除。根拠は「有料サブスクで見放題の推し作品 N作品で比較」。
+- ③ story は拡大率 1.22、タイトル下と根拠下の余白を均等に配分。2サービスの行は折り返さない大きさ（37px）。
+- ④ cute のカバー率の札を淡いクリーム → ブランドの黄色 #FEE34F（紺文字）に。カードの枠を4px・影を18pxに。
+- cool の右上の光は、グラデーションを枠の内側で消す（外まで残ると枠の直線が段差に見えた）。
+
+### OG（結果URLの X・LINE カード）
+- `src/app/oshi-vod/og/route.ts`（新規）：`/oshi-vod/og?p=...[&v=cute]` で 1200×630 の結果画像。**robots.txt が `/api/` を全UAに禁止しているため**（Twitterbot は robots.txt に従う）、`/api/oshi-vod/image` ではなくこのパスから配信。`X-Robots-Tag: noindex`。
+- `src/server/oshi-vod/image-response.ts`（新規）：`/api/oshi-vod/image` と `/oshi-vod/og` の共通処理。公開人物のみ・最大12人・サイズ／デザインは許可値のみ。正規形（重複なし・既定値省略・未知のキーなし・存在しない人物なし）でなければ 308 で正規形へ（CDN キャッシュキーを増やさない）。CDN `s-maxage=3600, stale-while-revalidate=86400`。関数まで届いた生成は IP ごと 40回/分（Upstash Redis `oshi-vod:image:rl:{ip}:{分}`、120秒で失効。Redis なし・失敗時は制限しない）。
+- `src/lib/oshi-vod/og-meta.ts`（新規）：`buildOshiVodResultSocialMetadata`。結果URL（公開人物が1人以上）だけ og:image / twitter:image を `/oshi-vod/og`（sv のデザイン）に、og:title / twitter:title を「A・Bに合うサブスク診断結果」に、og:url を共有URL（`?p=...&sv=cute`。cool は sv なし）にする。
+- `src/app/oshi-vod/page.tsx`：generateMetadata で上記を適用（公開人物の確認に失敗したら従来の静的OGのまま）。`/oshi-vod` 本体・入口URL（with / group）・canonical・robots は変更なし。静的OG（opengraph-image.tsx）は残し、本体ページでは従来どおり（config の images が結果URLでだけ上書きすることをビルド後の HTML で確認）。
+- `src/lib/oshi-vod/params.ts`：size に `og`（1200×630）、`buildOshiVodOgImagePath`。
+- `src/components/oshi-vod/OshiVodShare.tsx`・`oshi-vod.css`：「X・LINE に貼ったリンクのカードも、選んだデザインで表示されます。」を表示。
+
+### キャッシュの注意
+- X・LINE はカードをURLごとにキャッシュする。cool / cute は共有URL（sv）が違うため混ざらない。テンプレートを変えても、既に共有済みのURLは各サービスのキャッシュが切れるまで旧カードのまま（LINE は公式の Page Poker で再取得できる）。
+- カードは共有時点ではなく取得時点の診断結果（CDN 最大1時間＋再生成中は最大1日の旧画像）。
+- 静的OG（/oshi-vod 本体）は旧オレンジのまま（今回は変更しない方針）。
+
+### 確認
+- `tsc` 0件、`npm test` 149ファイル/2443件、`next build` 成功。テスト追加：両デザインで feed / story / og の文字情報が一致、未登録サービスの帯色、OGパス、正規形判定、アクセス上限、結果URLのカードメタデータ。
+- ローカル本番ビルド（Redis 無効で起動し本番 Redis に書き込まない）で、/oshi-vod/og の 200・308・400、X-Robots-Tag、Cache-Control を確認。本番と比較：/oshi-vod・入口URL・人物・グループ・/vod/hulu・/photobooks の title・meta・JSON-LD・楽天リンク数が一致、robots.txt・静的OG・favicon / icon / apple-icon がバイト一致。結果URLの差は og / twitter の7タグのみ。人物・写真集ページの本文差（価格の注記・応援広告バナー）は別作業の未コミット変更と環境変数 `NEXT_PUBLIC_OSHI_AD_ENABLED` の差で、今回の変更とは無関係。
+- 実際の X・LINE での表示は本番反映後でないと確認できない（クローラーがローカルに届かない）。
+
+## Task 152 追記2：OG画像を正方形トリミングに対応・共有リンクから来た人の導線
+
+### 目的
+LINE が OG 画像を中央の正方形に切り抜いて表示しても推し名・結果・推しサーチ名が読めるようにする。共有リンクを開いた人が、自分の推しで診断しやすくする。
+
+### 変更
+- `src/server/oshi-vod/result-image.tsx`：OG（1200×630）を、全要素が中央の幅600pxの列（x=300〜900。正方形の切り抜き x=285〜915 の内側）に入る縦積みに作り直した（診断名 → 推し名〔最大3人＋ほかN人〕→ 結果カード〔左：1位の札・サービス、右：作品数・カバー率〕→ 推しサーチ名・URL・CTA）。左右の余白は文字を含まない装飾のみ（cool＝黄色の細い縦線、cute＝きらめき・丸）。OG では「わたしの推し」の見出しを省略。サービス名は文字幅から文字サイズを決めて帯からはみ出さないようにした（NHKオンデマンド・Prime Video・同率2サービスで確認）。`NameTags` に中央寄せのオプション。
+- `src/components/oshi-vod/OshiVodShareVisitTracker.tsx`：共有リンク経由で結果を表示できたとき、h1 の下に「共有された診断結果です。あなたの推しなら、どのサブスクが一番見られる？」と「自分の推しで診断する（無料・登録不要）↓」（#oshi-vod-picker へ）を表示。クリックは GA4 `diagnosis_share_visit_cta_click`（variant・share_method・person_count）。結果の見出し「あなたの推し…」は診断ロジック（core.ts）の文言のため変更していない。
+- `src/app/oshi-vod/page.tsx`：共有リンク経由の結果表示では、診断する欄を空の状態（共有した人の推しを選んだ状態にしない）・見出し「あなたの推しで診断する」・ボタン「診断する」にする。通常の結果ページは従来どおり（選択済み・「N人でもう一度診断する」）。
+- `src/app/oshi-vod/oshi-vod.css`：案内の見た目（ボタンは黒地に白文字。白文字×オレンジはコントラスト不足のため影にだけオレンジ）。`#oshi-vod-picker` に `scroll-margin-top: 76px`（ページ内リンクで移動したとき見出しが固定ヘッダーに隠れていた。人物・グループページからの導線 #oshi-vod-picker でも同じく見やすくなる）。
+
+### 確認
+- X（Twitterbot）・LINE（facebookexternalhit;line-poker）・LINE内ブラウザ・iPhone の UA で、og / twitter タグが `<head>` 内に出力されること（Next.js 16 の通常UA向けメタデータのストリーミングでも head に入る。force-dynamic のため）。og:image は 1200×630 PNG（80〜110KB）、`/oshi-vod/og` は 200・HEAD も 200、Cache-Control・X-Robots-Tag を確認。sv が不正な値なら cool、人物が無効なら静的OG。
+- 共有リンク（sv=cute&sm=line）→ 案内表示 → ボタン → 診断欄（見出しがヘッダーの下）→ 別の推しで診断 → 新しい結果URL。イベント：diagnosis_share_visit → diagnosis_share_visit_cta_click → diagnosis_start（via_share・share_variant・share_method）。通常の結果ページでは案内なし。
+- 実際の X・LINE での表示（カードの取得・正方形の切り抜き方）は本番反映後でないと検証できない（未検証）。
+
+## Task 152 追記3：かっこいい・可愛いをレイアウトから別系統に再設計／OG 用フォントの関数同梱
+
+### 目的
+「かっこいい」が可愛い案の色違いに見えていたため、色ではなくデザインの考え方（レイアウト・余白・文字の強弱・装飾）から2系統に分ける。可愛いは、より保存・共有したくなる強さにする。
+
+### 変更
+- `src/server/oshi-vod/result-image.tsx`：テーマで色を差し替える方式をやめ、`buildCoolPortrait` / `buildCoolOg` / `buildCutePortrait` / `buildCuteOg` の別レイアウトに。共通は情報の組み立て（rankLabel・basisText・pairText・brandFill・fitFont）と BrandMark・装飾SVGだけ。
+  - cool（editorial）：囲みなし。上部に OSHI SEARCH／SUBSCRIPTION DIAGNOSIS の細い見出し、タイトル2行（90px）＋黄色の短い線、推し名は「FOR ＋ 名前 ／ 名前」の文字組み、サービス名はブランド色の縦帯＋大きな文字（配色未登録は黄色の帯。黒系のブランド色には薄い枠）、作品数（200px・黄色）とカバー率（白・列の幅に合わせて自動縮小）を細い縦線で区切って主役に、PRICE・BASIS・PAIR は小さなラベル付きの行、CTA は黄色の細枠の角ばったボタン。装飾は上端の線と右上の淡い光だけ。
+  - cute（sticker）：黄色〜ピンクのグラデーションに水玉（丸を並べて描画。Satori は繰り返し背景を描けない）、きらめき・星・ハートを周辺に。ピンクのテープ、白いシールのタイトル（ピンクの影）、「♡ わたしの推し ♡」の紺ラベル、推し名は白・黄・ピンク・ミントのシール（少し傾け、紺のふちと影）、結果はピンクの帯付きのチケット型カード（No.1 のロゼット、サービス名のシール、作品数、料金）＋右上にはみ出すカバー率の丸シール、根拠は点線のメモ、CTA は紺のピル（ピンクの影）。story のタイトルは「推しに合う／サブスク診断」の2行。
+  - OG（1200×630）は両系統とも文字を中央の幅600pxに収める（LINE の正方形切り抜き対策）。今回から OG にも料金を載せる。
+  - Satori が収まらない子要素を黙って縮める（回転したテープが潰れていた）ため、本文は `Column`（各ブロックを縮めない）＋ `Spacer`（余白だけ伸び縮み）で組む。はみ出しは見た目で分かる。
+  - フォントにない記号（✦）は使わない（♡・★ は可）。フォントは Noto Sans JP Bold のみ（追加していない）。
+- `next.config.ts`：`outputFileTracingIncludes` に `/oshi-vod/og` を追加。前回追加した OG のルートがフォント（約17MB、fs.readFileSync で読む）の同梱対象に入っておらず、Vercel 上でフォントが見つからず失敗するおそれがあった（ローカルでは再現しない）。ビルド後の `.next/server/app/oshi-vod/og/route.js.nft.json` にフォントが含まれることを確認。
+- `src/components/oshi-vod/OshiVodShare.tsx`・`oshi-vod.css`：切り替えボタンの補足を「雑誌風・ダーク」「シール風・ポップ」に、可愛いの見本を黄色＋ピンクの縁に。
+- テスト（`oshi-vod-share-variant.test.ts`）：「両デザインで文字が完全一致」をやめ、「両デザイン・全サイズに必須情報（推し名・1位・作品数・総数・カバー率・料金・CTA・推しサーチ名・URL・診断名）があること」「縦長は根拠・2サービスもあること」「1位なし・同率」「両デザインが別レイアウト」「未登録サービスは黄（cool）／紺（cute）、登録済みはブランド色」に変更。
+
+### 確認
+- 1人（U-NEXT）・3人（のぎ動画）・12人（同率 Netflix・Hulu）・長い名前（NHKオンデマンド）で、feed / story / og の両系統と OG の中央正方形を目視。`tsc` 0件、`npm test` 149ファイル/2444件、`next build` 成功。
+
+## Task 152 追記4：かっこいいを「Editorial Premium」（明るい紙面の編集デザイン）に再設計
+
+### 目的
+黒基調のかっこいい案が「雰囲気はあるが見づらい・分かりづらい」ため、雑誌の特集ページ・ブランド広告のような明るい編集デザインにし、情報が一瞬で読めるようにする。可愛い案は変更しない。
+
+### 変更（src/server/oshi-vod/result-image.tsx の cool 部分のみ）
+- 配色：アイボリー #F5F2EA の紙面、文字は濃いチャコール #1E1F24、カバー率は深いネイビー #112A5A、黄色 #FEE34F は蛍光ペン（タイトル2行目・作品数の下半分）と小見出しの四角だけ。黒（チャコール）のベタは CTA の帯だけ。
+- 目に入る順を「タイトル → サービス名 → 作品数（/ 総数）→ カバー率 → 推し名 → 月額・補足 → CTA」に。
+  - マストヘッド：推しサーチのアイコンと名前、右に SUBSCRIPTION DIAGNOSIS、下に太い罫線。
+  - タイトル：左揃え2行・104px、2行目に黄色の蛍光ペン。
+  - 推し名：「FOR 目黒蓮 ／ 梅澤美波 ／ 成田凌」のクレジット表記（36px、人数に応じて31・27px、最大8人＋ほかN人）。
+  - サービス名：小見出し「■ No.1 推しの作品数 1位」の下に、左のブランド色の縦線（未登録は黄色）＋116px の文字。ロゴは模倣しない。
+  - 数字：ラベル（見放題で見られる作品／カバー率）を数字の真上に置き、「43 / 86作品」を1行で、右に細い縦線を挟んでカバー率。カバー率の文字サイズは作品数側の幅の見積もり（数字0.55・小数点0.3・%0.85・全角1）から残り幅に収まる大きさにする。
+  - 補足：「月額／2サービスなら／比較の対象」の3行の表（ラベル列つき・上に罫線）で1段弱く。
+  - CTA：チャコールの角ばった帯に白文字、黄色の矢印。下に URL と注意書き。
+- OG（1200×630）：中央600pxに、マストヘッド → タイトル（1行・蛍光ペン）→ FOR 推し名 → 小見出し → サービス名（1行・最大66px）→ 作品数とカバー率 → 月額 → CTA の帯（URL入り）。左右の余白は罫線のみ。
+- テスト：cool の推し名の見出しを FOR で確認、CTA は「あなたの推しでも調べてみて」（矢印は別要素）で確認。
+
+### 確認
+- 1人（U-NEXT）・3人（のぎ動画）・12人（同率 Netflix・Hulu／実データではのぎ動画）・長い名前（NHKオンデマンド）・2人（吉田綾乃クリスティー・草間リチャード敬太）で feed / story / og と OG の中央正方形を目視。はみ出し・折り返し崩れなし。
+- スマホのプレビュー幅（358px＝投稿用は約1/3）での換算：タイトル約34px・サービス名約38px・作品数約59px・カバー率約42px・推し名約12px・ラベル約9px・補足約9px・CTA約11px。
+- `tsc` 0件、`npm test` 149ファイル/2444件、`next build` 成功。
+
+## Task 152 追記5：かっこいい（Editorial Premium）の縮小表示での読みやすさを改善
+
+### 目的
+SNS で縮小表示されても、推し名・サービス名・作品数とカバー率の意味・月額・CTA が読めるようにする。文字を一律に大きくせず、情報と余白を整理する。可愛い案は変更しない。
+
+### 判断の基準
+スマホの結果ページのプレビュー幅 358px（投稿用は約1/3、OG は約3/10）と、X のタイムラインのカードに近い 300px で、読ませたい文字がおおむね 10px 以上になること。
+
+### 変更（src/server/oshi-vod/result-image.tsx の cool 部分のみ）
+- 投稿用・ストーリーズ：補足の3行の表（月額／2サービスなら／比較の対象）をやめた。
+  - 月額は料金の文字列（「月額2,189円（税込）」「WEB月額1,320円（税込）」）を数字のすぐ下に 40px で置く。以前は「月額」のラベルと料金の文字列の「月額」が重複していた。
+  - 2サービスは 31px の1行。
+  - 「比較の対象」は注意書きと同じ小さな注記（※）に下げた。
+  - 数字のラベル 28→34px、推し名 36→40px、小見出し 28→30px、CTA 34→40px、URL 26→30px。代わりにタイトル 104→98px、サービス名 116→108px、作品数 178→168px にした。
+- OG：マストヘッド右の SUBSCRIPTION DIAGNOSIS を URL に置き換え、CTA の帯から URL を外した。
+  - 推し名 27→34px。1行に収まる人数だけ表示し、残りは「ほかN人」（`fitNamesOneLine`）。2行になると CTA が画像からはみ出していた。
+  - サービス名は最大74px、作品数108px、カバー率は最大86px、月額 18→30px、CTA 22→30px、数字のラベル 18→26px。
+- ストーリーズの注記は 21px 固定（拡大すると最後の1文字が折り返していた）。
+
+### 確認（本番ビルドの /api/oshi-vod/image・/oshi-vod/og が返した画像）
+- 358px 換算：投稿用はタイトル約32・サービス名約36・作品数約56・「/ 86作品」約15・ラベル約11・カバー率約40・月額約13・2サービス約10・推し名約13（7人以上は約10）・CTA約13px。OG は推し名約10・サービス名約22・作品数約32・カバー率約26・月額約9・CTA約9・ラベル約8px。
+- 1人・3人・12人・長い名前の2人で、はみ出し・折り返し崩れなし。
+- `tsc` 0件、`npm test` 149ファイル/2444件、`next build` 成功。

@@ -17,6 +17,8 @@ const nextConfig: NextConfig = {
     // 推しに合うサブスク診断の結果画像・OG画像も同じ日本語フォントを使う
     '/api/oshi-vod/image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
     '/oshi-vod/opengraph-image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
+    // 診断結果URLを X・LINE に貼ったときのカード画像（/api/oshi-vod/image と同じ処理）
+    '/oshi-vod/og': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
   },
   images: {
     remotePatterns: [

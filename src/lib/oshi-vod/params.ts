@@ -6,17 +6,22 @@
 // - p      … 診断する人物（結果ページ）。最大12人
 // - with   … 人物ページ・グループページからの導線で、選択済みにしておく人物（入口ページ）
 // - group  … メンバー選択パネルを開いておくグループ名（12人超のグループ導線）
-// - size   … 診断結果画像のサイズ（feed / story）
+// - size   … 診断結果画像のサイズ（feed / story / og）
+// - v      … 診断結果画像のデザイン（cool / cute。share-variant.ts）
+
+import { OSHI_VOD_DEFAULT_SHARE_VARIANT, type OshiVodShareVariant } from './share-variant';
 
 export const OSHI_VOD_PATH = '/oshi-vod';
 export const OSHI_VOD_MAX_PERSONS = 12;
 /** 異常に長い値を無視するための上限（人物名として十分な長さ） */
 const MAX_NAME_LENGTH = 60;
 
-export type OshiVodImageSize = 'feed' | 'story';
+/** feed＝投稿用 4:5、story＝ストーリーズ用 9:16、og＝結果URLを X・LINE で共有したときのカード画像（横長） */
+export type OshiVodImageSize = 'feed' | 'story' | 'og';
 export const OSHI_VOD_IMAGE_SIZES: Record<OshiVodImageSize, { width: number; height: number }> = {
   feed: { width: 1080, height: 1350 },
   story: { width: 1080, height: 1920 },
+  og: { width: 1200, height: 630 },
 };
 
 type RawParam = string | string[] | undefined;
@@ -91,12 +96,29 @@ export function buildOshiVodGroupPath(groupName: string): string {
   return `${OSHI_VOD_PATH}?group=${encodeURIComponent(groupName)}#oshi-vod-picker`;
 }
 
-/** 診断結果画像のパス */
-export function buildOshiVodImagePath(names: string[], size: OshiVodImageSize = 'feed'): string {
+/** 診断結果画像のパス（デザイン指定なし＝既定デザイン。既存のURL形式と互換） */
+export function buildOshiVodImagePath(
+  names: string[],
+  size: OshiVodImageSize = 'feed',
+  variant: OshiVodShareVariant = OSHI_VOD_DEFAULT_SHARE_VARIANT,
+): string {
   const q = buildQuery('p', names);
-  return `/api/oshi-vod/image?${q}${size === 'story' ? '&size=story' : ''}`;
+  const v = variant === OSHI_VOD_DEFAULT_SHARE_VARIANT ? '' : `&v=${variant}`;
+  return `/api/oshi-vod/image?${q}${size === 'feed' ? '' : `&size=${size}`}${v}`;
+}
+
+/**
+ * 結果URLを X・LINE に貼ったときのカード画像（og:image）のパス（1200×630）。
+ * /api/ は robots.txt でクロール禁止のため、クローラーが取得できる /oshi-vod/og から配信する。
+ */
+export const OSHI_VOD_OG_IMAGE_PATH = `${OSHI_VOD_PATH}/og`;
+
+export function buildOshiVodOgImagePath(names: string[], variant: OshiVodShareVariant = OSHI_VOD_DEFAULT_SHARE_VARIANT): string {
+  const q = buildQuery('p', names);
+  const v = variant === OSHI_VOD_DEFAULT_SHARE_VARIANT ? '' : `&v=${variant}`;
+  return `${OSHI_VOD_OG_IMAGE_PATH}?${q}${v}`;
 }
 
 export function parseImageSize(raw: string | null | undefined): OshiVodImageSize {
-  return raw === 'story' ? 'story' : 'feed';
+  return raw === 'story' || raw === 'og' ? raw : 'feed';
 }

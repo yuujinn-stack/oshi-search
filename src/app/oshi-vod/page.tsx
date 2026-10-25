@@ -10,17 +10,20 @@ import OshiVodPersonBreakdown from '@/components/oshi-vod/OshiVodPersonBreakdown
 import OshiVodDetailCompare from '@/components/oshi-vod/OshiVodDetailCompare';
 import OshiVodShare from '@/components/oshi-vod/OshiVodShare';
 import OshiVodTracker from '@/components/oshi-vod/OshiVodTracker';
+import OshiVodShareVisitTracker from '@/components/oshi-vod/OshiVodShareVisitTracker';
 import { secLabel } from '@/components/oshi-vod/sec-label';
-import { getOshiVodPickerData, loadOshiVodDiagnosis } from '@/lib/oshi-vod/data';
+import { getOshiVodKnownPersons, getOshiVodPickerData, loadOshiVodDiagnosis } from '@/lib/oshi-vod/data';
 import {
   OSHI_VOD_MAX_PERSONS,
   OSHI_VOD_PATH,
-  buildOshiVodImagePath,
   buildOshiVodResultPath,
   parseOshiVodParams,
   resolveKnownNames,
 } from '@/lib/oshi-vod/params';
 import { formatEpochDate, formatPersonList } from '@/lib/oshi-vod/format';
+import { parseShareAttribution } from '@/lib/oshi-vod/share';
+import { buildOshiVodResultSocialMetadata } from '@/lib/oshi-vod/og-meta';
+import { OSHI_VOD_DEFAULT_SHARE_VARIANT } from '@/lib/oshi-vod/share-variant';
 import type { DiagnosisResult } from '@/lib/oshi-vod/types';
 import './oshi-vod.css';
 
@@ -78,11 +81,29 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   const title = parsed.names.length > 0
     ? `${formatPersonList(parsed.names)}に合うサブスク診断結果`
     : PAGE_TITLE;
-  return {
+  const meta: Metadata = {
     ...base,
     title,
     robots: { index: false, follow: true },
   };
+  // 診断結果URLだけ、X・LINE のカード画像を「その結果・共有元が選んだデザイン（sv）」の画像にする。
+  // /oshi-vod 本体・入口URL（with / group）は従来の静的OGのまま。canonical・noindex は変えない。
+  if (parsed.names.length === 0) return meta;
+  try {
+    const known = await getOshiVodKnownPersons();
+    const { valid } = resolveKnownNames(parsed.names, new Set(known.keys()));
+    if (valid.length === 0) return meta;
+    const variant = parseShareAttribution(sp)?.variant ?? OSHI_VOD_DEFAULT_SHARE_VARIANT;
+    return {
+      ...meta,
+      ...buildOshiVodResultSocialMetadata({
+        names: valid, variant, siteOrigin: SITE_ORIGIN, description: PAGE_DESCRIPTION, baseOpenGraph: base.openGraph,
+      }),
+    };
+  } catch (err) {
+    console.error('[oshi-vod] og metadata failed:', String(err));
+    return meta;
+  }
 }
 
 function topServiceLabel(result: DiagnosisResult): string | null {
@@ -98,6 +119,7 @@ export default async function OshiVodPage({ searchParams }: Props) {
   const known = new Set(picker.persons.map((p) => p.name));
   const { valid, unknown } = resolveKnownNames(parsed.names, known);
   const withValid = resolveKnownNames(parsed.withNames, known).valid;
+  const shareAttribution = parseShareAttribution(sp);
 
   let result: DiagnosisResult | null = null;
   let loadError = false;
@@ -145,14 +167,17 @@ export default async function OshiVodPage({ searchParams }: Props) {
   if (parsed.names.length > 0 && valid.length === 0) notices.push('指定された人物が見つかりませんでした。あらためて推しを選んでください。');
   if (loadError) notices.push('診断結果を一時的に取得できませんでした。時間をおいて再度お試しください。');
 
+  // 共有リンクから来た人（共有された結果を見ている人）には、共有した人の推しを選んだ状態にせず、
+  // 自分の推しを選ぶところから始めてもらう（OshiVodShareVisitTracker の案内ボタンの移動先）。
+  const sharedVisit = !!(result && shareAttribution);
   const pickerBlock = (
     <OshiVodPersonPicker
       persons={picker.persons}
       groups={picker.groups}
-      initialSelected={result ? valid : withValid}
+      initialSelected={sharedVisit ? [] : result ? valid : withValid}
       initialGroup={parsed.group}
       source={pickerSource}
-      submitLabel={result ? 'もう一度診断する' : '診断する'}
+      submitLabel={result && !sharedVisit ? 'もう一度診断する' : '診断する'}
     />
   );
 
@@ -170,6 +195,9 @@ export default async function OshiVodPage({ searchParams }: Props) {
       </nav>
 
       <h1 className="ov-h1">推しに合うサブスク診断</h1>
+      {shareAttribution && (
+        <OshiVodShareVisitTracker attribution={shareAttribution} hasResult={!!result} personCount={valid.length} />
+      )}
 
       {notices.map((n) => <p key={n} className="ov-notice" role="status">{n}</p>)}
 
@@ -194,8 +222,6 @@ export default async function OshiVodPage({ searchParams }: Props) {
                 personNames={valid}
                 topServiceLabel={topServiceLabel(result)}
                 resultPath={buildOshiVodResultPath(valid)}
-                imageFeedPath={buildOshiVodImagePath(valid, 'feed')}
-                imageStoryPath={buildOshiVodImagePath(valid, 'story')}
               />
             </section>
 
@@ -217,7 +243,7 @@ export default async function OshiVodPage({ searchParams }: Props) {
             </section>
 
             <section id="oshi-vod-picker" aria-labelledby="ov-retry-heading" style={secLabel('RETRY')}>
-              <h2 id="ov-retry-heading" className="ov-h2">推しを変えて診断する</h2>
+              <h2 id="ov-retry-heading" className="ov-h2">{sharedVisit ? 'あなたの推しで診断する' : '推しを変えて診断する'}</h2>
               {pickerBlock}
             </section>
           </div>
