@@ -4977,3 +4977,14 @@ SNS で縮小表示されても、推し名・サービス名・作品数とカ�
 - 358px 換算：投稿用はタイトル約32・サービス名約36・作品数約56・「/ 86作品」約15・ラベル約11・カバー率約40・月額約13・2サービス約10・推し名約13（7人以上は約10）・CTA約13px。OG は推し名約10・サービス名約22・作品数約32・カバー率約26・月額約9・CTA約9・ラベル約8px。
 - 1人・3人・12人・長い名前の2人で、はみ出し・折り返し崩れなし。
 - `tsc` 0件、`npm test` 149ファイル/2444件、`next build` 成功。
+
+## Task 152 追記6：本番反映と、共有リンク経由の訪問イベントが送られていなかった不具合の修正
+
+### 本番反映
+- commit `7fc77f6`（シェア機能の16ファイルのみ。開発ログは Task 152 の節だけ。別作業の未コミット変更は含めない）を main へ push → Vercel 本番デプロイ `dpl_GcTLyBEm8R4uHFZ6j4EZ9YW89ukg`（Ready、oshi-search.jp）。戻し先は `oshi-search-tjju-o94nt2g3k`（commit `5f69a38`）。
+- push 前に、コミットだけを取り出した作業フォルダ（git worktree・node_modules は APFS クローン）で tsc 0件・テスト 144ファイル/2348件・next build 成功を確認（作業ツリーには別作業の変更があるため）。
+
+### 不具合
+- 本番確認で、`diagnosis_share_visit` が GA4 に送られていないことが分かった。GA4 は AnalyticsGate のマウント後に読み込まれ、子の useEffect は親より先に動くため、ページを開いた直後の `sendGaEvent` は window.gtag が無く黙って捨てられる。共有リンク経由の訪問は必ずページを開いた直後なので、毎回失われていた。
+- `src/components/oshi-vod/OshiVodShareVisitTracker.tsx`：gtag が使えるまで 250ms 間隔で最大10秒待ってから送る（`sendWhenGaReady`）。共通の ga-event.ts は他のイベントへの影響を避けて変更しない。
+- 同じ理由で、既存の `diagnosis_complete`（OshiVodTracker、今回の機能より前から）も、ページを直接開いたとき（共有リンク・ブックマーク等）は送られていない。今回の機能の範囲外のため未修正（ページ内の遷移で結果を表示した場合は送られる）。

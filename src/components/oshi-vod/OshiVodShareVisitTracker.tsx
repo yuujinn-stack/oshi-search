@@ -16,6 +16,26 @@ import {
   type OshiVodShareAttribution,
 } from '@/lib/oshi-vod/share';
 
+/**
+ * GA4（window.gtag）が使えるようになってから送る。
+ * GA4 は AnalyticsGate のマウント後に読み込まれるため、ページを開いた直後（子の useEffect は親より先に動く）に
+ * sendGaEvent を呼ぶと gtag がまだ無く、黙って捨てられる。共有リンク経由の訪問は必ずページを開いた直後なので、
+ * 最大10秒待つ（GA4 を読み込まないホストでは送らずに終わる）。戻り値は待機の中止。
+ */
+function sendWhenGaReady(name: string, params: Parameters<typeof sendGaEvent>[1], timeoutMs = 10_000): () => void {
+  const started = Date.now();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const tick = () => {
+    if (typeof (window as unknown as { gtag?: unknown }).gtag === 'function') {
+      sendGaEvent(name, params);
+      return;
+    }
+    if (Date.now() - started < timeoutMs) timer = setTimeout(tick, 250);
+  };
+  tick();
+  return () => { if (timer) clearTimeout(timer); };
+}
+
 interface Props {
   attribution: OshiVodShareAttribution;
   /** 共有された結果を表示できたか（人物が見つからない等で入口ページになった場合は false） */
@@ -26,7 +46,7 @@ interface Props {
 export default function OshiVodShareVisitTracker({ attribution, hasResult, personCount }: Props) {
   const { variant, method } = attribution;
   useEffect(() => {
-    sendGaEvent('diagnosis_share_visit', { variant, share_method: method, has_result: hasResult, person_count: personCount });
+    const cancel = sendWhenGaReady('diagnosis_share_visit', { variant, share_method: method, has_result: hasResult, person_count: personCount });
     rememberShareAttribution({ variant, method });
     try {
       const url = new URL(window.location.href);
@@ -34,7 +54,8 @@ export default function OshiVodShareVisitTracker({ attribution, hasResult, perso
       url.searchParams.delete(OSHI_VOD_SHARE_METHOD_PARAM);
       // Next.js App Router は window.history.replaceState と同期する（ページの再取得は起きない）
       window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-    } catch { /* URL を整えられなくても計測は済んでいる */ }
+    } catch { /* URL を整えられなくても計測には影響しない */ }
+    return cancel;
   }, [variant, method, hasResult, personCount]);
 
   if (!hasResult) return null;
