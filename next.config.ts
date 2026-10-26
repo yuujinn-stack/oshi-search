@@ -19,6 +19,10 @@ const nextConfig: NextConfig = {
     '/oshi-vod/opengraph-image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
     // 診断結果URLを X・LINE に貼ったときのカード画像（/api/oshi-vod/image と同じ処理）
     '/oshi-vod/og': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
+    // 推し布教カードの画像・OG・静的OG
+    '/api/oshi-card/image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
+    '/oshi-card/og': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
+    '/oshi-card/opengraph-image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
   },
   images: {
     remotePatterns: [

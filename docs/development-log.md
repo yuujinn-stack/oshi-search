@@ -4988,3 +4988,42 @@ SNS で縮小表示されても、推し名・サービス名・作品数とカ�
 - 本番確認で、`diagnosis_share_visit` が GA4 に送られていないことが分かった。GA4 は AnalyticsGate のマウント後に読み込まれ、子の useEffect は親より先に動くため、ページを開いた直後の `sendGaEvent` は window.gtag が無く黙って捨てられる。共有リンク経由の訪問は必ずページを開いた直後なので、毎回失われていた。
 - `src/components/oshi-vod/OshiVodShareVisitTracker.tsx`：gtag が使えるまで 250ms 間隔で最大10秒待ってから送る（`sendWhenGaReady`）。共通の ga-event.ts は他のイベントへの影響を避けて変更しない。
 - 同じ理由で、既存の `diagnosis_complete`（OshiVodTracker、今回の機能より前から）も、ページを直接開いたとき（共有リンク・ブックマーク等）は送られていない。今回の機能の範囲外のため未修正（ページ内の遷移で結果を表示した場合は送られる）。
+
+---
+
+## Task 153：推し布教カード（/oshi-card）
+
+### 目的
+推しとおすすめ出演作品（1〜3件）を選び、SNSに投稿できる布教カードを作る（会員登録不要）。共有→新規利用者の作成の循環を作る。サブスク診断とは独立した機能。
+
+### 構成
+- `/oshi-card`：推しを選ぶ → `?p=人物`：作品（1〜3件）・順番・デザイン（cool / cute）・ひとこと（定型5種。自由入力なし）を選ぶ → `?p=人物&w=作品id…[&v][&ph]`：完成カード（共有URL。人物・作品・順序・デザイン・ひとことを再現）。`edit=1` で編集画面に戻る。`sm`（共有方法）・`from`（入口）は計測用で表示後に URL から除去。
+- データ：既存の公開人物（getOshiVodKnownPersons）と公開作品（getPublishedWorksOrThrow）。候補はその人物の公開作品のみ・id 重複と空の作品名を除く・公開年の新しい順。分類は既存の表示分類（getDisplayWorkType）、作品ページは getWorkPublicUrl。未登録作品は作らない。作品0件の人物は案内を表示。
+- サーバー検証：存在しない人物は選び直しの案内、他の人物の作品・存在しない id は除いて注記、有効な作品が0件なら編集画面へ。
+- 画像：`/api/oshi-card/image`（feed 1080×1350・story 1080×1920）と `/oshi-card/og`（1200×630。/api/ は robots.txt でクロール禁止のため）。正規形でなければ 308、無効なら 400、取得失敗は 500（no-store）、CDN 1時間キャッシュ、IP ごと40回/分（Upstash Redis、`oshi-card:image:rl`、Redis なしは制限なし）。フォントは next.config.ts の outputFileTracingIncludes に追加。
+- デザイン（src/server/oshi-card/card-image.tsx）：部品はサブスク診断の result-image.tsx から export して共有（export を付けただけで描画は不変。変更前のビルドとサブスク診断の画像6種がバイト一致することを確認）。
+  - cool＝Editorial Premium：アイボリー・チャコール・黄色の蛍光ペン。推し名を最大168px、作品は 01・02・03 の番号付きの表（罫線区切り）。
+  - cute＝Fan Sticker：クリームイエロー〜ピンクの水玉、推し名は黄色のネームプレート、作品はチケット型シール（番号の丸）、きらめき・ハート・星は控えめ。
+  - 作品名は2行（OG は1行）で「…」切り詰め。長い人物名は幅に合わせて縮小。注記「作品は投稿者が選んだおすすめです（公式の順位ではありません）」（OG は省略）。
+- SEO：/oshi-card 本体だけ index（サイトマップに追加・静的OG）。パラメータ付きは noindex, follow・canonical は本体。完成カードのURLだけ og:image を /oshi-card/og（そのカード）に。
+- 共有：画像つきでシェア・X・LINE・リンクコピー・画像保存（4:5／9:16）。サブスク診断の buildXShareUrl / buildLineShareUrl を再利用。
+- 着地ページ：共有リンク経由は「共有された布教カードです」を表示、作品名から作品ページ（配信情報）へ、「あなたの推しでも布教カードを作る」を必ず表示。
+- GA4（ページ表示時は gtag の読み込みを待つ src/lib/ga-ready.ts）：oshi_card_view（stage・source）、oshi_card_person_select、oshi_card_work_select（add / remove）、oshi_card_variant_select（stage edit / card）、oshi_card_generate、oshi_card_share（method：x / line / copy / native / image_save_feed / image_save_story。ボタン操作であり投稿完了ではない）、oshi_card_share_visit、oshi_card_create_start（source share / card）。共有経由で始めた操作には via_share・share_variant・share_method。
+
+### 入口
+- 人物ページ・トップの導線（OshiCardEntryCta）は、両ファイルに別作業の未コミット変更があるため一度取り外してパッチにし、後で適用（下の追記）。コミットは HEAD に今回の行だけを足した内容を部分ステージ。
+
+### 確認
+- tsc 0件、npm test 150ファイル/2455件（oshi-card.test.ts 11件）、next build 成功。
+- 実データ（梶山朝日1作品・目黒蓮3作品〔長い作品名〕・吉田綾乃クリスティー2作品〔長い人物名・作品名〕）で両デザイン×3サイズの18枚を生成。存在しない作品のみ・他人の作品・人物なし・存在しない人物は 400、既定値の明示・無効の混在・不正なデザイン値は 308。
+- 390px で 推しを選ぶ→作品3件→並べ替え→可愛い→ひとこと→作成→共有（切り替え・保存・X・LINE）→共有リンクで開く→新規作成まで操作。GA4 イベントを確認（送信はブラウザ内で受け止め）。横はみ出しなし。
+
+### 追記：入口の追加・長い作品名・スマホ操作の最終調整
+- 人物ページ（出演作品の直後、作品がある人物のみ）・トップ（お買い物診断の直後）に OshiCardEntryCta を追加。保存していたパッチを適用し、適用前後の差は追加行のみ（トップ11行・人物ページ9行、削除0行）。両ファイルの別作業の未コミット変更はそのまま。人物ページから移ると推しが選択済み。
+- 作品名：まず2行に収まるまで文字を縮め（作品1件は下限を下げる）、極端に長いものだけ「…」。作品1件はストーリーズ・OGで3行、OGは2件で2行・3件で1行。文字幅は英大文字・小文字・数字・記号を分けて見積もり、英単語が途中で改行されない分の余裕（0.8倍）を取る。全文が入ったのに「…」が付く不具合を修正。
+- スマホ：作成ボタンを作成画面の末尾に移し、作品を選んだら画面下に固定（「このカードを作る（N作品）」）。分類ボタン 42px、画像保存はボタン形 44px。押す場所の40px未満は0件。
+- CTA は「あなたの推しでも作ってみて」のまま（作成を促す目的に合う）。
+- テスト：長めの作品名は全サイズで全文・「…」なし（1件追加）。tsc 0件、npm test 150ファイル/2456件、next build 成功。
+
+### 追記：公開前のデザイン名の変更
+- 布教カードのデザインの表示名を「かっこいい／可愛い」→「ノーマル（すっきり・見やすいデザイン）／デコ（カラフル・シール風デザイン）」に変更（OshiCardVariantToggle・画像の alt・説明文）。内部の値 cool / cute は共有URL（v）・OG画像・GA4（variant）との互換のため維持。初期選択はノーマル（cool）、URL で指定があればそちらを優先。画像デザイン・サブスク診断の名称は変更なし。

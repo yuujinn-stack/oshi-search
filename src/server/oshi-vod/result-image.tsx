@@ -11,6 +11,7 @@
 // - 人物写真・他社ロゴは使わない。サービスは既存のCTA配色（VOD_SERVICE_STYLE）の色だけを使い、
 //   配色が登録されていないサービス（のぎ動画など）は色を推測せず、デザイン側の色で描く。装飾は図形・SVGだけ（外部素材なし）。
 // - Satori の制約: 子要素を2つ以上持つ div には display:flex が必須。✦ など一部の記号はフォントに無いため使わない（♡・★ は可）。
+// - 部品（アイコン・装飾・紙面・シール等）は推し布教カード（src/server/oshi-card/card-image.tsx）でも使うため export している。
 import 'server-only';
 import type { CSSProperties, ReactElement, ReactNode } from 'react';
 import { VOD_SERVICE_STYLE } from '@/lib/vod-cta';
@@ -22,8 +23,8 @@ import type { OshiVodImageData, OshiVodImageService } from '@/lib/oshi-vod/image
 export const OSHI_VOD_IMAGE_FONT_FAMILY = 'Noto Sans JP';
 
 /** 推しサーチの正式アイコン（public/oshi-search-yellow-final.png）の黄色・紺 */
-const BRAND_YELLOW = '#FEE34F';
-const BRAND_NAVY = '#112A5A';
+export const BRAND_YELLOW = '#FEE34F';
+export const BRAND_NAVY = '#112A5A';
 
 export const OSHI_VOD_IMAGE_TEXT = {
   title: '推しに合うサブスク診断',
@@ -37,13 +38,13 @@ export const OSHI_VOD_IMAGE_TEXT = {
 // ─── 共通の小物 ──────────────────────────────────────────────────────────────
 
 /** 文字幅の目安（全角＝1、半角＝0.6）。長いサービス名でもはみ出さない文字サイズを決めるのに使う */
-function textUnits(text: string): number {
+export function textUnits(text: string): number {
   let u = 0;
   for (const ch of text) u += ch.charCodeAt(0) < 0x2000 ? 0.6 : 1;
   return u;
 }
 
-function fitFont(text: string, maxWidth: number, maxFont: number, minFont = 24): number {
+export function fitFont(text: string, maxWidth: number, maxFont: number, minFont = 24): number {
   return Math.max(minFont, Math.min(maxFont, Math.floor(maxWidth / Math.max(textUnits(text), 1))));
 }
 
@@ -69,7 +70,7 @@ function brandFill(service: string): { fill: CSSProperties; color: string; borde
 }
 
 /** 推しサーチのアイコン（黄色地に紺の「推」）を図形で描く（画像ファイルを読み込まない） */
-function BrandMark({ size, radius }: { size: number; radius: number }) {
+export function BrandMark({ size, radius }: { size: number; radius: number }) {
   return (
     <div
       style={{
@@ -82,11 +83,11 @@ function BrandMark({ size, radius }: { size: number; radius: number }) {
   );
 }
 
-function Abs({ style, children }: { style: CSSProperties; children?: ReactNode }) {
+export function Abs({ style, children }: { style: CSSProperties; children?: ReactNode }) {
   return <div style={{ position: 'absolute', display: 'flex', ...style }}>{children}</div>;
 }
 
-function Sparkle({ size, color, style }: { size: number; color: string; style: CSSProperties }) {
+export function Sparkle({ size, color, style }: { size: number; color: string; style: CSSProperties }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" style={{ position: 'absolute', ...style }}>
       <path d="M12 0 C13 7.5 16.5 11 24 12 C16.5 13 13 16.5 12 24 C11 16.5 7.5 13 0 12 C7.5 11 11 7.5 12 0 Z" fill={color} />
@@ -94,7 +95,7 @@ function Sparkle({ size, color, style }: { size: number; color: string; style: C
   );
 }
 
-function Star({ size, color, stroke, style }: { size: number; color: string; stroke?: string; style: CSSProperties }) {
+export function Star({ size, color, stroke, style }: { size: number; color: string; stroke?: string; style: CSSProperties }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" style={{ position: 'absolute', ...style }}>
       <path
@@ -105,7 +106,7 @@ function Star({ size, color, stroke, style }: { size: number; color: string; str
   );
 }
 
-function Heart({ size, color, style }: { size: number; color: string; style: CSSProperties }) {
+export function Heart({ size, color, style }: { size: number; color: string; style: CSSProperties }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" style={{ position: 'absolute', ...style }}>
       <path d="M12 21 C5 15.5 1.5 12 1.5 7.8 C1.5 4.6 4 2.5 6.8 2.5 C9 2.5 10.8 3.8 12 5.6 C13.2 3.8 15 2.5 17.2 2.5 C20 2.5 22.5 4.6 22.5 7.8 C22.5 12 19 15.5 12 21 Z" fill={color} />
@@ -113,7 +114,7 @@ function Heart({ size, color, style }: { size: number; color: string; style: CSS
   );
 }
 
-function Dot({ size, color, style }: { size: number; color: string; style: CSSProperties }) {
+export function Dot({ size, color, style }: { size: number; color: string; style: CSSProperties }) {
   return <Abs style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color, ...style }} />;
 }
 
@@ -121,7 +122,7 @@ function Dot({ size, color, style }: { size: number; color: string; style: CSSPr
  * 縦並びの本文の列。Satori は収まらない子要素を黙って縮める（テープ等が潰れる）ため、
  * 各ブロックを縮めず、余白だけを flex の伸び縮みで調整する（Spacer）。
  */
-function Column({ padding, center = false, children }: { padding: string; center?: boolean; children: ReactNode }) {
+export function Column({ padding, center = false, children }: { padding: string; center?: boolean; children: ReactNode }) {
   const kids = (Array.isArray(children) ? children : [children]).flat().filter(Boolean) as ReactElement[];
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: center ? 'center' : 'stretch', width: '100%', height: '100%', padding }}>
@@ -134,11 +135,11 @@ function Column({ padding, center = false, children }: { padding: string; center
   );
 }
 
-function Spacer({ min = 0 }: { min?: number }) {
+export function Spacer({ min = 0 }: { min?: number }) {
   return <div style={{ display: 'flex', flex: 1, minHeight: min }} />;
 }
 
-function Canvas({ size, background, children }: { size: OshiVodImageSize; background: CSSProperties; children: ReactNode }) {
+export function Canvas({ size, background, children }: { size: OshiVodImageSize; background: CSSProperties; children: ReactNode }) {
   const { width, height } = OSHI_VOD_IMAGE_SIZES[size];
   return (
     <div style={{ width, height, display: 'flex', position: 'relative', fontFamily: OSHI_VOD_IMAGE_FONT_FAMILY, ...background }}>
@@ -152,7 +153,7 @@ function Canvas({ size, background, children }: { size: OshiVodImageSize; backgr
 // 重要な箇所だけに使い、黒は下部の CTA の帯だけに絞る。装飾ではなく、左揃えの文字組み・余白・罫線・グルーピングで階層を作る。
 // 目に入る順：タイトル → サービス名 → 作品数（/ 総数）→ カバー率 → 推し名 → 月額・補足 → CTA。
 
-const COOL = {
+export const COOL = {
   paper: '#F5F2EA',
   ink: '#1E1F24',
   body: '#3A3B42',
@@ -162,17 +163,17 @@ const COOL = {
   navy: BRAND_NAVY,
   accent: BRAND_YELLOW,
 };
-const COOL_BG: CSSProperties = { backgroundColor: COOL.paper };
+export const COOL_BG: CSSProperties = { backgroundColor: COOL.paper };
 
 /** 黄色の蛍光ペン（文字の下半分に敷く） */
-const coolMarker = (from = 58): CSSProperties => ({ backgroundImage: `linear-gradient(180deg, rgba(254,227,79,0) ${from}%, ${COOL.accent} ${from}%)` });
+export const coolMarker = (from = 58): CSSProperties => ({ backgroundImage: `linear-gradient(180deg, rgba(254,227,79,0) ${from}%, ${COOL.accent} ${from}%)` });
 
-function CoolLabel({ fontSize, color = COOL.muted, spacing = 3, children }: { fontSize: number; color?: string; spacing?: number; children: ReactNode }) {
+export function CoolLabel({ fontSize, color = COOL.muted, spacing = 3, children }: { fontSize: number; color?: string; spacing?: number; children: ReactNode }) {
   return <div style={{ display: 'flex', fontSize, fontWeight: 700, letterSpacing: spacing, color }}>{children}</div>;
 }
 
 /** セクションの見出し：黄色の小さな四角＋小さな文字（雑誌の小見出し） */
-function CoolKicker({ fontSize, children }: { fontSize: number; children: ReactNode }) {
+export function CoolKicker({ fontSize, children }: { fontSize: number; children: ReactNode }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: Math.round(fontSize * 0.5) }}>
       <div style={{ display: 'flex', width: Math.round(fontSize * 0.62), height: Math.round(fontSize * 0.62), backgroundColor: COOL.accent, border: `2px solid ${COOL.ink}` }} />
@@ -409,7 +410,7 @@ function buildCoolOg(data: OshiVodImageData): ReactElement {
 
 // ─── cute（可愛い）：sticker ───────────────────────────────────────────────────
 
-const CUTE = {
+export const CUTE = {
   ink: '#1A2147',
   body: '#3B4062',
   muted: '#62677F',
@@ -420,12 +421,12 @@ const CUTE = {
   cream: '#FFF8DC',
   white: '#FFFFFF',
 };
-const CUTE_BG: CSSProperties = { backgroundColor: '#FFF2B8', backgroundImage: 'linear-gradient(165deg, #FFEC9A 0%, #FFF6CF 42%, #FFE3EC 100%)' };
+export const CUTE_BG: CSSProperties = { backgroundColor: '#FFF2B8', backgroundImage: 'linear-gradient(165deg, #FFEC9A 0%, #FFF6CF 42%, #FFE3EC 100%)' };
 const CUTE_TAG_COLORS = [CUTE.white, CUTE.yellow, CUTE.pinkSoft, CUTE.mint];
 const CUTE_TILTS = [-2.5, 1.8, -1.2, 2.4, -1.8, 1.2, -2.2, 1.6];
 
 /** 背景の水玉（Satori は繰り返し背景を描けないため、丸を並べて描く） */
-function CuteDots({ width, height, gap, size, color }: { width: number; height: number; gap: number; size: number; color: string }) {
+export function CuteDots({ width, height, gap, size, color }: { width: number; height: number; gap: number; size: number; color: string }) {
   const dots: ReactElement[] = [];
   for (let y = gap / 2, row = 0; y < height; y += gap, row++) {
     for (let x = (row % 2 ? gap : gap / 2); x < width; x += gap) {
@@ -436,11 +437,11 @@ function CuteDots({ width, height, gap, size, color }: { width: number; height: 
 }
 
 /** シール風：白・紺のふち・ずらした影 */
-function sticker(bg: string, radius: number, shadow = CUTE.ink, border = 4, offset = 6): CSSProperties {
+export function sticker(bg: string, radius: number, shadow = CUTE.ink, border = 4, offset = 6): CSSProperties {
   return { backgroundColor: bg, border: `${border}px solid ${CUTE.ink}`, borderRadius: radius, boxShadow: `${offset}px ${offset}px 0 ${shadow}` };
 }
 
-function CuteTape({ fontSize, children, rotate = -3 }: { fontSize: number; children: ReactNode; rotate?: number }) {
+export function CuteTape({ fontSize, children, rotate = -3 }: { fontSize: number; children: ReactNode; rotate?: number }) {
   return (
     // 回転した要素は背景の高さが文字に追従しないことがあるため、高さを固定する
     <div style={{ display: 'flex', alignSelf: 'flex-start', alignItems: 'center', height: Math.round(fontSize * 1.9), padding: `0 ${Math.round(fontSize * 0.8)}px`, backgroundColor: CUTE.pink, color: CUTE.white, fontSize, lineHeight: 1, fontWeight: 700, letterSpacing: 4, transform: `rotate(${rotate}deg)` }}>

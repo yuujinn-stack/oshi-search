@@ -31,6 +31,8 @@ import OshiVodEntryCta from '@/components/oshi-vod/OshiVodEntryCta';
 import { buildOshiVodWithPath } from '@/lib/oshi-vod/params';
 import OshiShoppingEntryCta from '@/components/oshi-shopping/OshiShoppingEntryCta';
 import { buildOshiShoppingStartPath } from '@/lib/oshi-shopping/params';
+import OshiCardEntryCta from '@/components/oshi-card/OshiCardEntryCta';
+import { buildOshiCardEditPath } from '@/lib/oshi-card/params';
 import type { ProductCategory, ApiResult, RakutenItem } from '@/types/rakuten';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
@@ -779,6 +781,13 @@ export default async function PersonPage({ params }: Props) {
                 )}
               </div>
               <WorksSection works={publishedWorksForClient} />
+              {/* 推し布教カードへの導線（出演作品がある人物のみ＝このセクション内に置く）。この人物を選択済みで /oshi-card を開く */}
+              <OshiCardEntryCta
+                href={buildOshiCardEditPath(person.name, { from: 'person' })}
+                title="この推しの布教カードを作る"
+                description={`${person.name}のおすすめ作品を選んで、SNSでシェアできるカードに`}
+                style={{ marginTop: '16px' }}
+              />
             </section>
           ) : redisError ? (
             <section id="works">

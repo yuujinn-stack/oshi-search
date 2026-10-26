@@ -1,0 +1,181 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   推し布教カード（/oshi-card）専用スタイル。
+   公開ページ共通の C案「Graphic Pop」（graphic-site.css・GraphicPageStyles）を前提に、
+   布教カード固有の部品（.oc-*）だけをここで定義する。スコープは .oc-page 配下のみ。
+   スマホ最優先（基準 360〜430px）。PC は max-w-3xl の1カラム。部品の見た目はサブスク診断（.ov-*）にそろえる。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshicard { --graphic-page-label: 'OSHI CARD / FAN RECOMMENDATION'; }
+
+.oc-page { overflow-wrap: anywhere; }
+.oc-page .oc-h1 { font-size: clamp(26px, 6.4vw, 36px); line-height: 1.25; margin: 0 0 12px; }
+.oc-page .oc-h2 { font-size: 18px; line-height: 1.4; margin: 0 0 12px; }
+.oc-page .oc-kicker { margin: 0 0 4px; font-size: 12px; font-weight: 800; letter-spacing: 0.12em; color: var(--graphic-orange-text); }
+.oc-page .oc-lead { font-size: 14px; line-height: 1.8; color: var(--graphic-body); margin: 0 0 16px; }
+.oc-page .oc-note { font-size: 12px; line-height: 1.7; color: var(--graphic-muted); margin: 8px 0 0; }
+.oc-page .oc-center { text-align: center; }
+.oc-page .oc-notice {
+  font-size: 13px; line-height: 1.6; margin: 8px 0 16px; padding: 8px 12px;
+  background: var(--graphic-orange-soft); border-left: 3px solid var(--graphic-orange); color: var(--graphic-text);
+}
+.oc-page .oc-sections { display: flex; flex-direction: column; gap: 32px; }
+.oc-page .oc-sections > section,
+.oc-page .oc-submit { padding-bottom: 12px; }
+.oc-page .oc-submit.is-sticky { position: sticky; bottom: 0; z-index: 20; }
+.oc-page .oc-editor > section { border-top: 1.5px solid var(--graphic-rule); padding-top: 18px; }
+.oc-page .oc-editor { display: flex; flex-direction: column; gap: 32px; }
+/* 手順の番号は共通スタイルの見出しラベル（01 — STEP …。graphic-site.css の section h2::before）で表示する */
+.oc-page .oc-step-title { font-size: 17px; line-height: 1.4; margin: 0 0 10px; }
+
+/* ── ボタン ── */
+.oc-page .oc-btn-main {
+  display: flex; align-items: center; justify-content: center; width: 100%;
+  min-height: 52px; margin-top: 16px; padding: 12px 16px; text-decoration: none; text-align: center;
+  font-family: var(--graphic-font-jp); font-weight: 900; font-size: 17px;
+  background: var(--graphic-ink); color: #FFFFFF; border: 0;
+  box-shadow: 4px 4px 0 var(--graphic-orange); cursor: pointer;
+}
+.oc-page .oc-btn-main:disabled { background: #9A9993; box-shadow: none; cursor: not-allowed; }
+.oc-page .oc-btn-main.is-sticky { position: sticky; bottom: 12px; z-index: 20; }
+.oc-page .oc-btn-main:not(:disabled):active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--graphic-orange); }
+.oc-page .oc-btn-main:focus-visible { outline: 2px solid var(--graphic-orange); outline-offset: 2px; }
+.oc-page .oc-btn-sub {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 6px 12px;
+  font-size: 13px; font-weight: 700; background: #FFFFFF; color: var(--graphic-ink);
+  border: 1.5px solid var(--graphic-ink); cursor: pointer; text-decoration: none;
+}
+.oc-page .oc-btn-sub:hover { background: var(--graphic-ink); color: #FFFFFF; }
+.oc-page .oc-btn-more { width: 100%; margin-top: 10px; }
+.oc-page .oc-row-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* ── 人物選択 ── */
+.oc-page .oc-panel { background: #FFFFFF; border: 1.5px solid var(--graphic-ink); padding: 14px; }
+.oc-page .oc-label { display: block; font-size: 12px; font-weight: 700; color: var(--graphic-body); margin: 0 0 6px; }
+.oc-page .oc-input {
+  width: 100%; min-height: 48px; padding: 10px 12px;
+  border: 2px solid var(--graphic-ink); border-radius: 0 !important; background: #FFFFFF; color: var(--graphic-text);
+}
+.oc-page .oc-input--sm { min-height: 42px; margin: 10px 0 0; border-width: 1.5px; }
+.oc-page .oc-input:focus { outline: 2px solid var(--graphic-orange); outline-offset: 1px; }
+.oc-page .oc-dropdown {
+  position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; z-index: 50;
+  background: #FFFFFF; border: 1.5px solid var(--graphic-ink); box-shadow: 4px 4px 0 var(--graphic-ink);
+  max-height: 320px; overflow-y: auto;
+}
+.oc-page .oc-option { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 8px 12px; text-align: left; background: #FFFFFF; border: 0; border-bottom: 1px solid var(--graphic-border); cursor: pointer; }
+.oc-page .oc-option.is-active { background: var(--graphic-orange-soft); }
+.oc-page .oc-option-kind { flex: none; min-width: 44px; font-size: 10px; font-weight: 800; color: var(--graphic-orange-text); }
+.oc-page .oc-option-label { display: block; font-size: 14px; font-weight: 700; color: var(--graphic-text); }
+.oc-page .oc-option-sub { display: block; font-size: 11px; color: var(--graphic-muted); }
+.oc-page .oc-group-panel { margin-top: 12px; padding: 12px; border: 1px solid var(--graphic-border); background: var(--graphic-panel); }
+.oc-page .oc-group-title { margin: 0 0 8px; font-size: 13px; font-weight: 700; }
+.oc-page .oc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.oc-page .oc-chip {
+  min-height: 42px; padding: 4px 10px; font-size: 13px; font-weight: 700;
+  background: #FFFFFF; color: var(--graphic-ink); border: 1.5px solid var(--graphic-border-strong); cursor: pointer;
+}
+.oc-page .oc-chip.is-on { background: var(--graphic-ink); color: #FFFFFF; border-color: var(--graphic-ink); }
+.oc-page .oc-selected { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px; background: #FFFFFF; border: 1.5px solid var(--graphic-ink); }
+.oc-page .oc-selected-name { font-size: 20px; font-weight: 900; }
+.oc-page .oc-selected-sub { font-size: 12px; color: var(--graphic-muted); }
+.oc-page .oc-selected .oc-btn-sub { margin-left: auto; }
+.oc-page .oc-empty-title { margin: 0; font-size: 15px; font-weight: 800; }
+.oc-page .oc-howto { margin: 0; padding-left: 1.4em; font-size: 14px; line-height: 1.9; color: var(--graphic-body); }
+
+/* ── 作品選択・並べ替え ── */
+.oc-page .oc-works { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.oc-page .oc-work {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 12px; text-align: left;
+  background: #FFFFFF; border: 1.5px solid var(--graphic-border-strong); cursor: pointer; color: var(--graphic-text);
+}
+.oc-page .oc-work:disabled { opacity: 0.45; cursor: not-allowed; }
+.oc-page .oc-work.is-on { border: 2px solid var(--graphic-ink); background: #FFFBEA; box-shadow: 3px 3px 0 var(--graphic-ink); }
+.oc-page .oc-work:focus-visible { outline: 2px solid var(--graphic-orange); outline-offset: 2px; }
+.oc-page .oc-work-mark {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px;
+  font-size: 14px; font-weight: 900; border: 1.5px solid var(--graphic-ink); background: #FFFFFF;
+}
+.oc-page .oc-work.is-on .oc-work-mark { background: #FEE34F; }
+.oc-page .oc-work-text { display: flex; flex-direction: column; min-width: 0; }
+.oc-page .oc-work-title { font-size: 14px; font-weight: 800; line-height: 1.45; }
+.oc-page .oc-work-meta { font-size: 11px; color: var(--graphic-muted); }
+.oc-page .oc-order { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.oc-page .oc-order-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: #FFFFFF; border: 1.5px solid var(--graphic-ink); }
+.oc-page .oc-order-num { flex: none; font-size: 16px; font-weight: 900; padding: 0 4px; background: linear-gradient(180deg, transparent 58%, #FEE34F 58%); }
+.oc-page .oc-order-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 800; line-height: 1.4; }
+.oc-page .oc-order-buttons { display: flex; gap: 4px; flex: none; }
+.oc-page .oc-icon-btn { width: 40px; height: 40px; font-size: 16px; font-weight: 900; background: #FFFFFF; border: 1.5px solid var(--graphic-ink); cursor: pointer; }
+.oc-page .oc-icon-btn:disabled { opacity: 0.3; cursor: default; }
+
+/* ── デザイン・ひとこと ── */
+.oc-page .oc-variant { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 0 12px; }
+.oc-page .oc-share .oc-variant { max-width: 360px; margin: 0 auto 12px; }
+.oc-page .oc-variant-btn {
+  display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 8px 10px; text-align: left;
+  background: #FFFFFF; color: var(--graphic-ink); border: 1.5px solid var(--graphic-border-strong); cursor: pointer;
+}
+.oc-page .oc-variant-btn[aria-checked="true"] { border: 2.5px solid var(--graphic-ink); box-shadow: 3px 3px 0 var(--graphic-ink); }
+.oc-page .oc-variant-btn:focus-visible { outline: 2px solid var(--graphic-ink); outline-offset: 2px; }
+.oc-page .oc-variant-swatch { flex: none; width: 28px; height: 28px; }
+.oc-page .oc-variant-btn--cool .oc-variant-swatch { background: #F5F2EA; border: 2px solid #1E1F24; box-shadow: inset 0 -9px 0 #FEE34F; }
+.oc-page .oc-variant-btn--cute .oc-variant-swatch { background: #FEE34F; border: 3px solid #FF8FB1; border-radius: 999px; box-shadow: 2px 2px 0 #1A2147; }
+.oc-page .oc-variant-text { display: flex; flex-direction: column; min-width: 0; }
+.oc-page .oc-variant-label { font-size: 14px; font-weight: 800; line-height: 1.3; }
+.oc-page .oc-variant-hint { font-size: 10.5px; line-height: 1.35; color: var(--graphic-muted); }
+.oc-page .oc-variant-btn[aria-checked="true"] .oc-variant-label::after { content: ' ✓'; }
+.oc-page .oc-phrases { display: flex; flex-direction: column; gap: 6px; }
+.oc-page .oc-phrase {
+  min-height: 44px; padding: 8px 12px; text-align: left; font-size: 14px; font-weight: 700;
+  background: #FFFFFF; color: var(--graphic-ink); border: 1.5px solid var(--graphic-border-strong); cursor: pointer;
+}
+.oc-page .oc-phrase.is-on { border: 2px solid var(--graphic-ink); background: #FFFBEA; }
+.oc-page .oc-phrase.is-on::before { content: '✓ '; }
+
+/* ── プレビュー・共有 ── */
+.oc-page .oc-preview, .oc-page .oc-share-preview { display: grid; max-width: 360px; margin: 0 auto; }
+.oc-page .oc-share-preview { margin-bottom: 14px; }
+.oc-page .oc-share-preview > * { grid-area: 1 / 1; }
+.oc-page .oc-preview-image, .oc-page .oc-share-image {
+  display: block; width: 100%; height: auto; aspect-ratio: 1080 / 1350;
+  border: 1.5px solid var(--graphic-ink); background: var(--graphic-panel);
+}
+.oc-page .oc-preview-image.is-loading { opacity: 0.55; transition: opacity 0.2s; }
+.oc-page .oc-preview-empty { display: flex; align-items: center; justify-content: center; padding: 16px; text-align: center; font-size: 13px; color: var(--graphic-muted); }
+/* 2デザインの画像を重ね、選択中だけを見せる（display:none の画像は読み込みが後回しになるため visibility で切り替える） */
+.oc-page img.oc-share-image:not(.is-active) { visibility: hidden; }
+.oc-page .oc-share-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.oc-page .oc-share-btn {
+  display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 8px;
+  font-size: 14px; font-weight: 800; text-align: center; background: #FFFFFF; color: var(--graphic-ink);
+  border: 1.5px solid var(--graphic-ink); cursor: pointer; text-decoration: none;
+}
+.oc-page .oc-share-btn--main { grid-column: 1 / -1; background: var(--graphic-ink); color: #FFFFFF; }
+.oc-page .oc-share-btn--x { background: #0A0A0A; color: #FFFFFF; }
+.oc-page .oc-share-btn--line { background: #06C755; border-color: #06C755; color: #FFFFFF; }
+.oc-page .oc-share-downloads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+/* 画像保存は指で押しやすい大きさのボタンにする（リンクの見た目のままだと高さが20px程度しかない） */
+.oc-page .oc-share-downloads a {
+  display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 6px 8px;
+  font-size: 12.5px; font-weight: 800; text-align: center; text-decoration: none;
+  background: #FFFFFF; color: var(--graphic-ink); border: 1.5px dashed var(--graphic-ink);
+}
+
+/* ── 完成カード・共有リンクの着地 ── */
+.oc-page .oc-visit {
+  padding: 14px 16px; background: #FFFFFF; border: 1.5px solid var(--graphic-ink); box-shadow: 4px 4px 0 var(--graphic-orange);
+}
+.oc-page .oc-visit-text { margin: 0; font-size: 14px; line-height: 1.7; color: var(--graphic-body); }
+.oc-page .oc-visit-text strong { display: block; font-size: 15px; color: var(--graphic-text); }
+.oc-page .oc-card-works { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.oc-page .oc-card-work { display: flex; gap: 14px; padding: 14px 0; border-top: 1px solid var(--graphic-border); }
+.oc-page .oc-card-work:first-child { border-top: 2px solid var(--graphic-ink); }
+.oc-page .oc-card-work-num { flex: none; align-self: flex-start; font-size: 22px; font-weight: 900; line-height: 1.2; padding: 0 4px; background: linear-gradient(180deg, transparent 58%, #FEE34F 58%); }
+.oc-page .oc-card-work-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.oc-page .oc-card-work-title { font-size: 16px; font-weight: 800; line-height: 1.5; color: var(--graphic-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--graphic-border-strong); }
+.oc-page .oc-card-work-meta { font-size: 12px; color: var(--graphic-muted); }
+.oc-page .oc-card-work-link { font-size: 13px; font-weight: 700; color: var(--graphic-orange-text); text-decoration: none; }
+
+@media (min-width: 640px) {
+  .oc-page .oc-share-buttons { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .oc-page .oc-phrases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
