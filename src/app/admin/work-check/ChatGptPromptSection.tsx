@@ -7,6 +7,7 @@ import { csvDownloadSection } from '@/lib/chatGptPromptUtil';
 import { buildVodResearchCsvRow, buildBatchVodResearchPrompt, VOD_RESEARCH_CSV_HEADER } from '@/lib/vod-research-prompt';
 import SearchablePersonSelect from './SearchablePersonSelect';
 import ChatGptPromptResultPanel from '@/components/admin/ChatGptPromptResultPanel';
+import { BULK_SELECT_SIZES, countHiddenSelected, firstNIds, isFirstNSelection } from '@/lib/bulk-work-selection';
 
 interface WorkPreview {
   title: string;
@@ -136,6 +137,8 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
   const [selYear, setSelYear]                   = useState('');
   const [selType, setSelType]                   = useState('');
   const [selResearch, setSelResearch]           = useState<ResearchFilter>('all');
+  // 最後に押した「先頭N件」ボタン（選択がその状態のままのときだけ強調する）
+  const [lastBulkSize, setLastBulkSize]         = useState<number | null>(null);
 
   // 再調査ログ（localStorage: vod-research-log-{personName}）
   const [researchLog, setResearchLog] = useState<Record<string, number>>({});
@@ -238,6 +241,17 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
   function deselectAllVisible() {
     setSelectedWorkIds((prev) => { const n = new Set(prev); displayWorks.forEach((w) => n.delete(w.id)); return n; });
   }
+  // 表示一覧（フィルター・並び順を反映、スクロール外も含む）の先頭N件に選択を置き換える。
+  // 表示外の選択（フィルターで隠れている作品）が解除される場合は確認してから行う。
+  const displayIds = useMemo(() => displayWorks.map((w) => w.id), [displayWorks]);
+  function selectFirstN(n: number) {
+    const hidden = countHiddenSelected(selectedWorkIds, displayIds);
+    if (hidden > 0 && !window.confirm(`現在の一覧に表示されていない選択中の作品が${hidden}件あります。\n解除して、一覧の先頭${n}件だけを選択しますか？`)) return;
+    setSelectedWorkIds(firstNIds(displayIds, n));
+    setLastBulkSize(n);
+  }
+  const activeBulkSize =
+    lastBulkSize !== null && isFirstNSelection(selectedWorkIds, displayIds, lastBulkSize) ? lastBulkSize : null;
 
   // ── 再調査ログ保存 ──
   function markResearched(workIds: string[]) {
@@ -465,6 +479,28 @@ export default function ChatGptPromptSection({ persons }: { persons: PersonWithC
                 >
                   全解除
                 </button>
+              </div>
+            </div>
+
+            {/* 先頭から件数指定で選択（5件刻み・最大40件） */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] text-gray-500 whitespace-nowrap">先頭から選択:</span>
+              <div className="grid grid-cols-4 gap-1">
+                {BULK_SELECT_SIZES.map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => selectFirstN(n)}
+                    disabled={displayWorks.length === 0}
+                    aria-pressed={activeBulkSize === n}
+                    className={`text-[10px] w-12 py-1.5 rounded-lg transition-colors disabled:opacity-40 font-medium ${
+                      activeBulkSize === n
+                        ? 'bg-amber-500 text-white'
+                        : 'bg-white border border-gray-200 text-slate-600 hover:bg-amber-50'
+                    }`}
+                  >
+                    {n}件
+                  </button>
+                ))}
               </div>
             </div>
 
