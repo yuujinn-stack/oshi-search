@@ -5094,3 +5094,11 @@ SNS で縮小表示されても、推し名・サービス名・作品数とカ�
 - IKE（SPYAIR 脱退・currentGroupName=TOOKAMI）も同じ形のデータ。今回は対象外のため所属行を作っていない（作れば TOOKAMI のグループページ等に反映される）。
 - `currentGroupName` を読む既存機能（Instagram予約のグループ絞り込み `person-group-filter`・投稿文のグループ名・動画作成・商品の卒業後グループ判定 `product-membership-guard`）は今回変更していない（平野紫耀のみ従来から currentGroupName=Number_i）。商品判定を所属履歴ベースにするのは別タスク。
 - Number_i の加入日（結成日）は既存データに無いため未設定。必要なら管理画面の所属履歴で入力する。
+
+### 追記：本番反映（2026-10-26）
+- commit 10dda6e を main に push、Vercel 本番デプロイ Ready。コミット前に、このコミットだけを取り出した作業ツリーで `tsc` 0件・`vitest` 146ファイル/2390件・`next build` 成功を確認（作業ツリーにある未コミットの別作業は含めていない）。
+- 本番：`/groups/number-i` 200（デプロイ切り替え直後の1回だけ 404、以後は常に 200）・`/groups/Number_i` 308→number-i。Number_i は現役3人（Organization の member も3人）、King & Prince は「現役メンバーは2人です。…歴代メンバーは6人」（member 2人・alumni 4人）。
+- 3人の人物ページ：title「（Number_i）」、所属 Number_i、活動状況 活動中、過去所属 King & Prince（脱退） 脱退日：2023-05-22、FAQ「…Number_iのメンバーです。以前はKing & Prince（2023-05-22脱退）に所属していました。」、memberOf=Number_i・alumniOf=King & Prince、Number_i へのリンクは 200。
+- 検索「Number_i」でグループ（現役3人）と3人、トップ・サイトマップ（グループ 25）・サブスク診断の人物選択に Number_i。
+- `/admin/work-check`（閲覧のみ・保存なし）：King & Prince で絞り込むと6人で、平野紫耀・神宮寺勇太・岸優太は「King & Prince［脱退］ 現在：Number_i［現役］」、岩橋玄樹は「King & Prince［脱退］」、永瀬廉・髙橋海人は「King & Prince［現役］」。Number_i で3人。📝 の所属履歴に現在の所属（Number_i／現役／加入は空欄）と過去の所属（King & Prince／脱退／2018-01-17〜2023-05-22）が分かれて表示される。
+- DB：persons 497・person_meta 497・group_meta 51 行とも移行前のバックアップと完全一致。追加は person_group_memberships の9行のみ。
