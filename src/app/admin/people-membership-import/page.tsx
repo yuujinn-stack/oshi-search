@@ -1,4 +1,6 @@
 import { getAllPersonsMerged } from '@/lib/persons';
+import { getAllMembershipRecords } from '@/lib/group-membership-store';
+import { groupMembershipRecords, listGroupNames } from '@/lib/group-membership';
 import MembershipImportClient from './MembershipImportClient';
 import { LogoutButton } from '@/components/admin/LogoutButton';
 
@@ -8,8 +10,9 @@ export default async function PeopleMembershipImportPage() {
   let groups: string[] = [];
   let persons: Array<{ name: string; group: string }> = [];
   try {
-    const allPersons = await getAllPersonsMerged();
-    groups = [...new Set(allPersons.map((p) => p.group).filter(Boolean))].sort((a, b) =>
+    const [allPersons, membershipRecords] = await Promise.all([getAllPersonsMerged(), getAllMembershipRecords()]);
+    // 所属履歴にだけ出てくるグループ（移籍先など）もテンプレートの対象にする
+    groups = listGroupNames(allPersons, groupMembershipRecords(membershipRecords)).sort((a, b) =>
       a.localeCompare(b, 'ja'),
     );
     persons = allPersons.map((p) => ({

@@ -11,6 +11,8 @@ import { VOD_PLAN_INFO } from '@/lib/vod-plan-info';
 import { computeOshiVodDiagnosis } from './core';
 import type { DiagnosisResult } from './types';
 import { buildPickerGroups, isCurrentMemberStatus, type OshiVodPickerGroup, type OshiVodPickerPerson } from './picker';
+import { getAllMembershipRecords } from '@/lib/group-membership-store';
+import { displayGroupOf, groupMembershipRecords, isCurrentMembership, resolvePersonMemberships } from '@/lib/group-membership';
 
 /** 診断結果キャッシュの有効期間（秒）。共有リンクへのアクセス集中時のDB負荷対策 */
 const DIAGNOSIS_CACHE_SECONDS = 300;
@@ -43,16 +45,34 @@ export async function getOshiVodKnownPersons(): Promise<Map<string, { name: stri
 
 /** 人物複数選択UI用のデータ（Header の検索候補と同じ人物データ源を使う） */
 export async function getOshiVodPickerData(): Promise<{ persons: OshiVodPickerPerson[]; groups: OshiVodPickerGroup[] }> {
-  const [persons, metas] = await Promise.all([
+  const [persons, metas, membershipRecords] = await Promise.all([
     getAllPersonsMerged(),
     getAllPersonMetas().catch(() => ({} as Awaited<ReturnType<typeof getAllPersonMetas>>)),
+    getAllMembershipRecords(),
   ]);
-  const pickerPersons: OshiVodPickerPerson[] = persons.map((p) => ({
-    name: p.name,
-    group: p.group,
-    aliases: p.config.aliases ?? [],
-    isCurrent: isCurrentMemberStatus(metas[p.name]?.activityStatus),
-  }));
+  const recordsByPerson = groupMembershipRecords(membershipRecords);
+  const pickerPersons: OshiVodPickerPerson[] = persons.map((p) => {
+    const records = recordsByPerson.get(p.name);
+    if (!records?.length) {
+      return {
+        name: p.name,
+        group: p.group,
+        aliases: p.config.aliases ?? [],
+        isCurrent: isCurrentMemberStatus(metas[p.name]?.activityStatus),
+      };
+    }
+    // 所属履歴がある人物：表示グループは現在の所属、グループ分けは所属ごとの状態（src/lib/group-membership.ts）
+    const memberships = resolvePersonMemberships(p, metas[p.name], records)
+      .filter((m) => m.source !== 'former_list')
+      .map((m) => ({ group: m.groupName, isCurrent: isCurrentMembership(m) }));
+    return {
+      name: p.name,
+      group: displayGroupOf(p, records),
+      aliases: p.config.aliases ?? [],
+      isCurrent: memberships.some((m) => m.isCurrent),
+      memberships,
+    };
+  });
   return { persons: pickerPersons, groups: buildPickerGroups(pickerPersons) };
 }
 

@@ -1,4 +1,5 @@
 import type { ActivityStatus, CareerStatus } from '@/types/person';
+import type { ResolvedMembership } from '@/lib/group-membership';
 export type { ActivityStatus, CareerStatus };
 
 export interface VodFetchDebugItem {
@@ -85,4 +86,8 @@ export interface PersonWithCounts {
   roleNote?: string;
   /** 'female' | 'male' | undefined(未設定)。写真集機能用。管理画面からの手動設定のみ。 */
   gender?: 'female' | 'male';
+  /** グループごとの所属（src/lib/group-membership.ts で解釈。所属履歴が無い人物は persons.group + person_meta） */
+  memberships?: ResolvedMembership[];
+  /** 所属履歴（person_group_memberships）の行がある人物 */
+  hasMembershipRecords?: boolean;
 }

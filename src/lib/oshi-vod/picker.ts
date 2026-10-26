@@ -10,6 +10,11 @@ export interface OshiVodPickerPerson {
   aliases: string[];
   /** 現役メンバーか（グループページの「現メンバー」と同じ判定: active / hiatus / 未設定） */
   isCurrent: boolean;
+  /**
+   * グループごとの所属（所属履歴 person_group_memberships がある人物だけ）。指定時はグループ分けに
+   * group / isCurrent の代わりにこちらを使う（移籍先グループにも、元のグループの元メンバーにも入る）。
+   */
+  memberships?: { group: string; isCurrent: boolean }[];
 }
 
 export interface OshiVodPickerGroup {
@@ -37,13 +42,15 @@ export function canSelectWholeGroup(currentMemberCount: number): boolean {
 export function buildPickerGroups(persons: OshiVodPickerPerson[]): OshiVodPickerGroup[] {
   const map = new Map<string, OshiVodPickerGroup>();
   for (const p of persons) {
-    if (!p.group) continue;
-    let g = map.get(p.group);
-    if (!g) {
-      g = { name: p.group, currentMembers: [], formerMembers: [] };
-      map.set(p.group, g);
+    for (const m of p.memberships ?? [{ group: p.group, isCurrent: p.isCurrent }]) {
+      if (!m.group) continue;
+      let g = map.get(m.group);
+      if (!g) {
+        g = { name: m.group, currentMembers: [], formerMembers: [] };
+        map.set(m.group, g);
+      }
+      (m.isCurrent ? g.currentMembers : g.formerMembers).push(p.name);
     }
-    (p.isCurrent ? g.currentMembers : g.formerMembers).push(p.name);
   }
   return [...map.values()];
 }

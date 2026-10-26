@@ -33,7 +33,7 @@ describe('トップ・ジャンル一覧・写真集のキャッシュ無効化'
     // トップのデータキャッシュはすべて1時間・無効化タグ付き（60秒のまま残っていない）
     const home = read('src/app/page.tsx');
     expect(home).not.toMatch(/revalidate: 60\b/);
-    expect(home.match(/tags: \[[^\]]*PUBLIC_LISTING_CACHE_TAG/g)?.length).toBe(5);
+    expect(home.match(/tags: \[[^\]]*PUBLIC_LISTING_CACHE_TAG/g)?.length).toBe(6);
   });
 
   it('公開ページに出るデータの書き込み関数は、すべて書き込み後に無効化する', () => {

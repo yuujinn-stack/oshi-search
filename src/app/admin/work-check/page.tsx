@@ -4,6 +4,8 @@ import { getAllImportedPersonsOrThrow } from '@/lib/imported-persons';
 import { getAllStoredProducts } from '@/lib/product-store';
 import { pingRedis } from '@/lib/redis-health';
 import { getAllPersonMetas } from '@/lib/person-meta';
+import { getAllMembershipRecords } from '@/lib/group-membership-store';
+import { groupMembershipRecords, resolvePersonMemberships } from '@/lib/group-membership';
 import { getPendingDedupWorkIds } from '@/lib/pending-dedup-store';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import { LogoutButton } from '@/components/admin/LogoutButton';
@@ -46,6 +48,16 @@ export default async function WorkCheckPage() {
   // 1回だけ取得し、以降は各人物の作品一覧に対してSetの参照だけで判定する（N+1回避）。
   const pendingDedupWorkIds = await getPendingDedupWorkIds();
 
+  // グループ別の所属履歴（現在・過去）。グループ絞り込みと「現在：Number_i［現役］」等の表示に使う
+  const recordsByPerson = groupMembershipRecords(await getAllMembershipRecords());
+  const membershipFields = (p: (typeof persons)[number]) => {
+    const records = recordsByPerson.get(p.name);
+    return {
+      memberships: resolvePersonMemberships(p, personMetaMap[p.name], records),
+      hasMembershipRecords: (records?.length ?? 0) > 0,
+    };
+  };
+
   const countResults = await Promise.all(
     persons.map(async (p) => {
       try {
@@ -87,6 +99,7 @@ export default async function WorkCheckPage() {
           awards: meta?.awards,
           careerStatus: meta?.careerStatus,
           roleNote: meta?.roleNote,
+          ...membershipFields(p),
           counts: {
             total: works.length,
             published: works.filter((w) => w.status === 'auto_published').length,
@@ -126,6 +139,7 @@ export default async function WorkCheckPage() {
           awards: meta?.awards,
           careerStatus: meta?.careerStatus,
           roleNote: meta?.roleNote,
+          ...membershipFields(p),
           counts: { total: 0, published: 0, review: 0, hidden: 0, noVod: 0, noTmdbId: 0, manualCsv: 0, aiSupplement: 0 },
         };
       }

@@ -687,3 +687,24 @@ export const videoScriptRequests = pgTable('video_script_requests', {
 }, (t) => [
   index('video_script_requests_pending_idx').on(t.handledAt, t.requestedAt),
 ]);
+
+// ── 人物とグループの所属履歴（drizzle/0021_person_group_memberships.sql）──────────
+// 人物（persons.name）とグループ（group_meta.group_name）の関連。グループごとに1行で、
+// 過去所属と現在所属（同時期の複数所属を含む）を同時に保持する。activity_status は
+// そのグループとの所属状態だけを表し、芸能活動全体の状態（person_meta.career_status）とは独立。
+// joined_at / left_at が不明な場合は NULL のまま（推測で埋めない）。
+// 行が無い人物は従来どおり persons.group_name + person_meta から所属を解釈する（src/lib/group-membership.ts）。
+export const personGroupMemberships = pgTable('person_group_memberships', {
+  id:             serial('id').primaryKey(),
+  personName:     text('person_name').notNull(),
+  groupName:      text('group_name').notNull(),
+  activityStatus: text('activity_status').notNull(), // ActivityStatus（active / graduated / withdrawn / hiatus / retired / unknown）
+  joinedAt:       text('joined_at'),
+  leftAt:         text('left_at'),
+  note:           text('note'),
+  createdAt:      timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:      timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex('pgm_person_group_idx').on(t.personName, t.groupName),
+  index('pgm_group_idx').on(t.groupName),
+]);

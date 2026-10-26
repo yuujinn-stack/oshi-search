@@ -156,6 +156,20 @@ const CREATE_STATEMENTS = [
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   sql`CREATE INDEX IF NOT EXISTS price_review_logs_created_at_idx ON price_review_logs (created_at)`,
+  // ── 人物とグループの所属履歴（drizzle/0021_person_group_memberships.sql）──────
+  sql`CREATE TABLE IF NOT EXISTS person_group_memberships (
+    id              SERIAL PRIMARY KEY,
+    person_name     TEXT NOT NULL,
+    group_name      TEXT NOT NULL,
+    activity_status TEXT NOT NULL,
+    joined_at       TEXT,
+    left_at         TEXT,
+    note            TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS pgm_person_group_idx ON person_group_memberships (person_name, group_name)`,
+  sql`CREATE INDEX IF NOT EXISTS pgm_group_idx ON person_group_memberships (group_name)`,
   sql`CREATE TABLE IF NOT EXISTS work_status_history (
     id               SERIAL PRIMARY KEY,
     person_name      TEXT NOT NULL,
@@ -470,6 +484,9 @@ const TABLE_NAMES = ['persons', 'person_meta', 'group_meta', 'vod_providers', 'w
 
 // 価格の確認待ち（drizzle/0020_price_reviews.sql）
 TABLE_NAMES.push('price_reviews', 'price_review_logs');
+
+// 人物とグループの所属履歴（drizzle/0021_person_group_memberships.sql）
+TABLE_NAMES.push('person_group_memberships');
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。

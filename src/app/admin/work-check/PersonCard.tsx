@@ -1,6 +1,7 @@
 'use client';
 
 import type { Counts, PersonPriority, ActivityStatus } from './work-check-types';
+import { isCurrentMembership, type ResolvedMembership } from '@/lib/group-membership';
 
 const ACTIVITY_BADGE: Record<ActivityStatus, { label: string; cls: string }> = {
   active:    { label: '現役',   cls: 'bg-green-100 text-green-700' },
@@ -42,6 +43,50 @@ interface PersonCardProps {
   dataFetchStatus?: string;
   activityStatus?: ActivityStatus;
   generation?: string;
+  /** 所属履歴（person_group_memberships）がある人物のグループごとの所属。指定時はグループ名・活動状態をこちらで表示 */
+  memberships?: ResolvedMembership[];
+  /** グループ絞り込み中のグループ（そのグループとの所属を先に表示し、別の現在の所属を「現在：」で添える） */
+  focusGroup?: string;
+}
+
+function MembershipBadge({ m }: { m: ResolvedMembership }) {
+  const badge = m.status ? ACTIVITY_BADGE[m.status] : null;
+  return (
+    <span className="text-xs text-gray-500 whitespace-nowrap">
+      {m.groupName}
+      {badge && (
+        <span className={`ml-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${badge.cls}`}>［{badge.label}］</span>
+      )}
+    </span>
+  );
+}
+
+function MembershipSummary({ memberships, focusGroup }: { memberships: ResolvedMembership[]; focusGroup?: string }) {
+  const listed = memberships.filter((m) => m.source !== 'former_list');
+  const focus = focusGroup ? listed.find((m) => m.groupName === focusGroup) : undefined;
+  if (focus) {
+    const others = listed.filter((m) => m !== focus && isCurrentMembership(m));
+    return (
+      <>
+        <MembershipBadge m={focus} />
+        {others.length > 0 && (
+          <span className="text-xs text-gray-500 whitespace-nowrap">
+            現在：{others.map((m) => <MembershipBadge key={m.groupName} m={m} />)}
+          </span>
+        )}
+      </>
+    );
+  }
+  const current = listed.filter(isCurrentMembership);
+  const past = listed.filter((m) => !isCurrentMembership(m));
+  return (
+    <>
+      {current.map((m) => <MembershipBadge key={m.groupName} m={m} />)}
+      {past.map((m) => (
+        <span key={m.groupName} className="text-xs text-gray-400 whitespace-nowrap">元<MembershipBadge m={m} /></span>
+      ))}
+    </>
+  );
 }
 
 export default function PersonCard({
@@ -55,6 +100,8 @@ export default function PersonCard({
   dataFetchStatus,
   activityStatus,
   generation,
+  memberships,
+  focusGroup,
 }: PersonCardProps) {
   const priorityLabel = priority ? PRIORITY_BADGE[priority] : '';
   const dotClass = dataFetchStatus ? (STATUS_DOT[dataFetchStatus] ?? 'bg-gray-300') : '';
@@ -78,10 +125,14 @@ export default function PersonCard({
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-medium text-slate-700">{personName}</span>
-            {group && <span className="text-xs text-gray-400">{group}</span>}
+            {memberships ? (
+              <MembershipSummary memberships={memberships} focusGroup={focusGroup} />
+            ) : (
+              group && <span className="text-xs text-gray-400">{group}</span>
+            )}
 
-            {/* 活動状態 */}
-            {activityBadge && (
+            {/* 活動状態（所属履歴がある人物はグループごとの状態を上で表示するため出さない） */}
+            {!memberships && activityBadge && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${activityBadge.cls}`}>
                 {activityBadge.label}
               </span>

@@ -105,6 +105,19 @@ interface Props {
 
 const RECENT_DAYS = 30;
 
+/** 所属しているグループ名（現在・過去。formerGroupNames だけのものは除く） */
+function membershipGroupsOf(p: PersonWithCounts): string[] {
+  return (p.memberships ?? []).filter((m) => m.source !== 'former_list').map((m) => m.groupName);
+}
+
+/** グループ絞り込み中はそのグループとの所属の状態、それ以外は従来の activityStatus */
+function statusInGroup(p: PersonWithCounts, group: string): ActivityStatus | undefined {
+  if (group && p.hasMembershipRecords) {
+    return p.memberships?.find((m) => m.groupName === group && m.source !== 'former_list')?.status ?? undefined;
+  }
+  return p.activityStatus;
+}
+
 const ACTIVITY_STATUS_OPTIONS: { value: ActivityStatus; label: string }[] = [
   { value: 'active',    label: '現役' },
   { value: 'graduated', label: '卒業' },
@@ -125,8 +138,9 @@ export default function WorkCheckPersonSection({ persons, stats, pendingDedupWor
   const [sort, setSort] = useState<SortKey>('importedAt_desc');
   const [recentOpen, setRecentOpen] = useState(true);
 
+  // persons.group に加え、所属履歴にだけ出てくるグループ（移籍先など）も絞り込み候補にする
   const groups = useMemo(
-    () => Array.from(new Set(persons.map((p) => p.group).filter(Boolean))).sort(),
+    () => Array.from(new Set(persons.flatMap((p) => [p.group, ...membershipGroupsOf(p)]).filter(Boolean))).sort(),
     [persons],
   );
   const genres = useMemo(
@@ -180,9 +194,11 @@ export default function WorkCheckPersonSection({ persons, stats, pendingDedupWor
       );
     }
 
-    if (groupFilter) list = list.filter((p) => p.group === groupFilter);
+    // グループ絞り込みは所属履歴（現在・過去）を含む。脱退した人物も元の所属グループで表示する
+    if (groupFilter) list = list.filter((p) => p.group === groupFilter || membershipGroupsOf(p).includes(groupFilter));
     if (genreFilter) list = list.filter((p) => p.genre === genreFilter);
-    if (activityStatusFilter) list = list.filter((p) => p.activityStatus === activityStatusFilter);
+    // グループ絞り込み中の活動状態は、そのグループとの所属の状態で判定する（所属履歴がある人物）
+    if (activityStatusFilter) list = list.filter((p) => statusInGroup(p, groupFilter) === activityStatusFilter);
     if (generationFilter.trim()) {
       const gq = generationFilter.trim().toLowerCase();
       list = list.filter((p) => p.generation?.toLowerCase().includes(gq));
@@ -495,6 +511,9 @@ export default function WorkCheckPersonSection({ persons, stats, pendingDedupWor
               leftAt={p.leftAt}
               currentGroupName={p.currentGroupName}
               formerGroupNames={p.formerGroupNames}
+              memberships={p.memberships}
+              hasMembershipRecords={p.hasMembershipRecords}
+              focusGroup={groupFilter || undefined}
               membershipNote={p.membershipNote}
               gender={p.gender}
               primaryGenre={p.primaryGenre}

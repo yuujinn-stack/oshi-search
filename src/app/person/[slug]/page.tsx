@@ -2,14 +2,26 @@ import type { ReactNode } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getPersonWithConfigMerged, getPersonsByGroupMerged } from '@/lib/persons';
+import { getPersonWithConfigMerged, getAllPersonsMerged } from '@/lib/persons';
 import { getAllStoredProductsOrThrow, type StoredCategoryData } from '@/lib/product-store';
 import { getAllVerdictsOrThrow } from '@/lib/judgment-store';
 import { getPublishedWorksOrThrow } from '@/lib/work-store';
 import { getDisplayWorkType } from '@/lib/work-display-type';
 import { getPersonMeta } from '@/lib/person-meta';
-import { getGroupMeta } from '@/lib/group-meta';
-import { groupHref } from '@/lib/group-slug';
+import { getAllGroupMetas } from '@/lib/group-meta';
+import { groupHref, groupHrefByName } from '@/lib/group-slug';
+import { getAllMembershipRecords, getMembershipRecordsForPerson } from '@/lib/group-membership-store';
+import {
+  careerStatusLabel,
+  currentMemberships,
+  displayGroupOf,
+  groupMembershipRecords,
+  hasExplicitMemberships,
+  pastMemberships,
+  personsInGroup,
+  resolvePersonMemberships,
+  type ResolvedMembership,
+} from '@/lib/group-membership';
 import { isConfirmedVodAvailability, normalizeProviderName, getVodProviderDisplayInfo } from '@/lib/vod-dedup';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
@@ -168,7 +180,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const name = decodeURIComponent(slug);
   const person = await getPersonWithConfigMerged(name);
   if (!person) return {};
-  const groupText = person.group ? `（${person.group}）` : '';
+  // 所属履歴がある人物は現在の所属グループを表示する（脱退済みのグループをタイトルに出さない）
+  const displayGroup = displayGroupOf(person, await getMembershipRecordsForPerson(person.name));
+  const groupText = displayGroup ? `（${displayGroup}）` : '';
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
 
   // title/descriptionは実際に存在するデータだけから条件分岐で組み立てる。
@@ -253,16 +267,21 @@ export default async function PersonPage({ params }: Props) {
   const person = await getPersonWithConfigMerged(name);
   if (!person) notFound();
 
-  const groupMembers = person.group ? await getPersonsByGroupMerged(person.group) : [];
-  const related = groupMembers.filter((p) => p.name !== person.name).slice(0, 4);
+  const [allPersons, membershipRecords] = await Promise.all([getAllPersonsMerged(), getAllMembershipRecords()]);
+  const recordsByPerson = groupMembershipRecords(membershipRecords);
+  const personRecords = recordsByPerson.get(person.name) ?? [];
+  // 所属履歴（person_group_memberships）の行がある人物だけ、グループごとの所属状態で表示する。
+  // 行が無い人物は従来どおり persons.group + person_meta の表示（displayGroup = person.group）。
+  const explicitMembership = hasExplicitMemberships(personRecords);
+  const displayGroup = displayGroupOf(person, personRecords);
 
-  const [storedResult, verdictsResult, worksResult, personMetaResult, groupMetaResult, displayOrdersResult, terminatedSlugs] =
+  const [storedResult, verdictsResult, worksResult, personMetaResult, groupMetasResult, displayOrdersResult, terminatedSlugs] =
     await Promise.allSettled([
       getAllStoredProductsOrThrow(person.name),
       getAllVerdictsOrThrow(person.name),
       getPublishedWorksOrThrow(person.name),
       getPersonMeta(person.name),
-      person.group ? getGroupMeta(person.group) : Promise.resolve(null),
+      getAllGroupMetas(),
       getAllDisplayOrders(person.name),
       getInactiveProviderSlugs(),
     ]);
@@ -272,7 +291,28 @@ export default async function PersonPage({ params }: Props) {
   const verdicts = verdictsResult.status === 'fulfilled' ? verdictsResult.value : {};
   const publishedWorks = worksResult.status === 'fulfilled' ? worksResult.value : [];
   const personMeta = personMetaResult.status === 'fulfilled' ? personMetaResult.value : null;
-  const groupMeta = groupMetaResult.status === 'fulfilled' ? groupMetaResult.value : null;
+  const allGroupMetas = groupMetasResult.status === 'fulfilled' ? groupMetasResult.value : [];
+  const groupMeta = displayGroup ? (allGroupMetas.find((g) => g.groupName === displayGroup) ?? null) : null;
+
+  // ── 所属（現在・過去）と関連メンバー ──────────────────────────────────────
+  const memberships: ResolvedMembership[] = resolvePersonMemberships(person, personMeta ?? undefined, personRecords);
+  const currentGroups = currentMemberships(memberships);
+  const pastGroups = pastMemberships(memberships);
+  // 関連メンバーは現在の所属グループを先に、過去の所属グループ（formerGroupNames だけのものは除く）を後に。
+  // 所属履歴の行が無い人物は persons.group の1グループだけ（従来と同じ）。
+  const relatedGroups: { groupName: string; isPast: boolean; persons: typeof allPersons }[] = [];
+  {
+    const shown = new Set<string>([person.name]);
+    for (const m of [...currentGroups, ...pastGroups]) {
+      if (m.source === 'former_list') continue;
+      const ps = personsInGroup(m.groupName, allPersons, recordsByPerson)
+        .filter((p) => !shown.has(p.name))
+        .slice(0, 4);
+      ps.forEach((p) => shown.add(p.name));
+      if (ps.length > 0) relatedGroups.push({ groupName: m.groupName, isPast: !currentGroups.includes(m), persons: ps });
+    }
+  }
+  const membershipGroupHref = (g: string) => groupHrefByName(g, allGroupMetas);
   const displayOrders = displayOrdersResult.status === 'fulfilled' ? displayOrdersResult.value : {};
   const inactiveSlugs: Set<string> = terminatedSlugs.status === 'fulfilled' ? terminatedSlugs.value : new Set();
   const redisError =
@@ -404,15 +444,92 @@ export default async function PersonPage({ params }: Props) {
   const hasVod     = streamingWorks.length > 0;
 
   // groupPagePath はJSON-LD・プロフィール・パンくず等、複数箇所で使うため先に計算する
-  // （groupMeta・person.group のみに依存し、以降の値には依存しないため安全に前倒しできる）
-  const groupPagePath = person.group
-    ? (groupMeta ? groupHref(groupMeta) : `/groups/${encodeURIComponent(person.group)}`)
+  // （groupMeta・displayGroup のみに依存し、以降の値には依存しないため安全に前倒しできる）
+  const groupPagePath = displayGroup
+    ? (groupMeta ? groupHref(groupMeta) : `/groups/${encodeURIComponent(displayGroup)}`)
     : null;
 
   // ── プロフィール情報行（クイックナビでの表示要否を先に判定する必要があるため
   //    レンダリング前に計算しておく。中身のロジック自体は変更していない） ──────
   const profileInfoRows: { label: string; value: ReactNode }[] = [];
-  {
+  if (explicitMembership) {
+    // 所属履歴がある人物：現在の所属と過去の所属（脱退・卒業はそのグループの履歴の中で表示）を分けて出す
+    if (currentGroups.length > 0) {
+      profileInfoRows.push({
+        label: '所属',
+        value: (
+          <>
+            {currentGroups.map((m, i) => (
+              <span key={m.groupName}>
+                {i > 0 && ' / '}
+                <Link href={membershipGroupHref(m.groupName)} className="theme-text-link">{m.groupName}</Link>
+                {m.status === 'hiatus' && '（活動休止中）'}
+              </span>
+            ))}
+          </>
+        ),
+      });
+    }
+    if (personMeta?.generation) {
+      profileInfoRows.push({ label: '期別', value: personMeta.generation });
+    }
+    const careerLabel = careerStatusLabel(personMeta?.careerStatus, memberships);
+    if (careerLabel) {
+      profileInfoRows.push({ label: '活動状況', value: careerLabel });
+    }
+    if (person.config.reading) {
+      profileInfoRows.push({ label: '読み', value: person.config.reading });
+    }
+    const genres = buildInfoGenreList({
+      genre: person.genre,
+      primaryGenre: personMeta?.primaryGenre,
+      genres: personMeta?.genres,
+    });
+    if (genres.length > 0) {
+      profileInfoRows.push({ label: 'ジャンル', value: genres.join(' / ') });
+    }
+    if (personMeta?.titles && personMeta.titles.length > 0) {
+      profileInfoRows.push({ label: '肩書き', value: personMeta.titles.join(' / ') });
+    }
+    if (personMeta?.publicRoles && personMeta.publicRoles.length > 0) {
+      profileInfoRows.push({ label: '役職', value: personMeta.publicRoles.join(' / ') });
+    }
+    const currentJoined = currentGroups.filter((m) => m.joinedAt);
+    if (currentJoined.length > 0) {
+      profileInfoRows.push({
+        label: '加入日',
+        value: currentJoined.map((m) => (currentGroups.length > 1 ? `${m.groupName} ${m.joinedAt}` : m.joinedAt)).join(' / '),
+      });
+    }
+    const pastWithStatus = pastGroups.filter((m) => m.source !== 'former_list');
+    const pastNamesOnly = pastGroups.filter((m) => m.source === 'former_list').map((m) => m.groupName);
+    if (pastWithStatus.length > 0 || pastNamesOnly.length > 0) {
+      profileInfoRows.push({
+        label: '過去所属',
+        value: (
+          <>
+            {pastWithStatus.map((m) => (
+              <span key={m.groupName} className="block">
+                <Link href={membershipGroupHref(m.groupName)} className="theme-text-link">{m.groupName}</Link>
+                {m.status && m.status !== 'unknown' && `（${ACTIVITY_LABEL[m.status]}）`}
+                {m.leftAt && ` ${m.status === 'withdrawn' ? '脱退日' : m.status === 'retired' ? '引退日' : '卒業日'}：${m.leftAt}`}
+              </span>
+            ))}
+            {pastNamesOnly.length > 0 && <span className="block">{pastNamesOnly.join(' / ')}</span>}
+          </>
+        ),
+      });
+    }
+    if (person.config.aliases && person.config.aliases.length > 0) {
+      profileInfoRows.push({ label: '別名・愛称', value: person.config.aliases.join(' / ') });
+    }
+    if (personMeta?.awards && personMeta.awards.length > 0) {
+      profileInfoRows.push({ label: '受賞歴', value: personMeta.awards.join(' / ') });
+    }
+    if (personMeta?.membershipNote) {
+      profileInfoRows.push({ label: '備考', value: personMeta.membershipNote });
+    }
+  } else {
     const groupLink = personMeta?.currentGroupName || person.group || null;
     if (groupLink) {
       const href = groupLink === person.group && groupPagePath
@@ -481,6 +598,36 @@ export default async function PersonPage({ params }: Props) {
   const hasProfileInfo = profileInfoRows.length > 0;
 
   // ── FAQ ──
+  // 所属の質問は現在の所属だけを「メンバー」と答え、脱退・卒業したグループは「元メンバー」として答える
+  // （src/lib/group-membership.ts の所属状態。所属履歴の行が無い人物は persons.group + activityStatus）。
+  const leftLabel = (m: ResolvedMembership) =>
+    m.status === 'withdrawn' ? '脱退' : m.status === 'retired' ? '引退' : '卒業';
+  const pastSentence = (ms: ResolvedMembership[]) => {
+    const parts = ms
+      .filter((m) => m.source !== 'former_list')
+      .map((m) => `${m.groupName}${m.leftAt ? `（${m.leftAt}${leftLabel(m)}）` : ''}`);
+    return parts.length > 0 ? `以前は${parts.join('・')}に所属していました。` : '';
+  };
+  const currentNames = currentGroups.map((m) => m.groupName);
+  const registeredPast = pastGroups.find((m) => m.source !== 'former_list');
+  const membershipFaq = currentNames.length > 0
+    ? {
+        q: `${person.name}は${currentNames.join('・')}のメンバーですか？`,
+        a: `${person.name}は${currentNames.join('・')}のメンバーです。${
+          personMeta?.generation && currentGroups.some((m) => m.groupName === person.group) ? `${personMeta.generation}所属。` : ''
+        }${pastSentence(pastGroups)}グループページでは全メンバーや関連情報をご確認いただけます。`,
+      }
+    : registeredPast
+    ? {
+        q: `${person.name}は${registeredPast.groupName}のメンバーですか？`,
+        a: `${person.name}は${registeredPast.groupName}の元メンバーです${
+          registeredPast.leftAt ? `（${registeredPast.leftAt}${leftLabel(registeredPast)}）` : `（${leftLabel(registeredPast)}）`
+        }。${pastSentence(pastGroups.filter((m) => m !== registeredPast))}グループページでは全メンバーや関連情報をご確認いただけます。`,
+      }
+    : {
+        q: `${person.name}は${person.group || 'どのグループ'}のメンバーですか？`,
+        a: `${person.name}はソロアーティストです。`,
+      };
   const topProviders = providerGroups.slice(0, 3).map(([n]) => getVodProviderDisplayInfo(n).displayName);
   const faqItems = [
     {
@@ -497,12 +644,7 @@ export default async function PersonPage({ params }: Props) {
         ? `出演作品を${publishedWorks.length}件掲載しています。各VODサービスでご確認ください。`
         : '配信情報は現在確認中です。',
     },
-    {
-      q: `${person.name}は${person.group ?? 'どのグループ'}のメンバーですか？`,
-      a: person.group
-        ? `${person.name}は${person.group}のメンバーです。${personMeta?.generation ? `${personMeta.generation}所属。` : ''}グループページでは全メンバーや関連情報をご確認いただけます。`
-        : `${person.name}はソロアーティストです。`,
-    },
+    membershipFaq,
   ];
 
   // ── JSON-LD ──
@@ -518,8 +660,12 @@ export default async function PersonPage({ params }: Props) {
   const personDescriptionParts = [
     personMeta?.publicRoles?.length ? personMeta.publicRoles.join('・') : null,
     jsonLdGenres.length > 0 ? jsonLdGenres.join('・') : null,
-    person.group ? `${person.group}所属` : null,
+    currentNames.length > 0 ? `${currentNames.join('・')}所属` : registeredPast ? `元${registeredPast.groupName}` : null,
   ].filter((v): v is string => !!v);
+  // memberOf は現在の所属だけ。脱退・卒業したグループは alumniOf（元メンバー）として出す
+  const orgOf = (g: string) => ({ '@type': 'Organization', name: g, url: `${siteOrigin}${membershipGroupHref(g)}` });
+  const memberOfOrgs = currentNames.map(orgOf);
+  const alumniOfOrgs = pastGroups.filter((m) => m.source !== 'former_list').map((m) => orgOf(m.groupName));
   const personJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Person',
@@ -528,19 +674,18 @@ export default async function PersonPage({ params }: Props) {
     ...(personDescriptionParts.length > 0 && { description: personDescriptionParts.join(' / ') }),
     ...(personMeta?.publicRoles?.length && { jobTitle: personMeta.publicRoles.join(' / ') }),
     ...(personMeta?.awards?.length && { award: personMeta.awards }),
-    ...(person.group && groupPagePath
-      ? { memberOf: { '@type': 'Organization', name: person.group, url: `${siteOrigin}${groupPagePath}` } }
-      : {}),
+    ...(memberOfOrgs.length > 0 ? { memberOf: memberOfOrgs.length === 1 ? memberOfOrgs[0] : memberOfOrgs } : {}),
+    ...(alumniOfOrgs.length > 0 ? { alumniOf: alumniOfOrgs.length === 1 ? alumniOfOrgs[0] : alumniOfOrgs } : {}),
   };
   const breadcrumbJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'ホーム', item: siteOrigin },
-      ...(person.group && groupPagePath
-        ? [{ '@type': 'ListItem', position: 2, name: person.group, item: `${siteOrigin}${groupPagePath}` }]
+      ...(displayGroup && groupPagePath
+        ? [{ '@type': 'ListItem', position: 2, name: displayGroup, item: `${siteOrigin}${groupPagePath}` }]
         : []),
-      { '@type': 'ListItem', position: person.group ? 3 : 2, name: person.name, item: personUrl },
+      { '@type': 'ListItem', position: displayGroup ? 3 : 2, name: person.name, item: personUrl },
     ],
   };
   const faqJsonLd = {
@@ -553,7 +698,7 @@ export default async function PersonPage({ params }: Props) {
     })),
   };
 
-  const heroBackground = getGroupHeroGradient(person.group, person.genre);
+  const heroBackground = getGroupHeroGradient(displayGroup, person.genre);
 
   // ── ファーストビューの数字サマリー（配信中を最優先に表示） ──────────────────
   const heroStats = [
@@ -592,11 +737,11 @@ export default async function PersonPage({ params }: Props) {
             <Link href={`/genre/${encodeURIComponent(person.genre)}`} className="theme-text-link">
               {person.genre}
             </Link>
-            {person.group && groupPagePath && (
+            {displayGroup && groupPagePath && (
               <>
                 <span style={{ opacity: 0.4 }}>›</span>
                 <Link href={groupPagePath} className="theme-text-link">
-                  {person.group}
+                  {displayGroup}
                 </Link>
               </>
             )}
@@ -610,6 +755,11 @@ export default async function PersonPage({ params }: Props) {
           person={person}
           personMeta={personMeta}
           groupMeta={groupMeta}
+          affiliation={explicitMembership ? {
+            current: currentGroups.map((m) => ({ groupName: m.groupName, href: membershipGroupHref(m.groupName) })),
+            past: pastGroups.map((m) => ({ groupName: m.groupName, status: m.status, leftAt: m.leftAt })),
+            careerLabel: careerStatusLabel(personMeta?.careerStatus, memberships),
+          } : undefined}
           groupPagePath={groupPagePath}
           heroBackground={heroBackground}
           stats={heroStats}
@@ -828,15 +978,18 @@ export default async function PersonPage({ params }: Props) {
             </section>
           )}
 
-          {/* ━━━ 関連メンバー ━━━ */}
-          {related.length > 0 && (
-            <section>
+          {/* ━━━ 関連メンバー（現在の所属グループ → 過去の所属グループ） ━━━ */}
+          {relatedGroups.map((rg) => (
+            <section key={rg.groupName}>
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base font-bold" style={{ color: 'var(--ds-text)' }}>
-                  {person.group} のメンバー
+                  {rg.groupName} のメンバー
+                  {rg.isPast && explicitMembership && (
+                    <span className="ml-2 text-xs font-medium" style={{ color: 'var(--ds-muted)' }}>過去の所属</span>
+                  )}
                 </h2>
                 <Link
-                  href={groupPagePath ?? `/groups/${encodeURIComponent(person.group)}`}
+                  href={rg.groupName === displayGroup && groupPagePath ? groupPagePath : membershipGroupHref(rg.groupName)}
                   className="theme-text-link text-sm font-medium"
                   style={{ textDecoration: 'none' }}
                 >
@@ -844,12 +997,12 @@ export default async function PersonPage({ params }: Props) {
                 </Link>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {related.map((p) => (
+                {rg.persons.map((p) => (
                   <PersonCard key={p.name} person={p} />
                 ))}
               </div>
             </section>
-          )}
+          ))}
 
           {/* ━━━ FAQ ━━━ */}
           <section>

@@ -9,6 +9,8 @@ import HeroSearchForm from '@/components/site/HeroSearchForm';
 import type { SuggestionItem } from '@/types/search';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
+import { getAllMembershipRecords } from '@/lib/group-membership-store';
+import { displayGroupOf, groupMembershipRecords, listGroupNames } from '@/lib/group-membership';
 import type { GroupMeta } from '@/types/group';
 import { getRenderableProductTitle } from '@/lib/product-image';
 import { PUBLIC_LISTING_CACHE_TAG, PUBLIC_LISTING_REVALIDATE_SECONDS } from '@/lib/public-listing-cache';
@@ -57,6 +59,13 @@ const getCachedRankingData = unstable_cache(
 const getCachedGroupMetas = unstable_cache(
   getAllGroupMetas,
   ['home-group-metas'],
+  { revalidate: PUBLIC_LISTING_REVALIDATE_SECONDS, tags: [PUBLIC_LISTING_CACHE_TAG] },
+);
+
+// 所属履歴（移籍先グループ等）。所属の保存時に revalidatePublicListings() で即時に無効化される
+const getCachedMembershipRecords = unstable_cache(
+  getAllMembershipRecords,
+  ['home-group-memberships'],
   { revalidate: PUBLIC_LISTING_REVALIDATE_SECONDS, tags: [PUBLIC_LISTING_CACHE_TAG] },
 );
 
@@ -149,12 +158,13 @@ function GenrePill({ genre }: { genre: string }) {
 // ─── ページ ──────────────────────────────────────────────────────────────────────
 export default async function HomePage() {
   // Redis 失敗時も200を返すため allSettled を使用
-  const [enrichedResult, rankingResult, groupMetasResult, vodCountsResult, photobookResult] = await Promise.allSettled([
+  const [enrichedResult, rankingResult, groupMetasResult, vodCountsResult, photobookResult, membershipResult] = await Promise.allSettled([
     getCachedEnrichedData(),
     getCachedRankingData(),
     getCachedGroupMetas(),
     getCachedVodProviderWorkCounts(),
     getCachedHomePhotobookItems(),
+    getCachedMembershipRecords(),
   ]);
 
   const { persons, genres: allGenres } = enrichedResult.status === 'fulfilled'
@@ -175,12 +185,14 @@ export default async function HomePage() {
   const photobookFemale = photobookResult.status === 'fulfilled' ? photobookResult.value.female : [];
   const photobookMale = photobookResult.status === 'fulfilled' ? photobookResult.value.male : [];
 
-  const groups = [...new Set(persons.map((p) => p.group).filter(Boolean))];
+  // persons.group に加え、所属履歴にだけ出てくるグループ（移籍先など）も一覧・検索候補に含める
+  const recordsByPerson = groupMembershipRecords(membershipResult.status === 'fulfilled' ? membershipResult.value : []);
+  const groups = listGroupNames(persons, recordsByPerson);
 
   const heroSuggestions: SuggestionItem[] = [
     ...groups.map((g) => ({ label: g, href: groupHrefByName(g, groupMetaList), type: 'group' as const })),
     ...persons.flatMap((p) => [
-      { label: p.name, sublabel: p.group || undefined, href: `/person/${encodeURIComponent(p.name)}`, type: 'person' as const },
+      { label: p.name, sublabel: displayGroupOf(p, recordsByPerson.get(p.name)) || undefined, href: `/person/${encodeURIComponent(p.name)}`, type: 'person' as const },
       ...(p.config.aliases ?? []).map((a) => ({
         label: a, sublabel: p.name, href: `/search?q=${encodeURIComponent(a)}`, type: 'alias' as const,
       })),

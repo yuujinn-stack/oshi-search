@@ -5,6 +5,43 @@ import { getAllPersonMetas } from '@/lib/person-meta';
 import type { PersonMeta } from '@/app/api/admin/person-meta/route';
 import type { ActivityStatus, CareerStatus } from '@/types/person';
 import { upsertPersonMeta } from '@/db/write';
+import { getAllMembershipRecords } from '@/lib/group-membership-store';
+import { saveMembershipsForPerson } from '@/lib/group-membership-service';
+import {
+  currentMemberships,
+  groupMembershipRecords,
+  personsInGroup,
+  resolvePersonMemberships,
+  type MembershipRecord,
+} from '@/lib/group-membership';
+import {
+  planMembershipCsvRow,
+  type MembershipConflict,
+  type MembershipUpsert,
+} from '@/lib/group-membership-csv';
+
+/**
+ * テンプレート用の meta。所属履歴がある人物は、activityStatus / joinedAt / leftAt を「対象グループとの所属」の値に、
+ * currentGroupName を現在の所属に置き換える（person_meta の値は persons.group についての値のため）。
+ */
+function templateMeta(
+  person: { name: string; group: string },
+  meta: PersonMeta | undefined,
+  records: MembershipRecord[] | undefined,
+  groupName: string,
+): PersonMeta | null {
+  if (!records?.length) return meta ?? null;
+  const ms = resolvePersonMemberships(person, meta, records);
+  const m = ms.find((x) => x.groupName === groupName);
+  const current = currentMemberships(ms).find((x) => x.source === 'membership');
+  const out: PersonMeta = { ...(meta ?? {}) };
+  delete out.activityStatus; delete out.joinedAt; delete out.leftAt; delete out.currentGroupName;
+  if (m?.status) out.activityStatus = m.status;
+  if (m?.joinedAt) out.joinedAt = m.joinedAt;
+  if (m?.leftAt) out.leftAt = m.leftAt;
+  if (current) out.currentGroupName = current.groupName;
+  return out;
+}
 
 export const MAX_MULTI_PERSONS = 100;
 
@@ -20,10 +57,12 @@ export async function GET(req: Request) {
   }
 
   try {
-    const [allPersons, metaMap] = await Promise.all([
+    const [allPersons, metaMap, membershipRecords] = await Promise.all([
       getAllPersonsMerged(),
       getAllPersonMetas().catch(() => ({} as Record<string, PersonMeta>)),
+      getAllMembershipRecords(),
     ]);
+    const recordsByPerson = groupMembershipRecords(membershipRecords);
 
     // 複数人モード: ?persons=name1,name2,...
     if (personsParam) {
@@ -44,7 +83,7 @@ export async function GET(req: Request) {
         .filter((name) => personMap.has(name))
         .map((name) => {
           const p = personMap.get(name)!;
-          return { name: p.name, group: p.group ?? '', meta: metaMap[name] ?? null };
+          return { name: p.name, group: p.group ?? '', meta: templateMeta(p, metaMap[name], recordsByPerson.get(name), p.group ?? '') };
         });
       return NextResponse.json({ members });
     }
@@ -53,19 +92,24 @@ export async function GET(req: Request) {
       const person = allPersons.find((p) => p.name === personName);
       if (!person) return NextResponse.json({ error: '人物が見つかりません' }, { status: 404 });
       return NextResponse.json({
-        members: [{ name: person.name, group: person.group ?? '', meta: metaMap[person.name] ?? null }],
+        members: [{ name: person.name, group: person.group ?? '', meta: templateMeta(person, metaMap[person.name], recordsByPerson.get(person.name), person.group ?? '') }],
       });
     }
 
-    const members = allPersons.filter((p) => p.group === group);
+    // persons.group に加え、所属履歴でこのグループに所属（現在・過去）する人物も含める。
+    // 所属履歴がある人物の行の groupName は対象グループ（その所属の状態・日付を出す）
+    const members = personsInGroup(group!, allPersons, recordsByPerson);
     if (members.length === 0) return NextResponse.json({ members: [] });
 
     return NextResponse.json({
-      members: members.map((m) => ({
-        name: m.name,
-        group: m.group ?? '',
-        meta: metaMap[m.name] ?? null,
-      })),
+      members: members.map((m) => {
+        const records = recordsByPerson.get(m.name);
+        return {
+          name: m.name,
+          group: records?.length ? group! : (m.group ?? ''),
+          meta: templateMeta(m, metaMap[m.name], records, group!),
+        };
+      }),
     });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
@@ -137,6 +181,44 @@ export interface PreviewRow {
   hasChanges: boolean;
   error?: string;
   duplicate?: boolean;
+  /** 所属履歴（person_group_memberships）がある人物：所属に関する列は所属履歴に反映する */
+  membershipManaged?: boolean;
+  membershipUpserts?: MembershipUpsert[];
+  /** 反映しなかった値（既存と異なる・脱退済みを現役に戻す等）。管理画面の所属編集で確認する */
+  conflicts?: MembershipConflict[];
+  notes?: string[];
+}
+
+// 所属履歴がある人物では、これらの列を person_meta に直接書かず planMembershipCsvRow で扱う
+const MEMBERSHIP_COLUMNS = ['activityStatus', 'joinedAt', 'leftAt', 'currentGroupName', 'formerGroupNames'] as const;
+
+function previewForMembershipPerson(
+  row: Record<string, string>,
+  person: { name: string; group: string },
+  existing: PersonMeta,
+  records: MembershipRecord[],
+): Pick<PreviewRow, 'changes' | 'membershipUpserts' | 'conflicts' | 'notes'> {
+  const rest: Record<string, string> = { ...row };
+  for (const c of MEMBERSHIP_COLUMNS) rest[c] = '';
+  const changes = computeChanges(rest, existing);
+  const plan = planMembershipCsvRow({
+    personGroup: person.group,
+    records,
+    existingFormerGroupNames: existing.formerGroupNames,
+    row: {
+      groupName: row['groupName'] ?? '',
+      activityStatus: row['activityStatus'] ?? '',
+      joinedAt: row['joinedAt'] ?? '',
+      leftAt: row['leftAt'] ?? '',
+      currentGroupName: row['currentGroupName'] ?? '',
+      formerGroupNames: row['formerGroupNames'] ?? '',
+    },
+  });
+  if (plan.formerGroupNames) {
+    const old = (existing.formerGroupNames ?? []).join(', ');
+    changes.push({ field: 'formerGroupNames', action: 'update', oldValue: old || undefined, newValue: plan.formerGroupNames.join(', ') });
+  }
+  return { changes, membershipUpserts: plan.upserts, conflicts: plan.conflicts, notes: plan.notes };
 }
 
 function computeChanges(row: Record<string, string>, existing: PersonMeta): FieldChange[] {
@@ -227,13 +309,16 @@ export async function POST(req: Request) {
     const rows = parseCsv(csv);
     if (rows.length === 0) return NextResponse.json({ error: 'データ行がありません' }, { status: 400 });
 
-    // 全人物名セット + 全 PersonMeta を取得
-    const [allPersons, metaMap] = await Promise.all([
+    // 全人物名セット + 全 PersonMeta + 所属履歴を取得
+    const [allPersons, metaMap, membershipRecords] = await Promise.all([
       getAllPersonsMerged(),
       getAllPersonMetas().catch(() => ({} as Record<string, PersonMeta>)),
+      getAllMembershipRecords(),
     ]);
 
     const personNameSet = new Set(allPersons.map((p) => p.name));
+    const personByName = new Map(allPersons.map((p) => [p.name, p]));
+    const recordsByPerson = groupMembershipRecords(membershipRecords);
 
     const seenNames = new Set<string>();
     const previewRows: PreviewRow[] = rows.map((row) => {
@@ -245,6 +330,18 @@ export async function POST(req: Request) {
       seenNames.add(name);
       const found = personNameSet.has(name);
       const existing = metaMap[name] ?? {};
+      const records = recordsByPerson.get(name);
+      if (found && records?.length) {
+        const m = previewForMembershipPerson(row, personByName.get(name)!, existing, records);
+        return {
+          name,
+          found,
+          groupName: row['groupName']?.trim() ?? '',
+          ...m,
+          membershipManaged: true,
+          hasChanges: m.changes.length > 0 || (m.membershipUpserts?.length ?? 0) > 0,
+        };
+      }
       const changes = found ? computeChanges(row, existing) : [];
       return {
         name,
@@ -262,6 +359,7 @@ export async function POST(req: Request) {
           total: previewRows.length,
           toUpdate: previewRows.filter((r) => r.found && r.hasChanges && !r.duplicate).length,
           toSkip: previewRows.filter((r) => !r.found || !r.hasChanges || r.duplicate).length,
+          conflicts: previewRows.reduce((n, r) => n + (r.conflicts?.length ?? 0), 0),
         },
       });
     }
@@ -275,8 +373,14 @@ export async function POST(req: Request) {
     for (const preview of previewRows) {
       if (!preview.found || !preview.hasChanges || preview.duplicate) { skipped++; continue; }
       try {
-        const newMeta = applyChanges(metaMap[preview.name] ?? {}, preview.changes);
-        await upsertPersonMeta(preview.name, newMeta);
+        if (preview.changes.length > 0) {
+          const newMeta = applyChanges(metaMap[preview.name] ?? {}, preview.changes);
+          await upsertPersonMeta(preview.name, newMeta);
+        }
+        if (preview.membershipUpserts?.length) {
+          // 所属履歴の追加・空欄の補完（競合した値は反映しない）。person_meta の旧フィールドもここで揃える
+          await saveMembershipsForPerson(personByName.get(preview.name)!, preview.membershipUpserts);
+        }
         const groupsToEnsure = [
           preview.groupName,
           preview.changes.find((c) => c.field === 'currentGroupName' && c.action === 'update')?.newValue,

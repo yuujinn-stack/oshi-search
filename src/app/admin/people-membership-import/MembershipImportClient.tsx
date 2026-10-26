@@ -825,7 +825,38 @@ interface ApplyResult {
 
 interface PreviewData {
   rows: PreviewRow[];
-  summary: { total: number; toUpdate: number; toSkip: number };
+  summary: { total: number; toUpdate: number; toSkip: number; conflicts?: number };
+}
+
+const MEMBERSHIP_STATUS_LABEL: Record<string, string> = {
+  active: '現役', graduated: '卒業', withdrawn: '脱退', hiatus: '休止中', retired: '引退', unknown: '不明',
+};
+
+// 所属履歴（person_group_memberships）がある人物の、所属履歴への反映内容と反映しなかった値（競合）
+function MembershipDetails({ row }: { row: PreviewRow }) {
+  if (!row.membershipManaged) return null;
+  const upserts = row.membershipUpserts ?? [];
+  const conflicts = row.conflicts ?? [];
+  const notes = row.notes ?? [];
+  if (upserts.length === 0 && conflicts.length === 0 && notes.length === 0) {
+    return <p className="text-[11px] text-gray-400">所属履歴で管理中（所属の変更なし）</p>;
+  }
+  return (
+    <div className="space-y-1 text-[11px]">
+      {upserts.map((u) => (
+        <p key={`u-${u.groupName}`} className="text-indigo-700">
+          所属履歴：{u.groupName}［{MEMBERSHIP_STATUS_LABEL[u.activityStatus] ?? u.activityStatus}］
+          {u.joinedAt && ` 加入 ${u.joinedAt}`}{u.leftAt && ` / 脱退・卒業 ${u.leftAt}`}
+        </p>
+      ))}
+      {notes.map((n) => <p key={`n-${n}`} className="text-gray-500">{n}</p>)}
+      {conflicts.map((c, i) => (
+        <p key={`c-${i}`} className="text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+          ⚠ 反映しません（{c.groupName} の {FIELD_LABEL[c.field] ?? c.field}）：既存 {c.existing ? (MEMBERSHIP_STATUS_LABEL[c.existing] ?? c.existing) : '未設定'} ／ CSV {MEMBERSHIP_STATUS_LABEL[c.incoming] ?? c.incoming} — {c.reason}。必要なら作品管理の人物編集（📝 → 所属履歴）で変更してください。
+        </p>
+      ))}
+    </div>
+  );
 }
 
 type Step = 'input' | 'preview' | 'done';
@@ -858,12 +889,13 @@ function DiffCard({ row }: { row: PreviewRow }) {
 
   if (!row.hasChanges) {
     return (
-      <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+      <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 space-y-1.5">
         <p className="text-xs font-medium text-gray-400">
           {row.name}
           {row.groupName && <span className="font-normal ml-1">({row.groupName})</span>}
           <span className="ml-2 text-[10px] bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded-full">変更なし</span>
         </p>
+        <MembershipDetails row={row} />
       </div>
     );
   }
@@ -873,8 +905,9 @@ function DiffCard({ row }: { row: PreviewRow }) {
       <p className="text-xs font-bold text-slate-700 flex items-center gap-2">
         {row.name}
         {row.groupName && <span className="font-normal text-gray-400">({row.groupName})</span>}
-        <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full">更新 {row.changes.length}件</span>
+        <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full">更新 {row.changes.length + (row.membershipUpserts?.length ?? 0)}件</span>
       </p>
+      <MembershipDetails row={row} />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
         {row.changes.map((ch, i) => (
           <div key={i} className="flex items-center gap-2 text-[11px]">
@@ -1096,6 +1129,12 @@ function ImportSection({
             </div>
           ))}
         </div>
+
+        {(summary.conflicts ?? 0) > 0 && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            ⚠ 既存の所属履歴と異なる値が {summary.conflicts} 件あります。これらは上書きせず、そのまま残します（下の各人物の「反映しません」を確認してください）。
+          </p>
+        )}
 
         {/* 更新予定の人物ごとの差分 */}
         {updateRows.length > 0 ? (

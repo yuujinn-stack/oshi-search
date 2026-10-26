@@ -5027,3 +5027,70 @@ SNS で縮小表示されても、推し名・サービス名・作品数とカ�
 
 ### 追記：公開前のデザイン名の変更
 - 布教カードのデザインの表示名を「かっこいい／可愛い」→「ノーマル（すっきり・見やすいデザイン）／デコ（カラフル・シール風デザイン）」に変更（OshiCardVariantToggle・画像の alt・説明文）。内部の値 cool / cute は共有URL（v）・OG画像・GA4（variant）との互換のため維持。初期選択はノーマル（cool）、URL で指定があればそちらを優先。画像デザイン・サブスク診断の名称は変更なし。
+
+---
+
+## Task 154：人物とグループの所属履歴（複数所属・移籍）— Number_i / King & Prince
+
+**目的：** King & Prince を脱退して Number_i で活動している平野紫耀・神宮寺勇太・岸優太の所属を、人物ページ・グループページ・管理画面で正しく連動させる。所属履歴を保持したまま現在の所属を表示でき、今後ほかのグループを脱退・移籍した人物にも使える汎用的な仕組みにする。
+
+**原因：**
+- 所属の判定がすべて `persons.group_name`（1人1グループ）だけで行われていた。グループページは `p.group === グループ名` でメンバーを集め、0人なら 404。Number_i は group_meta（slug=number-i）はあったが、group_name が Number_i の人物がいないため `/groups/number-i` が 404。
+- `person_meta.activityStatus / joinedAt / leftAt` は人物に1つずつで、どのグループについての値か区別できない。3人は `activityStatus=withdrawn`（King & Prince について）しか無く、人物ページで「活動状況：脱退」と表示され、FAQ も「King & Prince のメンバーです」と答えていた。
+- `currentGroupName` は平野紫耀だけに入っており、人物ページの表示にしか使われていなかった（グループページ・一覧・検索は未対応）。
+- トップ・検索・サイトマップ・ヘッダー検索候補・サブスク診断の人物選択のグループ一覧も `persons.group` の重複なし一覧だったため、Number_i が出なかった。
+
+**構造（既存テーブルは変更なし・新規テーブル1つ）：**
+- 新規 `person_group_memberships`（`drizzle/0021_person_group_memberships.sql`・`src/db/schema.ts` の `personGroupMemberships`・`/admin/db-init` にも追加）：`person_name`（= persons.name）・`group_name`（= group_meta.group_name）・`activity_status`（そのグループとの所属状態）・`joined_at`・`left_at`（不明は NULL）・`note`。UNIQUE (person_name, group_name)。過去所属と現在所属（同時期の複数所属）を同時に持てる。
+- 既存の人物・グループのキーがともに名前のため、personId/groupId は名前（persons.name / group_meta.group_name）。人物レコード・人物IDは変更しない。
+- `careerStatus`（芸能活動全体）とは独立。脱退等の状態はそのグループとの所属だけに適用する。
+
+**解釈（`src/lib/group-membership.ts`。純粋関数・クライアントからも使用）：**
+- 情報源の優先順：① 所属履歴の行（source=membership）→ ② 行の無いグループについては従来の `persons.group` + `person_meta.activityStatus/joinedAt/leftAt`（source=registered）→ ③ `formerGroupNames`（source=former_list・状態不明）。
+- **行が無い人物は従来とまったく同じ解釈**（他グループの表示・人数を変えない）。`currentGroupName` は所属の判定に使わない（IKE→TOOKAMI のような既存データを勝手に新グループのメンバーにしないため）。
+- 主な関数：`resolvePersonMemberships`・`currentMemberships/pastMemberships`・`displayGroupOf`（表示の代表グループ。行がある人物は現在の所属）・`personsInGroup`／`buildGroupRoster`（グループの所属者）・`listGroupNames`（公開グループ一覧＝persons.group の従来の並び＋所属履歴だけのグループ）・`careerStatusLabel`（careerStatus → 無ければ現役の所属がある場合だけ「活動中」。推測しない）・`legacyMetaMirror`・`validateMembershipInputs`。
+- 読み込み：`src/lib/group-membership-store.ts`（`getAllMembershipRecords` は react `cache()`。取得失敗・テーブル未作成時は [] を返し全員が従来の解釈になる＝ページは落ちない）。書き込み：`upsertMemberships`（(人物,グループ) 単位の upsert）・`deleteMemberships`（管理画面で明示削除した行だけ）。どちらも `revalidatePublicListings()` を呼ぶ。
+- 保存の共通処理 `src/lib/group-membership-service.ts`：行の保存 → `ensureGroupMeta`（既存のグループ登録ルール）→ person_meta の旧項目（persons.group についての activityStatus・日付。日付は値がある場合だけ）を揃える。**currentGroupName は書き換えない**（`product-membership-guard` が currentGroupName を「脱退したグループ」として扱うため、移籍先を入れると商品の自動判定が変わる）。
+
+**変更（公開ページ）：**
+- `/groups/[groupSlug]`：メンバーは `personsInGroup`（persons.group または所属履歴）。状態は「そのグループとの所属」の状態（行が無い人物は従来どおり）。カードの脱退日も所属行の値。generateMetadata の人数・関連グループも同じ判定。Organization JSON-LD は `member`＝現在のメンバー、卒業・脱退は `alumni`。所属履歴で加わった人物のカードはそのグループ名を表示。
+- `/person/[slug]`：title・パンくず・ヒーロー背景・groupMeta は `displayGroupOf`。所属履歴がある人物はプロフィールを「所属（現在）／活動状況（careerStatus or 活動中）／加入日（現在の所属）／過去所属：King & Prince（脱退） 脱退日：2023-05-22 ＋ formerGroupNames だけのグループ名」に。行が無い人物のプロフィールは従来のコードのまま。
+  - FAQ（全人物）：現在の所属があれば「Xは{現在}のメンバーです。以前は{過去}（{日付}脱退）に所属していました。」、現在の所属が無く登録グループが卒業・脱退なら「Xは{G}の元メンバーです（{日付}卒業）」。現役の人物の文面は従来と同じ。
+  - Person JSON-LD：`memberOf`＝現在の所属だけ、卒業・脱退したグループは `alumniOf`。description も「{現在}所属」／「元{G}」。
+  - 関連メンバー：現在の所属グループ → 過去の所属グループ（「過去の所属」ラベル）の順にグループごと最大4人。行が無い人物は従来どおり persons.group の1グループ。
+  - `PersonHero`：任意の `affiliation` を受け取り、所属履歴がある人物だけ現在の所属リンク・活動状況・「元King & Prince（脱退 2023-05）」を表示（行が無い人物は従来表示）。
+- トップ（`src/app/page.tsx`）：グループ一覧・検索候補を `listGroupNames`。所属履歴は `unstable_cache`（`home-group-memberships`・PUBLIC_LISTING_CACHE_TAG）で保持し、保存時に即時無効化。人物候補の補足は `displayGroupOf`。
+- 検索（`src/app/search/page.tsx`）：人物は所属グループ（移籍先を含む）でも一致。グループ検索・人数（現役／元）は所属ごとの状態。サジェストも同様。
+- サイトマップ（`getAllGroupsMerged`）・ヘッダー検索候補（`Header.tsx`）：所属履歴だけのグループも含める。
+- サブスク診断などの人物選択（`src/lib/oshi-vod/data.ts`・`picker.ts`）：所属履歴がある人物は `memberships` を持ち、移籍先の現メンバーと元のグループの元メンバーの両方に入る。行が無い人物は従来どおり。
+
+**変更（管理画面）：**
+- `/admin/work-check`：人物ごとに解釈済みの所属（`memberships`）を渡す。グループ絞り込みの候補・判定に所属履歴（現在・過去）を含める（King & Prince で脱退した3人も表示、Number_i も選べる）。絞り込み中の活動状態フィルタはそのグループとの所属の状態。
+  - 一覧の行（`PersonCard`）：所属履歴がある人物は「King & Prince［脱退］ 現在：Number_i［現役］」（絞り込み中）／「Number_i［現役］ 元King & Prince［脱退］」（絞り込みなし）。行が無い人物は従来表示。
+  - 📝 編集パネルに `MembershipEditor`（新規）：現在の所属／過去の所属を分けて表示し、グループごとに状態・加入日・脱退/卒業日を編集・追加・削除（削除は確認あり、人物・作品データは消さない）。日付は空欄＝不明。旧項目（活動状態・加入日・卒業日・現在G・過去G）は「登録グループについての旧項目」と注記して残す。
+  - API 新規 `/api/admin/person-memberships`（GET/POST。proxy の /api/admin 認証の対象）。入力チェック：グループ名必須・重複不可・状態の値・日付形式（YYYY / YYYY-MM / YYYY-MM-DD）・現役/休止中に脱退日不可。
+- 所属情報CSV（`/admin/people-membership-import`）：CSV形式は変更なし。
+  - **所属履歴がある人物**は、所属の列（activityStatus / joinedAt / leftAt / currentGroupName / formerGroupNames）を person_meta に直接書かず `planMembershipCsvRow`（新規 `src/lib/group-membership-csv.ts`）で扱う：行の値は「groupName（空なら persons.group）との所属」の値。空欄は変更しない／既存の値が空の項目だけ埋める／既存と異なる値は上書きせず「競合」としてプレビューに表示（⚠ 反映しません …）／脱退・卒業済みを現役に戻さない／currentGroupName に所属履歴の無いグループ・脱退済みのグループがあっても所属行は作らず競合／formerGroupNames は既存と合わせる（消さない・現役の所属グループは追加しない）。その他の列（期別・ジャンル等）は従来どおり person_meta へ。
+  - 所属履歴が無い人物は従来どおり（変更なし）。
+  - テンプレート（GET）：`?group=` は所属履歴でそのグループに所属する人物も含め、その人物の行は対象グループとの所属の状態・日付・現在の所属で出す。グループの候補も `listGroupNames`。
+- 人物CSV（`/admin/people/import`）は既存の名前をスキップする仕様のため変更なし（再取込で人物の重複・人物IDの変更は起きない）。
+
+**DB移行（本番・2026-10-26）：**
+- 実施前に `persons`・`person_meta`・`group_meta` の全行を `tmp/backups/membership-pre-migration-*.json` に保存（ローカル・git 対象外）。Neon のバックアップAPIはこの環境から使えないため、変更対象テーブルの論理バックアップを復元手段とした。
+- `person_group_memberships` を `CREATE TABLE IF NOT EXISTS`（既存テーブルの変更・削除なし）。
+- `scripts/group-membership/apply-memberships.ts`（既定は確認のみ・`--apply` で登録。(人物,グループ) の upsert で冪等。既存の人物レコードだけを対象にし、登録グループの所属行は person_meta の既存値〔状態が想定と違えば停止〕から作る。実行前に対象行を tmp/ に保存）で9行を登録：
+  - King & Prince：平野紫耀・神宮寺勇太・岸優太（脱退 2018-01-17〜2023-05-22）、岩橋玄樹（脱退 2018-01-17〜2021-03-31）、永瀬廉・髙橋海人（現役 2018-01-17〜）。既存の脱退日を保持。
+  - Number_i：平野紫耀・神宮寺勇太・岸優太（現役。加入日は既存データで確認できないため NULL）。
+  - group_meta は King & Prince（king-prince）・Number_i（number-i）とも既存のため新設なし。前身ユニット（BOYS AND MEN 等）は formerGroupNames のまま（グループマスター・所属行は作らない）。
+  - 2回目の実行は「変更予定: 0行」。persons 497件・重複なし。person_meta は移行前のバックアップと全497行一致（途中で currentGroupName を書いた2行は、商品判定への影響を避けるため設計を見直してバックアップの値に戻した）。
+
+**確認：**
+- 実データでの比較（読み取りのみ）：所属履歴なしでは全24グループで変更前のグループページと人数一致。登録後に変わるのは Number_i（0人→現役3人）だけ。King & Prince は現役2・脱退4（変更前と同じ）。
+- ローカル（本番DB・`next dev`）：`/groups/number-i` 200（`/groups/Number_i`・`/group/Number_i` は 308 → number-i）。3人の人物ページは title「（Number_i）」・所属 Number_i・活動状況 活動中・過去所属 King & Prince（脱退） 脱退日：2023-05-22・FAQ/JSON-LD（memberOf=Number_i・alumniOf=King & Prince）・パンくず Number_i。永瀬廉は従来どおり King & Prince。乃木坂46・King & Prince のFAQは本番と同一。検索「Number_i」でグループ（現役3人）と3人。トップ・サイトマップに Number_i（サイトマップのグループ 24→25）。
+- `/admin/work-check` はローカルに Upstash の認証情報が無くヘルスチェックで止まるため、本番反映後に確認。
+- テスト：新規 `group-membership.test.ts`（25件：K&P 現役2・脱退4、Number_i 現役3、3人の現在所属、K&P の履歴保持、行が無い人物は従来どおり、重複行でも人数不変、古いCSVの再取込で壊れない、formerGroupNames を消さない、冪等、サブスク診断のグループ分け、入力チェック）、`people-membership-import.test.ts` に4件追加（古いK&P CSV の preview/apply・2回適用・所属以外の列・テンプレート）。`public-listing-cache.test.ts` のトップのタグ付きキャッシュ数を 5→6。`npx tsc --noEmit` 0件、`npx vitest run` 151ファイル/2486件成功。
+
+**未対応・注意：**
+- IKE（SPYAIR 脱退・currentGroupName=TOOKAMI）も同じ形のデータ。今回は対象外のため所属行を作っていない（作れば TOOKAMI のグループページ等に反映される）。
+- `currentGroupName` を読む既存機能（Instagram予約のグループ絞り込み `person-group-filter`・投稿文のグループ名・動画作成・商品の卒業後グループ判定 `product-membership-guard`）は今回変更していない（平野紫耀のみ従来から currentGroupName=Number_i）。商品判定を所属履歴ベースにするのは別タスク。
+- Number_i の加入日（結成日）は既存データに無いため未設定。必要なら管理画面の所属履歴で入力する。

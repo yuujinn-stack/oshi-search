@@ -6,17 +6,23 @@ const {
   mockGetAllPersonMetas,
   mockUpsertPersonMeta,
   mockEnsureGroupMeta,
+  mockGetAllMembershipRecords,
+  mockSaveMembershipsForPerson,
 } = vi.hoisted(() => ({
   mockGetAllPersonsMerged: vi.fn(),
   mockGetAllPersonMetas: vi.fn(),
   mockUpsertPersonMeta: vi.fn(),
   mockEnsureGroupMeta: vi.fn(),
+  mockGetAllMembershipRecords: vi.fn(),
+  mockSaveMembershipsForPerson: vi.fn(),
 }));
 
 vi.mock('@/lib/persons', () => ({ getAllPersonsMerged: mockGetAllPersonsMerged }));
 vi.mock('@/lib/person-meta', () => ({ getAllPersonMetas: mockGetAllPersonMetas }));
 vi.mock('@/db/write', () => ({ upsertPersonMeta: mockUpsertPersonMeta }));
 vi.mock('@/lib/group-meta', () => ({ ensureGroupMeta: mockEnsureGroupMeta }));
+vi.mock('@/lib/group-membership-store', () => ({ getAllMembershipRecords: mockGetAllMembershipRecords }));
+vi.mock('@/lib/group-membership-service', () => ({ saveMembershipsForPerson: mockSaveMembershipsForPerson }));
 
 import { GET, POST, MAX_MULTI_PERSONS } from '@/app/api/admin/people-membership-import/route';
 
@@ -57,6 +63,8 @@ beforeEach(() => {
   mockGetAllPersonMetas.mockResolvedValue(META_FIXTURE);
   mockUpsertPersonMeta.mockResolvedValue(undefined);
   mockEnsureGroupMeta.mockResolvedValue(false);
+  mockGetAllMembershipRecords.mockResolvedValue([]);
+  mockSaveMembershipsForPerson.mockResolvedValue({ records: [], groupsCreated: [] });
 });
 
 // ─── T1: 複数人更新モード定数が存在する ──────────────────────────────────────
@@ -374,5 +382,82 @@ describe('POST apply', () => {
     const csv = makeCsv([['田中花子', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']]);
     const res = await POST(makePostRequest({ csv, action: 'invalid' }));
     expect(res.status).toBe(400);
+  });
+});
+
+// ─── 所属履歴（person_group_memberships）がある人物 ─────────────────────────────
+describe('所属履歴がある人物（King & Prince → Number_i）', () => {
+  const KP_PERSONS = [
+    { name: '平野紫耀', group: 'King & Prince', genre: 'アーティスト', config: {} },
+    { name: '永瀬廉', group: 'King & Prince', genre: 'アーティスト', config: {} },
+  ];
+  const KP_META = {
+    平野紫耀: { activityStatus: 'withdrawn', joinedAt: '2018-01-17', leftAt: '2023-05-22', currentGroupName: 'Number_i', formerGroupNames: ['Mr.KING', 'King & Prince'] },
+    永瀬廉: { activityStatus: 'active', joinedAt: '2018-01-17' },
+  };
+  const KP_RECORDS = [
+    { personName: '平野紫耀', groupName: 'King & Prince', activityStatus: 'withdrawn', joinedAt: '2018-01-17', leftAt: '2023-05-22' },
+    { personName: '平野紫耀', groupName: 'Number_i', activityStatus: 'active', joinedAt: null, leftAt: null },
+    { personName: '永瀬廉', groupName: 'King & Prince', activityStatus: 'active', joinedAt: '2018-01-17', leftAt: null },
+  ];
+  beforeEach(() => {
+    mockGetAllPersonsMerged.mockResolvedValue(KP_PERSONS);
+    mockGetAllPersonMetas.mockResolvedValue(KP_META);
+    mockGetAllMembershipRecords.mockResolvedValue(KP_RECORDS);
+  });
+
+  it('古い King & Prince のCSVを適用しても、脱退済みを現役に戻さず Number_i の現在所属も変えない', async () => {
+    const csv = makeCsv([
+      ['平野紫耀', 'King & Prince', 'active', '', '2018-01-17', '', 'King & Prince', '', '', '', '', '', '', '', '', ''],
+    ]);
+    const preview = await (await POST(makePostRequest({ csv, action: 'preview' }))).json();
+    expect(preview.rows[0].membershipManaged).toBe(true);
+    expect(preview.rows[0].hasChanges).toBe(false);
+    expect(preview.rows[0].conflicts.map((c: { field: string }) => c.field).sort()).toEqual(['activityStatus', 'currentGroupName']);
+    expect(preview.summary.conflicts).toBe(2);
+
+    const applied = await (await POST(makePostRequest({ csv, action: 'apply' }))).json();
+    expect(applied.updated).toBe(0);
+    expect(mockUpsertPersonMeta).not.toHaveBeenCalled();
+    expect(mockSaveMembershipsForPerson).not.toHaveBeenCalled();
+  });
+
+  it('同じCSVを2回適用しても所属履歴は変わらない（空欄の補完だけ・2回目は変更なし）', async () => {
+    const csv = makeCsv([['平野紫耀', 'Number_i', 'active', '', '2023-10', '', '', '', '', '', '', '', '', '', '', '']]);
+    const first = await (await POST(makePostRequest({ csv, action: 'apply' }))).json();
+    expect(first.updated).toBe(1);
+    expect(mockSaveMembershipsForPerson).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '平野紫耀' }),
+      [{ groupName: 'Number_i', activityStatus: 'active', joinedAt: '2023-10', leftAt: null, note: null }],
+    );
+    // 1回目の結果を反映した状態で2回目
+    mockGetAllMembershipRecords.mockResolvedValue(KP_RECORDS.map((r) => (r.groupName === 'Number_i' ? { ...r, joinedAt: '2023-10' } : r)));
+    mockSaveMembershipsForPerson.mockClear();
+    const second = await (await POST(makePostRequest({ csv, action: 'apply' }))).json();
+    expect(second.updated).toBe(0);
+    expect(mockSaveMembershipsForPerson).not.toHaveBeenCalled();
+  });
+
+  it('所属以外の列（期別など）は従来どおり person_meta に反映し、formerGroupNames は既存を消さない', async () => {
+    const csv = makeCsv([['平野紫耀', 'King & Prince', '', '', '', '', '', 'Kin Kan', '', '歌手', '', '', '', '', '', '']]);
+    await POST(makePostRequest({ csv, action: 'apply' }));
+    expect(mockUpsertPersonMeta).toHaveBeenCalledTimes(1);
+    const saved = mockUpsertPersonMeta.mock.calls[0][1];
+    expect(saved.formerGroupNames).toEqual(['Mr.KING', 'King & Prince', 'Kin Kan']);
+    expect(saved.primaryGenre).toBe('歌手');
+    // 所属の旧項目は CSV から直接書き換えない
+    expect(saved.activityStatus).toBe('withdrawn');
+    expect(saved.currentGroupName).toBe('Number_i');
+  });
+
+  it('GET ?group=Number_i のテンプレートに移籍した人物が含まれ、その所属の状態で出る', async () => {
+    const data = await (await GET(makeGetRequest(`/api/admin/people-membership-import?group=${encodeURIComponent('Number_i')}`))).json();
+    expect(data.members).toHaveLength(1);
+    expect(data.members[0]).toMatchObject({ name: '平野紫耀', group: 'Number_i' });
+    expect(data.members[0].meta.activityStatus).toBe('active');
+    expect(data.members[0].meta.leftAt).toBeUndefined();
+    const kp = await (await GET(makeGetRequest(`/api/admin/people-membership-import?group=${encodeURIComponent('King & Prince')}`))).json();
+    const hirano = kp.members.find((m: { name: string }) => m.name === '平野紫耀');
+    expect(hirano.meta).toMatchObject({ activityStatus: 'withdrawn', leftAt: '2023-05-22', currentGroupName: 'Number_i' });
   });
 });

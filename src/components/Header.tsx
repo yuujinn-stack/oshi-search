@@ -2,20 +2,24 @@ import Link from 'next/link';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHref, groupHrefByName } from '@/lib/group-slug';
+import { getAllMembershipRecords } from '@/lib/group-membership-store';
+import { displayGroupOf, groupMembershipRecords, listGroupNames } from '@/lib/group-membership';
 import SearchForm from './SearchForm';
 import HeaderSearchSlot from './HeaderSearchSlot';
 import type { SuggestionItem } from '@/types/search';
 
 export default async function Header() {
-  const [persons, groupMetas] = await Promise.all([
+  const [persons, groupMetas, membershipRecords] = await Promise.all([
     getAllPersonsMerged(),
     getAllGroupMetas(),
+    getAllMembershipRecords(),
   ]);
+  const recordsByPerson = groupMembershipRecords(membershipRecords);
 
   // 人物候補（名前 + エイリアス）
   const personSuggestions: SuggestionItem[] = persons.flatMap((p) => {
     const items: SuggestionItem[] = [
-      { label: p.name, sublabel: p.group || undefined, href: `/person/${encodeURIComponent(p.name)}`, type: 'person' },
+      { label: p.name, sublabel: displayGroupOf(p, recordsByPerson.get(p.name)) || undefined, href: `/person/${encodeURIComponent(p.name)}`, type: 'person' },
     ];
     for (const alias of p.config.aliases ?? []) {
       items.push({ label: alias, sublabel: p.name, href: `/search?q=${encodeURIComponent(alias)}`, type: 'alias' });
@@ -24,7 +28,8 @@ export default async function Header() {
   });
 
   // グループ候補（グループ名 + 旧名）
-  const groupNames = new Set(persons.map((p) => p.group).filter(Boolean) as string[]);
+  // persons.group ＋ 所属履歴にだけ出てくるグループ（移籍先など）
+  const groupNames = listGroupNames(persons, recordsByPerson);
   const groupSuggestions: SuggestionItem[] = [];
   for (const name of groupNames) {
     groupSuggestions.push({ label: name, href: groupHrefByName(name, groupMetas), type: 'group' });

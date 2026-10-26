@@ -15,6 +15,8 @@ import type { GroupMeta } from '@/types/group';
 import type { ActivityStatus, PersonWithConfig } from '@/types/person';
 import type { SuggestionItem } from '@/types/search';
 import { groupHrefByName } from '@/lib/group-slug';
+import { getAllMembershipRecords } from '@/lib/group-membership-store';
+import { buildGroupRoster, displayGroupOf, groupMembershipRecords, listGroupNames, membershipGroupNames } from '@/lib/group-membership';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,11 +60,13 @@ export default async function SearchPage({ searchParams }: Props) {
   const query = q?.trim() ?? '';
 
   // 全データ並行取得（meta系はOrThrowで取得し、Redis失敗を検知する）
-  const [personsResult, groupMetasResult, personMetasResult] = await Promise.allSettled([
+  const [personsResult, groupMetasResult, personMetasResult, membershipResult] = await Promise.allSettled([
     getAllPersonsMerged(),
     getAllGroupMetasOrThrow(),
     getAllPersonMetasOrThrow(),
+    getAllMembershipRecords(),
   ]);
+  const recordsByPerson = groupMembershipRecords(membershipResult.status === 'fulfilled' ? membershipResult.value : []);
   const allPersons =
     personsResult.status === 'fulfilled' ? personsResult.value : getAllPersonsWithConfig();
   const allGroupMetas =
@@ -85,7 +89,8 @@ export default async function SearchPage({ searchParams }: Props) {
 
     persons = allPersons.filter((p) => {
       if (p.name.toLowerCase().includes(ql)) return true;
-      if (p.group.toLowerCase().includes(ql)) return true;
+      // 所属グループ（persons.group ＋ 所属履歴の移籍先など）
+      if (membershipGroupNames(p, recordsByPerson.get(p.name)).some((g) => g.toLowerCase().includes(ql))) return true;
       if (p.genre.toLowerCase().includes(ql)) return true;
       if ((p.config.aliases ?? []).some((a) => a.toLowerCase().includes(ql))) return true;
 
@@ -137,12 +142,10 @@ export default async function SearchPage({ searchParams }: Props) {
     if (!query) return [];
     const ql = query.toLowerCase();
 
-    // 1. personsのgroupフィールドから一致するグループ名を収集
+    // 1. personsのgroupフィールド＋所属履歴から一致するグループ名を収集
     const matched = new Set<string>();
-    for (const p of allPersons) {
-      if (p.group && p.group.toLowerCase().includes(ql)) {
-        matched.add(p.group);
-      }
+    for (const g of listGroupNames(allPersons, recordsByPerson)) {
+      if (g.toLowerCase().includes(ql)) matched.add(g);
     }
 
     // 2. allGroupMetas の旧名・改名元からも補完
@@ -175,10 +178,11 @@ export default async function SearchPage({ searchParams }: Props) {
 
   // ── グループ別メンバー数 ──────────────────────────────────────────────────
   const memberCountMap: Record<string, { active: number; former: number }> = {};
+  // 状態はそのグループとの所属の状態（所属履歴の行が無い人物は従来どおり person_meta.activityStatus）
   for (const group of matchingGroups) {
-    const members = allPersons.filter((p) => p.group === group.groupName);
-    const active = members.filter((p) => {
-      const s = personMetaMap[p.name]?.activityStatus;
+    const { members } = buildGroupRoster(group.groupName, allPersons, personMetaMap, recordsByPerson);
+    const active = members.filter(({ membership }) => {
+      const s = membership.status;
       return !s || s === 'active' || s === 'hiatus' || s === 'unknown';
     }).length;
     memberCountMap[group.groupName] = { active, former: members.length - active };
@@ -214,13 +218,13 @@ export default async function SearchPage({ searchParams }: Props) {
 
   // サジェスト候補を構築
   const suggestions: SuggestionItem[] = [
-    ...[...new Set(allPersons.map((p) => p.group).filter(Boolean) as string[])].map((g) => ({
+    ...listGroupNames(allPersons, recordsByPerson).map((g) => ({
       label: g,
       href: groupHrefByName(g, allGroupMetas),
       type: 'group' as const,
     })),
     ...allPersons.flatMap((p) => [
-      { label: p.name, sublabel: p.group || undefined, href: `/person/${encodeURIComponent(p.name)}`, type: 'person' as const },
+      { label: p.name, sublabel: displayGroupOf(p, recordsByPerson.get(p.name)) || undefined, href: `/person/${encodeURIComponent(p.name)}`, type: 'person' as const },
       ...(p.config.aliases ?? []).map((a) => ({
         label: a, sublabel: p.name, href: `/search?q=${encodeURIComponent(a)}`, type: 'alias' as const,
       })),

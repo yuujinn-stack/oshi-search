@@ -12,6 +12,8 @@ import VodIntensiveModal from './VodIntensiveModal';
 import VodResearchModal from './VodResearchModal';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
 import ManualWorkModal from './ManualWorkModal';
+import MembershipEditor from './MembershipEditor';
+import type { ResolvedMembership } from '@/lib/group-membership';
 import { decideBulkVerdictCsvHandling } from '@/lib/bulk-verdict-guard';
 import { isReleaseYearTooOld } from '@/lib/work-review-signals';
 
@@ -40,6 +42,12 @@ interface Props {
   gender?: 'female' | 'male';
   /** Priority D-5: work_dedup_reviews で pending 状態のworkId集合（「重複候補」フィルター用） */
   pendingDedupWorkIds?: Set<string>;
+  /** グループごとの所属（src/lib/group-membership.ts） */
+  memberships?: ResolvedMembership[];
+  /** 所属履歴（person_group_memberships）の行がある人物 */
+  hasMembershipRecords?: boolean;
+  /** 一覧のグループ絞り込み中のグループ */
+  focusGroup?: string;
 }
 
 type StatusFilter = WorkStatus | 'all';
@@ -53,6 +61,9 @@ export default function PersonWorks({
   primaryGenre, genres, titles, publicRoles, awards, careerStatus, roleNote,
   gender,
   pendingDedupWorkIds,
+  memberships,
+  hasMembershipRecords,
+  focusGroup,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [reviewReasonFilter, setReviewReasonFilter] = useState<ReviewReasonFilter>('all');
@@ -118,6 +129,10 @@ export default function PersonWorks({
   const [currentActivityStatus, setCurrentActivityStatus] = useState<ActivityStatus | ''>(activityStatus ?? '');
   const [currentGeneration, setCurrentGeneration] = useState(generation ?? '');
   const [currentGender, setCurrentGender] = useState<'female' | 'male' | ''>(gender ?? '');
+  // 所属履歴（保存後に一覧の表示へ反映する）
+  const [currentMemberships, setCurrentMemberships] = useState<ResolvedMembership[] | undefined>(
+    hasMembershipRecords ? memberships : undefined,
+  );
 
   async function handleMetaSave() {
     setMetaSaving(true);
@@ -717,6 +732,8 @@ export default function PersonWorks({
             dataFetchStatus={dataFetchStatus}
             activityStatus={currentActivityStatus || undefined}
             generation={currentGeneration || undefined}
+            memberships={currentMemberships}
+            focusGroup={focusGroup}
           />
         </div>
         <div className="flex items-center px-2 shrink-0">
@@ -771,6 +788,28 @@ export default function PersonWorks({
               className="flex-1 min-w-40 text-xs border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300"
             />
           </div>
+          {/* 所属履歴（グループごとの現在・過去の所属） */}
+          <MembershipEditor
+            personName={personName}
+            registeredGroup={group}
+            onSaved={({ memberships: ms, records, currentGroupName: cg }) => {
+              setCurrentMemberships(records.length > 0 ? ms : undefined);
+              // person_meta の旧項目はサーバー側で所属履歴に合わせて更新済み。下の入力欄も揃える
+              if (cg) setEditCurrentGroupName(cg);
+              const reg = records.find((r) => r.groupName === group);
+              if (reg) {
+                setEditActivityStatus(reg.activityStatus);
+                setCurrentActivityStatus(reg.activityStatus);
+                if (reg.joinedAt) setEditJoinedAt(reg.joinedAt);
+                if (reg.leftAt) setEditLeftAt(reg.leftAt);
+              }
+            }}
+          />
+          {currentMemberships && (
+            <p className="text-[10px] text-gray-400">
+              下の「活動状態・加入日・卒業日・現在G・過去G」は旧項目（登録グループ {group || 'なし'} についての値）です。所属の表示は上の所属履歴が優先されます。
+            </p>
+          )}
           {/* 行2: 活動状態・期別・加入日・卒業日 */}
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1">

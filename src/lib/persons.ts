@@ -5,6 +5,8 @@ import personsConfigRaw from '../../data/persons_config.json';
 import { getCachedPublishedPersons } from './published-persons';
 import { splitGenres, sortGenreList, DEFAULT_GENRE_ORDER, type PersonCardMeta } from './genre-utils';
 import { getAllPersonMetas } from './person-meta';
+import { getAllMembershipRecords } from './group-membership-store';
+import { groupMembershipRecords, listGroupNames } from './group-membership';
 import { normalizeTag, getGenreAliases } from './person-display-tags';
 
 export type PersonCardData = PersonWithConfig & PersonCardMeta;
@@ -90,9 +92,10 @@ export async function getPersonWithConfigMerged(name: string): Promise<PersonWit
   return extra.find((p) => p.name === name);
 }
 
+// persons.group に加え、所属履歴（person_group_memberships）にだけ出てくるグループ（移籍先など）も含める
 export async function getAllGroupsMerged(): Promise<string[]> {
-  const all = await getAllPersonsMerged();
-  return [...new Set(all.map((p) => p.group).filter(Boolean))];
+  const [all, records] = await Promise.all([getAllPersonsMerged(), getAllMembershipRecords()]);
+  return listGroupNames(all, groupMembershipRecords(records));
 }
 
 export async function getPersonsByGroupMerged(group: string): Promise<PersonWithConfig[]> {

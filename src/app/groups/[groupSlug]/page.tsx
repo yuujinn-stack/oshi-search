@@ -15,6 +15,8 @@ import { canSelectWholeGroup } from '@/lib/oshi-vod/picker';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getAllPersonMetas } from '@/lib/person-meta';
+import { getAllMembershipRecords } from '@/lib/group-membership-store';
+import { buildGroupRoster, groupMembershipRecords, listGroupNames, personsInGroup } from '@/lib/group-membership';
 import { getAllGroupMetasOrThrow, getAllGroupMetas } from '@/lib/group-meta';
 import { getPublicGroupNote } from '@/lib/group-note';
 import { groupHref, groupHrefByName, resolveGroupFromSlug, resolveGroupName, canonicalGroupSlug, SLUG_TO_GROUP_NAME } from '@/lib/group-slug';
@@ -66,6 +68,8 @@ const ACTIVITY_BADGE_CLS: Record<ActivityStatus, string> = {
 type EnrichedMember = PersonWithConfig & {
   meta: PersonMeta;
   effectiveStatus: ActivityStatus;
+  /** このグループとの所属の脱退・卒業日（所属履歴の行 → 無ければ person_meta.leftAt） */
+  leftAt?: string;
 };
 
 function toCardData(m: EnrichedMember): GroupMemberCardData {
@@ -75,7 +79,7 @@ function toCardData(m: EnrichedMember): GroupMemberCardData {
     genre: m.genre,
     generation: m.meta.generation,
     activityStatus: m.effectiveStatus,
-    leftAt: m.meta.leftAt,
+    leftAt: m.leftAt,
   };
 }
 
@@ -255,8 +259,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   // resolveGroupName: GroupMeta なし・slug 未設定でも固定マッピングでグループ名を解決
   const groupName = resolveGroupName(groupSlug, allGroupMetas) ?? decodeURIComponent(groupSlug);
 
-  const allPersons = await getAllPersonsMerged();
-  const memberCount = allPersons.filter((p) => p.group === groupName).length;
+  const [allPersons, membershipRecords] = await Promise.all([getAllPersonsMerged(), getAllMembershipRecords()]);
+  // 所属履歴（person_group_memberships）にだけ所属があるグループ（移籍先など）も対象にする
+  const memberCount = personsInGroup(groupName, allPersons, groupMembershipRecords(membershipRecords)).length;
   if (memberCount === 0) return {};
 
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
@@ -283,13 +288,15 @@ export default async function GroupsPage({ params }: Props) {
 
   // ── GroupMeta 取得 + メンバー取得 ──
   // 互いに依存しないため並列実行（直列だと group_meta 取得完了までメンバー取得が遅延していた）
-  const [groupMetaResult, allPersons] = await Promise.all([
+  const [groupMetaResult, allPersons, membershipRecords] = await Promise.all([
     getAllGroupMetasOrThrow().then(
       (data) => ({ data, error: false }),
       () => ({ data: [] as GroupMeta[], error: true }),
     ),
     getAllPersonsMerged(),
+    getAllMembershipRecords(),
   ]);
+  const recordsByPerson = groupMembershipRecords(membershipRecords);
   const allGroupMetas = groupMetaResult.data;
   const groupMetaRedisError = groupMetaResult.error;
 
@@ -310,7 +317,8 @@ export default async function GroupsPage({ params }: Props) {
   const groupMeta: GroupMeta | null = resolvedMeta ?? null;
 
   // ── メンバー抽出 ──
-  const members = allPersons.filter((p) => p.group === groupName);
+  // persons.group が このグループ、または所属履歴（person_group_memberships）にこのグループがある人物（現在・過去）
+  const members = personsInGroup(groupName, allPersons, recordsByPerson);
 
   void groupMetaRedisError;
 
@@ -367,20 +375,29 @@ export default async function GroupsPage({ params }: Props) {
   ]);
 
   // ── メンバー分類 ──────────────────────────────────────────────────────────────
+  // 状態は「このグループとの所属」の状態（src/lib/group-membership.ts）。所属履歴の行が無い人物は
+  // 従来どおり person_meta.activityStatus（persons.group についての状態）。
+  const roster = buildGroupRoster(groupName, members, personMetaMap, recordsByPerson);
+  const membershipByName = new Map(roster.members.map((e) => [e.person.name, e.membership]));
   const enrichedMembers: EnrichedMember[] = members.map((m) => {
     const meta = personMetaMap[m.name] ?? {};
-    const effectiveStatus: ActivityStatus = meta.activityStatus ?? 'active';
-    return { ...m, meta, effectiveStatus };
+    const membership = membershipByName.get(m.name);
+    const effectiveStatus: ActivityStatus = membership?.status ?? 'active';
+    return { ...m, meta, effectiveStatus, leftAt: membership?.leftAt };
   });
 
-  const formerMembersFromOther: EnrichedMember[] = allPersons
-    .filter((p) => p.group !== groupName)
-    .filter((p) => (personMetaMap[p.name]?.formerGroupNames ?? []).includes(groupName))
-    .map((p) => ({
-      ...p,
-      meta: personMetaMap[p.name] ?? {},
-      effectiveStatus: (personMetaMap[p.name]?.activityStatus ?? 'unknown') as ActivityStatus,
-    }));
+  // formerGroupNames にだけこのグループがある人物（従来の「他グループから来た元メンバー」）
+  const formerMembersFromOther: EnrichedMember[] = buildGroupRoster(
+    groupName,
+    allPersons.filter((p) => !membershipByName.has(p.name)),
+    personMetaMap,
+    recordsByPerson,
+  ).formerFromList.map(({ person: p }) => ({
+    ...p,
+    meta: personMetaMap[p.name] ?? {},
+    effectiveStatus: (personMetaMap[p.name]?.activityStatus ?? 'unknown') as ActivityStatus,
+    leftAt: personMetaMap[p.name]?.leftAt,
+  }));
 
   const activeMembers = enrichedMembers.filter(
     (m) => m.effectiveStatus === 'active' || m.effectiveStatus === 'hiatus',
@@ -390,7 +407,7 @@ export default async function GroupsPage({ params }: Props) {
   );
   const allFormerMembers: EnrichedMember[] = [...formerMembersInGroup, ...formerMembersFromOther];
 
-  const hasStatusData = enrichedMembers.some((m) => m.meta.activityStatus);
+  const hasStatusData = members.some((m) => membershipByName.get(m.name)?.status);
   const hasGenerationData = [...enrichedMembers, ...formerMembersFromOther].some(
     (m) => m.meta.generation,
   );
@@ -509,10 +526,10 @@ export default async function GroupsPage({ params }: Props) {
   const totalProductCount = newProductMap.size + usedProductMap.size;
 
   // ── 関連グループ ──
-  const allGroups = [...new Set(allPersons.map((p) => p.group).filter(Boolean))];
+  const allGroups = listGroupNames(allPersons, recordsByPerson);
   const relatedGroupNames = allGroups.filter((g) => {
     if (g === groupName) return false;
-    return allPersons.filter((p) => p.group === g).some((p) => p.genre === genre);
+    return personsInGroup(g, allPersons, recordsByPerson).some((p) => p.genre === genre);
   });
 
   // ── FAQ ──
@@ -545,16 +562,20 @@ export default async function GroupsPage({ params }: Props) {
     : (SLUG_TO_GROUP_NAME[groupSlug] ? groupSlug : encodeURIComponent(groupName));
   const groupUrl = `${siteOrigin}/groups/${slug}`;
 
+  const formerNames = new Set(formerMembersInGroup.map((m) => m.name));
+  const toPersonLd = (m: { name: string }) => ({
+    '@type': 'Person',
+    name: m.name,
+    url: `${siteOrigin}/person/${encodeURIComponent(m.name)}`,
+  });
   const orgJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Organization',
     name: groupName,
     url: groupUrl,
-    member: members.map((m) => ({
-      '@type': 'Person',
-      name: m.name,
-      url: `${siteOrigin}/person/${encodeURIComponent(m.name)}`,
-    })),
+    // member は現在のメンバーだけ。卒業・脱退したメンバーは alumni（元メンバーを現所属と誤認させない）
+    member: members.filter((m) => !formerNames.has(m.name)).map(toPersonLd),
+    ...(allFormerMembers.length > 0 ? { alumni: allFormerMembers.map(toPersonLd) } : {}),
   };
 
   const breadcrumbJsonLd = {
@@ -731,7 +752,8 @@ export default async function GroupsPage({ params }: Props) {
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                   {members.map((m) => (
-                    <PersonCard key={m.name} person={m} />
+                    // 所属履歴で他グループから加わった人物も、このグループのメンバーとして表示する
+                    <PersonCard key={m.name} person={{ ...m, group: groupName }} />
                   ))}
                 </div>
               </div>

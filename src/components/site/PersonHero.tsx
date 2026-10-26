@@ -18,6 +18,18 @@ interface StatItem {
   href: string;
 }
 
+/**
+ * 所属履歴（person_group_memberships）がある人物の所属表示。指定時はグループリンク・活動状態・
+ * 加入/脱退・旧グループの表示をこちらで行う（脱退等はそのグループの履歴の中だけで表示する）。
+ * 未指定の人物は従来どおり personMeta の値で表示する。
+ */
+export interface PersonHeroAffiliation {
+  current: { groupName: string; href: string }[];
+  past: { groupName: string; status: ActivityStatus | null; leftAt?: string }[];
+  /** 芸能活動全体の状態（careerStatus、無ければ現役の所属がある場合だけ「活動中」） */
+  careerLabel: string | null;
+}
+
 interface Props {
   person: PersonWithConfig;
   personMeta: PersonMeta | null;
@@ -25,9 +37,76 @@ interface Props {
   groupPagePath: string | null;
   heroBackground: string;
   stats: StatItem[];
+  affiliation?: PersonHeroAffiliation;
 }
 
-export default function PersonHero({ person, personMeta, groupMeta, groupPagePath, heroBackground, stats }: Props) {
+function AffiliationInfo({ person, personMeta, affiliation }: { person: PersonWithConfig; personMeta: PersonMeta | null; affiliation: PersonHeroAffiliation }) {
+  const links = affiliation.current.map((g, i) => (
+    <span key={g.groupName}>
+      {i > 0 && <span className="text-white/50"> / </span>}
+      <Link
+        href={g.href}
+        className={personMeta?.primaryGenre
+          ? 'text-white/50 hover:text-white/80 text-xs transition-colors underline underline-offset-2 decoration-white/20'
+          : 'text-white/80 hover:text-white text-sm font-medium transition-colors underline underline-offset-2 decoration-white/40 hover:decoration-white'}
+      >
+        {g.groupName}
+      </Link>
+    </span>
+  ));
+  return (
+    <>
+      <div className="flex items-center gap-2 mt-1 flex-wrap">
+        {personMeta?.primaryGenre && <span className="text-white/80 text-sm font-medium">{personMeta.primaryGenre}</span>}
+        {links.length > 0 ? links : !personMeta?.primaryGenre && <span className="text-white/70 text-sm">ソロ活動</span>}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 mt-2">
+        {buildHeroBadgeTitles({
+          genre: person.genre,
+          primaryGenre: personMeta?.primaryGenre,
+          titles: personMeta?.titles,
+        }).map((t) => (
+          <span key={t} className="text-[11px] px-2 py-0.5 rounded-full bg-white/25 text-white font-medium">
+            {t}
+          </span>
+        ))}
+        {(() => {
+          const displayGenre = normalizeTag(person.genre) ?? person.genre;
+          return (
+            <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${GENRE_BADGE[displayGenre] ?? GENRE_BADGE[person.genre] ?? 'bg-gray-100 text-gray-600'}`}>
+              {displayGenre}
+            </span>
+          );
+        })()}
+        {affiliation.careerLabel && (
+          <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${ACTIVITY_BADGE_CLS.active}`}>
+            {affiliation.careerLabel}
+          </span>
+        )}
+        {personMeta?.generation && (
+          <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">
+            {personMeta.generation}
+          </span>
+        )}
+      </div>
+      {(affiliation.past.length > 0 || personMeta?.membershipNote) && (
+        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+          {affiliation.past.map((g) => (
+            <span key={g.groupName} className="text-[11px] text-white/60">
+              元{g.groupName}
+              {g.status && g.status !== 'unknown' && g.status !== 'active' && `（${ACTIVITY_LABEL[g.status]}${g.leftAt ? ` ${g.leftAt.slice(0, 7)}` : ''}）`}
+            </span>
+          ))}
+          {personMeta?.membershipNote && (
+            <span className="text-[11px] text-white/60 italic">{personMeta.membershipNote}</span>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function PersonHero({ person, personMeta, groupMeta, groupPagePath, heroBackground, stats, affiliation }: Props) {
   return (
     <div className="py-8 px-4" style={{ background: heroBackground }}>
       <div className="max-w-4xl mx-auto">
@@ -45,8 +124,10 @@ export default function PersonHero({ person, personMeta, groupMeta, groupPagePat
           <div className="min-w-0 flex-1">
             <h1 className="text-2xl sm:text-3xl font-black text-white leading-tight">{person.name}</h1>
 
+            {affiliation && <AffiliationInfo person={person} personMeta={personMeta} affiliation={affiliation} />}
+
             {/* メイン肩書き（primaryGenre優先）+ グループリンク */}
-            {(() => {
+            {!affiliation && (() => {
               const groupLink = personMeta?.currentGroupName || person.group || null;
               if (personMeta?.primaryGenre) {
                 return (
@@ -87,7 +168,7 @@ export default function PersonHero({ person, personMeta, groupMeta, groupPagePat
             })()}
 
             {/* バッジ群 */}
-            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+            {!affiliation && <div className="flex flex-wrap items-center gap-1.5 mt-2">
               {/* titles: primaryGenre・genre と重複する値を除外して正規化表示 */}
               {buildHeroBadgeTitles({
                 genre: person.genre,
@@ -127,10 +208,10 @@ export default function PersonHero({ person, personMeta, groupMeta, groupPagePat
                   → {personMeta.leftAt.slice(0, 7)} 卒業
                 </span>
               )}
-            </div>
+            </div>}
 
             {/* 旧グループ / 補足メモ */}
-            {((personMeta?.formerGroupNames?.length ?? 0) > 0 || personMeta?.membershipNote) && (
+            {!affiliation && ((personMeta?.formerGroupNames?.length ?? 0) > 0 || personMeta?.membershipNote) && (
               <div className="flex flex-wrap items-center gap-2 mt-1.5">
                 {personMeta?.formerGroupNames?.map((g) => (
                   <span key={g} className="text-[11px] text-white/60">元{g}</span>
