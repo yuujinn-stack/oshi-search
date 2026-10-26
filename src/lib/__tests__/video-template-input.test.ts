@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OSHI_CARD_SELECTION_INPUT_KIND,
   OSHI_VOD_COMPARE_INPUT_KIND,
   TemplateInputError,
   isTemplateInputKind,
+  parseOshiCardSelectionInput,
   parseOshiVodCompareInput,
   parseTemplateInput,
 } from '../video-template-input';
@@ -42,6 +44,33 @@ describe('推しでサブスク比較のテンプレート固有入力', () => {
     expect(isTemplateInputKind(OSHI_VOD_COMPARE_INPUT_KIND)).toBe(true);
     expect(isTemplateInputKind('unknown')).toBe(false);
     expect(isTemplateInputKind(undefined)).toBe(false);
-    expect(parseTemplateInput(OSHI_VOD_COMPARE_INPUT_KIND, { personSlugs: [A, B, C] }).personSlugs).toEqual([A, B, C]);
+    expect(parseTemplateInput(OSHI_VOD_COMPARE_INPUT_KIND, { personSlugs: [A, B, C] })).toMatchObject({ personSlugs: [A, B, C] });
+  });
+});
+
+describe('推し布教カード紹介（oshi-card-selection）', () => {
+  it('1〜3件を選んだ順のまま受け付ける', () => {
+    expect(isTemplateInputKind(OSHI_CARD_SELECTION_INPUT_KIND)).toBe(true);
+    for (const ids of [['w1'], ['w2', 'w1'], ['w3', 'w1', 'w2']]) {
+      expect(parseOshiCardSelectionInput({ version: 1, workIds: ids, variant: 'cool' })).toEqual({ version: 1, workIds: ids, variant: 'cool' });
+    }
+    expect(parseTemplateInput(OSHI_CARD_SELECTION_INPUT_KIND, { workIds: ['w1'], variant: 'cute' })).toEqual({ version: 1, workIds: ['w1'], variant: 'cute' });
+  });
+
+  it('0件・4件・重複・不正なデザイン・不正な作品IDは拒否する', () => {
+    const bad = [
+      undefined,
+      [],
+      { workIds: [], variant: 'cool' },
+      { workIds: ['a', 'b', 'c', 'd'], variant: 'cool' },
+      { workIds: ['a', 'a'], variant: 'cool' },
+      { workIds: ['a'], variant: 'dark' },
+      { workIds: ['a'] },
+      { workIds: [''], variant: 'cool' },
+      { workIds: [1], variant: 'cool' },
+      { workIds: ['x'.repeat(201)], variant: 'cool' },
+      { version: 2, workIds: ['a'], variant: 'cool' },
+    ];
+    for (const raw of bad) expect(() => parseOshiCardSelectionInput(raw)).toThrow(TemplateInputError);
   });
 });

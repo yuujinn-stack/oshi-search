@@ -287,11 +287,15 @@ export async function createVideoJobs(input: {
   }
   // 推しでサブスク比較: 共通CapCut音声は、3人の診断結果の台本の種類がWorker報告の利用条件（requires）と一致する場合だけ使える。
   // 画面を通さずにAPIを呼んでも、再生成でも、ここで必ず確かめる（不一致・条件不明なら作らない）。Worker側でも生成直前に台本ハッシュで再確認する
-  if (input.narrationMode === 'capcut' && template.templateInputKind === OSHI_VOD_COMPARE_INPUT_KIND) {
+  if (input.narrationMode === 'capcut' && template.templateInputKind === OSHI_VOD_COMPARE_INPUT_KIND && templateInput && 'personSlugs' in templateInput) {
     const { loadOshiVodVideoDiagnosis } = await import('@/server/oshi-vod/video-diagnosis');
-    const diagnosis = await loadOshiVodVideoDiagnosis(templateInput!);
+    const diagnosis = await loadOshiVodVideoDiagnosis(templateInput);
     const check = checkVodCompareSharedCapcut(template, diagnosis);
     if (!check.ok) throw new VideoJobError(check.reason, 400);
+  }
+  // 推し布教カード紹介: 選んだ作品がその人物の公開作品（布教カードの候補）にあるかを確かめる。再生成でも必ず確かめる
+  if (templateInput && 'workIds' in templateInput) {
+    await assertOshiCardWorks(input.personNames[0], templateInput.workIds);
   }
   if (input.narrationMode === 'capcut' && !template.sharedCapcut) {
     const notReady = input.personNames
@@ -356,10 +360,27 @@ export function resolveJobTemplateInput(
     if (err instanceof TemplateInputError) throw new VideoJobError(err.message, 400);
     throw err;
   }
+  // 推し布教カード紹介: 人物1人・ジョブ1件（作品が人物の公開作品かは createVideoJobs で確認する）
+  if (!('personSlugs' in parsed)) {
+    if (personNames.length !== 1) throw new VideoJobError(`「${template.name}」は人物を1人だけ選んでください。`, 400);
+    return parsed;
+  }
   if (personNames.length !== 1 || personVideoSlug(personNames[0]) !== parsed.personSlugs[0]) {
     throw new VideoJobError(`「${template.name}」は選択した人物1を代表としてジョブを1件だけ作成します。`, 400);
   }
   return parsed;
+}
+
+/** 推し布教カード紹介: 人物が布教カードで選べる公開人物で、作品がすべてその人物の候補にあること */
+async function assertOshiCardWorks(personName: string, workIds: string[]): Promise<void> {
+  const { loadOshiCardPerson } = await import('@/lib/oshi-card/data');
+  const { resolveOshiCardWorks } = await import('@/lib/oshi-card/core');
+  const person = await loadOshiCardPerson(personName);
+  if (!person) throw new VideoJobError(`推し布教カードで選べない人物です: ${personName}`, 400);
+  const { works, invalidIds } = resolveOshiCardWorks(workIds, person.candidates);
+  if (invalidIds.length > 0 || works.length !== workIds.length) {
+    throw new VideoJobError(`${personName}の公開作品にない作品が含まれています: ${invalidIds.join(', ')}`, 400);
+  }
 }
 
 /** queuedのジョブだけキャンセルできる（Phase Aでは実行中ジョブの中断は行わない） */

@@ -15,7 +15,8 @@ import { matchesQuery } from '@/lib/person-group-filter';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
 import First3WorkSlots, { type First3SlotWork } from './First3WorkSlots';
 import VodCompareTrioPicker, { EMPTY_TRIO, completeTrio, type TrioCapcutCheck, type TrioSlots } from './VodCompareTrioPicker';
-import { OSHI_VOD_COMPARE_INPUT_KIND } from '@/lib/video-template-input';
+import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND } from '@/lib/video-template-input';
+import OshiCardWorkPicker, { EMPTY_OSHI_CARD_PICK, type OshiCardPick } from './OshiCardWorkPicker';
 import { countHashtags, validateCaption, INSTAGRAM_CAPTION_MAX_LENGTH, INSTAGRAM_HASHTAG_MAX_COUNT } from '@/lib/instagram-caption-rules';
 import { HOURLY_TIME_OPTIONS } from '@/lib/instagram-post-times';
 import { addDaysJst, formatJst as formatJstDateTime, jstWallClockToUtcDate, nowJstParts } from '@/lib/jst-time';
@@ -152,7 +153,7 @@ interface VideoJob {
   personSlug: string | null;
   templateId: string;
   /** テンプレート固有の入力（推しでサブスク比較: 3人のslug。従来のテンプレートは null） */
-  templateInput?: { personSlugs?: string[] } | null;
+  templateInput?: { personSlugs?: string[]; workIds?: string[]; variant?: string } | null;
   narrationMode: NarrationMode;
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
   attempts: number;
@@ -263,6 +264,8 @@ export default function VideoMakerClient({
   const [trioSlots, setTrioSlots] = useState<TrioSlots>(EMPTY_TRIO);
   // 選んだ3人で共通CapCut音声を使えるか（3人の診断結果を確認できるまでは null）
   const [trioCapcut, setTrioCapcut] = useState<TrioCapcutCheck | null>(null);
+  // 推し布教カード紹介（人物1人＋おすすめ作品1〜3件＋デザイン）の選択
+  const [cardPick, setCardPick] = useState<OshiCardPick>(EMPTY_OSHI_CARD_PICK);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [narrationMode, setNarrationMode] = useState<NarrationMode | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -336,6 +339,8 @@ export default function VideoMakerClient({
   const template = templates.find((t) => t.templateId === templateId) ?? null;
   const trioMode = template?.templateInputKind === OSHI_VOD_COMPARE_INPUT_KIND;
   const trio = completeTrio(trioSlots);
+  const cardMode = template?.templateInputKind === OSHI_CARD_SELECTION_INPUT_KIND;
+  const cardReady = !!cardPick.personName && cardPick.workIds.length > 0;
   const nameBySlug = useMemo(() => new Map(Object.entries(personSlugByName).map(([n, s]) => [s, n])), [personSlugByName]);
 
   // CapCut保存済み音声: Workerが報告した状態（正本はMac上の保存音声と台本）。CapCut対応テンプレートでだけ表示する
@@ -645,6 +650,32 @@ export default function VideoMakerClient({
     }
   }
 
+  // 推し布教カード紹介: 人物1人・作品（選んだ順）・デザインで1ジョブだけ作る
+  async function submitCard() {
+    if (!template || !narrationMode || !cardReady) return;
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      await fetchJson<{ jobs: VideoJob[] }>('/api/admin/video-jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          personNames: [cardPick.personName],
+          templateId: template.templateId,
+          narrationMode,
+          templateInput: { version: 1, workIds: cardPick.workIds, variant: cardPick.variant },
+        }),
+      });
+      setMessage({ kind: 'ok', text: '1件のジョブを登録しました。Workerが順番に生成します。' });
+      setCardPick((prev) => ({ ...EMPTY_OSHI_CARD_PICK, variant: prev.variant }));
+      await load();
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function submit(names: string[] = selectedNames) {
     if (!template || !narrationMode || names.length === 0) return;
     setSubmitting(true);
@@ -759,6 +790,11 @@ export default function VideoMakerClient({
             onCapcutCheck={setTrioCapcut}
           />
         </section>
+        ) : cardMode ? (
+        <section>
+          <h2 className="text-sm font-bold text-slate-700 mb-2">3. 人物・おすすめ作品・デザイン</h2>
+          <OshiCardWorkPicker persons={persons} value={cardPick} onChange={setCardPick} />
+        </section>
         ) : (
         <section>
           <h2 className="text-sm font-bold text-slate-700 mb-2">3. 人物（複数選択可）</h2>
@@ -795,6 +831,15 @@ export default function VideoMakerClient({
                 : capcutMode && !trioCapcut
                   ? 'CapCut音声を使えるか確認中...'
                   : '生成する（3人で1本）'}
+          </button>
+          ) : cardMode ? (
+          <button
+            type="button"
+            disabled={submitting || !template || !narrationMode || !cardReady}
+            onClick={() => void submitCard()}
+            className="px-5 py-2 rounded-lg bg-violet-600 text-white text-sm font-bold disabled:bg-gray-300"
+          >
+            {submitting ? '登録中...' : !cardReady ? '人物と作品を選ぶと生成できます' : `生成する（${cardPick.workIds.length}作品）`}
           </button>
           ) : (
           <button
@@ -1591,6 +1636,7 @@ function CompletedDetail({
         </div>
       </div>
     </div>
+    {job.templateInput?.workIds && <OshiCardJobOutputs job={job} />}
     <InstagramCaptionSection templateId={job.templateId} person={captionPerson} />
     {igReelUrl && (
       <InstagramReelSection
@@ -1602,6 +1648,68 @@ function CompletedDetail({
       />
     )}
     </>
+  );
+}
+
+/** 推し布教カード紹介: 選んだ作品・デザイン、ナレーション台本のコピー、CapCut取り込み用SRTのダウンロード */
+function OshiCardJobOutputs({ job }: { job: VideoJob }) {
+  const card = (job.result?.oshiCard ?? null) as { workTitles?: string[]; variant?: string; cardUrl?: string } | null;
+  const srt = typeof job.result?.narrationSrt === 'string' ? job.result.narrationSrt : null;
+  const [copied, setCopied] = useState(false);
+  const variant = card?.variant ?? job.templateInput?.variant;
+  const downloadSrt = () => {
+    if (!srt) return;
+    const url = URL.createObjectURL(new Blob([srt], { type: 'application/x-subrip;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `oshi-card-intro_${job.personName}.srt`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  return (
+    <div className="mt-3 border-t border-gray-100 pt-3 space-y-2 text-xs">
+      <div className="grid grid-cols-[110px_1fr] gap-x-4 gap-y-1">
+        <span className="text-gray-500">おすすめ作品</span>
+        <span>{card?.workTitles?.length ? card.workTitles.map((t, i) => `${i + 1}. ${t}`).join(' / ') : `${job.templateInput?.workIds?.length ?? 0}件`}</span>
+        <span className="text-gray-500">デザイン</span>
+        <span>{variant === 'cute' ? 'デコ' : 'ノーマル'}</span>
+        {card?.cardUrl && (
+          <>
+            <span className="text-gray-500">共有URL</span>
+            <a href={card.cardUrl} target="_blank" rel="noopener noreferrer" className="text-violet-600 hover:underline break-all">
+              {card.cardUrl}
+            </a>
+          </>
+        )}
+      </div>
+      {job.narrationScript && (
+        <div>
+          <p className="text-gray-500 mb-1">ナレーション台本</p>
+          <pre className="whitespace-pre-wrap bg-gray-50 rounded p-2 text-slate-700">{job.narrationScript}</pre>
+        </div>
+      )}
+      <div className="flex gap-3">
+        {job.narrationScript && (
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard.writeText(job.narrationScript ?? '').then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              });
+            }}
+            className="text-violet-600 hover:underline"
+          >
+            {copied ? 'コピーしました' : '台本をコピー'}
+          </button>
+        )}
+        {srt && (
+          <button type="button" onClick={downloadSrt} className="text-violet-600 hover:underline">
+            ⬇ SRTをダウンロード
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

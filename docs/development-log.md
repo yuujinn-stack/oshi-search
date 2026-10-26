@@ -5121,3 +5121,66 @@ SNS で縮小表示されても、推し名・サービス名・作品数とカ�
 - テスト：新規 `bulk-work-selection.test.ts`（11件：5/25/40件、切り替えで合計が変わる、フィルター後の並びで選ぶ、件数不足、個別の追加・解除、全解除、表示外の選択の数、25件で25行のプロンプト）。
 - 実際のコンポーネントを一時ページで表示し Playwright で操作（永瀬廉 125作品・本番DB読み取りのみ）：5/25/40件、40→10件で合計10件、個別解除・追加、全解除、種別フィルター後の25件（9件しかないので9件）、表示外の選択がある時の確認（キャンセルで保持・OKで置き換え）、⑦選択作品のみで25件、「選択25件でプロンプト生成」で作品行25行、4列×2行、幅375pxで横スクロールなし。一時ページは削除済み。
 - `npx tsc --noEmit` 0件、`npx vitest run` 152ファイル/2497件成功。
+
+---
+
+## Task 156：動画テンプレート「推し布教カード紹介｜18秒」（oshi-card-intro-v1）
+
+**目的：** 推し布教カード（/oshi-card）を、実際の画面と画像APIのカードで紹介する18秒の縦型動画を、既存の動画生成（/admin/video-maker → Mac Worker → oshi-video-maker）で人物・作品を替えて繰り返し作れるようにする。
+
+**oshi-search 側（変更ファイル）：**
+- `src/lib/video-template-input.ts`：入力種別 `oshi-card-selection`（`{version:1, workIds:[1〜3件・選んだ順], variant:'cool'|'cute'}`）と `parseOshiCardSelectionInput` を追加。`parseTemplateInput` に分岐を追加。
+- `src/server/video-jobs/job-store.ts`：`resolveJobTemplateInput` を人物1人の入力にも対応。`createVideoJobs` で選んだ作品が「その人物の布教カード候補（公開作品）」にあるかを `loadOshiCardPerson` + `resolveOshiCardWorks` で確認（再生成でも確認）。サブスク比較の分岐は `'personSlugs' in templateInput` で型を絞っただけで挙動は同じ。
+- 新規 `src/app/api/admin/video-jobs/oshi-card-works/route.ts`：人物の作品候補（布教カードと同じ並び）とグループ名を返す（読み取りのみ・/api/admin の認証下）。
+- 新規 `src/app/admin/video-maker/OshiCardWorkPicker.tsx`：人物（PersonCombobox）・作品1〜3件（しぼりこみ・順番の入れ替え・外す）・デザイン（ノーマル/デコ）。
+- `src/app/admin/video-maker/VideoMakerClient.tsx`：テンプレートが `oshi-card-selection` のとき上の選択画面と「生成する（N作品）」を出す。結果欄に選んだ作品・デザイン・共有URL・ナレーション台本（コピー）・「SRTをダウンロード」（`result.narrationSrt`）を追加。投稿文は既存のタブ（投稿文 / Instagram / Threads / X）でコピー。
+- テスト：`video-template-input.test.ts` に追加、新規 `src/server/video-jobs/__tests__/job-store-oshi-card.test.ts`（1/2/3件・順番・他人物の作品・選べない人物・複数人物・再生成）。
+
+**oshi-video-maker 側：** 新規 `src/compositions/oshi-card-intro/`（構成・台本・入力・投稿文・Composition）、`scripts/oshi-card-intro/`（本番 /oshi-card の操作撮影・共通CapCut音声の取り込みと同期確認）、`scripts/oshiCardIntroProduce.ts`、`src/lib/__tests__/oshiCardIntro.test.ts`。registry・produce.ts・videoWorker.ts・capcutNarrationConfig.ts には独立した追加だけ（他テンプレートの分岐は変更なし）。
+
+**設計上の判断・注意点：**
+- DBスキーマ変更なし（SRT は既存の jsonb `result.narrationSrt`、作品と表示名は `result.oshiCard`）。
+- 作品は管理者が選んだおすすめで公式順位ではない。動画内の人物名・作品名・グループ名は撮影時に画面から読んだ値だけ。人物写真は使わない。
+- ナレーションは人物名・作品名を含まない7文の固定文。CapCut の音声はテンプレート共通の1本（`assets/audio/shared/oshi-card-intro-v1/capcut/`）を `npx tsx scripts/oshi-card-intro/oshiCardIntroNarration.ts --audio=<18.0秒wav> --srt=<CapCutのsrt>` で取り込み、台本ハッシュ・18.0秒・各文の発話開始/字幕開始（±0.2秒）を確認してから使う。取り込むまでは「音声なし」だけ選べる。
+- 布教カード本体・楽天・VOD・SEO・サブスク診断・既存テンプレートは変更していない。
+
+**確認：** oshi-search `npx tsc --noEmit` 0件・`npx vitest run` 153ファイル/2504件成功。oshi-video-maker tsc 0件・テスト183件成功。サンプル生成（音声なし・QA PASS・18.000秒・1080×1920・30fps・h264）：目黒蓮 3作品デコ、梶山朝日 1作品ノーマル、吉田綾乃クリスティー 2作品ノーマル。まだコミット・プッシュ・本番反映はしていない。
+
+### Task 156 追記：完成動画の最終調整（冒頭・見切れ・デザイン切替・X投稿文の文字数）
+
+- **冒頭（0〜2.5秒）：** `OshiCardIntroV1.tsx` の HookScene を、デコの完成カード（幅約660px）→ 1.3秒でノーマルへカット、に変更。下に「デコ／ノーマル」の表示。冒頭の字幕だけ行ごとに幅いっぱいの大きさ（`perLine`）。クロスフェードは2枚の文字が二重に見えたためやめた。
+- **見切れ：** 撮影（`captureOshiCardPages.ts`）で「推しを選ぶ」STEPの上端（`pick.stepRect` / `pickedStepRect`。古い撮影データには無いので省略可）を記録し、ScreenShot の `viewTop` でそこから切り出す。デザイン切替は切り替えボタンの行だけを上下10pxの余白付きで切り出す。高い枠は、画面の続きがある端を白へなじませる。
+- **デザイン切替：** カードを幅480px→約650pxに拡大（この場面だけ内容の上端を430pxへ）。
+- **X投稿文：** `oshiCardInput.ts` に `xWeightedLength`（URL=23・日本語/絵文字=2・ZWJの組み合わせ/国旗=1つで2）と `buildOshiCardXPost` を追加。280を超えるときは定型文 → ハッシュタグ → 「おすすめは」の順に短くし、最後の手段としてだけ長い作品名の末尾を「…」で省く（先頭8文字以上・順番・URLは保つ）。収まる場合は従来の文のまま。Threads・Instagramは変更なし。
+- シーンの時刻・字幕・ナレーション台本は変更なし（台本ハッシュ・SRT・CapCut取り込みの確認内容は同じ）。
+- 確認：3人とも撮影から再生成して QA PASS（18.000秒）。全540フレームの測定で白・黒のフレーム0。video-maker のテスト 188件成功（既存の `first3ScriptPrep.test.ts` の1件が、全体実行のときだけ時々失敗する。単独では毎回成功）。
+
+### Task 156 追記2：操作画面を大きく切り出して表示
+
+- **目的：** スマホで見たときに、人物選択・作品選択・デザイン切替・保存/共有の文字と操作がわかるようにする。
+- `OshiCardIntroV1.tsx`：画面全体を幅820pxで置く ScreenShot をやめ、`CropShot` を追加。撮影時の要素の位置（CSSピクセル）＋余白10pxで操作部分だけを切り出し、横幅940px（約87%）で動かさずに置く。撮影は3倍の解像度で、約2.5倍の拡大でも1表示ピクセルあたり約1.2画素。
+  - 人物選択：検索欄＋選ぶ候補（上端は固定し、入力前は検索欄だけ、候補が開くと下へ広げる）→ 選んだ人物の欄。
+  - 作品選択：絞り込み欄＋選ぶ作品（高さ240pxを超えるときは作品だけ）→ 「カードに載せる順番」。
+  - デザイン切替：切り替えボタンの行＋画像APIのカード。保存・共有：共有ボタン＋保存ボタン。
+  - 操作シーンのズームをなくした（完成カードの1.00→1.03だけ残す）。タップ表示は小さく半透明にして行の左端へ。
+- `captureOshiCardPages.ts`：作品ごとに絞り込み欄の位置（`works.steps[].filterRect`。絞り込み欄の無い画面では無し）を記録。
+- シーンの時刻・字幕・ナレーション・SRT・CapCut取り込み・投稿文は変更なし。
+- 確認：3人とも撮影から生成して QA PASS（18.000秒）。全540フレームの測定で真っ黒0・1フレームだけの乱れ0。390px幅に縮小して人物名・作品名・ボタン名が読めることを確認。
+
+### Task 156 追記3：最終確認と、未解決の既存テスト
+
+- **最終確認（コード変更なし）：** 目黒蓮デコ版 `out/oshi-card-intro/目黒蓮/2026-10-26T09-52-34-374Z/final.mp4` を最終版とした。390px幅で修正前・修正後を並べて比較し、4シーン（人物選択・作品選択・デザイン切替・保存共有）の流れを確認した。字幕と画面の重なりは3本×全フレーム（3フレームおき）を測定して、間隔の最小が43〜57px（重なりなし）。
+- **気になる点（未対応・小さい）：** 保存・共有でタップ後の枠が保存ボタン2つをまとめて囲む（`.oc-share-downloads` の位置）。3作品のとき作品選択は1作品あたり約0.7秒。
+- **未解決の既存テスト（今回の変更とは無関係）：** `oshi-video-maker/src/lib/__tests__/first3ScriptPrep.test.ts`「読みを登録したら、その語を使う人物の台本だけ作り直す」が、全体実行のときだけ時々失敗する（エラー：`PERSON_REGISTRY未登録で、素材取得済みの推しサーチDB人物でもありません: zz-remake-state-a`）。原因は、既存の `first3RemakeState.test.ts` が実際の保存場所に仮の人物 `zz-remake-state-a/b` を作って消す処理と、`node --test` がテストファイルを同時に実行することによる競合。この2ファイルだけを15回実行して6回失敗することで、推し布教カード紹介とは無関係であることを確認した。直すなら、仮の人物を一時ディレクトリに作るか、2ファイルを同時に実行しない設定にする。
+- **CapCut：** 実際のCapCut WAV/SRTでの同期は未検証のまま（合成したWAVの自動テストのみ）。
+
+### Task 156 追記4：保存・共有シーンの強調を、押したボタン1つだけに
+
+- `captureOshiCardPages.ts`：保存欄の中の「画像を保存（投稿用 4:5）」のボタンの位置（`share.saveButtonRect`）を記録（見つからなければ撮影を止める）。
+- `OshiCardIntroV1.tsx`：強調枠とタップ表示を、保存ボタン2つをまとめた欄ではなく、このボタン1つの位置に出す。切り出し範囲・表示倍率・ボタン名・他のシーンは変更なし。古い撮影データでは欄の左半分を使う。
+- 確認：目黒蓮（3作品・デコ）・梶山朝日（1作品・ノーマル）・吉田綾乃クリスティー（2作品・ノーマル）を撮影から生成して QA PASS（18.000秒・1080×1920・30fps）。全フレームの測定で真っ黒0・1フレームだけの乱れ0。字幕と画面の間隔の最小は43〜57px（重なりなし）。人物名・作品名・押したボタンの位置を目視で確認。
+- テスト：video-maker 188件中187件成功。失敗の1件は追記3の既存テスト（`first3ScriptPrep.test.ts` と `first3RemakeState.test.ts` の同時実行による競合）で、今回の変更とは無関係。新たな失敗はなし。
+
+**音声の扱い（分けて記録）：**
+- **確認済み：** 音声なしテンプレートとしての生成（撮影 → レンダリング → MP4・台本txt・かな台本txt・SRT・投稿文 → QA）。CapCut取り込みの判定（長さ・台本ハッシュ・発話開始とSRTの位置）は、合成したWAVの自動テストでのみ確認。
+- **未確認：** 実際にCapCutで作ったWAV/SRTを取り込んだときの同期と、音声付き動画（final-with-voice.mp4）の仕上がり。共通音声はまだ取り込んでいないため、管理画面では「音声なし」だけが選べる。
