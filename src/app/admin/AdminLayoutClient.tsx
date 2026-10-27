@@ -14,6 +14,7 @@ export const NAV_ITEMS = [
   { href: '/admin/video-maker',                label: '🎬 動画生成' },
   { href: '/admin/rakuten-search',             label: '楽天検索' },
   { href: '/admin/price-refresh',              label: '価格更新' },
+  { href: '/admin/rakuten-events',             label: '🛍️ 楽天イベント' },
   { href: '/admin/groups',                     label: 'グループ管理' },
   { href: '/admin/providers',                  label: '配信サービス' },
   { href: '/admin/vod-recheck',                label: 'VOD再確認' },

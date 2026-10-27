@@ -5184,3 +5184,49 @@ SNS で縮小表示されても、推し名・サービス名・作品数とカ�
 **音声の扱い（分けて記録）：**
 - **確認済み：** 音声なしテンプレートとしての生成（撮影 → レンダリング → MP4・台本txt・かな台本txt・SRT・投稿文 → QA）。CapCut取り込みの判定（長さ・台本ハッシュ・発話開始とSRTの位置）は、合成したWAVの自動テストでのみ確認。
 - **未確認：** 実際にCapCutで作ったWAV/SRTを取り込んだときの同期と、音声付き動画（final-with-voice.mp4）の仕上がり。共通音声はまだ取り込んでいないため、管理画面では「音声なし」だけが選べる。
+
+---
+
+## Task 157：楽天イベント管理 Phase 1（/admin/rakuten-events）— イベント登録・既存商品の紐付けと確認状態・SNS投稿文（未commit・本番DB/Redis 未変更・テーブル未作成）
+
+**目的：** お買い物マラソン・5と0のつく日・楽天スーパーSALE・期間限定クーポンなどを管理画面で手動登録し、推しサーチに登録済みの楽天商品と紐付けて、X・Threads・Instagram（フィード／ストーリーズ）の投稿文を作る。投稿は手動（自動投稿なし）。一般公開ページは変更しない。
+
+**調査（変更前）：**
+- 商品は `products`（人物×保存カテゴリの items JSON）、公開条件は `verdicts.verdict = 'related'`（人物ページと同じ）。グループは `persons.group` ＋所属履歴（`personsInGroup`）。
+- 楽天APIの単品取得は `src/lib/oshi-shopping/rakuten-lookup.ts`（IchibaItem/Search/20260701・itemCode 指定）が共通の使用権（`rakuten-api-gate.ts`）を通して呼んでいる。
+- 計測：楽天リンクのクリックは `trackRakutenClick`（/api/track の Redis ＋ GA4 `affiliate_click`）。SNS流入の計測は無かった（UTM 未使用）。
+- 楽天API仕様（2026-07-01版・公式ドキュメントで確認）：`pointRate`／`pointRateStartTime`／`pointRateEndTime` は**商品別**の倍付けだけ（ショップ単位・購入者条件は含まない）。**24時間以内に終わる倍付けは返らない**。`startTime`／`endTime` はタイムセールが設定された商品だけ。クーポンの項目は無い。`availability` の既定は 1（在庫ありのみ）。itemCode の複数指定は不可。楽天ブックス総合検索（2017-04-04）にポイント倍率の項目は無い。規約上、商品画像を含む商品情報の目的外の複製・改変は禁止（第10条1項(7)）で、SNSでの画像利用を許可する記述は無い → 画像は扱わない。
+
+**DB（追加のみ）：** `drizzle/0022_rakuten_events.sql`・`src/db/schema.ts`（`rakutenEvents`・`rakutenEventProducts`）。
+- `rakuten_events`：名前・種類・開始/終了（timestamptz）・公式URL・エントリー（required/not_required/unknown）・エントリーURL・参加条件・倍率/割引・適用条件・最終確認日時・公開/非公開（published/hidden）・メモ・更新者。終了状態は保存せず `ends_at` と現在時刻で判定。
+- `rakuten_event_products`：イベント×（人物名・保存カテゴリ・商品ID）で既存商品を参照（商品データは複製しない。商品名だけ一覧表示用に紐付け時点の値）。確認状態 confirmed/needs_check/excluded、特典の範囲 item（商品単体）/shop（ショップ単位）/buyer_condition（楽天カード・買いまわり等）/event_general/unknown、特典の内容、確認元URL・確認日時・確認者・メモ。UNIQUE(event_id, person_name, product_id)。
+- `/admin/db-init` には追加していない（作業ツリーの db-init に別作業の未commit変更があるため・本番反映は専用スクリプトで行う）。
+
+**変更ファイル：**
+- 新規 `src/lib/rakuten-event/core.ts`（純粋関数）：日本時間の入出力（`parseJstDateTimeLocal`・`toJstDateTimeLocal`・`formatJstAdmin`・`formatJstPost`）、`eventStatus`（終了日時ちょうど以降は終了）、`isOfficialRakutenUrl`（https・rakuten.co.jp/rakuten.ne.jp。hb.afl 等の計測リンクは不可）、`validateEventInput`（公開には公式URLと最終確認日時が必要）、`validateLinkUpdate`（確認済み＝公式の確認元URL・確認日時・範囲〔未分類不可〕が必須、対象外＝理由が必須）、`generatePosts`、`buildPersonLink`（UTM）、`xWeightedLength`。
+- 新規 `src/lib/rakuten-event/store.ts`：イベントの一覧・取得・登録・更新（画面で読んだ updated_at と一致するときだけ＝同時編集で上書きしない）・削除（紐付けと一緒に1トランザクション）、紐付け（products に実在する商品だけ・「要確認」で開始・既存の紐付けは状態を戻さない・1回50件まで）・確認状態の更新・解除、商品検索（DB側で JSON を展開し必要な項目だけ返す。人物 or グループ〔最大60人〕・カテゴリ・キーワード〔LIKE 記号はエスケープ〕・既定は公開中〔related〕のみ・最大200件）。products・verdicts には書かない。
+- 新規 `src/lib/rakuten-event/item-check.ts`：紐付けた商品1件だけを「楽天APIで現在の情報を確認」ボタンで取得（2026-07-01版・itemCode 指定・availability=0）。共通の使用権を通す（最大3秒待ち、Vercel で Redis が無ければ呼ばない、429 は全経路共通の停止を記録）。結果（価格・在庫・商品別ポイント倍率と期間・タイムセール期間）は**表示のみで保存しない**。該当なし・失敗でも「対象外」と判断しない（メッセージで明記）。
+- 新規 `src/app/api/admin/rakuten-events/route.ts`：GET（イベント＋紐付け）・POST（create/update/delete/search/link/update_link/unlink/check_item）。proxy に加えて処理内でもセッションと Origin を確認。エラー文は返さない。テーブル未作成は 503 で案内。
+- 新規 `src/app/admin/rakuten-events/{page.tsx,RakutenEventsClient.tsx}`：左に一覧（開催前／開催中／終了・公開/非公開・確認状態の件数）、右にタブ「イベント情報」「商品の紐付け」「SNS投稿文」。人物選択は `PersonCombobox`。スマートフォンでは縦並び。開いたままでも1分ごとに開催状態を更新。操作者名は localStorage（U-NEXT承認・価格の確認待ちと同じ方式）。
+- 変更 `src/app/admin/AdminLayoutClient.tsx`：ナビに「🛍️ 楽天イベント」。
+- 新規 `scripts/rakuten-events/{setup-tables.ts,setup-tables-core.ts}`：price-review と同じ check（読み取りのみ）／apply（「APPLY」入力・1トランザクション・2テーブル3インデックスの CREATE IF NOT EXISTS 以外を拒否・前後で products/verdicts の指紋を比較）／verify／undo（空のときだけ）。
+
+**投稿文のルール（`generatePosts`）：**
+- 含めるもの：【PR】＋イベント名、開催中なら「開催中｜11月11日(水) 1:59まで」・開催前なら開始〜終了、エントリーの要否（未確認なら「公式ページでご確認ください」）、参加条件・特典（入力がある場合）、「購入者の条件で変わる」注記、「楽天アフィリエイトを利用しています」、#PR、推しサーチの人物ページへのリンク。X は280（全角2・URL23）に収まるよう任意の行から落とす。
+- 商品の特典として載せるのは「確認済み」かつ範囲が商品単体／ショップ単位のものだけ（範囲を明記）。購入者条件・イベント全体・要確認・対象外・別の人物の商品は載せない。価格は入れない。
+- 「最安値」「値下げ」「買い時」「絶対」等（`BANNED_PHRASES`）は生成しない。入力欄に含まれていればその項目を外して警告。
+- 終了したイベントは投稿文を作らない。非公開・最終確認から24時間超・公式URL未入力は警告。
+- 画像は作らない・商品画像を使わない（画面で注意書き）。
+
+**効果測定：** 投稿のリンクに `utm_source=x|threads|instagram&utm_medium=social&utm_campaign=rakuten_event_<id>`（ストーリーズは `utm_content=story`）。既存の GA4 が参照元として集計し、既存の `affiliate_click` を同じ GA4 で参照元・キャンペーン別に比べられる。新しい計測コード・送信は追加していない（重複計測なし）。人物ページの canonical は UTM なしのため SEO に影響しない。Instagram フィードはリンクが押せないため「プロフィールのリンクから」と案内（プロフィールのリンクには UTM を付けられない）。
+
+**確認：**
+- `npx tsc --noEmit` 0件、`npx vitest run` 156ファイル/2,544件成功（新規 `rakuten-event-core.test.ts`・`rakuten-event-store.test.ts`〔PGlite で実際に SQL を実行。products・verdicts の指紋が操作の前後で同じ〕・`rakuten-event-api.test.ts`〔認証・Origin・入力検証・競合・グループ解決・50件上限・API結果で状態を変えない・エラー文を返さない・item-check のエンドポイント/429/Vercel で Redis なし〕 計39件）、`next build` 成功（`/admin/rakuten-events`・`/api/admin/rakuten-events` が追加されただけ）。
+- ローカル dev（本番DBは読み取りのみ）：未ログインは 307→/admin/login・API は 401。ログイン時はテーブル未作成の案内とナビ表示。
+- 本番で `setup-tables.ts check`（読み取りのみ）：2テーブル・3インデックスとも未作成、products 2,196 行・verdicts 92,084 行、問題なし。
+
+**未対応・注意：**
+- 本番のテーブル作成（apply）・commit・push は未実施。手順：Neon でスナップショット → `npx tsx scripts/rakuten-events/setup-tables.ts check` → `apply`（APPLY 入力）→ `verify`。コードのデプロイはテーブル作成の前後どちらでもよい（未作成でも画面は案内を出すだけ）。
+- 作業ツリーには別作業（U-NEXT 等）の未commit変更がある。`src/db/schema.ts`・`AdminLayoutClient.tsx`・この開発ログは、今回の差分だけを取り出して commit する必要がある。
+- 本番データでの商品検索の速度は未計測（最大の人物の items は約1MB。1人ずつの検索を想定）。
+- イベントの一覧は最大500件。紐付けた商品の itemCode は表示時に products から読むため、商品が削除・ID変更されると API 確認は「見つかりません」になる（紐付け自体は残る）。

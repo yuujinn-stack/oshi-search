@@ -708,3 +708,51 @@ export const personGroupMemberships = pgTable('person_group_memberships', {
   uniqueIndex('pgm_person_group_idx').on(t.personName, t.groupName),
   index('pgm_group_idx').on(t.groupName),
 ]);
+
+// ── 楽天イベント管理（drizzle/0022_rakuten_events.sql・管理画面 /admin/rakuten-events）──────────
+// イベントは手動登録。終了状態は保存せず ends_at と現在時刻で判定する（src/lib/rakuten-event/core.ts）。
+// 商品は products.items の要素を 人物名・保存カテゴリ・商品ID で参照する（商品データは複製しない）。
+export const rakutenEvents = pgTable('rakuten_events', {
+  id:                serial('id').primaryKey(),
+  name:              text('name').notNull(),
+  eventType:         text('event_type').notNull(),
+  startsAt:          timestamp('starts_at', { withTimezone: true }).notNull(),
+  endsAt:            timestamp('ends_at', { withTimezone: true }).notNull(),
+  officialUrl:       text('official_url'),
+  entryRequired:     text('entry_required').notNull().default('unknown'), // required | not_required | unknown
+  entryUrl:          text('entry_url'),
+  conditions:        text('conditions'),
+  benefit:           text('benefit'),
+  benefitConditions: text('benefit_conditions'),
+  lastCheckedAt:     timestamp('last_checked_at', { withTimezone: true }),
+  visibility:        text('visibility').notNull().default('hidden'),      // published | hidden
+  note:              text('note'),
+  updatedBy:         text('updated_by'),
+  createdAt:         timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:         timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('rakuten_events_ends_at_idx').on(t.endsAt),
+]);
+
+// check_status: confirmed | needs_check | excluded（excluded は手動でのみ設定）
+// benefit_scope: item | shop | buyer_condition | event_general | unknown
+export const rakutenEventProducts = pgTable('rakuten_event_products', {
+  id:           serial('id').primaryKey(),
+  eventId:      integer('event_id').notNull(),
+  personName:   text('person_name').notNull(),
+  category:     text('category').notNull(),
+  productId:    text('product_id').notNull(),
+  productTitle: text('product_title'),
+  checkStatus:  text('check_status').notNull().default('needs_check'),
+  benefitScope: text('benefit_scope').notNull().default('unknown'),
+  benefitNote:  text('benefit_note'),
+  sourceUrl:    text('source_url'),
+  checkedAt:    timestamp('checked_at', { withTimezone: true }),
+  checkedBy:    text('checked_by'),
+  note:         text('note'),
+  createdAt:    timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex('rakuten_event_products_link_idx').on(t.eventId, t.personName, t.productId),
+  index('rakuten_event_products_event_idx').on(t.eventId),
+]);
