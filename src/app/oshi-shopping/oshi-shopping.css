@@ -10,7 +10,6 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshishopping 
 .os-page { overflow-wrap: anywhere; }
 .os-page .os-h1 { font-size: clamp(26px, 6.4vw, 36px); line-height: 1.25; margin: 0 0 8px; }
 .os-page .os-h2 { font-size: 18px; line-height: 1.4; margin: 0 0 8px; }
-.os-page .os-pr { margin: 0 0 12px; font-size: 11px; color: var(--graphic-muted); }
 .os-page .os-sections { display: flex; flex-direction: column; gap: 32px; }
 .os-page .os-sections > section { border-top: 1.5px solid var(--graphic-rule); padding-top: 18px; }
 .os-page .os-lead { font-size: 14px; line-height: 1.8; color: var(--graphic-body); margin: 0; }

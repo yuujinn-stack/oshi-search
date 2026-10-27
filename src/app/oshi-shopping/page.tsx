@@ -27,6 +27,7 @@ import {
 } from '@/lib/oshi-shopping/params';
 import { productTabAnchorId } from '@/lib/product-tabs';
 import { PRICE_FRESH_DAYS } from '@/lib/price-freshness';
+import PrNotice from '@/components/site/PrNotice';
 import './oshi-shopping.css';
 
 // 結果は searchParams に依存するため動的レンダリング（一般商品の楽天APIの結果は商品ごとに24時間キャッシュ）。
@@ -305,8 +306,10 @@ export default async function OshiShoppingPage({ searchParams }: Props) {
         <span>{PAGE_NAME}</span>
       </nav>
 
+      {/* PR表記（ファーストビュー） */}
+      <PrNotice className="mb-4" />
+
       <h1 className="os-h1">{PAGE_NAME}</h1>
-      <p className="os-pr">PR｜このページは楽天アフィリエイトを利用しています。</p>
 
       {notices.map((n) => <p key={n} className="os-notice" role="status">{n}</p>)}
 

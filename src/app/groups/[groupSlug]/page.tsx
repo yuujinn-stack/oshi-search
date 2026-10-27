@@ -35,6 +35,7 @@ import type { PersonWithConfig } from '@/types/person';
 import type { GroupMeta } from '@/types/group';
 import PageViewTracker from '@/components/site/PageViewTracker';
 import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
+import PrNotice from '@/components/site/PrNotice';
 
 export const dynamic = 'force-dynamic';
 
@@ -618,6 +619,9 @@ export default async function GroupsPage({ params }: Props) {
 
       <div className="page-bg oshi-graphic-page oshi-graphic-page--group">
         <GraphicPageStyles />
+
+        {/* PR表記（ファーストビュー）。パンくずの上に置く（デザインCSSの `nav:first-of-type + div` がヒーローを指すため、パンくずとヒーローの間には挟まない） */}
+        <PrNotice className="max-w-4xl mx-auto px-4 pt-3" />
 
         {/* パンくずリスト */}
         <nav aria-label="パンくずリスト" className="breadcrumb-bar">

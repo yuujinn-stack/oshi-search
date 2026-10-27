@@ -25,6 +25,7 @@ import OshiShoppingEntryCta from '@/components/oshi-shopping/OshiShoppingEntryCt
 import OshiCardEntryCta from '@/components/oshi-card/OshiCardEntryCta';
 import type { HomeGroupItem } from '@/components/site/HomeGroupSection';
 import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
+import PrNotice from '@/components/site/PrNotice';
 import './home-graphic.css';
 
 // トップページのデザイン「C. Graphic Pop」用フォント（home-graphic.css の --pc-* を上書き）。
@@ -258,6 +259,8 @@ export default async function HomePage() {
       <style dangerouslySetInnerHTML={{ __html: GRAPHIC_FONT_VARS_CSS }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }} />
+      {/* PR表記（ファーストビュー）。ヒーロー（section:first-of-type）の外に置き、ヒーロー用のCSSを受けないようにする */}
+      <PrNotice className="max-w-[1120px] mx-auto px-4 pt-4" />
       {/* ━━━ Hero（メインコピー＋検索） ━━━ */}
       {/* すでに推しがいるユーザーがすぐ検索できるよう、スマホでも検索欄がファーストビューに入る高さに抑える */}
       <section

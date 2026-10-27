@@ -677,6 +677,30 @@ body {
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 
+/* 広告掲載ページのファーストビューのPR表記（src/components/site/PrNotice.tsx）。
+   どのテーマ・ページでも同じ見た目にするため、CSS変数ではなく固定色で指定する。
+   白文字/黒地 約19:1、PR（#FF7A33）/黒地 約7.6:1、区切り（#B5B5AE）/黒地 約10:1。 */
+.pr-notice {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
+  margin: 0;
+  padding: 6px 12px;
+  background: #0A0A0A;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  border-radius: 2px;
+}
+.pr-notice__label { color: #FF7A33; font-weight: 900; letter-spacing: 0.08em; }
+.pr-notice__sep { color: #B5B5AE; margin: 0 2px; }
+@media (min-width: 768px) {
+  .pr-notice { font-size: 13px; }
+}
+
 .breadcrumb-bar {
   background: var(--ds-surface);
   border-bottom: 1px solid var(--ds-border);

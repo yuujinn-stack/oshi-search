@@ -25,6 +25,7 @@ import { parseShareAttribution } from '@/lib/oshi-vod/share';
 import { buildOshiVodResultSocialMetadata } from '@/lib/oshi-vod/og-meta';
 import { OSHI_VOD_DEFAULT_SHARE_VARIANT } from '@/lib/oshi-vod/share-variant';
 import type { DiagnosisResult } from '@/lib/oshi-vod/types';
+import PrNotice from '@/components/site/PrNotice';
 import './oshi-vod.css';
 
 // 結果は searchParams に依存するため動的レンダリング（計算結果は data.ts で短時間キャッシュ）。
@@ -193,6 +194,9 @@ export default async function OshiVodPage({ searchParams }: Props) {
         <span className="mx-1.5" style={{ opacity: 0.4 }}>›</span>
         <span>推しに合うサブスク診断</span>
       </nav>
+
+      {/* PR表記（ファーストビュー） */}
+      <PrNotice className="mb-4" />
 
       <h1 className="ov-h1">推しに合うサブスク診断</h1>
       {shareAttribution && (

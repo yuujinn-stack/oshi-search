@@ -19,6 +19,7 @@ import { shouldNoindexWork, safeTitleFallback } from '@/lib/seo-quality';
 import ProviderLogo from '@/components/ProviderLogo';
 import VodTrackLink from '@/components/site/VodTrackLink';
 import AffiliateSlot from '@/components/site/AffiliateSlot';
+import PrNotice from '@/components/site/PrNotice';
 import { VOD_TYPE_CONFIG, VOD_TYPE_ORDER, getVodLink, getVodServiceStyle } from '@/lib/vod-cta';
 import { VOD_PAGE_PROVIDERS } from '@/lib/vod-page';
 
@@ -238,6 +239,8 @@ export default async function WorkDetailPage({ params }: Props) {
         </nav>
 
         <div className="max-w-lg mx-auto px-4 py-5 space-y-5">
+          {/* PR表記（ファーストビュー） */}
+          <PrNotice />
 
           {/* ━━━ ファーストビュー（基本情報 + サマリー統計） ━━━ */}
           <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">

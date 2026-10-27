@@ -1,4 +1,5 @@
 import GraphicPageStyles from '@/components/site/GraphicPageStyles';
+import PrNotice from '@/components/site/PrNotice';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -127,6 +128,9 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
         <span aria-hidden="true">›</span>
         <span>{config.displayName}で見られる出演作品</span>
       </nav>
+
+      {/* PR表記（ファーストビュー） */}
+      <PrNotice className="mb-5" />
 
       {/* H1・導入文 */}
       <div className="mb-6">

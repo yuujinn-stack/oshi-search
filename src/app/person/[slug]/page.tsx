@@ -67,6 +67,7 @@ import type { WorkRecord } from '@/types/work';
 import { buildHeroBadgeTitles, buildInfoGenreList, normalizeTag } from '@/lib/person-display-tags';
 import { ACTIVITY_LABEL } from '@/lib/person-badges';
 import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
+import PrNotice from '@/components/site/PrNotice';
 import './person-graphic.css';
 
 // 人物ページのデザイン「C. Graphic Pop」用フォント（person-graphic.css の --pp-* を上書き）。
@@ -728,6 +729,9 @@ export default async function PersonPage({ params }: Props) {
       {/* oshi-person-graphic: 人物ページのデザイン「C. Graphic Pop」（./person-graphic.css）の適用範囲 */}
       <style dangerouslySetInnerHTML={{ __html: PERSON_GRAPHIC_FONT_VARS_CSS }} />
       <div className="page-bg oshi-person-graphic">
+
+        {/* PR表記（ファーストビュー）。パンくずの上に置く（デザインCSSの `nav:first-of-type + div` がヒーローを指すため、パンくずとヒーローの間には挟まない） */}
+        <PrNotice className="max-w-4xl mx-auto px-4 pt-3" />
 
         {/* ─── パンくず ─── */}
         <nav aria-label="パンくずリスト" className="breadcrumb-bar">

@@ -8,6 +8,7 @@ import {
 } from '@/lib/photobook-store';
 import type { PhotobookGenreBucket } from '@/lib/photobook';
 import PhotobookCard from '@/components/site/PhotobookCard';
+import PrNotice from '@/components/site/PrNotice';
 import PhotobookFilterBar from './PhotobookFilterBar';
 
 export const revalidate = 60;
@@ -79,6 +80,9 @@ export default async function PhotobooksPage({ searchParams }: Props) {
         <span aria-hidden="true">›</span>
         <span>写真集を探す</span>
       </nav>
+
+      {/* PR表記（ファーストビュー） */}
+      <PrNotice className="mb-5" />
 
       <div className="mb-6">
         <h1 className="text-2xl font-black mb-2" style={{ color: 'var(--ds-text)' }}>写真集を探す</h1>
