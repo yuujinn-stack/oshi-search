@@ -23,7 +23,7 @@ import {
   MAX_LINK_PER_REQUEST, createEvent, deleteEvent, getEvent, getItemCodesFor, getLinkedItemCode, isMissingEventTable, linkProducts, linkTargetKey,
   listEventProducts, listEvents, neonEventDb, searchProducts, unlinkProduct, updateEvent, updateEventProduct, type EventDb, type LinkTarget,
 } from '@/lib/rakuten-event/store';
-import { ITEM_CHECK_MESSAGE, MAX_CHECK_PER_REQUEST, cachedCheckStates, checkRakutenItems } from '@/lib/rakuten-event/item-check';
+import { ITEM_CHECK_MESSAGE, MAX_CHECK_PER_REQUEST, apiCheckKey, cachedCheckStates, checkRakutenItems } from '@/lib/rakuten-event/item-check';
 import { findDuplicateEvent } from '@/lib/rakuten-event/candidates';
 import { formatJstAdmin } from '@/lib/rakuten-event/core';
 import { CATEGORIES } from '@/lib/product-store';
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
     const [event, products] = await Promise.all([getEvent(db, eventId), listEventProducts(db, eventId)]);
     if (!event) return json({ ok: false, code: 'not_found', message: 'イベントが見つかりません' }, 404);
     // 楽天APIの確認結果（24時間のキャッシュだけ。APIは呼ばない）
-    const api = await cachedCheckStates(products.map((p) => p.itemCode));
+    const api = await cachedCheckStates(products.map((p) => apiCheckKey(p)));
     return json({ ok: true, event, products: products.map((p, i) => ({ ...p, api: api[i] })) });
   } catch (err) {
     return failure(err);
@@ -139,7 +139,8 @@ export async function POST(req: NextRequest) {
         const r = await searchProducts(db, {
           personNames: persons, categories, keyword, includeUnpublished: body.includeUnpublished === true, eventId: posInt(body.eventId) ?? undefined,
         });
-        const api = await cachedCheckStates(r.rows.map((x) => x.itemCode));
+        // API 確認のキー：楽天市場は itemCode、楽天ブックスは商品番号（キャッシュだけを読む。API は呼ばない）
+        const api = await cachedCheckStates(r.rows.map((x) => apiCheckKey(x)));
         return json({ ok: true, rows: r.rows.map((x, i) => ({ ...x, api: api[i] })), truncated: r.truncated, personCount: persons.length });
       }
       case 'link': {
@@ -171,7 +172,8 @@ export async function POST(req: NextRequest) {
         if (!linkId) return bad('入力が正しくありません');
         const item = await getLinkedItemCode(db, linkId);
         if (!item) return json({ ok: false, code: 'not_found', message: '紐付けた商品が商品データに見つかりません（削除・ID変更の可能性）' }, 404);
-        const [r] = await checkRakutenItems([item.itemCode]);
+        const key = apiCheckKey(item);
+        const [r] = await checkRakutenItems([key ? { key, title: item.title, itemUrl: item.itemUrl, affiliateUrl: item.affiliateUrl } : null]);
         if (r.code === 'ok') return json({ ok: true, code: 'ok', info: r.info });
         return json({ ok: false, code: r.code, message: ITEM_CHECK_MESSAGE[r.code] }, r.code === 'no_item_code' || r.code === 'not_found' ? 200 : 503);
       }
@@ -179,14 +181,18 @@ export async function POST(req: NextRequest) {
         const targets = parseTargets(body.items);
         if (!targets.length) return bad('確認する商品を選んでください');
         if (targets.length > MAX_CHECK_PER_REQUEST) return bad(`楽天APIで一度に確認できるのは${MAX_CHECK_PER_REQUEST}件までです`);
-        const codes = await getItemCodesFor(db, targets);
-        const results = await checkRakutenItems(targets.map((t) => codes.get(linkTargetKey(t)) ?? null));
+        const refs = await getItemCodesFor(db, targets);
+        const results = await checkRakutenItems(targets.map((t) => {
+          const ref = refs.get(linkTargetKey(t));
+          const key = ref ? apiCheckKey(ref) : null;
+          return ref && key ? { key, title: ref.title, itemUrl: ref.itemUrl, affiliateUrl: ref.affiliateUrl } : null;
+        }));
         const out = targets.map((t, i) => ({ ...t, result: results[i] }));
         const called = results.filter((r) => r.code === 'ok' || r.code === 'not_found').length;
         const stopped = results.find((r) => r.code === 'busy' || r.code === 'cooldown' || r.code === 'rate_limited' || r.code === 'unavailable' || r.code === 'config_missing');
         return json({
           ok: true, code: 'checked', results: out,
-          message: stopped ? `${called}件を確認しました。${ITEM_CHECK_MESSAGE[stopped.code as keyof typeof ITEM_CHECK_MESSAGE]}` : `${called}件の結果を表示しています（商品コードの無い商品は確認できません）`,
+          message: stopped ? `${called}件を確認しました。${ITEM_CHECK_MESSAGE[stopped.code as keyof typeof ITEM_CHECK_MESSAGE]}` : `${called}件の結果を表示しています（楽天市場の商品コードも楽天ブックスの商品番号も無い商品は確認できません）`,
         });
       }
       default:

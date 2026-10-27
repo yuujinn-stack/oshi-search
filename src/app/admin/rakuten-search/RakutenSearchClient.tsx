@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
+import { suggestManualCategory } from '@/lib/product-curation';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import PersonCombobox from '@/components/admin/PersonCombobox';
 import PersonMultiPicker, { recordRecentPersons } from './PersonMultiPicker';
@@ -162,7 +163,8 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
 
   // ── 追加先人物 ────────────────────────────────────────────────────────────
   const [targetNames, setTargetNames] = useState<string[]>([]);
-  const [addCategory, setAddCategory] = useState<ProductCategory>('写真集');
+  // 未選択から始め、管理者が必ず選ぶ（以前の初期値「写真集」のまま CD 等が保存されていたため）
+  const [addCategory, setAddCategory] = useState<ProductCategory | ''>('');
 
   // ── 追加結果 ─────────────────────────────────────────────────────────────
   const [adding, setAdding] = useState(false);
@@ -341,6 +343,7 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
   // ── 追加実行 ──────────────────────────────────────────────────────────────
   async function handleAdd() {
     if (selectedItems.length === 0 || targetNames.length === 0) return;
+    if (!addCategory) { setAddError('保存カテゴリを選択してください'); return; }
     setAdding(true);
     setAddError('');
     setAddResult(null);
@@ -711,7 +714,7 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
 
               {/* カテゴリ */}
               <div>
-                <p className="text-[10px] text-gray-500 font-medium mb-1.5">保存カテゴリ</p>
+                <p className="text-[10px] text-gray-500 font-medium mb-1.5">保存カテゴリ <span className="text-red-500">*</span>{!addCategory && <span className="ml-1 text-amber-700">未選択（必ず選んでください）</span>}</p>
                 <div className="flex flex-wrap gap-1">
                   {CATEGORIES.map(({ value, label }) => (
                     <label key={value}
@@ -725,6 +728,17 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
                     </label>
                   ))}
                 </div>
+                {(() => {
+                  // 選択中の商品名がすべて同じ候補を示すときだけ候補を出す（自動では選ばない）
+                  const hints = selectedItems.map((i) => suggestManualCategory(i.title));
+                  const first = hints[0];
+                  if (!first || hints.some((h) => h?.category !== first.category) || first.category === addCategory) return null;
+                  return (
+                    <button type="button" onClick={() => setAddCategory(first.category)} className="mt-1 text-[11px] text-indigo-700 hover:underline">
+                      候補：{first.category}（選択中の商品名：{first.reason}）→ 押すと選択
+                    </button>
+                  );
+                })()}
               </div>
 
               {/* 追加先人物 */}
@@ -770,7 +784,7 @@ export default function RakutenSearchClient({ persons, groups, metaMap }: Props)
                 </div>
               ) : (
                 <>
-                  <button onClick={handleAdd} disabled={adding || selectedItems.length === 0 || targetNames.length === 0}
+                  <button onClick={handleAdd} disabled={adding || !addCategory || selectedItems.length === 0 || targetNames.length === 0}
                     className="w-full py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors disabled:opacity-40">
                     {adding ? '追加中...' : `✚ 選択${selectedItems.length}件を${targetNames.length}人に追加`}
                   </button>

@@ -161,6 +161,7 @@ export async function deleteEvent(db: EventDb, id: number): Promise<boolean> {
 export interface EventProductRow extends RakutenEventProduct {
   itemCode: string | null;
   itemUrl: string | null;
+  affiliateUrl: string | null;
   verdict: string | null;
   /** products に商品が見つからない（削除・ID変更） */
   missing: boolean;
@@ -172,7 +173,7 @@ export async function listEventProducts(db: EventDb, eventId: number): Promise<E
       l.source_url, l.checked_by, l.note,
       (extract(epoch from l.checked_at) * 1000)::float8 AS checked_ms,
       (extract(epoch from l.updated_at) * 1000)::float8 AS updated_ms,
-      it.item->>'itemCode' AS item_code, it.item->>'itemUrl' AS item_url, (it.item IS NULL) AS missing, v.verdict
+      it.item->>'itemCode' AS item_code, it.item->>'itemUrl' AS item_url, it.item->>'affiliateUrl' AS affiliate_url, (it.item IS NULL) AS missing, v.verdict
     FROM rakuten_event_products l
     LEFT JOIN products p ON p.person_name = l.person_name AND p.category = l.category
     LEFT JOIN LATERAL (
@@ -181,7 +182,7 @@ export async function listEventProducts(db: EventDb, eventId: number): Promise<E
     ) it ON true
     LEFT JOIN verdicts v ON v.person_name = l.person_name AND v.product_id = l.product_id
     WHERE l.event_id = $1 ORDER BY l.person_name, l.category, l.id`, [eventId]);
-  return rows.map((r) => ({ ...toLink(r), itemCode: str(r.item_code), itemUrl: str(r.item_url), verdict: str(r.verdict), missing: r.missing === true }));
+  return rows.map((r) => ({ ...toLink(r), itemCode: str(r.item_code), itemUrl: str(r.item_url), affiliateUrl: str(r.affiliate_url), verdict: str(r.verdict), missing: r.missing === true }));
 }
 
 export interface LinkTarget { personName: string; category: string; productId: string }
@@ -245,6 +246,7 @@ export interface ProductSearchRow {
   shopName: string | null;
   itemCode: string | null;
   itemUrl: string | null;
+  affiliateUrl: string | null;
   verdict: string | null;
   isUsed: boolean;
   linkedStatus: CheckStatus | null;
@@ -264,7 +266,7 @@ export async function searchProducts(db: EventDb, q: ProductSearchInput): Promis
   if (!persons.length) return { rows: [], truncated: false };
   const rows = await db.query(`
     SELECT p.person_name, p.category, e.item->>'id' AS product_id, e.item->>'title' AS title, e.item->>'shopName' AS shop_name,
-      e.item->>'itemCode' AS item_code, e.item->>'itemUrl' AS item_url, (e.item->>'isUsed') = 'true' AS is_used,
+      e.item->>'itemCode' AS item_code, e.item->>'itemUrl' AS item_url, e.item->>'affiliateUrl' AS affiliate_url, (e.item->>'isUsed') = 'true' AS is_used,
       v.verdict, l.check_status AS linked_status, l.id AS link_id, l.benefit_scope AS linked_scope, l.source_url AS linked_source_url,
       (extract(epoch from l.checked_at) * 1000)::float8 AS linked_checked_ms
     FROM products p
@@ -287,6 +289,7 @@ export async function searchProducts(db: EventDb, q: ProductSearchInput): Promis
     shopName: str(r.shop_name),
     itemCode: str(r.item_code),
     itemUrl: str(r.item_url),
+    affiliateUrl: str(r.affiliate_url),
     verdict: str(r.verdict),
     isUsed: r.is_used === true,
     linkedStatus: (r.linked_status as CheckStatus | null) ?? null,
@@ -299,30 +302,36 @@ export async function searchProducts(db: EventDb, q: ProductSearchInput): Promis
 }
 
 /** 紐付けた商品の itemCode（楽天市場の商品だけ。API で現在の情報を確認するため） */
-export async function getLinkedItemCode(db: EventDb, linkId: number): Promise<{ itemCode: string | null; itemUrl: string | null } | null> {
+export async function getLinkedItemCode(db: EventDb, linkId: number): Promise<StoredItemRef | null> {
   const rows = await db.query(`
-    SELECT e.item->>'itemCode' AS item_code, e.item->>'itemUrl' AS item_url
+    SELECT e.item->>'itemCode' AS item_code, e.item->>'itemUrl' AS item_url, e.item->>'affiliateUrl' AS affiliate_url, e.item->>'title' AS title
     FROM rakuten_event_products l
     JOIN products p ON p.person_name = l.person_name AND p.category = l.category
     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.items) = 'array' THEN p.items ELSE '[]'::jsonb END) AS e(item)
     WHERE l.id = $1 AND e.item->>'id' = l.product_id
     LIMIT 1`, [linkId]);
   if (!rows[0]) return null;
-  return { itemCode: str(rows[0].item_code), itemUrl: str(rows[0].item_url) };
+  return { itemCode: str(rows[0].item_code), itemUrl: str(rows[0].item_url), affiliateUrl: str(rows[0].affiliate_url), title: str(rows[0].title) };
 }
 
-/** 選んだ商品の itemCode（API確認用。画面から送られた値は使わず、products から読む）。見つからない商品は含めない */
-export async function getItemCodesFor(db: EventDb, targets: LinkTarget[]): Promise<Map<string, string | null>> {
-  const out = new Map<string, string | null>();
+export interface StoredItemRef { itemCode: string | null; itemUrl: string | null; affiliateUrl: string | null; title: string | null }
+
+/** 選んだ商品の itemCode・商品URL・商品名（API確認用。画面から送られた値は使わず、products から読む）。見つからない商品は含めない */
+export async function getItemCodesFor(db: EventDb, targets: LinkTarget[]): Promise<Map<string, StoredItemRef>> {
+  const out = new Map<string, StoredItemRef>();
   if (!targets.length) return out;
   const rows = await db.query(`
-    SELECT t.person_name, t.category, t.product_id, e.item->>'itemCode' AS item_code
+    SELECT t.person_name, t.category, t.product_id, e.item->>'itemCode' AS item_code, e.item->>'itemUrl' AS item_url,
+      e.item->>'affiliateUrl' AS affiliate_url, e.item->>'title' AS title
     FROM unnest($1::text[], $2::text[], $3::text[]) AS t(person_name, category, product_id)
     JOIN products p ON p.person_name = t.person_name AND p.category = t.category
     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.items) = 'array' THEN p.items ELSE '[]'::jsonb END) AS e(item)
     WHERE e.item->>'id' = t.product_id`,
   [targets.map((t) => t.personName), targets.map((t) => t.category), targets.map((t) => t.productId)]);
-  for (const r of rows) out.set(linkTargetKey({ personName: String(r.person_name), category: String(r.category), productId: String(r.product_id) }), str(r.item_code));
+  for (const r of rows) {
+    out.set(linkTargetKey({ personName: String(r.person_name), category: String(r.category), productId: String(r.product_id) }),
+      { itemCode: str(r.item_code), itemUrl: str(r.item_url), affiliateUrl: str(r.affiliate_url), title: str(r.title) });
+  }
   return out;
 }
 

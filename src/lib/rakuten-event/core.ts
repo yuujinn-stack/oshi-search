@@ -114,6 +114,8 @@ export interface RakutenEventProduct {
   checkedBy: string | null;
   note: string | null;
   updatedAt: number;
+  /** 商品データの商品URL（表示分類・ページ内リンクに使う。紐付けの一覧で付く） */
+  itemUrl?: string | null;
 }
 
 export type EventStatus = 'upcoming' | 'active' | 'ended';
@@ -400,6 +402,8 @@ export interface ItemCheckInfo {
   saleEndTime: string | null;
   shopName: string | null;
   fetchedAt: number;
+  /** 取得元：楽天市場商品検索（itemCode）／楽天ブックス総合検索（商品番号で照合。ポイント倍率の項目は無い） */
+  source?: 'ichiba' | 'books';
 }
 
 /** 楽天APIの日時（"YYYY-MM-DD HH:MM"・日本時間）を epoch ms に。不正なら null */

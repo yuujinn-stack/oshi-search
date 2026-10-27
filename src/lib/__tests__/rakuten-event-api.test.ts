@@ -9,7 +9,11 @@ const spies = vi.hoisted(() => ({
 }));
 vi.mock('@/db/client', () => ({ neonSql: {}, db: {} }));
 vi.mock('@/lib/redis', () => ({ getRedis: () => null }));
-vi.mock('@/lib/product-store', () => ({ CATEGORIES: ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD', '中古'] }));
+vi.mock('@/lib/product-store', async () => ({
+  // 楽天ブックスの照合（price-refresh の matchBooksResult）が使う productIdentityKey は実物（DB は使わない）
+  ...(await vi.importActual<typeof import('../product-store')>('../product-store')),
+  CATEGORIES: ['写真集', '本・雑誌', 'Blu-ray・DVD', 'グッズ', 'CD', '中古'],
+}));
 vi.mock('@/lib/persons', () => ({
   getAllPersonsMerged: async () => [{ name: '推しA', group: 'G1' }, { name: '推しB', group: 'G1' }, { name: '推しC', group: 'G2' }, { name: '推しD', group: 'G2' }],
 }));
@@ -29,7 +33,7 @@ vi.mock('@/lib/rakuten-event/store', async () => {
 vi.mock('@/lib/rakuten-event/item-check', async () => {
   const actual = await vi.importActual<typeof import('../rakuten-event/item-check')>('../rakuten-event/item-check');
   return {
-    ITEM_CHECK_MESSAGE: actual.ITEM_CHECK_MESSAGE, MAX_CHECK_PER_REQUEST: actual.MAX_CHECK_PER_REQUEST,
+    ITEM_CHECK_MESSAGE: actual.ITEM_CHECK_MESSAGE, MAX_CHECK_PER_REQUEST: actual.MAX_CHECK_PER_REQUEST, apiCheckKey: actual.apiCheckKey,
     checkRakutenItems: spies.checkRakutenItems, cachedCheckStates: spies.cachedCheckStates,
   };
 });
@@ -110,7 +114,7 @@ describe('楽天イベント管理 API', () => {
   });
 
   it('楽天APIで確認：取得できなくても確認状態を変えない（表示用の結果だけ返す）', async () => {
-    spies.getLinkedItemCode.mockResolvedValue({ itemCode: 'shop:a1', itemUrl: null });
+    spies.getLinkedItemCode.mockResolvedValue({ itemCode: 'shop:a1', itemUrl: null, affiliateUrl: null, title: 'A' });
     spies.checkRakutenItems.mockResolvedValue([{ code: 'not_found' }]);
     const res = await call({ action: 'check_item', eventId: 1, linkId: 2 });
     const data = await res.json();
@@ -152,20 +156,37 @@ describe('楽天イベント管理 API（Phase 2）', () => {
   });
 
   it('商品の検索結果に API 確認の状態（キャッシュのみ・API は呼ばない）を付ける', async () => {
-    spies.searchProducts.mockResolvedValue({ rows: [{ productId: 'a', itemCode: 'shop:a' }, { productId: 'b', itemCode: null }], truncated: false });
+    spies.searchProducts.mockResolvedValue({ rows: [
+      { productId: 'a', itemCode: 'shop:a' },
+      { productId: 'b', itemCode: null, itemUrl: 'https://item.rakuten.co.jp/shop/b/' },
+      { productId: 'c', itemCode: null, itemUrl: 'https://books.rakuten.co.jp/rb/18507787/' },
+    ], truncated: false });
     const data = await (await call({ action: 'search', personName: '推しA', categories: [] })).json();
-    expect(data.rows.map((r: { api: { code: string } }) => r.api.code)).toEqual(['unchecked', 'no_item_code']);
+    // 楽天ブックスの商品は商品番号で確認できる（キー book:<番号>）。楽天市場で itemCode が無い商品は確認できない
+    expect(data.rows.map((r: { api: { code: string } }) => r.api.code)).toEqual(['unchecked', 'no_item_code', 'unchecked']);
+    expect(spies.cachedCheckStates.mock.calls[0][0]).toEqual(['shop:a', null, 'book:18507787']);
     expect(spies.checkRakutenItems).not.toHaveBeenCalled();
   });
 
   it('選んだ商品の API 確認：20件まで・itemCode は商品データから読む（画面の値を使わない）', async () => {
     const items = Array.from({ length: 21 }, (_, i) => ({ personName: '推しA', category: 'グッズ', productId: `p${i}` }));
     expect((await call({ action: 'check_items', items })).status).toBe(400);
-    spies.getItemCodesFor.mockResolvedValue(new Map([['推しA\u0000グッズ\u0000p1', 'shop:p1']]));
-    spies.checkRakutenItems.mockResolvedValue([{ code: 'ok', info: { itemCode: 'shop:p1' } }, { code: 'no_item_code' }]);
-    const res = await call({ action: 'check_items', items: [{ personName: '推しA', category: 'グッズ', productId: 'p1', itemCode: 'evil:x' }, { personName: '推しA', category: 'グッズ', productId: 'p2' }] });
+    spies.getItemCodesFor.mockResolvedValue(new Map([
+      ['推しA\u0000グッズ\u0000p1', { itemCode: 'shop:p1', itemUrl: null, affiliateUrl: null, title: 'グッズ1' }],
+      ['推しA\u0000写真集\u0000p3', { itemCode: null, itemUrl: 'https://books.rakuten.co.jp/rb/123/', affiliateUrl: null, title: '写真集3' }],
+    ]));
+    spies.checkRakutenItems.mockResolvedValue([{ code: 'ok', info: { itemCode: 'shop:p1' } }, { code: 'no_item_code' }, { code: 'not_found' }]);
+    const res = await call({ action: 'check_items', items: [
+      { personName: '推しA', category: 'グッズ', productId: 'p1', itemCode: 'evil:x' },
+      { personName: '推しA', category: 'グッズ', productId: 'p2' },
+      { personName: '推しA', category: '写真集', productId: 'p3' },
+    ] });
     expect(res.status).toBe(200);
-    expect(spies.checkRakutenItems.mock.calls[0][0]).toEqual(['shop:p1', null]);
+    expect(spies.checkRakutenItems.mock.calls[0][0]).toEqual([
+      { key: 'shop:p1', title: 'グッズ1', itemUrl: null, affiliateUrl: null },
+      null,
+      { key: 'book:123', title: '写真集3', itemUrl: 'https://books.rakuten.co.jp/rb/123/', affiliateUrl: null },
+    ]);
     expect(spies.updateEventProduct).not.toHaveBeenCalled();
   });
 });
@@ -259,5 +280,34 @@ describe('選んだ商品の楽天API確認（checkRakutenItems・キャッシ�
     const f = byCode({});
     const r = await checkRakutenItems(Array.from({ length: 25 }, (_, i) => `shop:x${i}`), { gateDeps: { ...deps }, fetchImpl: f as unknown as typeof fetch, cache: null });
     expect(r.length).toBe(20);
+  });
+});
+
+describe('楽天ブックスの商品を商品番号で確認（価格更新と同じ照合）', () => {
+  beforeEach(async () => {
+    (await vi.importActual<typeof import('../rakuten-api-gate')>('../rakuten-api-gate')).__resetRakutenApiGateForTests();
+    vi.stubEnv('RAKUTEN_APP_ID', 'app-id-not-real');
+    vi.stubEnv('RAKUTEN_ACCESS_KEY', 'access-key-not-real');
+    vi.stubEnv('VERCEL', '');
+  });
+  const deps = { redis: null, now: () => Date.now(), sleep: async () => {}, intervalMs: 0, log: () => {} };
+  const booksFetch = (items: Record<string, unknown>[]) => vi.fn(async () => new Response(JSON.stringify({ Items: items.map((Item) => ({ Item })) }), { status: 200 }));
+  const target = { key: 'book:18507787', title: '【映画化記念帯】ほどなく、お別れです 文庫1巻〜4巻', itemUrl: 'https://books.rakuten.co.jp/rb/18507787/', affiliateUrl: null };
+
+  it('商品番号が完全に一致した商品だけ。価格と購入できるかだけで、ポイント倍率は null', async () => {
+    const { checkRakutenItems, apiCheckKey } = await vi.importActual<typeof import('../rakuten-event/item-check')>('../rakuten-event/item-check');
+    expect(apiCheckKey({ itemCode: null, itemUrl: null, affiliateUrl: 'https://hb.afl.rakuten.co.jp/hgc/x/?pc=https%3A%2F%2Fbooks.rakuten.co.jp%2Frb%2F18507787%2F' })).toBe('book:18507787');
+    expect(apiCheckKey({ itemCode: null, itemUrl: 'https://item.rakuten.co.jp/shop/a/' })).toBeNull();
+    const f = booksFetch([{ itemUrl: 'https://books.rakuten.co.jp/rb/99999999/', itemPrice: 100, availability: 1 }, { itemUrl: 'https://books.rakuten.co.jp/rb/18507787/', itemPrice: 3080, availability: 1 }]);
+    const [r] = await checkRakutenItems([target], { gateDeps: deps, fetchImpl: f as unknown as typeof fetch, cache: null });
+    expect(String((f.mock.calls[0] as unknown[])[0])).toContain('/BooksTotal/Search/20170404?');
+    expect(r).toMatchObject({ code: 'ok', info: { source: 'books', itemPrice: 3080, availability: 1, pointRate: null, saleEndTime: null } });
+  });
+  it('似た商品だけ（商品番号が違う）は該当なし、品切れは購入できない', async () => {
+    const { checkRakutenItems } = await vi.importActual<typeof import('../rakuten-event/item-check')>('../rakuten-event/item-check');
+    const other = booksFetch([{ itemUrl: 'https://books.rakuten.co.jp/rb/11111111/', itemPrice: 3080, availability: 1 }]);
+    expect((await checkRakutenItems([target], { gateDeps: deps, fetchImpl: other as unknown as typeof fetch, cache: null }))[0].code).toBe('not_found');
+    const sold = booksFetch([{ itemUrl: 'https://books.rakuten.co.jp/rb/18507787/', itemPrice: 3080, availability: '' }]);
+    expect((await checkRakutenItems([target], { gateDeps: deps, fetchImpl: sold as unknown as typeof fetch, cache: null }))[0]).toMatchObject({ code: 'ok', info: { availability: 0, itemPrice: null } });
   });
 });

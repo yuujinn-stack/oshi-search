@@ -20,6 +20,21 @@ import {
 import { candidateRegistered, fiveZeroCandidates, irregularCandidates, type EventCandidate } from '@/lib/rakuten-event/candidates';
 import { API_STATE_LABEL, PRIORITY_LABEL, candidatePriority, type ApiCheckState, type Priority } from '@/lib/rakuten-event/priority';
 import type { EventProductRow, EventWithCounts, ProductSearchRow } from '@/lib/rakuten-event/store';
+import { classifyProductDetailed } from '@/lib/product-curation';
+import type { ProductCategory } from '@/types/person';
+
+const DISPLAY_SECTIONS = ['写真集・書籍', 'CD', 'Blu-ray・DVD', 'グッズ', 'その他'] as const;
+/** 公開ページと同じ表示分類（保存カテゴリと違うときは根拠も見せる） */
+function displayOf(title: string | null | undefined, category: string, itemUrl: string | null | undefined) {
+  return classifyProductDetailed(title ?? '', category as ProductCategory, itemUrl ?? '');
+}
+const STORED_AS_SECTION: Record<string, string> = { 写真集: '写真集・書籍', '本・雑誌': '写真集・書籍', CD: 'CD', 'Blu-ray・DVD': 'Blu-ray・DVD', グッズ: 'グッズ', 中古: '中古' };
+/** 楽天APIで確認するときの手段（画面の表示用。実際のキーはサーバーが商品データから決める） */
+function apiMeans(r: { itemCode: string | null; itemUrl: string | null; affiliateUrl?: string | null }): string {
+  if (r.itemCode) return '楽天市場の商品コードあり';
+  const page = productPageUrlOf(r.itemUrl) ?? productPageUrlOf(r.affiliateUrl ?? null) ?? '';
+  return page.includes('books.rakuten.co.jp/rb/') ? '楽天ブックスの商品番号あり' : '商品コード・商品番号なし';
+}
 
 const OPERATOR_KEY = 'rakuten-event-operator';
 const COPY_HISTORY_KEY = 'rakuten-event-copy-history';
@@ -455,6 +470,7 @@ function ProductCandidates({ event, persons, groups, groupInfo, now, onLinked, o
   const [notice, setNotice] = useState<Notice>(null);
   // 絞り込み・並べ替え（画面内だけ）
   const [fCat, setFCat] = useState('');
+  const [fSection, setFSection] = useState('');
   const [fCode, setFCode] = useState<'' | 'yes' | 'no'>('');
   const [fApi, setFApi] = useState<'' | ApiCheckState['code']>('');
   const [fLink, setFLink] = useState<'' | 'unlinked' | 'linked'>('');
@@ -480,11 +496,13 @@ function ProductCandidates({ event, persons, groups, groupInfo, now, onLinked, o
 
   const enriched = useMemo(() => (rows ?? []).map((r) => ({
     r,
-    pr: candidatePriority({ category: r.category, verdict: r.verdict, isUsed: r.isUsed, itemCode: r.itemCode, linkedStatus: r.linkedStatus, api: r.api }, now),
+    disp: displayOf(r.title, r.category, r.itemUrl),
+    pr: candidatePriority({ category: r.category, title: r.title, itemUrl: r.itemUrl, verdict: r.verdict, isUsed: r.isUsed, itemCode: r.itemCode, linkedStatus: r.linkedStatus, api: r.api }, now),
   })), [rows, now]);
   const shown = useMemo(() => {
-    const list = enriched.filter(({ r, pr }) =>
+    const list = enriched.filter(({ r, pr, disp }) =>
       (!fCat || r.category === fCat)
+      && (!fSection || (fSection === '中古' ? r.category === '中古' || r.isUsed : r.category !== '中古' && disp.section === fSection))
       && (!fCode || (fCode === 'yes') === !!r.itemCode)
       && (!fApi || r.api.code === fApi)
       && (!fLink || (fLink === 'linked') === !!r.linkedStatus)
@@ -496,15 +514,15 @@ function ProductCandidates({ event, persons, groups, groupInfo, now, onLinked, o
       category: (a, b) => a.r.category.localeCompare(b.r.category, 'ja') || b.pr.score - a.pr.score,
     };
     return [...list].sort(cmp[sort]);
-  }, [enriched, fCat, fCode, fApi, fLink, fLevel, sort]);
+  }, [enriched, fCat, fSection, fCode, fApi, fLink, fLevel, sort]);
 
   const pickedRows = (rows ?? []).filter((r) => picked.has(keyOf(r)));
   const toggle = (k: string) => setPicked((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const selectTop = (n: number) => setPicked(new Set(shown.filter(({ r }) => !r.linkedStatus).slice(0, n).map(({ r }) => keyOf(r))));
 
   async function checkApi() {
-    const targets = pickedRows.filter((r) => r.itemCode && r.api.code === 'unchecked').slice(0, CHECK_CHUNK);
-    if (!targets.length) { setNotice({ ok: false, message: '楽天APIで未確認の、商品コードがある商品を選んでください' }); return; }
+    const targets = pickedRows.filter((r) => r.api.code === 'unchecked').slice(0, CHECK_CHUNK);
+    if (!targets.length) { setNotice({ ok: false, message: '楽天APIで未確認の商品（楽天市場の商品コードか楽天ブックスの商品番号がある商品）を選んでください' }); return; }
     setBusy(true); setNotice(null);
     const r = await post<{ results?: { personName: string; category: string; productId: string; result: { code: string; info?: ItemCheckInfo } }[] }>({
       action: 'check_items', items: targets.map((t) => ({ personName: t.personName, category: t.category, productId: t.productId })),
@@ -588,12 +606,16 @@ function ProductCandidates({ event, persons, groups, groupInfo, now, onLinked, o
         <div className="space-y-2">
           {/* 絞り込み・並べ替え */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <select className="rounded-md border border-gray-300 px-2 py-1" value={fCat} onChange={(e) => setFCat(e.target.value)} aria-label="カテゴリ">
-              <option value="">カテゴリ：すべて</option>
+            <select className="rounded-md border border-gray-300 px-2 py-1" value={fSection} onChange={(e) => setFSection(e.target.value)} aria-label="表示カテゴリ">
+              <option value="">表示カテゴリ：すべて</option>
+              {[...DISPLAY_SECTIONS, '中古'].map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select className="rounded-md border border-gray-300 px-2 py-1" value={fCat} onChange={(e) => setFCat(e.target.value)} aria-label="保存カテゴリ">
+              <option value="">保存カテゴリ：すべて</option>
               {STORAGE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
-            <select className="rounded-md border border-gray-300 px-2 py-1" value={fCode} onChange={(e) => setFCode(e.target.value as typeof fCode)} aria-label="商品コード">
-              <option value="">商品コード：すべて</option><option value="yes">あり</option><option value="no">なし</option>
+            <select className="rounded-md border border-gray-300 px-2 py-1" value={fCode} onChange={(e) => setFCode(e.target.value as typeof fCode)} aria-label="楽天市場の商品コード">
+              <option value="">楽天市場の商品コード：すべて</option><option value="yes">あり</option><option value="no">なし</option>
             </select>
             <select className="rounded-md border border-gray-300 px-2 py-1" value={fApi} onChange={(e) => setFApi(e.target.value as typeof fApi)} aria-label="API確認">
               <option value="">API確認：すべて</option>
@@ -616,8 +638,8 @@ function ProductCandidates({ event, persons, groups, groupInfo, now, onLinked, o
             <button type="button" className={btnGhost} onClick={() => selectTop(50)} disabled={!shown.length}>上位50件を選択</button>
             <button type="button" className={btnGhost} onClick={() => setPicked(new Set())} disabled={!picked.size}>選択を解除</button>
             <span className="ml-auto flex flex-wrap gap-2">
-              <button type="button" className={btnGhost} onClick={checkApi} disabled={busy || !pickedRows.some((r) => r.itemCode && r.api.code === 'unchecked')}>
-                選んだ商品を楽天APIで確認（{Math.min(CHECK_CHUNK, pickedRows.filter((r) => r.itemCode && r.api.code === 'unchecked').length)}件）
+              <button type="button" className={btnGhost} onClick={checkApi} disabled={busy || !pickedRows.some((r) => r.api.code === 'unchecked')}>
+                選んだ商品を楽天APIで確認（{Math.min(CHECK_CHUNK, pickedRows.filter((r) => r.api.code === 'unchecked').length)}件）
               </button>
               <button type="button" className={btnPrimary} onClick={link} disabled={busy || !pickedRows.some((r) => !r.linkedStatus)}>
                 選んだ{pickedRows.filter((r) => !r.linkedStatus).length}件をイベントに紐付け
@@ -634,13 +656,13 @@ function ProductCandidates({ event, persons, groups, groupInfo, now, onLinked, o
                     <th className="p-2 text-left">優先度・理由</th>
                     <th className="p-2 text-left">商品名</th>
                     <th className="p-2 text-left">人物・グループ</th>
-                    <th className="p-2 text-left">カテゴリ</th>
-                    <th className="p-2 text-left">商品コード／楽天API</th>
+                    <th className="p-2 text-left">表示カテゴリ（保存カテゴリ）</th>
+                    <th className="p-2 text-left">楽天APIでの確認</th>
                     <th className="p-2 text-left">特典の確認（紐付け）</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {shown.map(({ r, pr }) => {
+                  {shown.map(({ r, pr, disp }) => {
                     const k = keyOf(r);
                     return (
                       <tr key={k} className={picked.has(k) ? 'bg-indigo-50' : ''}>
@@ -656,9 +678,12 @@ function ProductCandidates({ event, persons, groups, groupInfo, now, onLinked, o
                           {r.shopName && <div className="text-[10px] text-gray-400">{r.shopName}</div>}
                         </td>
                         <td className="p-2 align-top">{r.personName}<div className="text-[10px] text-gray-400">{(groupOf.get(r.personName) ?? []).join('・')}</div></td>
-                        <td className="p-2 align-top">{r.category}{r.verdict !== 'related' && <div className="text-[10px] text-amber-700">非掲載（{r.verdict ?? '未判定'}）</div>}</td>
                         <td className="p-2 align-top">
-                          <div>{r.itemCode ? 'あり' : 'なし'}</div>
+                          <SectionCell section={r.category === '中古' || r.isUsed ? '中古' : disp.section} stored={r.category} basis={disp.basis} reason={disp.reason} needsReview={disp.needsReview} />
+                          {r.verdict !== 'related' && <div className="text-[10px] text-amber-700">非掲載（{r.verdict ?? '未判定'}）</div>}
+                        </td>
+                        <td className="p-2 align-top">
+                          <div>{apiMeans(r)}</div>
                           <div className="text-[10px] text-gray-500">{API_STATE_LABEL[r.api.code]}</div>
                           {r.api.code === 'ok' && <ApiSummary info={r.api.info} />}
                         </td>
@@ -685,7 +710,29 @@ function ProductCandidates({ event, persons, groups, groupInfo, now, onLinked, o
   );
 }
 
+/** 表示カテゴリと、保存カテゴリ・根拠（商品名から変えた場合・要確認の場合に見せる） */
+function SectionCell({ section, stored, basis, reason, needsReview }: { section: string; stored: string; basis: string; reason: string; needsReview: boolean }) {
+  const changed = section !== (STORED_AS_SECTION[stored] ?? stored);
+  return (
+    <div>
+      <span className={`font-bold ${needsReview ? 'text-amber-700' : 'text-slate-700'}`}>{needsReview ? '要確認' : section}</span>
+      {(changed || needsReview) && (
+        <div className="text-[10px] text-gray-500">保存：{stored}／{basis === 'title' ? '商品名から判定' : basis === 'none' ? '判定できず' : '保存カテゴリ'}：{reason}</div>
+      )}
+      {!changed && !needsReview && <div className="text-[10px] text-gray-400">保存：{stored}</div>}
+    </div>
+  );
+}
+
 function ApiSummary({ info }: { info: ItemCheckInfo }) {
+  if (info.source === 'books') {
+    return (
+      <div className="text-[10px] text-slate-600 mt-0.5 space-y-0.5">
+        <div>楽天ブックス：{info.availability === 1 ? '購入可' : '購入できない（品切れ等）'}{info.itemPrice != null ? `／${info.itemPrice.toLocaleString()}円` : ''}</div>
+        <div className="text-gray-400">ポイント倍率は API に無い／{formatJstAdmin(info.fetchedAt)}取得</div>
+      </div>
+    );
+  }
   return (
     <div className="text-[10px] text-slate-600 mt-0.5 space-y-0.5">
       <div>在庫：{info.availability === 1 ? 'あり' : info.availability === 0 ? 'なし' : '—'}{info.itemPrice != null ? `／${info.itemPrice.toLocaleString()}円` : ''}</div>
@@ -738,6 +785,7 @@ function LinkRow({ event, link, operator, now, onChanged }: { event: RakutenEven
   const set = (k: keyof typeof v) => (e: { target: { value: string } }) => setV((p) => ({ ...p, [k]: e.target.value }));
   // 管理画面の確認用リンク・確認元は、アフィリエイトの計測リンクではなく商品ページ（クリックを計測させない）
   const pageUrl = productPageUrlOf(link.itemUrl);
+  const disp = displayOf(link.productTitle, link.category, link.itemUrl);
   const itemScopeNeedsProductUrl = v.checkStatus === 'confirmed' && v.benefitScope === 'item' && !!v.sourceUrl && !isRakutenProductPageUrl(v.sourceUrl);
 
   async function save() {
@@ -770,7 +818,8 @@ function LinkRow({ event, link, operator, now, onChanged }: { event: RakutenEven
           <div className="text-sm font-bold text-slate-800 break-all">
             {pageUrl ? <a href={pageUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">{link.productTitle ?? link.productId} ↗</a> : (link.productTitle ?? link.productId)}
           </div>
-          <div className="text-[11px] text-gray-500">{link.personName}／{link.category}／ID {link.productId}{link.itemCode ? '' : '／商品コードなし'}</div>
+          <div className="text-[11px] text-gray-500">{link.personName}／ID {link.productId}／{apiMeans(link)}</div>
+          <div className="text-[11px]"><SectionCell section={link.category === '中古' ? '中古' : disp.section} stored={link.category} basis={disp.basis} reason={disp.reason} needsReview={link.category !== '中古' && disp.needsReview} /></div>
           {link.missing && <div className="text-[11px] text-red-600">商品データに見つかりません（削除・ID変更の可能性）</div>}
           {link.verdict && link.verdict !== 'related' && <div className="text-[11px] text-amber-700">サイトに非掲載（{link.verdict}）</div>}
           {link.checkedBy && <div className="text-[11px] text-gray-400">確認：{link.checkedBy}{link.checkedAt != null ? `（${formatJstAdmin(link.checkedAt)}）` : ''}</div>}
@@ -817,7 +866,7 @@ function LinkRow({ event, link, operator, now, onChanged }: { event: RakutenEven
       </div>
       <div className="flex flex-wrap items-center gap-2 mt-3">
         <button type="button" className={btnPrimary} onClick={save} disabled={busy || !operator.trim()}>保存</button>
-        <button type="button" className={btnGhost} onClick={checkApi} disabled={busy || !link.itemCode}>{link.itemCode ? '楽天APIで現在の情報を確認' : '商品コードなし（API確認不可）'}</button>
+        <button type="button" className={btnGhost} onClick={checkApi} disabled={busy || link.api?.code === 'no_item_code'}>{link.api?.code === 'no_item_code' ? '商品コード・商品番号なし（API確認不可）' : '楽天APIで現在の情報を確認'}</button>
         <button type="button" className={`${btnDanger} ml-auto`} onClick={unlink} disabled={busy}>紐付け解除</button>
       </div>
       <NoticeLine notice={notice} />
@@ -829,6 +878,14 @@ function LinkRow({ event, link, operator, now, onChanged }: { event: RakutenEven
 function ApiResult({ api, now }: { api: { info?: ItemCheckInfo; message?: string }; now: number }) {
   if (!api.info) return <p className="text-xs text-amber-700 mt-2">{api.message}</p>;
   const i = api.info;
+  if (i.source === 'books') {
+    return (
+      <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs">
+        <p>楽天ブックス（商品番号で照合）：{i.availability === 1 ? '購入できる' : '購入できない（品切れ・販売終了等）'}{i.itemPrice != null ? `／価格 ${i.itemPrice.toLocaleString()}円（取得時点）` : ''}</p>
+        <p className="text-[11px] text-gray-500 mt-1">取得：{formatJstAdmin(i.fetchedAt)}。楽天ブックスの API にはポイント倍率・特典の項目が無いため、特典は公式ページで確認してください。表示のみで商品データには保存していません。</p>
+      </div>
+    );
+  }
   const rows: [string, string][] = [
     ['商品コード', i.itemCode],
     ['価格（API取得時点）', i.itemPrice != null ? `${i.itemPrice.toLocaleString()}円` : '—'],

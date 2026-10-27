@@ -6,6 +6,7 @@ import type { ProductCategory } from '@/types/person';
 import PersonCombobox, { type PersonOption } from '@/components/admin/PersonCombobox';
 import AffiliateLinkBadge from '@/components/admin/AffiliateLinkBadge';
 import { affiliateLinkStatusOf, describeLinkBeforeSave, type AffiliateLinkStatus } from '@/lib/rakuten-affiliate-link';
+import { suggestManualCategory } from '@/lib/product-curation';
 
 const CATEGORIES: { value: ProductCategory; label: string }[] = [
   { value: '写真集', label: '写真集' },
@@ -39,7 +40,8 @@ export default function ManualProductModal({
   const [title, setTitle]       = useState(editProduct?.title ?? '');
   const [itemUrl, setItemUrl]   = useState(editProduct?.itemUrl ?? '');
   const [imageUrl, setImageUrl] = useState(editProduct?.imageUrl ?? '');
-  const [category, setCategory] = useState<ProductCategory>(editProduct?.catLabel ?? '写真集');
+  // 追加時は未選択から始め、管理者が必ず選ぶ（以前の初期値「写真集」のまま CD 等が保存されていたため。編集時は保存中のカテゴリ）
+  const [category, setCategory] = useState<ProductCategory | ''>(editProduct?.catLabel ?? '');
   const [price, setPrice]       = useState(editProduct?.price ? String(editProduct.price) : '');
   const [shopName, setShopName] = useState(editProduct?.shopName ?? '');
   const [isUsed, setIsUsed]     = useState(editProduct?.isUsed ?? false);
@@ -84,6 +86,7 @@ export default function ManualProductModal({
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!title.trim() || !itemUrl.trim()) { setError('商品名とURLは必須です'); return; }
+    if (!category) { setError('カテゴリを選択してください'); return; }
     if (!isEdit && selectedNames.length === 0) { setError('追加先を1人以上選択してください'); return; }
     setSaving(true);
     setError('');
@@ -362,6 +365,7 @@ export default function ManualProductModal({
                 カテゴリ <span className="text-red-500">*</span>
               </label>
               <div className="flex flex-wrap gap-2">
+                {!category && <span className="self-center text-xs text-amber-700">未選択（必ず選んでください）</span>}
                 {CATEGORIES.map(({ value, label }) => (
                   <label
                     key={value}
@@ -383,6 +387,16 @@ export default function ManualProductModal({
                   </label>
                 ))}
               </div>
+              {(() => {
+                const hint = suggestManualCategory(title);
+                if (!hint || hint.category === category) return null;
+                return (
+                  <button type="button" onClick={() => setCategory(hint.category)}
+                    className="mt-1.5 text-xs text-indigo-700 hover:underline">
+                    候補：{hint.category}（{hint.reason}）→ 押すと選択
+                  </button>
+                );
+              })()}
             </div>
 
             {/* 価格・ショップ */}

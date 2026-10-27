@@ -1,4 +1,8 @@
-// 楽天イベント管理で、選んだ商品の現在の情報を楽天市場商品検索API（2026-07-01版・itemCode 指定）で確認する。サーバー専用。
+// 楽天イベント管理で、選んだ商品の現在の情報を楽天APIで確認する。サーバー専用。
+// - 楽天市場の商品：楽天市場商品検索API（2026-07-01版・itemCode 指定）。
+// - 楽天ブックスの商品（itemCode が無い）：価格更新と同じ方法（src/lib/price-refresh.ts の booksSearchKeyword・matchBooksResult）で、
+//   楽天ブックス総合検索APIを商品名で検索し、商品ページの商品番号が保存中の商品と完全に一致したものだけを使う。
+//   価格と購入できるか（在庫）だけで、ポイント倍率の項目は無い（推測で補わない）。価格更新の処理は呼び出すだけで変えない。
 //
 // - 管理画面で選んだ商品だけを取得する（1回の操作で最大 MAX_CHECK_PER_REQUEST 件。一斉取得・定期取得はしない）。
 //   楽天APIの共通の使用権（src/lib/rakuten-api-gate.ts）を1つのセッションで通し、価格更新・新商品の取得・お買い物診断と合わせて
@@ -16,12 +20,27 @@ import {
   RakutenApiBusyError, RakutenApiCooldownError, RakutenApiLeaseLostError, RakutenApiUnavailableError,
   createRakutenApiSession, type GateDeps, type RakutenApiSession,
 } from '@/lib/rakuten-api-gate';
+import { booksSearchKeyword, matchBooksResult } from '@/lib/price-refresh';
+import { productKeyOfLink } from '@/lib/rakuten-affiliate-link';
 import type { ItemCheckInfo } from './core';
 import type { ApiCheckState } from './priority';
 
 export type { ItemCheckInfo };
 
 const ENDPOINT = 'https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701';
+const BOOKS_TOTAL_ENDPOINT = 'https://openapi.rakuten.co.jp/services/api/BooksTotal/Search/20170404';
+
+/** 確認する商品（key は楽天市場の itemCode、または楽天ブックスの「book:<商品番号>」） */
+export interface CheckTarget { key: string; title?: string | null; itemUrl?: string | null; affiliateUrl?: string | null }
+
+/** API で確認するときのキー：itemCode があればそれ、無ければ楽天ブックスの商品番号（商品URL・アフィリエイトURLの遷移先から）。どちらも無ければ null */
+export function apiCheckKey(item: { itemCode?: string | null; itemUrl?: string | null; affiliateUrl?: string | null }): string | null {
+  const code = (item.itemCode ?? '').trim();
+  if (code && isItemCode(code)) return code;
+  const k = productKeyOfLink(item.itemUrl ?? '') ?? productKeyOfLink(item.affiliateUrl ?? '');
+  return k?.source === 'books' ? `book:${k.productNumber}` : null;
+}
+const isBooksKey = (key: string) => key.startsWith('book:');
 export const MAX_CHECK_PER_REQUEST = 20;
 
 export type ItemCheckResult =
@@ -30,7 +49,7 @@ export type ItemCheckResult =
 
 export const ITEM_CHECK_MESSAGE: Record<Exclude<ItemCheckResult['code'], 'ok'>, string> = {
   not_found: 'APIで該当する商品が見つかりませんでした（販売終了・商品コード変更などの可能性。対象外とは判断していません）',
-  no_item_code: '楽天市場の商品コード（itemCode）が無い商品のため、APIでは確認できません（楽天ブックスの商品などは商品ページで確認してください）',
+  no_item_code: '楽天市場の商品コード（itemCode）も楽天ブックスの商品番号も無い商品のため、APIでは確認できません（商品ページで確認してください）',
   busy: '楽天APIを他の処理（価格更新など）が使用中です。少し待ってからもう一度押してください',
   cooldown: '楽天APIの利用制限のため一時停止中です。しばらく待ってからもう一度押してください',
   rate_limited: '楽天APIの利用制限（429）に達しました。しばらく待ってからもう一度押してください',
@@ -122,16 +141,26 @@ export function toItemCheckInfo(requested: string, raw: RawItem | undefined, fet
 type StopCode = Exclude<ItemCheckResult['code'], 'ok'>;
 class Stop extends Error { constructor(public code: StopCode) { super(code); } }
 
-async function fetchOne(code: string, session: RakutenApiSession, fetchImpl: typeof fetch): Promise<ItemCheckResult> {
+async function fetchOne(target: CheckTarget, session: RakutenApiSession, fetchImpl: typeof fetch): Promise<ItemCheckResult> {
+  const code = target.key;
   const appId = (process.env.RAKUTEN_APP_ID ?? '').trim();
   const accessKey = (process.env.RAKUTEN_ACCESS_KEY ?? '').trim();
   if (!appId || !accessKey) throw new Stop('config_missing');
   const origin = (process.env.NEXT_PUBLIC_SITE_URL ?? '').trim() || 'https://oshi-search.jp';
-  // availability=0：在庫切れの商品も返す（既定の1だと在庫切れが「該当なし」に見えるため）。アフィリエイトIDは付けない（表示しか使わない）
-  const params = new URLSearchParams({ applicationId: appId, accessKey, itemCode: code, hits: '1', availability: '0' });
+  const books = isBooksKey(code);
+  let url: string;
+  if (books) {
+    // 楽天ブックス：価格更新と同じ検索語・同じ照合（商品番号の完全一致）。検索語が作れなければ呼ばない
+    const keyword = booksSearchKeyword(target.title ?? undefined);
+    if (!keyword) return { code: 'not_found' };
+    url = `${BOOKS_TOTAL_ENDPOINT}?${new URLSearchParams({ applicationId: appId, accessKey, keyword, hits: '30', outOfStockFlag: '1', elements: 'itemUrl,itemPrice,availability' })}`;
+  } else {
+    // availability=0：在庫切れの商品も返す（既定の1だと在庫切れが「該当なし」に見えるため）。アフィリエイトIDは付けない（表示しか使わない）
+    url = `${ENDPOINT}?${new URLSearchParams({ applicationId: appId, accessKey, itemCode: code, hits: '1', availability: '0' })}`;
+  }
   let res: Response;
   try {
-    res = await session.call(() => fetchImpl(`${ENDPOINT}?${params}`, { cache: 'no-store', headers: { Origin: origin, accessKey } }));
+    res = await session.call(() => fetchImpl(url, { cache: 'no-store', headers: { Origin: origin, accessKey } }));
   } catch (err) {
     if (err instanceof RakutenApiBusyError || err instanceof RakutenApiLeaseLostError) throw new Stop('busy');
     if (err instanceof RakutenApiCooldownError) throw new Stop('cooldown');
@@ -144,13 +173,29 @@ async function fetchOne(code: string, session: RakutenApiSession, fetchImpl: typ
     throw new Stop('rate_limited');
   }
   if (!res.ok) {
-    console.warn(`[rakuten-event] IchibaItem/Search HTTP ${res.status}`);
+    console.warn(`[rakuten-event] ${books ? 'BooksTotal' : 'IchibaItem'}/Search HTTP ${res.status}`);
     if (res.status === 401 || res.status === 403) throw new Stop('error');
     return { code: 'error', httpStatus: res.status };
   }
+  if (books) {
+    const data = (await res.json()) as { Items?: ({ Item?: BooksRaw } & BooksRaw)[] };
+    const m = matchBooksResult((data.Items ?? []).map((x) => x.Item ?? x), { itemUrl: target.itemUrl ?? '', affiliateUrl: target.affiliateUrl ?? '' });
+    if (m.kind === 'not_found' || m.kind === 'mismatched') return { code: 'not_found' };
+    return { code: 'ok', info: booksInfo(code, target.title ?? '', m.kind === 'found' ? m.price : null, m.kind === 'found' ? 1 : 0) };
+  }
   const data = (await res.json()) as { Items?: { Item: RawItem }[] };
   const info = toItemCheckInfo(code, data.Items?.[0]?.Item, Date.now());
-  return info ? { code: 'ok', info } : { code: 'not_found' };
+  return info ? { code: 'ok', info: { ...info, source: 'ichiba' } } : { code: 'not_found' };
+}
+
+interface BooksRaw { itemUrl?: string; itemPrice?: number | string; availability?: number | string }
+
+/** 楽天ブックスの確認結果（価格と購入できるかだけ。ポイント倍率・タイムセールの項目は無いので null） */
+export function booksInfo(key: string, title: string, price: number | null, availability: 0 | 1): ItemCheckInfo {
+  return {
+    itemCode: key, itemName: title, itemPrice: price, availability, pointRate: null, pointRateStartTime: null, pointRateEndTime: null,
+    saleStartTime: null, saleEndTime: null, shopName: '楽天ブックス', fetchedAt: Date.now(), source: 'books',
+  };
 }
 
 /**
@@ -158,10 +203,11 @@ async function fetchOne(code: string, session: RakutenApiSession, fetchImpl: typ
  * 利用制限・混雑・呼び出し制御なしで止まったら、残りは skipped（呼ばない）。
  */
 export async function checkRakutenItems(
-  itemCodes: (string | null)[],
+  items: (string | CheckTarget | null)[],
   opts: { gateDeps?: Partial<GateDeps>; fetchImpl?: typeof fetch; cache?: ItemCheckCache | null } = {},
 ): Promise<ItemCheckResult[]> {
-  const list = itemCodes.slice(0, MAX_CHECK_PER_REQUEST);
+  const targets = items.slice(0, MAX_CHECK_PER_REQUEST).map((x) => (typeof x === 'string' ? { key: x } : x));
+  const list = targets.map((t) => t?.key ?? null);
   const cache = opts.cache === undefined ? createRedisItemCheckCache() : opts.cache;
   const cached = await cachedCheckStates(list, cache);
   const results: ItemCheckResult[] = cached.map((c) => (c.code === 'ok' ? c : c.code === 'not_found' ? { code: 'not_found' } : c.code === 'no_item_code' ? { code: 'no_item_code' } : { code: 'skipped' }));
@@ -180,7 +226,7 @@ export async function checkRakutenItems(
       if (prev) { results[i] = prev; continue; }
       let r: ItemCheckResult;
       try {
-        r = await fetchOne(code, session, fetchImpl);
+        r = await fetchOne({ ...targets[i]!, key: code }, session, fetchImpl);
       } catch (err) {
         if (err instanceof Stop) { results[i] = { code: err.code }; break; }
         throw err;

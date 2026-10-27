@@ -25,6 +25,18 @@ export interface ProductClassification {
   needsReview: boolean;
 }
 
+/** どの情報で表示セクションを決めたか（管理画面で確認するため） */
+export type ClassificationBasis =
+  | 'source_category' // 保存カテゴリ（取得元の楽天API）
+  | 'title'           // 商品名の明示的な語
+  | 'none';           // 根拠なし（その他・要確認）
+
+export interface DetailedClassification extends ProductClassification {
+  basis: ClassificationBasis;
+  /** 判定の理由（管理画面の表示用） */
+  reason: string;
+}
+
 // ── 正規化 ──────────────────────────────────────────────────────────────────
 
 /** 全角英数・記号を半角へ寄せ、Blu−ray 等のダッシュ揺れを統一する（判定用。表示には使わない） */
@@ -72,6 +84,17 @@ const CD_RE = /(?:^|[^a-z])\d*CD(?![a-z])/i;
 const DISC_RE = /blu-?ray|ブルーレイ|dvd/i;
 const CD_WORD_RE = /シングル|アルバム|shop盤/i;
 const GENERIC_GOODS_RE = /グッズ|goods/i;
+// 書籍の検索（写真集・本・雑誌）に入ったディスク商品の判定用（Phase 3）
+// 「CD＋Blu-ray」「CD+DVD」= 本体は CD（映像は付属）
+const CD_SET_RE = /(?:^|[^a-z])\d*cd\s*[+＆&]\s*(?:blu-?ray|ブルーレイ|dvd|bd)/i;
+// 「CD付」「CDつき」= 本体は書籍など（CD は付属）
+const CD_ATTACHED_RE = /cd\s*(?:付|つき)/i;
+// 盤（通常盤・初回限定盤・Type-A 等）だけでは CD か映像か分からない
+const RELEASE_EDITION_RE = /通常盤|限定盤|初回盤|生産盤|仕様盤|type\s*-?\s*[a-e](?![a-z])/i;
+// 「初回盤A(DVD)」「初回限定盤(Blu-ray付)」= 盤（CD 等）に付く映像の特典。映像の商品とはみなさない
+const EDITION_BONUS_DISC_RE = /盤\s*[a-e]?\s*[(（]\s*(?:blu-?ray|ブルーレイ|dvd|bd)/i;
+// 【Blu-ray】[DVD] のように角括弧で明示された形式（丸括弧は盤の特典の記述にも使われるため含めない）
+const SQUARE_DISC_RE = /[\[【]\s*(?:blu-?ray|ブルーレイ|dvd|bd)(?:\s*disc)?\s*[\]】]/i;
 
 // ── 分類 ────────────────────────────────────────────────────────────────────
 
@@ -90,35 +113,70 @@ export function classifyProductForDisplay(
   adminCat: ProductCategory,
   itemUrl = '',
 ): ProductClassification {
+  const { section, needsReview } = classifyProductDetailed(title, adminCat, itemUrl);
+  return { section, needsReview };
+}
+
+/**
+ * classifyProductForDisplay と同じ判定に、根拠（保存カテゴリ／商品名／根拠なし）と理由を付けて返す。
+ *
+ * Phase 3 の追加（書籍・CD の検索に別の形式の商品が入っている場合だけ、商品名の明示的な語で表示を変える。DB は変えない）：
+ * - 写真集・本・雑誌：書籍の語（写真集・雑誌・文庫・コミック等）が無く、商品名が CD／映像を明示する商品は CD／Blu-ray・DVD。
+ *   「CD＋Blu-ray」は CD、「DVD付」「CD付」は付属品なので書籍のまま。盤（通常盤・Type-A 等）だけで形式が分からない商品は
+ *   無理に分類せず「その他」（要確認）。それ以外は従来どおり 写真集・書籍。
+ * - CD：商品名が映像だけを明示（【Blu-ray】等）し CD の語が無い商品は Blu-ray・DVD（楽天ブックスの商品も）。
+ */
+export function classifyProductDetailed(
+  title: string,
+  adminCat: ProductCategory,
+  itemUrl = '',
+): DetailedClassification {
+  const bySource = (section: DisplaySectionLabel): DetailedClassification => ({ section, needsReview: false, basis: 'source_category', reason: `保存カテゴリ（${adminCat}）` });
+  const byTitle = (section: DisplaySectionLabel, reason: string): DetailedClassification => ({ section, needsReview: false, basis: 'title', reason });
+  const review = (reason: string): DetailedClassification => ({ section: REVIEW_SECTION_LABEL, needsReview: true, basis: 'none', reason });
+  const t = normalizeForMatch(title ?? '');
+
   if (adminCat === 'CD' || adminCat === 'Blu-ray・DVD') {
     if (isShopListingUrl(itemUrl)) {
-      const t = normalizeForMatch(title ?? '');
-      if (EXPLICIT_DISC_RE.test(t)) return { section: 'Blu-ray・DVD', needsReview: false };
-      if (EXPLICIT_CD_RE.test(t) || DISC_ATTACHED_RE.test(t) || CD_RE.test(t)) return { section: 'CD', needsReview: false };
-      if (DISC_RE.test(t)) return { section: 'Blu-ray・DVD', needsReview: false };
+      if (EXPLICIT_DISC_RE.test(t)) return byTitle('Blu-ray・DVD', '商品名に【Blu-ray】【DVD】等');
+      if (EXPLICIT_CD_RE.test(t) || DISC_ATTACHED_RE.test(t) || CD_RE.test(t)) return byTitle('CD', '商品名に CD の表記');
+      if (DISC_RE.test(t)) return byTitle('Blu-ray・DVD', '商品名に Blu-ray・DVD の表記');
+    } else if (adminCat === 'CD' && SQUARE_DISC_RE.test(t) && !EDITION_BONUS_DISC_RE.test(t)
+      && !(EXPLICIT_CD_RE.test(t) || CD_SET_RE.test(t) || CD_RE.test(t) || DISC_ATTACHED_RE.test(t))) {
+      return byTitle('Blu-ray・DVD', '商品名が映像だけを明示（【Blu-ray】等）し CD の表記なし');
     }
-    return { section: adminCat, needsReview: false };
+    return bySource(adminCat);
   }
-
-  const t = normalizeForMatch(title ?? '');
 
   if (adminCat === '写真集' || adminCat === '本・雑誌') {
     // 括弧内は特典・付属品の記述（「(限定絵柄ポストカード1枚)」等）なので品目の判定に使わない
     const core = t.replace(/【[^】]*】|\([^)]*\)|\[[^\]]*\]/g, ' ');
-    if (!BOOK_RE.test(t) && GOODS_ITEM_RE.test(core)) return { section: 'グッズ', needsReview: false };
-    return { section: '写真集・書籍', needsReview: false };
+    if (BOOK_RE.test(t)) return byTitle('写真集・書籍', '商品名に書籍の語（写真集・雑誌・文庫・コミック等）');
+    if (GOODS_ITEM_RE.test(core)) return byTitle('グッズ', '商品名にグッズの品目');
+    // 書籍の語が無く、ディスク商品であることが商品名で明示されている（手動登録で写真集のまま保存された CD 等）
+    if (!CD_ATTACHED_RE.test(t)) {
+      if (CD_SET_RE.test(t) || EXPLICIT_CD_RE.test(t)) return byTitle('CD', '商品名に CD（CD＋映像のセット・[CD] 等）');
+      if (EDITION_BONUS_DISC_RE.test(t)) return review('盤に映像の特典が付く商品（初回盤A(DVD) 等）で書籍ではないが、CD か映像か商品名から分からない');
+      if (!DISC_ATTACHED_RE.test(t)) {
+        if (EXPLICIT_DISC_RE.test(t)) return byTitle('Blu-ray・DVD', '商品名に【Blu-ray】【DVD】等');
+        if (CD_RE.test(t)) return byTitle('CD', '商品名に CD の表記');
+        if (DISC_RE.test(t)) return byTitle('Blu-ray・DVD', '商品名に Blu-ray・DVD の表記');
+        if (RELEASE_EDITION_RE.test(t)) return review('盤（通常盤・初回限定盤・Type 等）の表記があり書籍ではないが、CD か映像か商品名から分からない');
+      }
+    }
+    return bySource('写真集・書籍');
   }
 
   // 楽天市場（グッズ・中古）
-  if (EXPLICIT_DISC_RE.test(t)) return { section: 'Blu-ray・DVD', needsReview: false };
-  if (EXPLICIT_CD_RE.test(t)) return { section: 'CD', needsReview: false };
-  if (GOODS_ITEM_RE.test(t)) return { section: 'グッズ', needsReview: false };
-  if (DISC_ATTACHED_RE.test(t) || CD_RE.test(t)) return { section: 'CD', needsReview: false };
-  if (DISC_RE.test(t)) return { section: 'Blu-ray・DVD', needsReview: false };
-  if (CD_WORD_RE.test(t)) return { section: 'CD', needsReview: false };
-  if (BOOK_RE.test(t)) return { section: '写真集・書籍', needsReview: false };
-  if (GENERIC_GOODS_RE.test(t)) return { section: 'グッズ', needsReview: false };
-  return { section: REVIEW_SECTION_LABEL, needsReview: true };
+  if (EXPLICIT_DISC_RE.test(t)) return byTitle('Blu-ray・DVD', '商品名に【Blu-ray】【DVD】等');
+  if (EXPLICIT_CD_RE.test(t)) return byTitle('CD', '商品名に [CD] 等');
+  if (GOODS_ITEM_RE.test(t)) return byTitle('グッズ', '商品名にグッズの品目');
+  if (DISC_ATTACHED_RE.test(t) || CD_RE.test(t)) return byTitle('CD', '商品名に CD の表記');
+  if (DISC_RE.test(t)) return byTitle('Blu-ray・DVD', '商品名に Blu-ray・DVD の表記');
+  if (CD_WORD_RE.test(t)) return byTitle('CD', '商品名にシングル・アルバム等');
+  if (BOOK_RE.test(t)) return byTitle('写真集・書籍', '商品名に書籍の語');
+  if (GENERIC_GOODS_RE.test(t)) return byTitle('グッズ', '商品名にグッズ');
+  return review('商品名から種類を判断できない');
 }
 
 // ── 中古・まとめ買い ────────────────────────────────────────────────────────
@@ -232,4 +290,25 @@ export function stripPromoTags(title: string): string {
     .replace(INLINE_DISCOUNT_RE, '')
     .replace(/^[\s　]+/, '');
   return stripped.trim() ? stripped : title;
+}
+
+// ── 手動登録のカテゴリの候補（Phase 3） ───────────────────────────────────────────
+
+/**
+ * 手動登録の画面で、商品名から保存カテゴリの候補を示す（自動では選ばない。管理者が押して確定する）。
+ * 判定は classifyProductDetailed の商品名による判定と同じ語を使う。商品名から分からなければ null。
+ */
+export function suggestManualCategory(title: string): { category: ProductCategory; reason: string } | null {
+  const t = (title ?? '').trim();
+  if (!t) return null;
+  if (isUsedListing(t)) return { category: '中古', reason: '商品名に「中古」' };
+  const r = classifyProductDetailed(t, 'グッズ', 'https://item.rakuten.co.jp/');
+  if (r.basis !== 'title') return null;
+  if (r.section === '写真集・書籍') {
+    return /写真集|フォトブック|photo ?book/i.test(normalizeForMatch(t))
+      ? { category: '写真集', reason: '商品名に「写真集」等' }
+      : { category: '本・雑誌', reason: r.reason };
+  }
+  if (r.section === 'CD' || r.section === 'Blu-ray・DVD' || r.section === 'グッズ') return { category: r.section, reason: r.reason };
+  return null;
 }

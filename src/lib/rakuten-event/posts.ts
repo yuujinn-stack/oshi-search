@@ -13,6 +13,8 @@
 // - 冒頭で何の情報かを示し、購入を急かさない。PR 表記を入れる。リンクは推しサーチのページ（UTM 付き）だけで、
 //   楽天アフィリエイトのURLは載せない（短縮・改変もしない）。
 // - 終了したイベントは作らない。非公開・公式未確認・テスト用の名前のイベントは「プレビュー」扱い（公開用コピー不可）。
+import { classifyProductForDisplay } from '@/lib/product-curation';
+import type { ProductCategory } from '@/types/person';
 import {
   EVENT_TYPE_HASHTAG, INSTAGRAM_MAX, RECHECK_AFTER_MS, SITE_ORIGIN, THREADS_MAX, X_MAX,
   activePointRate, activeTimeSale, eventStatus, findBannedPhrases, formatJstPost, isOfficiallyConfirmed, xWeightedLength,
@@ -36,13 +38,20 @@ export interface PostTarget {
   path: string;
 }
 
-/** 保存カテゴリ → 人物ページの商品タブ（src/lib/product-tabs.ts の #products-<slug>） */
+/** 保存カテゴリ・表示セクション → 人物ページの商品タブ（src/lib/product-tabs.ts の #products-<slug>） */
 const CATEGORY_TAB_SLUG: Record<string, string> = {
-  写真集: 'photobook', '本・雑誌': 'photobook', CD: 'cd', 'Blu-ray・DVD': 'bluray', グッズ: 'goods', 中古: 'used',
+  写真集: 'photobook', '本・雑誌': 'photobook', '写真集・書籍': 'photobook', CD: 'cd', 'Blu-ray・DVD': 'bluray', グッズ: 'goods', 中古: 'used', その他: 'other',
 };
-const CATEGORY_WORD: Record<string, string> = {
-  写真集: '写真集', '本・雑誌': '書籍・雑誌', CD: 'CD', 'Blu-ray・DVD': 'Blu-ray・DVD', グッズ: 'グッズ', 中古: '中古商品',
+/** 表示セクション → 投稿文の言葉（「その他」は言葉にしない） */
+const SECTION_WORD: Record<string, string> = {
+  '写真集・書籍': '写真集・書籍', CD: 'CD', 'Blu-ray・DVD': 'Blu-ray・DVD', グッズ: 'グッズ',
 };
+
+/** 紐付けた商品の表示セクション（公開ページと同じ分類。写真集として保存された CD は CD）。中古は「中古」 */
+function displaySectionOf(p: RakutenEventProduct): string {
+  if (p.category === '中古') return '中古';
+  return classifyProductForDisplay(p.productTitle ?? '', p.category as ProductCategory, p.itemUrl ?? '').section;
+}
 
 export const personPath = (name: string) => `/person/${encodeURIComponent(name)}`;
 
@@ -171,8 +180,9 @@ export function generatePosts(input: PostInput): GeneratedPosts {
   // 対象の商品：人物はその人物、グループはメンバーの商品。対象外は使わない
   const names = new Set(target ? (target.kind === 'person' ? [target.name] : input.memberNames ?? []) : []);
   const own = input.products.filter((p) => p.eventId === e.id && names.has(p.personName) && p.checkStatus !== 'excluded');
-  const categories = own.map((p) => p.category);
-  const words = [...new Set(categories.map((c) => CATEGORY_WORD[c]).filter(Boolean))];
+  // 言葉・ページ内リンクは公開ページと同じ表示分類で決める（保存カテゴリの「写真集」に入った CD 等を写真集と書かない）
+  const categories = own.map(displaySectionOf);
+  const words = [...new Set(categories.map((c) => SECTION_WORD[c]).filter(Boolean))];
   const goodsWord = words.length ? words.slice(0, 3).join('・') : '関連商品';
 
   const deals = own

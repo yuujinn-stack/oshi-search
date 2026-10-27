@@ -152,7 +152,7 @@ describe.runIf(!!PGliteCtor)('楽天イベントの DB 操作（隔離した Pos
     const id = await createEvent(db, input(), 'A');
     await linkProducts(db, id, [{ personName: '推しA', category: '写真集', productId: 'a1' }, { personName: '推しB', category: '写真集', productId: 'b1' }]);
     const links = await listEventProducts(db, id);
-    expect(await getLinkedItemCode(db, links.find((l) => l.productId === 'a1')!.id)).toEqual({ itemCode: 'shop:a1', itemUrl: 'https://item.rakuten.co.jp/shop/a1/' });
+    expect(await getLinkedItemCode(db, links.find((l) => l.productId === 'a1')!.id)).toEqual({ itemCode: 'shop:a1', itemUrl: 'https://item.rakuten.co.jp/shop/a1/', affiliateUrl: null, title: '推しA 1st写真集' });
     expect((await getLinkedItemCode(db, links.find((l) => l.productId === 'b1')!.id))?.itemCode).toBeNull();
     expect(await getLinkedItemCode(db, 9999)).toBeNull();
   });
@@ -190,9 +190,9 @@ describe.runIf(!!PGliteCtor)('楽天イベントの DB 操作（隔離した Pos
   it('Phase 2：API確認用の itemCode は商品データから読む（存在しない商品は含めない）', async () => {
     const t = [{ personName: '推しA', category: '写真集', productId: 'a1' }, { personName: '推しA', category: 'CD', productId: 'a3' }, { personName: '推しB', category: '写真集', productId: 'b1' }, { personName: '推しA', category: '写真集', productId: 'zzz' }];
     const m = await getItemCodesFor(db, t);
-    expect(m.get(linkTargetKey(t[0]))).toBe('shop:a1');
-    expect(m.get(linkTargetKey(t[1]))).toBe('shop:a3');
-    expect(m.get(linkTargetKey(t[2]))).toBeNull();
+    expect(m.get(linkTargetKey(t[0]))).toMatchObject({ itemCode: 'shop:a1', title: '推しA 1st写真集' });
+    expect(m.get(linkTargetKey(t[1]))?.itemCode).toBe('shop:a3');
+    expect(m.get(linkTargetKey(t[2]))?.itemCode).toBeNull();
     expect(m.has(linkTargetKey(t[3]))).toBe(false);
   });
 
