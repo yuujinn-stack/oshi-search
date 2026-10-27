@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
-  BANNED_PHRASES, X_MAX, buildPersonLink, eventStatus, findBannedPhrases, formatJstAdmin, formatJstPost, generatePosts, isOfficialRakutenUrl,
-  parseJstDateTimeLocal, toJstDateTimeLocal, validateEventInput, validateLinkUpdate, xWeightedLength,
-  type RakutenEvent, type RakutenEventProduct,
+  activePointRate, activeTimeSale, eventStatus, findBannedPhrases, formatJstAdmin, formatJstPost, isOfficialRakutenUrl, isOfficiallyConfirmed,
+  isRakutenProductPageUrl, parseJstDateTimeLocal, productPageUrlOf, toJstDateTimeLocal, validateEventInput, validateLinkUpdate, xWeightedLength,
+  type RakutenEvent,
 } from '../rakuten-event/core';
 
-// 楽天イベント管理の純粋関数（日本時間・開催状態・入力の検証・投稿文）
+// 楽天イベント管理の純粋関数（日本時間・開催状態・入力の検証・API の情報の扱い）。投稿文は rakuten-event-posts.test.ts
 const JST = (s: string) => parseJstDateTimeLocal(s)!;
 
 const event = (o: Partial<RakutenEvent> = {}): RakutenEvent => ({
@@ -14,10 +14,6 @@ const event = (o: Partial<RakutenEvent> = {}): RakutenEvent => ({
   officialUrl: 'https://event.rakuten.co.jp/campaign/point-up/marathon/', entryRequired: 'required', entryUrl: null,
   conditions: '1,000円（税込）以上のショップで買いまわり', benefit: 'ショップ買いまわりでポイント最大10倍', benefitConditions: 'ポイント上限あり',
   lastCheckedAt: JST('2026-11-05T09:00'), visibility: 'published', note: null, updatedBy: 'A', createdAt: 0, updatedAt: 0, ...o,
-});
-const link = (o: Partial<RakutenEventProduct> = {}): RakutenEventProduct => ({
-  id: 1, eventId: 7, personName: '推しA', category: '写真集', productId: 'p1', productTitle: '推しA 1st写真集',
-  checkStatus: 'needs_check', benefitScope: 'unknown', benefitNote: null, sourceUrl: null, checkedAt: null, checkedBy: null, note: null, updatedAt: 0, ...o,
 });
 
 describe('日本時間', () => {
@@ -95,92 +91,45 @@ describe('紐付けた商品の確認状態', () => {
   });
 });
 
-describe('SNS投稿文', () => {
-  const now = JST('2026-11-05T12:00');
-  const gen = (o: { e?: Partial<RakutenEvent>; products?: RakutenEventProduct[]; nowMs?: number } = {}) =>
-    generatePosts({ event: event(o.e), personName: '推しA', products: o.products ?? [], nowMs: o.nowMs ?? now });
-
-  it('イベント名・正確な終了日時・エントリー・PR表記・推しサーチへのリンク（UTM付き）を含む', () => {
-    const p = gen();
-    for (const text of [p.x, p.threads, p.instagramFeed, p.instagramStory]) {
-      expect(text).toContain('楽天お買い物マラソン');
-      expect(text).toContain('11月11日(水) 1:59まで');
-      expect(text).toContain('エントリーが必要');
-      expect(text).toContain('PR');
-    }
-    expect(p.x).toContain('https://oshi-search.jp/person/%E6%8E%A8%E3%81%97A?utm_source=x&utm_medium=social&utm_campaign=rakuten_event_7');
-    expect(p.threads).toContain('utm_source=threads');
-    expect(p.instagramStory).toContain('utm_source=instagram&utm_medium=social&utm_campaign=rakuten_event_7&utm_content=story');
-    expect(p.threads).toContain('楽天アフィリエイトを利用しています');
-    expect(p.threads).toContain('参加条件：1,000円（税込）以上のショップで買いまわり');
-    expect(p.blocked).toBeNull();
+describe('Phase 2 の追加', () => {
+  it('商品単体の特典の確認元は楽天の商品ページだけ（イベント告知ページは不可）', () => {
+    const base = { checkStatus: 'confirmed', benefitScope: 'item', checkedAt: '2026-11-05T10:00' };
+    expect(validateLinkUpdate({ ...base, sourceUrl: 'https://item.rakuten.co.jp/shop/item1/' }).ok).toBe(true);
+    expect(validateLinkUpdate({ ...base, sourceUrl: 'https://books.rakuten.co.jp/rb/18000000/' }).ok).toBe(true);
+    expect(validateLinkUpdate({ ...base, sourceUrl: 'https://event.rakuten.co.jp/campaign/point-up/marathon/' }).ok).toBe(false);
+    expect(validateLinkUpdate({ ...base, sourceUrl: 'https://item.rakuten.co.jp/shop/' }).ok).toBe(false);
+    // ショップ単位・購入者条件はイベントページでもよい
+    expect(validateLinkUpdate({ ...base, benefitScope: 'buyer_condition', sourceUrl: 'https://event.rakuten.co.jp/campaign/card/pointday/' }).ok).toBe(true);
+    expect(isRakutenProductPageUrl('https://hb.afl.rakuten.co.jp/hgc/x/?pc=https://item.rakuten.co.jp/a/b/')).toBe(false);
   });
-
-  it('X は280以内（全角2・URL23で数える）', () => {
-    const p = gen({ e: { benefit: 'あ'.repeat(200) } });
-    expect(xWeightedLength(p.x)).toBeLessThanOrEqual(X_MAX);
-    expect(p.x).not.toContain('あああ');
+  it('管理画面で開く商品ページ：アフィリエイトの計測リンクは遷移先の商品ページに（推測で作らない）', () => {
+    expect(productPageUrlOf('https://hb.afl.rakuten.co.jp/hgc/abc.def/?pc=https%3A%2F%2Fitem.rakuten.co.jp%2Fajewelry%2Fsrxl-300%2F&m=x')).toBe('https://item.rakuten.co.jp/ajewelry/srxl-300/');
+    expect(productPageUrlOf('https://item.rakuten.co.jp/shop/a/')).toBe('https://item.rakuten.co.jp/shop/a/');
+    expect(productPageUrlOf('https://a.r10.to/abc')).toBeNull();
+    expect(productPageUrlOf('https://hb.afl.rakuten.co.jp/hgc/abc/?pc=https%3A%2F%2Fexample.com%2F')).toBeNull();
+    expect(productPageUrlOf(null)).toBeNull();
   });
-
-  it('開催前は開始日時も入れる。終了したイベントは作らない', () => {
-    expect(gen({ nowMs: JST('2026-11-01T00:00') }).x).toContain('11月4日(水) 20:00スタート');
-    const ended = gen({ nowMs: JST('2026-11-11T01:59') });
-    expect(ended.status).toBe('ended');
-    expect(ended.blocked).toMatch(/終了/);
-    expect(ended.x + ended.threads + ended.instagramFeed + ended.instagramStory).toBe('');
+  it('公式確認済み＝公式URLと最終確認日時の両方', () => {
+    expect(isOfficiallyConfirmed(event())).toBe(true);
+    expect(isOfficiallyConfirmed(event({ lastCheckedAt: null }))).toBe(false);
+    expect(isOfficiallyConfirmed(event({ officialUrl: null }))).toBe(false);
   });
-
-  it('「最安値」等は生成しない。入力に含まれる項目は外して警告', () => {
-    const p = gen({ e: { benefit: '今が最安値！ポイント10倍' } });
-    for (const text of [p.x, p.threads, p.instagramFeed, p.instagramStory]) expect(findBannedPhrases(text)).toEqual([]);
-    expect(p.threads).not.toContain('ポイント10倍');
-    expect(p.warnings.join()).toMatch(/最安値/);
-    // 通常の生成でも禁止表現が出ない
-    const normal = gen({ products: [link({ checkStatus: 'confirmed', benefitScope: 'item', benefitNote: 'ポイント5倍' })] });
-    for (const text of [normal.x, normal.threads, normal.instagramFeed, normal.instagramStory]) {
-      for (const b of BANNED_PHRASES) expect(text).not.toContain(b);
-    }
+  it('ブラックフライデーを種類に追加', () => {
+    expect(validateEventInput({ name: 'BF', eventType: 'black_friday', startsAt: '2026-11-20T00:00', endsAt: '2026-11-27T01:59', entryRequired: 'unknown', visibility: 'hidden' }).ok).toBe(true);
   });
-
-  it('商品の特典は「確認済み・商品単体／ショップ単位」だけ。購入者条件・要確認・対象外は商品の特典として書かない', () => {
-    const p = gen({
-      products: [
-        link({ id: 1, productId: 'p1', productTitle: '写真集A', checkStatus: 'confirmed', benefitScope: 'item', benefitNote: 'ポイント5倍' }),
-        link({ id: 2, productId: 'p2', productTitle: 'CD-B', category: 'CD', checkStatus: 'confirmed', benefitScope: 'buyer_condition', benefitNote: '楽天カードで+2倍' }),
-        link({ id: 3, productId: 'p3', productTitle: 'DVD-C', category: 'Blu-ray・DVD', checkStatus: 'needs_check' }),
-        link({ id: 4, productId: 'p4', productTitle: 'グッズD', category: 'グッズ', checkStatus: 'excluded', note: '対象外' }),
-        link({ id: 5, productId: 'p5', productTitle: '別人の写真集', personName: '推しB', checkStatus: 'confirmed', benefitScope: 'item' }),
-      ],
-    });
-    expect(p.threads).toContain('・写真集A（商品の特典：ポイント5倍）');
-    expect(p.threads).not.toContain('CD-B');
-    expect(p.threads).not.toContain('楽天カードで+2倍');
-    expect(p.threads).not.toContain('DVD-C');
-    expect(p.threads).not.toContain('グッズD');
-    expect(p.threads).not.toContain('別人の写真集');
-    expect(p.warnings.join()).toMatch(/要確認/);
-    expect(p.warnings.join()).toMatch(/購入者の条件/);
-    expect(p.threads).toContain('購入者の条件');
+  it('API の商品別ポイント倍率・タイムセールは期間内で2倍以上のときだけ有効', () => {
+    const info = { itemCode: 's:a', itemName: '', itemPrice: 1000, availability: 1, pointRate: 5, pointRateStartTime: '2026-11-04 20:00', pointRateEndTime: '2026-11-11 01:59', saleStartTime: null, saleEndTime: null, shopName: null, fetchedAt: 0 };
+    expect(activePointRate(info, JST('2026-11-05T00:00'))).toEqual({ rate: 5, endsAt: JST('2026-11-11T01:59') });
+    expect(activePointRate(info, JST('2026-11-11T01:59'))).toBeNull();
+    expect(activePointRate(info, JST('2026-11-01T00:00'))).toBeNull();
+    expect(activePointRate({ ...info, pointRate: 1 }, JST('2026-11-05T00:00'))).toBeNull();
+    expect(activeTimeSale({ ...info, saleStartTime: '2026-11-04 20:00', saleEndTime: '2026-11-05 01:59' }, JST('2026-11-05T00:00'))).toEqual({ endsAt: JST('2026-11-05T01:59') });
+    expect(activeTimeSale(info, JST('2026-11-05T00:00'))).toBeNull();
   });
-
-  it('価格は入れない・Instagram フィードはリンクではなくプロフィールへの案内', () => {
-    // 商品の価格（products の price）は投稿文に入れない（管理者が入力した参加条件の金額はそのまま）
-    const p = gen({ e: { conditions: null }, products: [link({ checkStatus: 'confirmed', benefitScope: 'item' })] });
-    expect(p.threads).not.toMatch(/[¥￥]\s?\d|\d+円/);
-    expect(p.instagramFeed).not.toContain('https://oshi-search.jp');
-    expect(p.instagramFeed).toContain('プロフィールのリンク');
-  });
-
-  it('エントリー未確認・最終確認が古い・非公開は警告', () => {
-    const p = gen({ e: { entryRequired: 'unknown', lastCheckedAt: JST('2026-11-04T00:00'), visibility: 'hidden' } });
-    expect(p.threads).toContain('エントリーの要否は楽天の公式ページでご確認ください');
-    const w = p.warnings.join('\n');
-    expect(w).toMatch(/24時間以上/);
-    expect(w).toMatch(/非公開/);
-  });
-
-  it('リンクは1カテゴリだけなら人物ページのそのタブへ', () => {
-    expect(buildPersonLink('推しA', { eventId: 1, channel: 'x', categories: ['CD', 'CD'] })).toMatch(/#products-cd$/);
-    expect(buildPersonLink('推しA', { eventId: 1, channel: 'x', categories: ['CD', 'グッズ'] })).not.toContain('#');
+  it('X の文字数：URL は23、日本語は2、ラテン文字は1', () => {
+    expect(xWeightedLength('abc')).toBe(3);
+    expect(xWeightedLength('あいう')).toBe(6);
+    expect(xWeightedLength('a https://oshi-search.jp/person/%E6%88%90?utm_source=x b')).toBe(1 + 1 + 23 + 1 + 1);
+    expect(findBannedPhrases('今が一番安い・急いで')).toEqual(['一番安い', '急いで']);
   });
 });

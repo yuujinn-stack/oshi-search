@@ -138,8 +138,10 @@ export async function updateEvent(db: EventDb, id: number, v: EventInput, operat
   const rows = await db.query(`
     UPDATE rakuten_events SET name = $1, event_type = $2, starts_at = $3::timestamptz, ends_at = $4::timestamptz, official_url = $5,
       entry_required = $6, entry_url = $7, conditions = $8, benefit = $9, benefit_conditions = $10, last_checked_at = $11::timestamptz,
-      visibility = $12, note = $13, updated_by = $14, updated_at = now()
-    WHERE id = $15 AND abs((extract(epoch from updated_at) * 1000) - $16::float8) < 1
+      visibility = $12, note = $13, updated_by = $14,
+      -- 同じミリ秒の更新でも古い画面からの保存を見分けられるよう、少なくとも 2ms 進める（画面の値は ms に丸めるため比較は 0.6ms 未満）
+      updated_at = greatest(now(), updated_at + interval '2 milliseconds')
+    WHERE id = $15 AND abs((extract(epoch from updated_at) * 1000) - $16::float8) < 0.6
     RETURNING id`, [...eventParams(v), operator, id, expectedUpdatedAt]);
   if (rows.length) return 'updated';
   const exists = await db.query(`SELECT 1 FROM rakuten_events WHERE id = $1`, [id]);
@@ -155,9 +157,31 @@ export async function deleteEvent(db: EventDb, id: number): Promise<boolean> {
   return deleted.length > 0;
 }
 
-export async function listEventProducts(db: EventDb, eventId: number): Promise<RakutenEventProduct[]> {
-  const rows = await db.query(`SELECT ${LINK_COLS} FROM rakuten_event_products WHERE event_id = $1 ORDER BY person_name, category, id`, [eventId]);
-  return rows.map(toLink);
+/** 紐付けた商品（商品データの itemCode・商品ページURL・判定も、表示用に products・verdicts から読む） */
+export interface EventProductRow extends RakutenEventProduct {
+  itemCode: string | null;
+  itemUrl: string | null;
+  verdict: string | null;
+  /** products に商品が見つからない（削除・ID変更） */
+  missing: boolean;
+}
+
+export async function listEventProducts(db: EventDb, eventId: number): Promise<EventProductRow[]> {
+  const rows = await db.query(`
+    SELECT l.id, l.event_id, l.person_name, l.category, l.product_id, l.product_title, l.check_status, l.benefit_scope, l.benefit_note,
+      l.source_url, l.checked_by, l.note,
+      (extract(epoch from l.checked_at) * 1000)::float8 AS checked_ms,
+      (extract(epoch from l.updated_at) * 1000)::float8 AS updated_ms,
+      it.item->>'itemCode' AS item_code, it.item->>'itemUrl' AS item_url, (it.item IS NULL) AS missing, v.verdict
+    FROM rakuten_event_products l
+    LEFT JOIN products p ON p.person_name = l.person_name AND p.category = l.category
+    LEFT JOIN LATERAL (
+      SELECT e.item FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.items) = 'array' THEN p.items ELSE '[]'::jsonb END) AS e(item)
+      WHERE e.item->>'id' = l.product_id LIMIT 1
+    ) it ON true
+    LEFT JOIN verdicts v ON v.person_name = l.person_name AND v.product_id = l.product_id
+    WHERE l.event_id = $1 ORDER BY l.person_name, l.category, l.id`, [eventId]);
+  return rows.map((r) => ({ ...toLink(r), itemCode: str(r.item_code), itemUrl: str(r.item_url), verdict: str(r.verdict), missing: r.missing === true }));
 }
 
 export interface LinkTarget { personName: string; category: string; productId: string }
@@ -224,9 +248,14 @@ export interface ProductSearchRow {
   verdict: string | null;
   isUsed: boolean;
   linkedStatus: CheckStatus | null;
+  /** 紐付け済みの場合の特典の範囲・確認元URL・確認日時 */
+  linkId: number | null;
+  linkedScope: string | null;
+  linkedSourceUrl: string | null;
+  linkedCheckedAt: number | null;
 }
 export const MAX_SEARCH_PERSONS = 60;
-export const MAX_SEARCH_RESULTS = 200;
+export const MAX_SEARCH_RESULTS = 500;
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
@@ -236,7 +265,8 @@ export async function searchProducts(db: EventDb, q: ProductSearchInput): Promis
   const rows = await db.query(`
     SELECT p.person_name, p.category, e.item->>'id' AS product_id, e.item->>'title' AS title, e.item->>'shopName' AS shop_name,
       e.item->>'itemCode' AS item_code, e.item->>'itemUrl' AS item_url, (e.item->>'isUsed') = 'true' AS is_used,
-      v.verdict, l.check_status AS linked_status
+      v.verdict, l.check_status AS linked_status, l.id AS link_id, l.benefit_scope AS linked_scope, l.source_url AS linked_source_url,
+      (extract(epoch from l.checked_at) * 1000)::float8 AS linked_checked_ms
     FROM products p
     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.items) = 'array' THEN p.items ELSE '[]'::jsonb END) AS e(item)
     LEFT JOIN verdicts v ON v.person_name = p.person_name AND v.product_id = e.item->>'id'
@@ -260,6 +290,10 @@ export async function searchProducts(db: EventDb, q: ProductSearchInput): Promis
     verdict: str(r.verdict),
     isUsed: r.is_used === true,
     linkedStatus: (r.linked_status as CheckStatus | null) ?? null,
+    linkId: r.link_id == null ? null : Number(r.link_id),
+    linkedScope: str(r.linked_scope),
+    linkedSourceUrl: str(r.linked_source_url),
+    linkedCheckedAt: ms(r.linked_checked_ms),
   }));
   return { rows: out, truncated: rows.length > MAX_SEARCH_RESULTS };
 }
@@ -276,3 +310,20 @@ export async function getLinkedItemCode(db: EventDb, linkId: number): Promise<{ 
   if (!rows[0]) return null;
   return { itemCode: str(rows[0].item_code), itemUrl: str(rows[0].item_url) };
 }
+
+/** 選んだ商品の itemCode（API確認用。画面から送られた値は使わず、products から読む）。見つからない商品は含めない */
+export async function getItemCodesFor(db: EventDb, targets: LinkTarget[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  if (!targets.length) return out;
+  const rows = await db.query(`
+    SELECT t.person_name, t.category, t.product_id, e.item->>'itemCode' AS item_code
+    FROM unnest($1::text[], $2::text[], $3::text[]) AS t(person_name, category, product_id)
+    JOIN products p ON p.person_name = t.person_name AND p.category = t.category
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.items) = 'array' THEN p.items ELSE '[]'::jsonb END) AS e(item)
+    WHERE e.item->>'id' = t.product_id`,
+  [targets.map((t) => t.personName), targets.map((t) => t.category), targets.map((t) => t.productId)]);
+  for (const r of rows) out.set(linkTargetKey({ personName: String(r.person_name), category: String(r.category), productId: String(r.product_id) }), str(r.item_code));
+  return out;
+}
+
+export const linkTargetKey = (t: LinkTarget) => `${t.personName}\u0000${t.category}\u0000${t.productId}`;

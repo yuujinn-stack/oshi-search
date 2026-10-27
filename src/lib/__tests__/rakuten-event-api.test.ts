@@ -5,7 +5,7 @@ import { NextRequest } from 'next/server';
 // DB・楽天API は偽物。未ログイン・不正な Origin・不正な入力では何もしない。API の結果で確認状態を変えない。
 const spies = vi.hoisted(() => ({
   createEvent: vi.fn(), updateEvent: vi.fn(), deleteEvent: vi.fn(), linkProducts: vi.fn(), updateEventProduct: vi.fn(),
-  searchProducts: vi.fn(), getLinkedItemCode: vi.fn(), checkRakutenItem: vi.fn(),
+  searchProducts: vi.fn(), getLinkedItemCode: vi.fn(), checkRakutenItems: vi.fn(), listEvents: vi.fn(), getItemCodesFor: vi.fn(), cachedCheckStates: vi.fn(),
 }));
 vi.mock('@/db/client', () => ({ neonSql: {}, db: {} }));
 vi.mock('@/lib/redis', () => ({ getRedis: () => null }));
@@ -20,14 +20,18 @@ vi.mock('@/lib/rakuten-event/store', async () => {
   const actual = await vi.importActual<typeof import('../rakuten-event/store')>('../rakuten-event/store');
   return {
     MAX_LINK_PER_REQUEST: actual.MAX_LINK_PER_REQUEST, isMissingEventTable: actual.isMissingEventTable,
-    neonEventDb: () => ({}), getEvent: vi.fn(), listEventProducts: vi.fn(), unlinkProduct: vi.fn(),
+    linkTargetKey: actual.linkTargetKey,
+    neonEventDb: () => ({}), getEvent: vi.fn(), listEventProducts: vi.fn(), unlinkProduct: vi.fn(), listEvents: spies.listEvents, getItemCodesFor: spies.getItemCodesFor,
     createEvent: spies.createEvent, updateEvent: spies.updateEvent, deleteEvent: spies.deleteEvent, linkProducts: spies.linkProducts,
     updateEventProduct: spies.updateEventProduct, searchProducts: spies.searchProducts, getLinkedItemCode: spies.getLinkedItemCode,
   };
 });
 vi.mock('@/lib/rakuten-event/item-check', async () => {
   const actual = await vi.importActual<typeof import('../rakuten-event/item-check')>('../rakuten-event/item-check');
-  return { ITEM_CHECK_MESSAGE: actual.ITEM_CHECK_MESSAGE, checkRakutenItem: spies.checkRakutenItem };
+  return {
+    ITEM_CHECK_MESSAGE: actual.ITEM_CHECK_MESSAGE, MAX_CHECK_PER_REQUEST: actual.MAX_CHECK_PER_REQUEST,
+    checkRakutenItems: spies.checkRakutenItems, cachedCheckStates: spies.cachedCheckStates,
+  };
 });
 
 import { POST } from '../../app/api/admin/rakuten-events/route';
@@ -58,6 +62,8 @@ describe('楽天イベント管理 API', () => {
     spies.searchProducts.mockResolvedValue({ rows: [], truncated: false });
     spies.linkProducts.mockResolvedValue({ linked: 1, skipped: 0 });
     spies.updateEventProduct.mockResolvedValue(true);
+    spies.listEvents.mockResolvedValue([]);
+    spies.cachedCheckStates.mockImplementation(async (codes: unknown[]) => codes.map(() => ({ code: 'unchecked' })));
   });
 
   it('未ログイン・不正なセッション・不正な Origin では何もしない', async () => {
@@ -105,7 +111,7 @@ describe('楽天イベント管理 API', () => {
 
   it('楽天APIで確認：取得できなくても確認状態を変えない（表示用の結果だけ返す）', async () => {
     spies.getLinkedItemCode.mockResolvedValue({ itemCode: 'shop:a1', itemUrl: null });
-    spies.checkRakutenItem.mockResolvedValue({ code: 'not_found' });
+    spies.checkRakutenItems.mockResolvedValue([{ code: 'not_found' }]);
     const res = await call({ action: 'check_item', eventId: 1, linkId: 2 });
     const data = await res.json();
     expect(data).toMatchObject({ ok: false, code: 'not_found' });
@@ -120,6 +126,47 @@ describe('楽天イベント管理 API', () => {
     expect(JSON.stringify(await res.json())).not.toContain('secret');
     spies.createEvent.mockRejectedValueOnce(Object.assign(new Error('relation "rakuten_events" does not exist'), { code: '42P01' }));
     expect((await call({ action: 'create', event, operator: 'A' })).status).toBe(503);
+  });
+});
+
+describe('楽天イベント管理 API（Phase 2）', () => {
+  let token = '';
+  const call = (b: unknown) => POST(req(b, { cookie: token, origin: ORIGIN }));
+  beforeEach(async () => {
+    vi.stubEnv('ADMIN_SESSION_SECRET', SECRET);
+    token = await createSessionToken(SECRET);
+    Object.values(spies).forEach((s) => s.mockReset());
+    spies.createEvent.mockResolvedValue(1);
+    spies.updateEvent.mockResolvedValue('updated');
+    spies.cachedCheckStates.mockImplementation(async (codes: unknown[]) => codes.map((c) => (c ? { code: 'unchecked' } : { code: 'no_item_code' })));
+  });
+
+  it('同じ種類で期間が重なるイベントは登録・更新しない（409）。自分自身は重複にしない', async () => {
+    spies.listEvents.mockResolvedValue([{ id: 5, name: '既存のマラソン', eventType: 'marathon', startsAt: Date.UTC(2026, 10, 4, 11), endsAt: Date.UTC(2026, 10, 10, 16, 59) }]);
+    const res = await call({ action: 'create', event, operator: 'A' });
+    expect(res.status).toBe(409);
+    expect((await res.json()).message).toMatch(/既存のマラソン/);
+    expect(spies.createEvent).not.toHaveBeenCalled();
+    expect((await call({ action: 'update', id: 5, expectedUpdatedAt: 1, event, operator: 'A' })).status).toBe(200);
+    expect((await call({ action: 'update', id: 6, expectedUpdatedAt: 1, event, operator: 'A' })).status).toBe(409);
+  });
+
+  it('商品の検索結果に API 確認の状態（キャッシュのみ・API は呼ばない）を付ける', async () => {
+    spies.searchProducts.mockResolvedValue({ rows: [{ productId: 'a', itemCode: 'shop:a' }, { productId: 'b', itemCode: null }], truncated: false });
+    const data = await (await call({ action: 'search', personName: '推しA', categories: [] })).json();
+    expect(data.rows.map((r: { api: { code: string } }) => r.api.code)).toEqual(['unchecked', 'no_item_code']);
+    expect(spies.checkRakutenItems).not.toHaveBeenCalled();
+  });
+
+  it('選んだ商品の API 確認：20件まで・itemCode は商品データから読む（画面の値を使わない）', async () => {
+    const items = Array.from({ length: 21 }, (_, i) => ({ personName: '推しA', category: 'グッズ', productId: `p${i}` }));
+    expect((await call({ action: 'check_items', items })).status).toBe(400);
+    spies.getItemCodesFor.mockResolvedValue(new Map([['推しA\u0000グッズ\u0000p1', 'shop:p1']]));
+    spies.checkRakutenItems.mockResolvedValue([{ code: 'ok', info: { itemCode: 'shop:p1' } }, { code: 'no_item_code' }]);
+    const res = await call({ action: 'check_items', items: [{ personName: '推しA', category: 'グッズ', productId: 'p1', itemCode: 'evil:x' }, { personName: '推しA', category: 'グッズ', productId: 'p2' }] });
+    expect(res.status).toBe(200);
+    expect(spies.checkRakutenItems.mock.calls[0][0]).toEqual(['shop:p1', null]);
+    expect(spies.updateEventProduct).not.toHaveBeenCalled();
   });
 });
 
@@ -160,5 +207,57 @@ describe('商品1件の楽天API確認（item-check）', () => {
     const f = okFetch({ itemCode: 'shop:a1' });
     expect((await checkRakutenItem('shop:a1', deps, f as unknown as typeof fetch)).code).toBe('unavailable');
     expect(f).not.toHaveBeenCalled();
+  });
+});
+
+describe('選んだ商品の楽天API確認（checkRakutenItems・キャッシュ）', () => {
+  beforeEach(async () => {
+    // 前のテストの 429 による停止（プロセス内）を持ち込まない
+    (await vi.importActual<typeof import('../rakuten-api-gate')>('../rakuten-api-gate')).__resetRakutenApiGateForTests();
+    vi.stubEnv('RAKUTEN_APP_ID', 'app-id-not-real');
+    vi.stubEnv('RAKUTEN_ACCESS_KEY', 'access-key-not-real');
+    vi.stubEnv('VERCEL', '');
+  });
+  const deps = { redis: null, now: () => Date.now(), sleep: async () => {}, intervalMs: 0, log: () => {} };
+  const memCache = () => {
+    const m = new Map<string, unknown>();
+    return { m, cache: { getMany: async (codes: readonly string[]) => new Map(codes.filter((c) => m.has(c)).map((c) => [c, m.get(c)])) as never, set: async (c: string, v: unknown) => { m.set(c, v); } } };
+  };
+  const byCode = (map: Record<string, Record<string, unknown> | number>) => vi.fn(async (url: string) => {
+    const code = new URL(url).searchParams.get('itemCode')!;
+    const v = map[code];
+    if (typeof v === 'number') return new Response('{}', { status: v });
+    return new Response(JSON.stringify({ Items: v ? [{ Item: v }] : [] }), { status: 200 });
+  });
+
+  it('キャッシュがある商品は API を呼ばない・同じ商品は1回だけ・商品コードなしは呼ばない', async () => {
+    const { checkRakutenItems } = await vi.importActual<typeof import('../rakuten-event/item-check')>('../rakuten-event/item-check');
+    const { cache, m } = memCache();
+    const f = byCode({ 'shop:a': { itemCode: 'shop:a', itemPrice: 100, pointRate: 3 }, 'shop:b': { itemCode: 'shop:b' } });
+    const r1 = await checkRakutenItems(['shop:a', 'shop:a', null, 'shop:b'], { gateDeps: deps, fetchImpl: f as unknown as typeof fetch, cache });
+    expect(r1.map((r) => r.code)).toEqual(['ok', 'ok', 'no_item_code', 'ok']);
+    expect(f).toHaveBeenCalledTimes(2);
+    expect(m.size).toBe(2);
+    const r2 = await checkRakutenItems(['shop:a', 'shop:b'], { gateDeps: deps, fetchImpl: f as unknown as typeof fetch, cache });
+    expect(r2.map((r) => r.code)).toEqual(['ok', 'ok']);
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+
+  it('429 で止めて残りは呼ばない（skipped）。該当なしは6時間だけキャッシュ、エラーはキャッシュしない', async () => {
+    const { checkRakutenItems } = await vi.importActual<typeof import('../rakuten-event/item-check')>('../rakuten-event/item-check');
+    const { cache, m } = memCache();
+    const f = byCode({ 'shop:nf': {}, 'shop:err': 500, 'shop:rl': 429, 'shop:after': { itemCode: 'shop:after' } });
+    const r = await checkRakutenItems(['shop:nf', 'shop:err', 'shop:rl', 'shop:after'], { gateDeps: deps, fetchImpl: f as unknown as typeof fetch, cache });
+    expect(r.map((x) => x.code)).toEqual(['not_found', 'error', 'rate_limited', 'skipped']);
+    expect(f).toHaveBeenCalledTimes(3);
+    expect([...m.keys()]).toEqual(['shop:nf']);
+  });
+
+  it('一度に20件まで', async () => {
+    const { checkRakutenItems, MAX_CHECK_PER_REQUEST } = await vi.importActual<typeof import('../rakuten-event/item-check')>('../rakuten-event/item-check');
+    expect(MAX_CHECK_PER_REQUEST).toBe(20);
+    const f = byCode({});
+    const r = await checkRakutenItems(Array.from({ length: 25 }, (_, i) => `shop:x${i}`), { gateDeps: { ...deps }, fetchImpl: f as unknown as typeof fetch, cache: null });
+    expect(r.length).toBe(20);
   });
 });

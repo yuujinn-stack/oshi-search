@@ -8,7 +8,11 @@
 // POST { action: 'link', eventId, items[] }         → 商品の紐付け（「要確認」で開始）
 // POST { action: 'update_link', eventId, linkId, link, operator } → 確認状態・確認元URL・確認日時・メモ
 // POST { action: 'unlink', eventId, linkId }        → 紐付けの解除
-// POST { action: 'check_item', eventId, linkId }    → 楽天APIで商品1件の現在の情報を確認（表示のみ・保存しない）
+// POST { action: 'check_item', eventId, linkId }    → 楽天APIで紐付けた商品1件の現在の情報を確認（表示のみ・products に保存しない）
+// POST { action: 'check_items', items[] }            → 選んだ商品（最大20件）を楽天APIで確認（24時間のキャッシュがあれば呼ばない）
+//
+// 登録・更新では、同じ種類で期間が重なるイベント（5と0のつく日・マラソン・スーパーSALE・ブラックフライデー）、
+// または同じ名前・開始日時のイベントを重複として保存しない（src/lib/rakuten-event/candidates.ts findDuplicateEvent）。
 //
 // proxy.ts の認証に加え、この処理でも管理者のセッションと Origin を確認する。products・verdicts には書き込まない。
 // 一般公開ページは参照しないため、キャッシュの失効（revalidate）もしない。エラー文（秘密を含みうる）は返さない。
@@ -16,10 +20,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkCsrfOrigin, SESSION_COOKIE, validateSecretStrength, verifySessionToken } from '@/lib/session';
 import { validateEventInput, validateLinkUpdate, validateOperator } from '@/lib/rakuten-event/core';
 import {
-  MAX_LINK_PER_REQUEST, createEvent, deleteEvent, getEvent, getLinkedItemCode, isMissingEventTable, linkProducts, listEventProducts,
-  neonEventDb, searchProducts, unlinkProduct, updateEvent, updateEventProduct, type LinkTarget,
+  MAX_LINK_PER_REQUEST, createEvent, deleteEvent, getEvent, getItemCodesFor, getLinkedItemCode, isMissingEventTable, linkProducts, linkTargetKey,
+  listEventProducts, listEvents, neonEventDb, searchProducts, unlinkProduct, updateEvent, updateEventProduct, type EventDb, type LinkTarget,
 } from '@/lib/rakuten-event/store';
-import { ITEM_CHECK_MESSAGE, checkRakutenItem } from '@/lib/rakuten-event/item-check';
+import { ITEM_CHECK_MESSAGE, MAX_CHECK_PER_REQUEST, cachedCheckStates, checkRakutenItems } from '@/lib/rakuten-event/item-check';
+import { findDuplicateEvent } from '@/lib/rakuten-event/candidates';
+import { formatJstAdmin } from '@/lib/rakuten-event/core';
 import { CATEGORIES } from '@/lib/product-store';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllMembershipRecords } from '@/lib/group-membership-store';
@@ -56,7 +62,9 @@ export async function GET(req: NextRequest) {
     const db = neonEventDb();
     const [event, products] = await Promise.all([getEvent(db, eventId), listEventProducts(db, eventId)]);
     if (!event) return json({ ok: false, code: 'not_found', message: 'イベントが見つかりません' }, 404);
-    return json({ ok: true, event, products });
+    // 楽天APIの確認結果（24時間のキャッシュだけ。APIは呼ばない）
+    const api = await cachedCheckStates(products.map((p) => p.itemCode));
+    return json({ ok: true, event, products: products.map((p, i) => ({ ...p, api: api[i] })) });
   } catch (err) {
     return failure(err);
   }
@@ -68,6 +76,18 @@ async function resolveSearchPersons(personName: unknown, groupName: unknown): Pr
   if (typeof groupName !== 'string' || !groupName.trim()) return [];
   const [persons, records] = await Promise.all([getAllPersonsMerged(), getAllMembershipRecords()]);
   return personsInGroup(groupName.trim(), persons, groupMembershipRecords(records)).map((p) => p.name);
+}
+
+async function duplicateMessage(db: EventDb, v: { name: string; eventType: Parameters<typeof findDuplicateEvent>[1]['eventType']; startsAt: number; endsAt: number }, excludeId?: number) {
+  const dup = findDuplicateEvent(await listEvents(db), v, excludeId);
+  return dup ? `同じイベントが登録済みです：「${dup.name}」（${formatJstAdmin(dup.startsAt)}〜${formatJstAdmin(dup.endsAt)}）。そちらを編集してください（保存していません）` : null;
+}
+
+function parseTargets(v: unknown): LinkTarget[] {
+  return (Array.isArray(v) ? v : [])
+    .map((i) => i as Record<string, unknown>)
+    .filter((i) => typeof i.personName === 'string' && typeof i.productId === 'string' && (CATEGORIES as string[]).includes(String(i.category)))
+    .map((i) => ({ personName: String(i.personName).slice(0, 200), category: String(i.category), productId: String(i.productId).slice(0, 300) }));
 }
 
 export async function POST(req: NextRequest) {
@@ -85,6 +105,8 @@ export async function POST(req: NextRequest) {
         if (!operator) return bad('操作者名を50文字以内で入力してください');
         const v = validateEventInput(body.event);
         if (!v.ok) return bad(v.error);
+        const dup = await duplicateMessage(db, v.value);
+        if (dup) return json({ ok: false, code: 'duplicate', message: dup }, 409);
         const id = await createEvent(db, v.value, operator);
         return json({ ok: true, code: 'created', message: 'イベントを登録しました', id });
       }
@@ -96,6 +118,8 @@ export async function POST(req: NextRequest) {
         if (!operator) return bad('操作者名を50文字以内で入力してください');
         const v = validateEventInput(body.event);
         if (!v.ok) return bad(v.error);
+        const dup = await duplicateMessage(db, v.value, id);
+        if (dup) return json({ ok: false, code: 'duplicate', message: dup }, 409);
         const r = await updateEvent(db, id, v.value, operator, expected);
         if (r === 'not_found') return json({ ok: false, code: 'not_found', message: 'イベントが見つかりません' }, 404);
         if (r === 'conflict') return json({ ok: false, code: 'conflict', message: '他の画面で更新されています。再読み込みしてから編集してください（保存していません）' }, 409);
@@ -115,15 +139,12 @@ export async function POST(req: NextRequest) {
         const r = await searchProducts(db, {
           personNames: persons, categories, keyword, includeUnpublished: body.includeUnpublished === true, eventId: posInt(body.eventId) ?? undefined,
         });
-        return json({ ok: true, rows: r.rows, truncated: r.truncated, personCount: persons.length });
+        const api = await cachedCheckStates(r.rows.map((x) => x.itemCode));
+        return json({ ok: true, rows: r.rows.map((x, i) => ({ ...x, api: api[i] })), truncated: r.truncated, personCount: persons.length });
       }
       case 'link': {
         const eventId = posInt(body.eventId);
-        const items = Array.isArray(body.items) ? body.items : [];
-        const targets: LinkTarget[] = items
-          .map((i) => i as Record<string, unknown>)
-          .filter((i) => typeof i.personName === 'string' && typeof i.productId === 'string' && (CATEGORIES as string[]).includes(String(i.category)))
-          .map((i) => ({ personName: String(i.personName).slice(0, 200), category: String(i.category), productId: String(i.productId).slice(0, 300) }));
+        const targets = parseTargets(body.items);
         if (!eventId || !targets.length) return bad('紐付ける商品を選んでください');
         if (targets.length > MAX_LINK_PER_REQUEST) return bad(`一度に紐付けられるのは${MAX_LINK_PER_REQUEST}件までです`);
         const r = await linkProducts(db, eventId, targets);
@@ -150,9 +171,23 @@ export async function POST(req: NextRequest) {
         if (!linkId) return bad('入力が正しくありません');
         const item = await getLinkedItemCode(db, linkId);
         if (!item) return json({ ok: false, code: 'not_found', message: '紐付けた商品が商品データに見つかりません（削除・ID変更の可能性）' }, 404);
-        const r = await checkRakutenItem(item.itemCode);
+        const [r] = await checkRakutenItems([item.itemCode]);
         if (r.code === 'ok') return json({ ok: true, code: 'ok', info: r.info });
         return json({ ok: false, code: r.code, message: ITEM_CHECK_MESSAGE[r.code] }, r.code === 'no_item_code' || r.code === 'not_found' ? 200 : 503);
+      }
+      case 'check_items': {
+        const targets = parseTargets(body.items);
+        if (!targets.length) return bad('確認する商品を選んでください');
+        if (targets.length > MAX_CHECK_PER_REQUEST) return bad(`楽天APIで一度に確認できるのは${MAX_CHECK_PER_REQUEST}件までです`);
+        const codes = await getItemCodesFor(db, targets);
+        const results = await checkRakutenItems(targets.map((t) => codes.get(linkTargetKey(t)) ?? null));
+        const out = targets.map((t, i) => ({ ...t, result: results[i] }));
+        const called = results.filter((r) => r.code === 'ok' || r.code === 'not_found').length;
+        const stopped = results.find((r) => r.code === 'busy' || r.code === 'cooldown' || r.code === 'rate_limited' || r.code === 'unavailable' || r.code === 'config_missing');
+        return json({
+          ok: true, code: 'checked', results: out,
+          message: stopped ? `${called}件を確認しました。${ITEM_CHECK_MESSAGE[stopped.code as keyof typeof ITEM_CHECK_MESSAGE]}` : `${called}件の結果を表示しています（商品コードの無い商品は確認できません）`,
+        });
       }
       default:
         return bad('操作が正しくありません');

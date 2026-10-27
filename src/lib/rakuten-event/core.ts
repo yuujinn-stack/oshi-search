@@ -8,28 +8,32 @@
 //   保存した場合だけ。確認状態は管理者の操作でだけ変わる（APIで取得できなくても自動で「対象外」にしない）。
 // - 商品単体の特典（item）・ショップ単位（shop）・購入者の条件で変わる特典（buyer_condition：楽天カード・買いまわり等）・
 //   イベント全体（event_general）を区別して保存し、投稿文でも混同しない（商品単体の特典として書くのは item だけ）。
-// - 投稿文に「最安値」「値下げ中」「今が絶対に買い時」などの表現は生成しない（根拠を保存する仕組みが無いため）。
-//   管理者が入力した特典・条件の文にこれらが含まれる場合も、その項目は投稿文に入れず警告を出す。価格も投稿文に入れない。
+// - 投稿文の生成は ./posts.ts、イベント候補（5と0のつく日のカレンダー等）は ./candidates.ts、
+//   商品の紹介候補の優先度は ./priority.ts（いずれも純粋関数）。
 // - 画像は扱わない（商品画像・写真集の表紙を SNS 素材に転用しない）。
+
+import { parseAffiliateUrl } from '@/lib/rakuten-affiliate-link';
 
 export const SITE_ORIGIN = 'https://oshi-search.jp';
 
 // ── 選択肢 ──────────────────────────────────────────────────────────────────────
 
-export const EVENT_TYPES = ['marathon', 'five_zero', 'super_sale', 'coupon', 'other'] as const;
+export const EVENT_TYPES = ['marathon', 'five_zero', 'super_sale', 'black_friday', 'coupon', 'other'] as const;
 export type RakutenEventType = (typeof EVENT_TYPES)[number];
 export const EVENT_TYPE_LABEL: Record<RakutenEventType, string> = {
   marathon: 'お買い物マラソン',
   five_zero: '5と0のつく日',
   super_sale: '楽天スーパーSALE',
+  black_friday: 'ブラックフライデー',
   coupon: '期間限定クーポン',
-  other: 'その他',
+  other: '楽天公式の期間限定イベント・その他',
 };
 /** 投稿文のハッシュタグ（種類ごと。その他は付けない） */
-const EVENT_TYPE_HASHTAG: Partial<Record<RakutenEventType, string>> = {
+export const EVENT_TYPE_HASHTAG: Partial<Record<RakutenEventType, string>> = {
   marathon: '#楽天お買い物マラソン',
   five_zero: '#5と0のつく日',
   super_sale: '#楽天スーパーSALE',
+  black_friday: '#楽天ブラックフライデー',
 };
 
 export const ENTRY_REQUIRED = ['required', 'not_required', 'unknown'] as const;
@@ -122,6 +126,14 @@ export function eventStatus(e: Pick<RakutenEvent, 'startsAt' | 'endsAt'>, nowMs:
   return 'active';
 }
 
+/**
+ * 公式情報で確認済みのイベントか（公式情報URLと最終確認日時の両方がある）。
+ * イベント候補から登録した直後は最終確認日時が空のため「未確認（開催候補）」になる。
+ */
+export function isOfficiallyConfirmed(e: Pick<RakutenEvent, 'officialUrl' | 'lastCheckedAt'>): boolean {
+  return !!e.officialUrl && e.lastCheckedAt != null;
+}
+
 /** 最終確認からこの時間を超えたら、投稿前に再確認を促す */
 export const RECHECK_AFTER_MS = 24 * 60 * 60 * 1000;
 
@@ -183,6 +195,32 @@ export function isOfficialRakutenUrl(v: unknown): boolean {
   const host = u.hostname.toLowerCase();
   if (AFFILIATE_HOSTS.includes(host)) return false;
   return ['rakuten.co.jp', 'rakuten.ne.jp'].some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+/**
+ * 楽天の商品ページか（商品単体の特典の根拠にできるURL）。楽天市場の商品ページ（item.rakuten.co.jp/<店舗>/<商品>）と
+ * 楽天ブックスの商品ページ（books.rakuten.co.jp/rb/<番号>）。イベントの告知ページ（event.rakuten.co.jp）は商品単位の根拠にしない。
+ */
+export function isRakutenProductPageUrl(v: unknown): boolean {
+  if (!isOfficialRakutenUrl(v)) return false;
+  const u = new URL(String(v).trim());
+  const host = u.hostname.toLowerCase();
+  const parts = u.pathname.split('/').filter(Boolean);
+  if (host === 'item.rakuten.co.jp') return parts.length >= 2;
+  if (host === 'books.rakuten.co.jp') return parts[0] === 'rb' && parts.length >= 2;
+  return false;
+}
+
+/**
+ * 管理画面で開く・確認元にする商品ページURL。保存された商品URLが楽天アフィリエイトの計測リンク（hb.afl…?pc=<商品ページ>）の場合は
+ * 既存の parseAffiliateUrl で遷移先の商品ページを取り出す（管理者の確認でアフィリエイトのクリックを発生させないため）。
+ * 商品ページが分からなければ null（推測で作らない）。
+ */
+export function productPageUrlOf(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (isRakutenProductPageUrl(url)) return url;
+  const page = parseAffiliateUrl(url)?.pageUrl ?? null;
+  return page && isRakutenProductPageUrl(page) ? page : null;
 }
 
 // ── 入力の検証 ──────────────────────────────────────────────────────────────────
@@ -308,6 +346,9 @@ export function validateLinkUpdate(raw: unknown): Result<LinkUpdateInput> {
     if (!sourceUrl) return { ok: false, error: '確認済みにするには、公式情報の確認元URLを入力してください' };
     if (checkedAt == null) return { ok: false, error: '確認済みにするには、確認日時を入力してください' };
     if (r.benefitScope === 'unknown') return { ok: false, error: '確認済みにするには、特典の範囲（商品単体・ショップ単位・購入者条件・イベント全体）を選んでください' };
+    if (r.benefitScope === 'item' && !isRakutenProductPageUrl(sourceUrl)) {
+      return { ok: false, error: '商品単体の特典として確認済みにするには、その商品の楽天の商品ページ（item.rakuten.co.jp / books.rakuten.co.jp/rb/）を確認元URLにしてください（イベントの告知ページは商品単位の根拠になりません）' };
+    }
   }
   if (r.checkStatus === 'excluded' && !note) {
     return { ok: false, error: '対象外にする理由をメモに入力してください（取得できなかっただけの場合は「要確認」のままにしてください）' };
@@ -317,46 +358,19 @@ export function validateLinkUpdate(raw: unknown): Result<LinkUpdateInput> {
 
 // ── 投稿文 ──────────────────────────────────────────────────────────────────────
 
-/** 根拠を保存する仕組みが無いため、投稿文に入れない表現 */
-export const BANNED_PHRASES = ['最安値', '最安', '底値', '値下げ', '値下がり', '買い時', '今が絶対', '絶対', '激安', '今だけ', '史上最'];
+/** 根拠なく購入を急かす・価格を断定する表現（投稿文に入れない。管理者の入力に含まれていればその項目を外す） */
+export const BANNED_PHRASES = ['最安値', '最安', '底値', '値下げ', '値下がり', '買い時', '今が絶対', '絶対', '激安', '今だけ', '史上最', '一番安い', '最もお得', '最もおトク', 'お得すぎ', '買わなきゃ損', '急いで', '在庫わずか', '残りわずか'];
 
 export function findBannedPhrases(text: string): string[] {
   return BANNED_PHRASES.filter((p) => text.includes(p));
 }
 
-/** 保存カテゴリ → 人物ページの商品タブ（src/lib/product-tabs.ts の #products-<slug>） */
-const CATEGORY_TAB_SLUG: Record<string, string> = {
-  写真集: 'photobook', '本・雑誌': 'photobook', CD: 'cd', 'Blu-ray・DVD': 'bluray', グッズ: 'goods', 中古: 'used',
-};
-const CATEGORY_WORD: Record<string, string> = {
-  写真集: '写真集', '本・雑誌': '書籍・雑誌', CD: 'CD', 'Blu-ray・DVD': 'Blu-ray・DVD', グッズ: 'グッズ', 中古: '中古商品',
-};
-
-export type PostChannel = 'x' | 'threads' | 'instagram_feed' | 'instagram_story';
-
-/**
- * 推しサーチの人物ページへのリンク（SNS流入の計測用に UTM を付ける。GA4 が参照元として集計し、
- * 楽天商品のクリック〔既存の affiliate_click〕と同じ GA4 で参照元別に比べられる。新しい計測は追加しない）。
- * 人物ページは canonical が UTM なしのURLのため、SEO には影響しない。
- */
-export function buildPersonLink(personName: string, opts: { eventId: number; channel: PostChannel; categories?: string[] }): string {
-  const source = opts.channel === 'x' ? 'x' : opts.channel === 'threads' ? 'threads' : 'instagram';
-  const params = new URLSearchParams({
-    utm_source: source,
-    utm_medium: 'social',
-    utm_campaign: `rakuten_event_${opts.eventId}`,
-  });
-  if (opts.channel === 'instagram_story') params.set('utm_content', 'story');
-  const tabs = [...new Set((opts.categories ?? []).map((c) => CATEGORY_TAB_SLUG[c]).filter(Boolean))];
-  const hash = tabs.length === 1 ? `#products-${tabs[0]}` : '';
-  return `${SITE_ORIGIN}/person/${encodeURIComponent(personName)}?${params.toString()}${hash}`;
-}
-
-/** X の文字数（全角は2・URLは23として数える。上限280） */
+/** X の文字数（X の仕様：URL は t.co 換算で23、指定範囲〔ラテン文字等〕は1、それ以外〔日本語・絵文字等〕は2。上限280）。
+ * 絵文字の結合（ZWJ 等）は X では1つの絵文字として2と数えるが、ここでは構成する文字ごとに数える（多めに数える＝上限を超えない側）。 */
 export function xWeightedLength(text: string): number {
   const urlRe = /https?:\/\/\S+/g;
   const urls = text.match(urlRe) ?? [];
-  const rest = text.replace(urlRe, '');
+  const rest = text.normalize('NFC').replace(urlRe, '');
   let n = urls.length * 23;
   for (const ch of rest) {
     const c = ch.codePointAt(0) ?? 0;
@@ -365,144 +379,51 @@ export function xWeightedLength(text: string): number {
   return n;
 }
 export const X_MAX = 280;
+/** Threads の本文の上限（文字数。UTF-16 の長さで数える＝絵文字を多めに数える） */
 export const THREADS_MAX = 500;
 export const INSTAGRAM_MAX = 2200;
 
-export interface PostInput {
-  event: RakutenEvent;
-  personName: string;
-  /** 投稿に使う紐付け済み商品（確認済み・商品単体またはショップ単位のものだけを商品名として載せる） */
-  products: RakutenEventProduct[];
-  nowMs: number;
+// ── 楽天APIで確認した商品の情報（表示用・保存しない。./item-check.ts が取得し Redis に24時間だけ保持） ──
+
+export interface ItemCheckInfo {
+  itemCode: string;
+  itemName: string;
+  itemPrice: number | null;
+  /** 1=在庫あり・0=在庫なし（API の値。無ければ null） */
+  availability: number | null;
+  /** 商品別のポイント倍率（1 や無しは倍付けなし。24時間以内に終わる倍付けは API が返さない） */
+  pointRate: number | null;
+  pointRateStartTime: string | null;
+  pointRateEndTime: string | null;
+  /** タイムセール（期間限定価格）の期間。設定されている商品だけ */
+  saleStartTime: string | null;
+  saleEndTime: string | null;
+  shopName: string | null;
+  fetchedAt: number;
 }
 
-export interface GeneratedPosts {
-  status: EventStatus;
-  x: string;
-  threads: string;
-  instagramFeed: string;
-  instagramStory: string;
-  /** 画面に出す注意（投稿前に確認する点） */
-  warnings: string[];
-  /** 生成しなかった理由（終了したイベントなど）。このときの投稿文は空 */
-  blocked: string | null;
+/** 楽天APIの日時（"YYYY-MM-DD HH:MM"・日本時間）を epoch ms に。不正なら null */
+export function parseRakutenApiTime(v: string | null | undefined): number | null {
+  const m = (v ?? '').trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  return m ? parseJstDateTimeLocal(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}`) : null;
 }
 
-const hashtagOf = (s: string) => `#${s.replace(/[\s#・、。,.!！?？()（）「」『』【】&＆'’"”-]/g, '')}`;
+/** 楽天APIで確認できた、現在有効な商品別のポイント倍率（2倍以上・期間内）。無ければ null */
+export function activePointRate(info: ItemCheckInfo | null | undefined, nowMs: number): { rate: number; endsAt: number | null } | null {
+  if (!info || info.pointRate == null || info.pointRate < 2) return null;
+  const start = parseRakutenApiTime(info.pointRateStartTime);
+  const end = parseRakutenApiTime(info.pointRateEndTime);
+  if (start != null && nowMs < start) return null;
+  if (end != null && nowMs >= end) return null;
+  return { rate: info.pointRate, endsAt: end };
+}
 
-/**
- * SNS投稿文を作る（X・Threads・Instagram フィード・Instagram ストーリーズ）。自動投稿はしない（画面でコピーして手動で投稿する）。
- * 価格・「最安値」等は入れない。商品の特典は、確認済みで範囲が商品単体／ショップ単位のものだけ、その範囲を明記して載せる。
- * 購入者の条件で変わる特典（買いまわり・楽天カード等）は、商品の特典ではなくイベントの条件として書く。
- */
-export function generatePosts(input: PostInput): GeneratedPosts {
-  const { event: e, personName, nowMs } = input;
-  const status = eventStatus(e, nowMs);
-  const empty = { x: '', threads: '', instagramFeed: '', instagramStory: '' };
-  if (status === 'ended') {
-    return { status, ...empty, warnings: [], blocked: 'このイベントは終了しています（終了したイベントの投稿文は作りません）' };
-  }
-  const warnings: string[] = [];
-  if (e.visibility !== 'published') warnings.push('イベントが「非公開（下書き）」です。内容を確認してから公開にしてください');
-  if (!e.officialUrl) warnings.push('公式情報URLが未入力です');
-  if (e.lastCheckedAt == null) warnings.push('最終確認日時が未入力です。公式情報で日時・条件を確認してください');
-  else if (nowMs - e.lastCheckedAt > RECHECK_AFTER_MS) warnings.push('最終確認から24時間以上経っています。投稿前に公式情報を再確認してください');
-  if (e.entryRequired === 'unknown') warnings.push('エントリーの必要性が未確認です（投稿文では「公式ページでご確認ください」と書きます）');
-
-  // 管理者が入力した文のうち、根拠の無い価格表現を含むものは使わない
-  const safe = (label: string, v: string | null): string | null => {
-    if (!v) return null;
-    const hit = findBannedPhrases(v);
-    if (hit.length) { warnings.push(`${label}に「${hit.join('」「')}」が含まれるため、投稿文に入れていません`); return null; }
-    return v.replace(/\s+/g, ' ').trim();
-  };
-  const benefit = safe('ポイント倍率・割引内容', e.benefit);
-  const benefitConditions = safe('特典の適用条件', e.benefitConditions);
-  const conditions = safe('参加条件', e.conditions);
-
-  const own = input.products.filter((p) => p.personName === personName && p.eventId === e.id);
-  const featured = own.filter((p) => p.checkStatus === 'confirmed' && (p.benefitScope === 'item' || p.benefitScope === 'shop'));
-  const others = own.filter((p) => !featured.includes(p));
-  if (own.some((p) => p.checkStatus === 'needs_check')) warnings.push('「要確認」の商品は投稿文で対象商品として扱っていません');
-  if (others.some((p) => p.checkStatus === 'confirmed')) warnings.push('購入者の条件・イベント全体の特典として確認した商品は、商品の特典としては書いていません');
-  const featuredLines: string[] = [];
-  for (const p of featured) {
-    const title = safe(`商品名（${p.productId}）`, (p.productTitle ?? '').slice(0, 40)) ?? null;
-    if (!title) continue;
-    const note = safe(`商品の特典（${p.productId}）`, p.benefitNote);
-    const scope = p.benefitScope === 'item' ? '商品の特典' : 'ショップの特典';
-    featuredLines.push(`・${title}${note ? `（${scope}：${note}）` : ''}`);
-  }
-  const categories = own.filter((p) => p.checkStatus !== 'excluded').map((p) => p.category);
-  const words = [...new Set(categories.map((c) => CATEGORY_WORD[c]).filter(Boolean))];
-  const goodsWord = words.length ? words.slice(0, 3).join('・') : '関連商品';
-
-  const when = status === 'upcoming'
-    ? `${formatJstPost(e.startsAt, nowMs)}スタート〜${formatJstPost(e.endsAt, nowMs)}まで`
-    : `開催中｜${formatJstPost(e.endsAt, nowMs)}まで`;
-  const entry = e.entryRequired === 'required' ? '※事前のエントリーが必要です'
-    : e.entryRequired === 'not_required' ? '※エントリー不要'
-      : '※エントリーの要否は楽天の公式ページでご確認ください';
-  const benefitLine = benefit ? `${benefit}${benefitConditions ? `（${benefitConditions}）` : ''}` : null;
-  const typeTag = EVENT_TYPE_HASHTAG[e.eventType];
-  const tags = [typeTag, hashtagOf(personName), '#推しサーチ', '#PR'].filter(Boolean).join(' ');
-  const prLine = '※楽天アフィリエイトを利用しています';
-  const conditionNote = '※特典の内容・ポイント倍率は購入者の条件（楽天カードの利用・買いまわり等）によって変わります。最新の条件は楽天の公式ページでご確認ください';
-
-  // X：文字数（280）に収まるよう、任意の行から落とす
-  const xLink = buildPersonLink(personName, { eventId: e.id, channel: 'x', categories });
-  const xRequired = [`【PR】${e.name}`, when, entry];
-  const xOptional = [
-    benefitLine,
-    featuredLines.length ? `公式で確認済みの対象商品：${featured.length}件` : null,
-  ].filter((s): s is string => !!s);
-  const xTail = [`${personName}の${goodsWord}は推しサーチでまとめてチェック👇`, xLink, tags];
-  let xLines = [...xRequired, ...xOptional, ...xTail];
-  while (xWeightedLength(xLines.join('\n')) > X_MAX && xOptional.length) {
-    xOptional.pop();
-    xLines = [...xRequired, ...xOptional, ...xTail];
-  }
-  const x = xLines.join('\n');
-  if (xWeightedLength(x) > X_MAX) warnings.push(`X の文字数が上限（${X_MAX}）を超えています（${xWeightedLength(x)}）。イベント名を短くしてください`);
-
-  const body = (channel: PostChannel) => {
-    const link = buildPersonLink(personName, { eventId: e.id, channel, categories });
-    return [
-      `【PR】${e.name}`,
-      when,
-      entry,
-      ...(conditions ? [`参加条件：${conditions}`] : []),
-      ...(benefitLine ? [`特典：${benefitLine}`] : []),
-      ...(featuredLines.length ? ['', '公式情報で確認済みの対象商品', ...featuredLines] : []),
-      '',
-      `${personName}の${goodsWord}は推しサーチでまとめてチェックできます`,
-      channel === 'instagram_feed' ? 'プロフィールのリンク（推しサーチ）から人物ページへどうぞ' : link,
-      '',
-      conditionNote,
-      prLine,
-      ...(e.officialUrl && channel !== 'instagram_feed' ? [`イベントの詳細（楽天公式）：${e.officialUrl}`] : []),
-      '',
-      tags,
-    ].join('\n');
-  };
-  const threads = body('threads');
-  if (threads.length > THREADS_MAX) warnings.push(`Threads の文字数が上限（${THREADS_MAX}）を超えています（${threads.length}）`);
-  const instagramFeed = body('instagram_feed');
-  if (instagramFeed.length > INSTAGRAM_MAX) warnings.push(`Instagram の文字数が上限（${INSTAGRAM_MAX}）を超えています`);
-
-  // ストーリーズ：画像の上に載せる短い文言と、リンクスタンプに貼るURL（画像は作らない）
-  const instagramStory = [
-    '【PR】',
-    e.name,
-    when,
-    entry,
-    `${personName}の${goodsWord}は推しサーチで👆`,
-    '',
-    '--- リンクスタンプのURL ---',
-    buildPersonLink(personName, { eventId: e.id, channel: 'instagram_story', categories }),
-    '',
-    '※ストーリーズにも「PR」の表記と、楽天アフィリエイトを利用している旨を入れてください',
-  ].join('\n');
-
-  return { status, x, threads, instagramFeed, instagramStory, warnings: [...new Set(warnings)], blocked: null };
+/** 楽天APIで確認できた、現在有効なタイムセールの期間。無ければ null */
+export function activeTimeSale(info: ItemCheckInfo | null | undefined, nowMs: number): { endsAt: number | null } | null {
+  if (!info || (!info.saleStartTime && !info.saleEndTime)) return null;
+  const start = parseRakutenApiTime(info.saleStartTime);
+  const end = parseRakutenApiTime(info.saleEndTime);
+  if (start != null && nowMs < start) return null;
+  if (end != null && nowMs >= end) return null;
+  return { endsAt: end };
 }

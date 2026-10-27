@@ -8,7 +8,7 @@ import path from 'node:path';
 vi.mock('@/db/client', () => ({ neonSql: {}, db: {} }));
 
 import {
-  createEvent, deleteEvent, getEvent, getLinkedItemCode, linkProducts, listEventProducts, listEvents, searchProducts, unlinkProduct,
+  createEvent, deleteEvent, getEvent, getItemCodesFor, getLinkedItemCode, linkProducts, linkTargetKey, listEventProducts, listEvents, searchProducts, unlinkProduct,
   updateEvent, updateEventProduct, isMissingEventTable, type EventDb,
 } from '../rakuten-event/store';
 import { parseJstDateTimeLocal, type EventInput } from '../rakuten-event/core';
@@ -170,6 +170,30 @@ describe.runIf(!!PGliteCtor)('楽天イベントの DB 操作（隔離した Pos
     expect(await listEventProducts(db, id)).toEqual([]);
     expect(await deleteEvent(db, id)).toBe(false);
     expect(await fingerprint()).toEqual(before);
+  });
+
+  it('Phase 2：紐付けた商品に itemCode・判定・削除済みを付け、検索結果に紐付けの範囲・確認元・確認日時を付ける', async () => {
+    const id = await createEvent(db, input(), 'A');
+    await linkProducts(db, id, [{ personName: '推しA', category: '写真集', productId: 'a1' }, { personName: '推しA', category: '写真集', productId: 'a2' }]);
+    const links = await listEventProducts(db, id);
+    expect(links.find((l) => l.productId === 'a1')).toMatchObject({ itemCode: 'shop:a1', verdict: 'related', missing: false, itemUrl: 'https://item.rakuten.co.jp/shop/a1/' });
+    expect(links.find((l) => l.productId === 'a2')).toMatchObject({ itemCode: null, verdict: 'uncertain', missing: false });
+    const a1 = links.find((l) => l.productId === 'a1')!;
+    await updateEventProduct(db, a1.id, id, { checkStatus: 'confirmed', benefitScope: 'item', benefitNote: null, sourceUrl: 'https://item.rakuten.co.jp/shop/a1/', checkedAt: JST('2026-11-05T10:00'), note: null }, 'A');
+    const found = (await searchProducts(db, { personNames: ['推しA'], categories: ['写真集'], keyword: '', includeUnpublished: true, eventId: id })).rows.find((r) => r.productId === 'a1');
+    expect(found).toMatchObject({ linkId: a1.id, linkedStatus: 'confirmed', linkedScope: 'item', linkedSourceUrl: 'https://item.rakuten.co.jp/shop/a1/', linkedCheckedAt: JST('2026-11-05T10:00') });
+    // 商品データから消えた商品は missing
+    await pg.query(`UPDATE products SET items = '[]' WHERE person_name = '推しA' AND category = '写真集'`);
+    expect((await listEventProducts(db, id)).every((l) => l.missing)).toBe(true);
+  });
+
+  it('Phase 2：API確認用の itemCode は商品データから読む（存在しない商品は含めない）', async () => {
+    const t = [{ personName: '推しA', category: '写真集', productId: 'a1' }, { personName: '推しA', category: 'CD', productId: 'a3' }, { personName: '推しB', category: '写真集', productId: 'b1' }, { personName: '推しA', category: '写真集', productId: 'zzz' }];
+    const m = await getItemCodesFor(db, t);
+    expect(m.get(linkTargetKey(t[0]))).toBe('shop:a1');
+    expect(m.get(linkTargetKey(t[1]))).toBe('shop:a3');
+    expect(m.get(linkTargetKey(t[2]))).toBeNull();
+    expect(m.has(linkTargetKey(t[3]))).toBe(false);
   });
 
   it('テーブル未作成のエラーを見分ける', async () => {
