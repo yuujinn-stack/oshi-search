@@ -88,3 +88,29 @@ describe('手動登録のカテゴリの候補（自動では選ばない）', (
     expect(suggestManualCategory('')).toBeNull();
   });
 });
+
+describe('商品番号の根拠による補正（src/lib/display-category-evidence.ts）', () => {
+  const books = (n: string) => `https://hb.afl.rakuten.co.jp/hgc/x/?pc=https%3A%2F%2Fbooks.rakuten.co.jp%2Frb%2F${n}%2F`;
+  it('一覧の商品番号と完全一致したときだけ、要確認の商品を CD／映像に', () => {
+    expect(classifyProductDetailed('キュン (通常盤) [ 日向坂46 ]', '写真集', books('15814961'))).toMatchObject({ section: 'CD', basis: 'product_number', needsReview: false });
+    expect(classifyProductDetailed('欅坂46 LIVE at 東京ドーム ～ARENA TOUR 2019 FINAL～(通常盤) [ 欅坂46 ]', '写真集', 'https://books.rakuten.co.jp/rb/16164042/')).toMatchObject({ section: 'Blu-ray・DVD', basis: 'product_number' });
+    // 商品番号が違えば（名前が同じでも）補正しない
+    expect(classifyProductDetailed('キュン (通常盤) [ 日向坂46 ]', '写真集', books('15814960')).section).toBe('その他');
+    expect(classifyProductDetailed('キュン (通常盤) [ 日向坂46 ]', '写真集', 'https://item.rakuten.co.jp/shop/15814961/').section).toBe('その他');
+  });
+  it('根拠が両方にある・根拠の無い商品は要確認のまま', () => {
+    expect(classifyProductDetailed('欅坂46 LIVE at 東京ドーム ～ARENA TOUR 2019 FINAL～(初回生産限定盤) [ 欅坂46 ]', '写真集', books('16164041')).section).toBe('その他');
+    expect(classifyProductDetailed('制服のマネキン（通常盤） [ 乃木坂46 ]', '写真集', books('12064985')).section).toBe('その他');
+    expect(classifyProductDetailed("Nobody's fault (通常盤) [ 櫻坂46 ]", '写真集', books('16500432')).section).toBe('その他');
+    expect(classifyProductDetailed('KawaiiってMagic (通常盤) [ FRUITS ZIPPER ]', '写真集', books('18158363')).section).toBe('その他');
+  });
+  it('要確認以外の商品には効かない（商品名・保存カテゴリの判定が優先）', () => {
+    // 一覧にある商品番号でも、商品名で書籍・CD と分かる商品・CD/映像として保存された商品はそのまま
+    expect(classifyProductDetailed('〇〇 1st写真集', '写真集', books('16164042')).section).toBe('写真集・書籍');
+    expect(classifyProductDetailed('なにかのCD', 'CD', books('16164042'))).toMatchObject({ section: 'CD', basis: 'source_category' });
+    expect(classifyProductDetailed('ほげ', '写真集', books('15814961'))).toMatchObject({ section: '写真集・書籍', basis: 'source_category' });
+  });
+  it('一覧を作るときは補正を使わない（useEvidence: false）', () => {
+    expect(classifyProductDetailed('キュン (通常盤) [ 日向坂46 ]', '写真集', books('15814961'), { useEvidence: false }).section).toBe('その他');
+  });
+});

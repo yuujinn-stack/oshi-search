@@ -717,7 +717,7 @@ function SectionCell({ section, stored, basis, reason, needsReview }: { section:
     <div>
       <span className={`font-bold ${needsReview ? 'text-amber-700' : 'text-slate-700'}`}>{needsReview ? '要確認' : section}</span>
       {(changed || needsReview) && (
-        <div className="text-[10px] text-gray-500">保存：{stored}／{basis === 'title' ? '商品名から判定' : basis === 'none' ? '判定できず' : '保存カテゴリ'}：{reason}</div>
+        <div className="text-[10px] text-gray-500">保存：{stored}／{basis === 'title' ? '商品名から判定' : basis === 'product_number' ? '商品番号の根拠' : basis === 'none' ? '判定できず' : '保存カテゴリ'}：{reason}</div>
       )}
       {!changed && !needsReview && <div className="text-[10px] text-gray-400">保存：{stored}</div>}
     </div>

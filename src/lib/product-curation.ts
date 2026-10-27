@@ -13,6 +13,8 @@
  */
 
 import type { ProductCategory, RakutenItem } from '@/types/rakuten';
+import { DISPLAY_CATEGORY_EVIDENCE, DISPLAY_CATEGORY_EVIDENCE_CHECKED_AT } from '@/lib/display-category-evidence';
+import { productKeyOfLink } from '@/lib/rakuten-affiliate-link';
 
 export type DisplaySectionLabel = '写真集・書籍' | 'CD' | 'Blu-ray・DVD' | 'グッズ' | 'その他';
 
@@ -29,6 +31,7 @@ export interface ProductClassification {
 export type ClassificationBasis =
   | 'source_category' // 保存カテゴリ（取得元の楽天API）
   | 'title'           // 商品名の明示的な語
+  | 'product_number'  // 楽天ブックスの商品番号の完全一致（src/lib/display-category-evidence.ts）
   | 'none';           // 根拠なし（その他・要確認）
 
 export interface DetailedClassification extends ProductClassification {
@@ -130,10 +133,22 @@ export function classifyProductDetailed(
   title: string,
   adminCat: ProductCategory,
   itemUrl = '',
+  /** false のとき商品番号の根拠（display-category-evidence）を使わない（根拠の一覧を作るスクリプト用） */
+  opts: { useEvidence?: boolean } = {},
 ): DetailedClassification {
   const bySource = (section: DisplaySectionLabel): DetailedClassification => ({ section, needsReview: false, basis: 'source_category', reason: `保存カテゴリ（${adminCat}）` });
   const byTitle = (section: DisplaySectionLabel, reason: string): DetailedClassification => ({ section, needsReview: false, basis: 'title', reason });
-  const review = (reason: string): DetailedClassification => ({ section: REVIEW_SECTION_LABEL, needsReview: true, basis: 'none', reason });
+  // 商品名だけでは分からない商品：楽天ブックスの商品番号が根拠の一覧にあればその形式、無ければ「その他」（要確認）
+  const review = (reason: string): DetailedClassification => {
+    const ev = opts.useEvidence === false ? null : evidenceFor(itemUrl);
+    if (ev) {
+      return {
+        section: ev.section, needsReview: false, basis: 'product_number',
+        reason: `楽天ブックスの同じ商品番号が楽天ブックスの${ev.section === 'CD' ? 'CD' : 'DVD'}検索で取得されている（${DISPLAY_CATEGORY_EVIDENCE_CHECKED_AT} 確認）`,
+      };
+    }
+    return { section: REVIEW_SECTION_LABEL, needsReview: true, basis: 'none', reason };
+  };
   const t = normalizeForMatch(title ?? '');
 
   if (adminCat === 'CD' || adminCat === 'Blu-ray・DVD') {
@@ -177,6 +192,12 @@ export function classifyProductDetailed(
   if (BOOK_RE.test(t)) return byTitle('写真集・書籍', '商品名に書籍の語');
   if (GENERIC_GOODS_RE.test(t)) return byTitle('グッズ', '商品名にグッズ');
   return review('商品名から種類を判断できない');
+}
+
+/** 楽天ブックスの商品ページ（アフィリエイトURLなら遷移先）の商品番号が根拠の一覧にあるか（完全一致） */
+function evidenceFor(itemUrl: string) {
+  const key = productKeyOfLink(itemUrl);
+  return key?.source === 'books' ? DISPLAY_CATEGORY_EVIDENCE[key.productNumber] ?? null : null;
 }
 
 // ── 中古・まとめ買い ────────────────────────────────────────────────────────
