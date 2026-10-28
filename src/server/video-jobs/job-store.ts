@@ -102,8 +102,29 @@ export interface CapcutStoreEntry {
   selectedAt?: string | null;
   /** 直近の「再選定」の結果（変えられなかった場合はその理由） */
   reselectNote?: { at: string; changed: boolean; message: string } | null;
-  /** 台本に使っている3作品（1作品だけ変更の画面用） */
-  works?: Array<{ id: string | null; title: string; kind: string | null; year: number | null }> | null;
+  /** 台本に使っている3作品（1作品だけ変更の画面用。reason=選ばれた理由） */
+  works?: Array<{
+    id: string | null;
+    title: string;
+    kind: string | null;
+    year: number | null;
+    reason?: string | null;
+    /** 見放題 / 無料 / 広告付き無料 のどれで見られるか（見放題を優先） */
+    access?: '見放題' | '無料' | '広告付き無料' | null;
+    services?: string[];
+    /** 作品ページの「確認: ○○」（配信情報を確認した日。現在も見られることの保証ではない） */
+    checkedAt?: string | null;
+    /** 本人が出演する番組・ライブ等（追加の候補）から選んだ作品 */
+    extra?: boolean;
+    /** 動画用の表示名（設定した場合だけ。title は正式名称） */
+    videoTitle?: string | null;
+    /** 動画で使う作品名が作品カードで2行に収まらない（ナレーションも長くなる） */
+    titleTooLong?: boolean;
+  }> | null;
+  /** 作品不足のとき、動画に使える異なる作品の数（0〜2）。3作品以上なら null */
+  eligibleCount?: number | null;
+  /** 管理画面で除外した作品 */
+  excludedWorks?: Array<{ id: string; title: string; kind?: 'exclude' | 'vod_check' }>;
   /** 1作品だけ変更した3作品（生成時もこの3作品。自動では選び直さない） */
   fixedWorks?: boolean;
   /** 完成動画が現在の台本に対応しているか（current=現在の3作品で生成済み / outdated=作品変更後は未生成 / none=未生成） */

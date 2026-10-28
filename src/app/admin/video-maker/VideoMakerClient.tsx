@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { countScriptStatuses, groupUnresolvedReadings } from '@/lib/video-first3-script';
+import { countScriptStatuses, countWorkBuckets, groupUnresolvedReadings, staleFirst3Works } from '@/lib/video-first3-script';
 import {
   buildReadingChatGptPrompt,
   buildUnregisteredReadingRows,
@@ -80,6 +80,10 @@ interface CapcutEntry {
   reselectNote?: { at: string; changed: boolean; message: string } | null;
   /** まず見る3作だけ: 台本に使っている3作品（古いWorkerの報告には無い） */
   works?: First3SlotWork[] | null;
+  /** まず見る3作だけ: 作品不足のとき、動画に使える異なる作品の数（0〜2） */
+  eligibleCount?: number | null;
+  /** まず見る3作だけ: 管理画面で除外した作品 */
+  excludedWorks?: Array<{ id: string; title: string; kind?: 'exclude' | 'vod_check' }>;
   /** まず見る3作だけ: 1作品だけ変更した3作品 */
   fixedWorks?: boolean;
   /** まず見る3作だけ: 完成動画が現在の台本に対応しているか（古いWorkerの報告には無い） */
@@ -383,6 +387,9 @@ export default function VideoMakerClient({
   // まず見る3作: 台本の準備状態の集計と、読み未登録の語（人物ごとではなく語ごとに1件）
   const hasScriptStatus = capcutEntries.some((e) => e.scriptStatus);
   const scriptCounts = useMemo(() => countScriptStatuses(capcutEntries), [capcutEntries]);
+  const workBuckets = useMemo(() => countWorkBuckets(capcutEntries), [capcutEntries]);
+  // 選定中の3作品に、配信の確認から90日以上たった作品がある人物
+  const staleCheckCount = useMemo(() => capcutEntries.filter((e) => e.scriptStatus && staleFirst3Works(e.works).length > 0).length, [capcutEntries]);
   const unresolvedGroups = useMemo(() => groupUnresolvedReadings(capcutEntries), [capcutEntries]);
   const first3Queue = worker?.capcutStore?.first3Queue;
   // まず見る3作: 人物一覧（上の絞り込み＋人物名・グループ名の検索）と、選択中の1人の詳細（詳細は1人分だけ描画する）
@@ -484,6 +491,69 @@ export default function VideoMakerClient({
         text: res.alreadyPending
           ? '同じ変更の依頼がまだWorkerで処理されていません。処理が終わり台本が更新されてから、もう一度押してください。'
           : `${slot}作目の変更をWorkerへ依頼しました（Workerが変更すると、3作品・正式台本・音声生成用台本がこの画面で更新されます）。`,
+      });
+      await load();
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setScriptRequestBusy(false);
+    }
+  }
+
+  // まず見る3作: その枠の作品を除外して自動変更する／除外を解除する（Workerへの依頼）
+  async function requestExclusion(
+    entry: CapcutEntry,
+    req: { action: 'exclude_one' | 'vodcheck_one'; slot: 1 | 2 | 3 } | { action: 'unexclude'; workId: string; title: string },
+  ) {
+    const audioNote = entry.status !== 'missing' ? '\n\n保存済みのCapCut音声があります。台本が変わるため音声の録り直しが必要になります（保存済みの音声・完成動画は削除されません）。' : '';
+    const text =
+      req.action !== 'unexclude'
+        ? `${entry.personName} の${req.slot}作目「${entry.works?.[req.slot - 1]?.title ?? ''}」を${req.action === 'vodcheck_one' ? '配信確認待ちにし' : '除外し'}、おすすめ作品に自動変更します。解除するまで、この人物の選定・変更の候補にしません（ほかの人物には影響しません。代わりの作品が無ければ変更しません）。${audioNote}\n\nよろしいですか？`
+        : `${entry.personName} の「${req.title}」の除外・配信確認待ちを解除します（3作品は変わりません。次の選定・変更から候補に戻ります）。よろしいですか？`;
+    if (!window.confirm(text)) return;
+    setScriptRequestBusy(true);
+    try {
+      const res = await fetchJson<{ alreadyPending?: boolean }>('/api/admin/video-jobs/first3-prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.action !== 'unexclude' ? { action: req.action, personName: entry.personName, slot: req.slot } : { action: req.action, personName: entry.personName, workId: req.workId }),
+      });
+      setMessage({
+        kind: 'ok',
+        text: res.alreadyPending
+          ? '同じ依頼がまだWorkerで処理されていません。処理が終わってから、もう一度押してください。'
+          : req.action !== 'unexclude'
+            ? `${req.slot}作目の${req.action === 'vodcheck_one' ? '配信確認待ち' : '除外'}と変更をWorkerへ依頼しました（Workerが変更すると、3作品・正式台本・音声生成用台本がこの画面で更新されます）。`
+            : '解除をWorkerへ依頼しました。',
+      });
+      await load();
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setScriptRequestBusy(false);
+    }
+  }
+
+  // まず見る3作: 選定中の作品の動画用の表示名を設定・解除する（正式名称は変えない）
+  async function requestVideoTitle(entry: CapcutEntry, slot: 1 | 2 | 3, workId: string, videoTitle: string | null) {
+    const formal = entry.works?.[slot - 1]?.title ?? '';
+    const audioNote = entry.status !== 'missing' ? '\n\n保存済みのCapCut音声があります。ナレーションが変わるため音声の録り直しが必要になります（保存済みの音声・完成動画は削除されません）。' : '';
+    const text = videoTitle
+      ? `${entry.personName} の${slot}作目を、動画では「${videoTitle}」と表示・ナレーションします（正式名称「${formal}」は変わらず、作品カードにも小さく表示します）。${audioNote}\n\nよろしいですか？`
+      : `${entry.personName} の${slot}作目の動画用の表示名を解除し、正式名称「${formal}」に戻します。${audioNote}\n\nよろしいですか？`;
+    if (!window.confirm(text)) return;
+    setScriptRequestBusy(true);
+    try {
+      const res = await fetchJson<{ alreadyPending?: boolean }>('/api/admin/video-jobs/first3-prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'video_title', personName: entry.personName, workId, videoTitle }),
+      });
+      setMessage({
+        kind: 'ok',
+        text: res.alreadyPending
+          ? '同じ依頼がまだWorkerで処理されていません。処理が終わってから、もう一度押してください。'
+          : '動画用の表示名をWorkerへ依頼しました（正式台本・音声生成用台本がこの画面で更新されます）。',
       });
       await load();
     } catch (err) {
@@ -964,6 +1034,14 @@ export default function VideoMakerClient({
                   </span>
                 ))}
               </div>
+              <p className="text-xs text-gray-600">
+                動画に使える作品数: 3作品以上 {workBuckets.three}人・2作品 {workBuckets.two}人・1作品 {workBuckets.one}人・0作品 {workBuckets.zero}人
+                {workBuckets.unknown > 0 ? `・未選定など ${workBuckets.unknown}人` : ''}
+                {staleCheckCount > 0 && <span className="ml-1 font-bold text-amber-700">・⚠ 配信の再確認が必要 {staleCheckCount}人</span>}
+                <span className="block text-gray-500">
+                  ドラマ・映画（見放題）を優先し、足りない人物だけ本人が出演する番組・ライブ等（見放題・無料。ゲスト出演・レンタルだけの作品は除く）で補います。
+                </span>
+              </p>
               {first3Queue && first3Queue.status !== 'idle' && (
                 <p className="text-xs text-gray-600">
                   全人物の台本準備: {QUEUE_STATUS_LABEL[first3Queue.status]}（{first3Queue.processed}/{first3Queue.total}人・選定{' '}
@@ -1254,6 +1332,9 @@ export default function VideoMakerClient({
                       isNext={nextCapcut === pickedCapcut}
                       onReselect={pickedCapcut.scriptStatus ? () => void requestScripts('reselect', [pickedCapcut.personName]) : undefined}
                       onReplace={pickedCapcut.scriptStatus ? (slot, workId) => requestReplace(pickedCapcut, slot, workId) : undefined}
+                      onExclude={(slot, kind) => requestExclusion(pickedCapcut, { action: kind === 'vod_check' ? 'vodcheck_one' : 'exclude_one', slot })}
+                      onUnexclude={(workId, title) => requestExclusion(pickedCapcut, { action: 'unexclude', workId, title })}
+                      onVideoTitle={(slot, workId, v) => requestVideoTitle(pickedCapcut, slot, workId, v)}
                       busy={scriptRequestBusy}
                     />
                     <div className="flex items-center justify-between gap-2 text-xs">
@@ -1295,6 +1376,9 @@ export default function VideoMakerClient({
                   isNext={nextCapcut === e}
                   onReselect={e.scriptStatus ? () => void requestScripts('reselect', [e.personName]) : undefined}
                   onReplace={e.scriptStatus ? (slot, workId) => requestReplace(e, slot, workId) : undefined}
+                  onExclude={(slot, kind) => requestExclusion(e, { action: kind === 'vod_check' ? 'vodcheck_one' : 'exclude_one', slot })}
+                  onUnexclude={(workId, title) => requestExclusion(e, { action: 'unexclude', workId, title })}
+                  onVideoTitle={(slot, workId, v) => requestVideoTitle(e, slot, workId, v)}
                   busy={scriptRequestBusy}
                 />
               ))}
@@ -1420,6 +1504,9 @@ function CapcutCard({
   isNext,
   onReselect,
   onReplace,
+  onExclude,
+  onUnexclude,
+  onVideoTitle,
   busy = false,
 }: {
   entry: CapcutEntry;
@@ -1431,6 +1518,12 @@ function CapcutCard({
   onReselect?: () => void;
   /** まず見る3作: 1作品だけ変更を依頼する */
   onReplace?: (slot: 1 | 2 | 3, workId: string | null) => Promise<void>;
+  /** まず見る3作: その枠の作品を除外（または配信確認待ちに）して自動変更 */
+  onExclude?: (slot: 1 | 2 | 3, kind: 'exclude' | 'vod_check') => Promise<void>;
+  /** まず見る3作: 除外を解除 */
+  onUnexclude?: (workId: string, title: string) => Promise<void>;
+  /** まず見る3作: 動画用の表示名（null=解除） */
+  onVideoTitle?: (slot: 1 | 2 | 3, workId: string, videoTitle: string | null) => Promise<void>;
   busy?: boolean;
 }) {
   const view = CAPCUT_STATUS_VIEW[entry.status];
@@ -1481,6 +1574,10 @@ function CapcutCard({
           hasSavedAudio={entry.status !== 'missing'}
           busy={busy}
           onReplace={onReplace}
+          excludedWorks={entry.excludedWorks ?? []}
+          onExclude={onExclude}
+          onUnexclude={onUnexclude}
+          onVideoTitle={onVideoTitle}
         />
       )}
       <div>

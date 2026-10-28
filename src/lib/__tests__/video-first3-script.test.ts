@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkReadingInput, countScriptStatuses, groupUnresolvedReadings, kanaOnlyAliases, normalizeFirst3Title, first3CandidateExclusion } from '../video-first3-script';
+import { checkReadingInput, countScriptStatuses, groupUnresolvedReadings, kanaOnlyAliases, normalizeFirst3Title, first3CandidateExclusion, countWorkBuckets, daysSinceFirst3Check, staleFirst3Works } from '../video-first3-script';
 
 describe('まず見る3作の台本準備（管理画面）', () => {
   it('同じ未登録語が複数人物にあっても1件にまとめ、使用人物を集める', () => {
@@ -60,9 +60,50 @@ describe('first3CandidateExclusion（oshi-video-maker の orderFirst3Candidates 
     expect(c('ドラマ', '林田裕紀（第1話ゲスト）')).toBe('本人出演・ゲスト等');
     expect(c('ドラマ', null)).toBe('役の表示がないドラマ（音楽・トーク番組等）');
     expect(c('映画', '役名', false)).toBe('配信中ではない');
-    expect(c('ライブ・コンサート', '役名')).toBe('ドラマ・映画ではない');
+    expect(c('舞台・ミュージカル', '役名')).toBe('まず見る3作の対象外の種別');
+    // 番組・ライブ等（追加の候補）: 本人出演は可、ゲスト等・配信中でないものは不可
+    expect(c('ライブ・コンサート', 'Self (Naniwa Danshi)')).toBeNull();
+    expect(c('バラエティ', null)).toBeNull();
+    expect(c('バラエティ', 'ゲスト')).toBe('ゲスト出演等');
+    expect(c('アイドル番組', null, false)).toBe('配信中ではない');
     expect(c('映画', null)).toBeNull();
     expect(c('ドラマ', 'Kouta Kirigaya')).toBeNull();
     expect(c('ドラマ', '神崎幸一（主演）')).toBeNull();
+  });
+});
+
+describe('countWorkBuckets（作品数ごとの人数）', () => {
+  it('3作品以上・2・1・0作品・不明を数える（他テンプレートは数えない）', () => {
+    expect(
+      countWorkBuckets([
+        { personName: 'a', scriptStatus: 'ready_script' },
+        { personName: 'b', scriptStatus: 'needs_reading' },
+        { personName: 'c', scriptStatus: 'insufficient_works', eligibleCount: 2 },
+        { personName: 'd', scriptStatus: 'insufficient_works', eligibleCount: 1 },
+        { personName: 'e', scriptStatus: 'insufficient_works', eligibleCount: 0 },
+        { personName: 'f', scriptStatus: 'insufficient_works' },
+        { personName: 'g', scriptStatus: 'pending' },
+        { personName: 'h' },
+      ]),
+    ).toEqual({ three: 2, two: 1, one: 1, zero: 1, unknown: 2 });
+  });
+});
+
+describe('daysSinceFirst3Check（配信の確認日からの日数。日本時間）', () => {
+  it('作品ページの表記から日数を出す。読めなければnull', () => {
+    expect(daysSinceFirst3Check('2026年7月29日', new Date('2026-10-27T03:00:00Z'))).toBe(90);
+    expect(daysSinceFirst3Check('2026年10月27日', new Date('2026-10-26T16:00:00Z'))).toBe(0); // 日本時間では10/27
+    expect(daysSinceFirst3Check(null)).toBeNull();
+    expect(daysSinceFirst3Check('不明')).toBeNull();
+  });
+});
+
+describe('staleFirst3Works（配信の再確認が必要な作品）', () => {
+  it('確認から90日以上の作品だけ（確認日が読めない作品は含めない）', () => {
+    const now = new Date('2026-10-28T03:00:00Z');
+    expect(
+      staleFirst3Works([{ title: 'A', checkedAt: '2026年7月29日' }, { title: 'B', checkedAt: '2026年10月1日' }, { title: 'C', checkedAt: null }], now),
+    ).toEqual([{ slot: 1, title: 'A', days: 91 }]);
+    expect(staleFirst3Works(null, now)).toEqual([]);
   });
 });

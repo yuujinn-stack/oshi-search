@@ -1,7 +1,7 @@
 import 'server-only';
-import { inArray } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { workAliases } from '@/db/schema';
+import { workAliases, works as worksTable } from '@/db/schema';
 import { getPersonWithConfigMerged } from '@/lib/persons';
 import { getPublishedWorksOrThrow, getPublicWorkById } from '@/lib/work-store';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
@@ -32,6 +32,11 @@ export interface First3SourceCard {
   role: string | null;
   /** 人物ページでの掲載順（既定の並べ替え「配信あり優先」） */
   order: number;
+  /**
+   * この作品の出演が登録されている人物の数（works の行数。グループ全体の番組ほど多い）。
+   * 「まず見る3作」の追加の候補で、本人に近い作品を先に使うための目安（Worker 側の順位付けだけに使う）
+   */
+  personCount?: number | null;
 }
 
 /** 作品ページの表示と同じ値（h1の作品名・種別・年・配信情報） */
@@ -52,7 +57,25 @@ const SITE_ORIGIN = 'https://oshi-search.jp';
 /** 人物ページの「出演作品」と同じ作品カード（人物が存在しなければnull） */
 export async function getFirst3SourceCards(personName: string): Promise<{ personName: string; pageUrl: string; cards: First3SourceCard[] } | null> {
   const r = await loadPersonWorkCards(personName);
-  return r ? { personName: r.personName, pageUrl: r.pageUrl, cards: r.items.map((i) => i.card) } : null;
+  if (!r) return null;
+  const counts = await countRegisteredPersons(r.items.map((i) => i.work.id));
+  return {
+    personName: r.personName,
+    pageUrl: r.pageUrl,
+    cards: r.items.map((i) => ({ ...i.card, personCount: counts.get(i.work.id) ?? null })),
+  };
+}
+
+/** 作品ごとの出演登録人数（読み取りのみ。works は 人物×作品 で1行） */
+async function countRegisteredPersons(workIds: string[]): Promise<Map<string, number>> {
+  const ids = [...new Set(workIds)];
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select({ id: worksTable.id, n: sql<number>`count(*)::int` })
+    .from(worksTable)
+    .where(inArray(worksTable.id, ids))
+    .groupBy(worksTable.id);
+  return new Map(rows.map((r) => [r.id, Number(r.n)]));
 }
 
 /** 動画メーカーの「1作品だけ変更 → 候補から手動選択」に表示する作品（人物ページの「出演作品」のうちドラマ・映画） */
@@ -64,6 +87,8 @@ export interface First3ManualCandidate {
   role: string | null;
   /** 見放題の配信先（表示名）。空なら動画に使えない（「どのサブスクで見られる」の場面を作れない） */
   flatServices: string[];
+  /** 無料・広告付き無料の配信先（表示名）。番組・ライブ等は見放題が無くても無料で見られれば使える */
+  freeServices: string[];
   /** まず見る3作の候補にならない理由（本人出演・配信中でない等）。null なら選べる */
   excludedReason: string | null;
 }
@@ -76,22 +101,22 @@ export async function getFirst3ManualCandidates(personName: string): Promise<{ p
   const r = await loadPersonWorkCards(personName);
   if (!r) return null;
   const candidates = r.items
-    .filter(({ card }) => card.kind === 'ドラマ' || card.kind === '映画')
-    .map(({ work, card }) => ({
+    // ドラマ・映画と、追加の候補の種別（番組・ライブ等）。それ以外（舞台・アニメ等）は一覧に出さない
+    .filter(({ card }) => card.kind === 'ドラマ' || card.kind === '映画' || first3CandidateExclusion({ ...card, streaming: true, role: null }) === null)
+    .map(({ work, card }) => {
+      const providers = deduplicateProviders((work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p)));
+      const names = (types: string[]) => [...new Set(providers.filter((p) => types.includes(p.type)).map((p) => getVodProviderDisplayInfo(p.providerName).displayName))];
+      return {
       id: decodeURIComponent(card.href.replace(/^\/work\//, '')),
       title: card.title,
       kind: card.kind,
       year: card.year,
       role: card.role,
       excludedReason: first3CandidateExclusion(card),
-      flatServices: [
-        ...new Set(
-          deduplicateProviders((work.vodProviders ?? []).filter((p) => isConfirmedVodAvailability(p)))
-            .filter((p) => p.type === 'flatrate')
-            .map((p) => getVodProviderDisplayInfo(p.providerName).displayName),
-        ),
-      ],
-    }));
+      flatServices: names(['flatrate']),
+      freeServices: names(['free', 'ads']),
+    };
+    });
   return { personName: r.personName, candidates };
 }
 

@@ -53,6 +53,12 @@ function sanitizeEntries(raw: unknown[]): CapcutStoreEntry[] {
             reselectNote: sanitizeReselectNote(e.reselectNote),
             works: sanitizeFirst3Works(e.works),
             fixedWorks: e.fixedWorks === true,
+            eligibleCount: typeof e.eligibleCount === 'number' && e.eligibleCount >= 0 && e.eligibleCount < 3 ? Math.floor(e.eligibleCount) : null,
+            excludedWorks: (Array.isArray(e.excludedWorks) ? e.excludedWorks : [])
+              .slice(0, 100)
+              .map((w) => w as Record<string, unknown>)
+              .filter((w) => typeof w.id === 'string' && typeof w.title === 'string')
+              .map((w) => ({ id: str(w.id, 200)!, title: str(w.title, 200)!, kind: w.kind === 'vod_check' ? ('vod_check' as const) : ('exclude' as const) })),
             ...(e.videoStatus === 'current' || e.videoStatus === 'outdated' || e.videoStatus === 'none' ? { videoStatus: e.videoStatus } : {}),
           }
         : {}),
@@ -71,7 +77,20 @@ function sanitizeFirst3Works(raw: unknown): Array<{ id: string | null; title: st
   if (!Array.isArray(raw) || raw.length !== 3) return null;
   const works = raw.map((w) => w as Record<string, unknown>).filter((w) => typeof w.title === 'string');
   if (works.length !== 3) return null;
-  return works.map((w) => ({ id: str(w.id, 200), title: str(w.title, 200)!, kind: str(w.kind, 20), year: num(w.year) }));
+  const ACCESS = new Set(['見放題', '無料', '広告付き無料']);
+  return works.map((w) => ({
+    id: str(w.id, 200),
+    title: str(w.title, 200)!,
+    kind: str(w.kind, 20),
+    year: num(w.year),
+    reason: str(w.reason, 300),
+    access: typeof w.access === 'string' && ACCESS.has(w.access) ? (w.access as '見放題' | '無料' | '広告付き無料') : null,
+    services: (Array.isArray(w.services) ? w.services : []).filter((x): x is string => typeof x === 'string').slice(0, 10).map((x) => x.slice(0, 100)),
+    checkedAt: str(w.checkedAt, 40),
+    extra: w.extra === true,
+    videoTitle: str(w.videoTitle, 100),
+    titleTooLong: w.titleTooLong === true,
+  }));
 }
 
 /** まず見る3作の台本準備キューの進捗 */

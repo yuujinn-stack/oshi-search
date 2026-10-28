@@ -16,8 +16,19 @@ vi.mock('@/server/video-jobs/first3-source', () => ({
         : [{ id: 'tmdb-tv-michieda', title: 'キャスター' }],
   }),
 }));
-vi.mock('@/server/video-jobs/script-prep-store', () => ({
+const exclusions: Array<{ personName: string; action: string }> = [];
+vi.mock('@/server/video-jobs/script-prep-store', async () => ({
   createScriptRequest: async () => 1,
+  excludeOneAction: (slot: number, kind = 'exclude') => {
+    if (![1, 2, 3].includes(slot)) throw Object.assign(new Error('bad slot'), { status: 400 });
+    return `${kind === 'vod_check' ? 'vodcheck_one' : 'exclude_one'}|${slot}`;
+  },
+  unexcludeAction: (workId: string) => `unexclude|${encodeURIComponent(workId)}`,
+  videoTitleAction: (workId: string, v: string | null) => `video_title|${encodeURIComponent(workId)}|${encodeURIComponent(v ?? '')}`,
+  createExclusionRequest: async (personName: string, action: string) => {
+    exclusions.push({ personName, action });
+    return 1;
+  },
   createReplaceOneRequest: async (personName: string, slot: number, workId: string | null) => {
     created.push({ personName, slot, workId });
     return 1;
@@ -54,5 +65,38 @@ describe('first3-prepare replace_one', () => {
     const res = await post({ action: 'replace_one', personName: '大橋和也', slot: 3, workId: null });
     expect(res.status).toBe(200);
     expect(created).toEqual([{ personName: '大橋和也', slot: 3, workId: null }]);
+  });
+});
+
+describe('first3-prepare exclude_one / unexclude', () => {
+  it('その枠の除外・除外の解除を依頼する', async () => {
+    exclusions.length = 0;
+    expect((await post({ action: 'exclude_one', personName: '大橋和也', slot: 2 })).status).toBe(200);
+    expect((await post({ action: 'vodcheck_one', personName: '大橋和也', slot: 3 })).status).toBe(200);
+    expect((await post({ action: 'unexclude', personName: '大橋和也', workId: 'tmdb-tv-296060' })).status).toBe(200);
+    expect(exclusions).toEqual([
+      { personName: '大橋和也', action: 'exclude_one|2' },
+      { personName: '大橋和也', action: 'vodcheck_one|3' },
+      { personName: '大橋和也', action: 'unexclude|tmdb-tv-296060' },
+    ]);
+  });
+  it('登録されていない人物は依頼しない', async () => {
+    exclusions.length = 0;
+    expect((await post({ action: 'exclude_one', personName: '未登録', slot: 1 })).status).toBe(400);
+    expect(exclusions).toEqual([]);
+  });
+});
+
+describe('first3-prepare video_title', () => {
+  it('その人物の出演作品だけ表示名を依頼する（別の人物の作品は拒否）', async () => {
+    exclusions.length = 0;
+    expect((await post({ action: 'video_title', personName: '大橋和也', workId: 'tmdb-tv-296060', videoTitle: '君トク' })).status).toBe(200);
+    expect((await post({ action: 'video_title', personName: '大橋和也', workId: 'tmdb-tv-296060', videoTitle: null })).status).toBe(200);
+    const bad = await post({ action: 'video_title', personName: '大橋和也', workId: 'tmdb-tv-michieda', videoTitle: 'x' });
+    expect(bad.status).toBe(400);
+    expect(exclusions).toEqual([
+      { personName: '大橋和也', action: 'video_title|tmdb-tv-296060|%E5%90%9B%E3%83%88%E3%82%AF' },
+      { personName: '大橋和也', action: 'video_title|tmdb-tv-296060|' },
+    ]);
   });
 });

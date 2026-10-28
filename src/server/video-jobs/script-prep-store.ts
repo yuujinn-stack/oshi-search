@@ -72,6 +72,40 @@ export function replaceOneAction(slot: number, workId: string | null): string {
   return `replace_one|${slot}|${workId === null ? '' : encodeURIComponent(workId)}`;
 }
 
+/**
+ * 作品の除外の依頼の action（oshi-video-maker の parseExclusionAction と同じ形式）:
+ *   "exclude_one|{1〜3}"  … その枠の作品を除外して、おすすめ作品に自動変更（代わりが無ければ除外しない）
+ *   "vodcheck_one|{1〜3}" … 同じく、配信に疑義がある作品として「配信確認待ち」にして自動変更
+ *   "unexclude|{作品ID}"  … 除外を解除（3作品は変えない）
+ */
+export function excludeOneAction(slot: number, kind: 'exclude' | 'vod_check' = 'exclude'): string {
+  if (![1, 2, 3].includes(slot)) throw new VideoJobError('除外する作品の番号が不正です。', 400);
+  return `${kind === 'vod_check' ? 'vodcheck_one' : 'exclude_one'}|${slot}`;
+}
+export function unexcludeAction(workId: string): string {
+  if (!workId.trim() || workId.length > 200) throw new VideoJobError('作品IDが不正です。', 400);
+  return `unexclude|${encodeURIComponent(workId)}`;
+}
+
+/** 動画用の表示名の長さの上限（oshi-video-maker の FIRST3_VIDEO_TITLE_MAX と同じ） */
+export const FIRST3_VIDEO_TITLE_MAX = 40;
+
+/**
+ * 動画用の表示名の依頼の action（oshi-video-maker の parseVideoTitleAction と同じ形式）:
+ *   "video_title|{作品ID}|{表示名}"（どちらも encodeURIComponent。表示名が空=解除して正式名称に戻す）
+ */
+export function videoTitleAction(workId: string, videoTitle: string | null): string {
+  if (!workId.trim() || workId.length > 200) throw new VideoJobError('作品IDが不正です。', 400);
+  const v = (videoTitle ?? '').replace(/\s+/g, ' ').trim();
+  if (v.length > FIRST3_VIDEO_TITLE_MAX) throw new VideoJobError(`動画用の表示名は${FIRST3_VIDEO_TITLE_MAX}文字以内にしてください。`, 400);
+  return `video_title|${encodeURIComponent(workId)}|${encodeURIComponent(v)}`;
+}
+
+/** 作品の除外・除外の解除の依頼を追加する（同じ内容の未処理の依頼があれば追加しない）。追加した件数を返す */
+export async function createExclusionRequest(personName: string, action: string): Promise<number> {
+  return insertScriptRequests(action, [personName]);
+}
+
 /** 1作品だけ変更の依頼を追加する（同じ内容の未処理の依頼があれば追加しない）。追加した件数を返す */
 export async function createReplaceOneRequest(personName: string, slot: number, workId: string | null): Promise<number> {
   return insertScriptRequests(replaceOneAction(slot, workId), [personName]);
