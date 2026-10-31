@@ -6,6 +6,7 @@ import type { PersonOption } from '@/components/admin/PersonCombobox';
 import VideoMakerClient from './VideoMakerClient';
 import { listPersonReadingCandidates } from '@/server/video-jobs/script-prep-store';
 import { personVideoSlug } from '@/server/video-jobs/person-slug';
+import { listSonkamoGroups } from '@/server/video-jobs/sonkamo-target';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +25,8 @@ export default async function VideoMakerPage() {
 
   // まず見る3作の読み未登録の人物名に、人物登録データの別名（ひらがな・カタカナ）を候補として表示する（自動では確定しない）
   const readingCandidates = await listPersonReadingCandidates().catch(() => ({}));
+  // 推し活で損してるかも？: 選べるグループ（公開サイトのグループ一覧と同じ）。取得できなくても他のテンプレートは使える
+  const groups = await listSonkamoGroups().catch(() => []);
 
   const personOptions: PersonOption[] = persons.map((p) => ({
     name: p.name,
@@ -48,7 +51,7 @@ export default async function VideoMakerPage() {
           <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
-      <VideoMakerClient persons={personOptions} readingCandidates={readingCandidates} personSlugByName={personSlugByName} />
+      <VideoMakerClient persons={personOptions} readingCandidates={readingCandidates} personSlugByName={personSlugByName} groups={groups} />
     </div>
   );
 }

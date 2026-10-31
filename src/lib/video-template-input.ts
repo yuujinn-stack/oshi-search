@@ -16,8 +16,19 @@ export const OSHI_VOD_COMPARE_PERSON_COUNT = 3;
 export const OSHI_CARD_SELECTION_INPUT_KIND = 'oshi-card-selection' as const;
 export const OSHI_CARD_VIDEO_MAX_WORKS = 3;
 
-export type TemplateInputKind = typeof OSHI_VOD_COMPARE_INPUT_KIND | typeof OSHI_CARD_SELECTION_INPUT_KIND;
-export const TEMPLATE_INPUT_KINDS: readonly TemplateInputKind[] = [OSHI_VOD_COMPARE_INPUT_KIND, OSHI_CARD_SELECTION_INPUT_KIND];
+/**
+ * 推し活で損してるかも？: 1ジョブ=人物1人 または グループ1つ（グループのときは person_name にグループ名）。
+ * 人物・グループの存在確認と、撮影するページのパス（pagePath）は、ジョブ作成時にサーバーで行う（src/server/video-jobs/sonkamo-target.ts）
+ */
+export const OSHI_SONKAMO_INPUT_KIND = 'oshi-sonkamo-target' as const;
+/** 敬称（読みにもそのまま使えるひらがなだけ。空=なし）。正本は oshi-video-maker の SONKAMO_HONORIFICS（Workerが雛形と一緒に報告） */
+export const OSHI_SONKAMO_HONORIFICS = ['', 'くん', 'ちゃん', 'さん'] as const;
+export const OSHI_SONKAMO_LINE_IDS = ['01-hook', '02-works', '03-vod', '04-goods', '05-cta'] as const;
+const SONKAMO_TEXT_MAX = 60;
+const SONKAMO_KANA_MAX = 90;
+
+export type TemplateInputKind = typeof OSHI_VOD_COMPARE_INPUT_KIND | typeof OSHI_CARD_SELECTION_INPUT_KIND | typeof OSHI_SONKAMO_INPUT_KIND;
+export const TEMPLATE_INPUT_KINDS: readonly TemplateInputKind[] = [OSHI_VOD_COMPARE_INPUT_KIND, OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND];
 
 export interface OshiVodCompareTemplateInput {
   version: 1;
@@ -33,7 +44,19 @@ export interface OshiCardSelectionTemplateInput {
   variant: 'cool' | 'cute';
 }
 
-export type VideoTemplateInput = OshiVodCompareTemplateInput | OshiCardSelectionTemplateInput;
+export interface OshiSonkamoTemplateInput {
+  version: 1;
+  target: 'person' | 'group';
+  /** 撮影する推しサーチのページ（/person/… または /groups/…）。サーバーがDBの人物・グループから決める（画面からの値は使わない） */
+  pagePath?: string;
+  honorific: string;
+  /** グループだけ: 出演作品・配信先を見せるメンバー（null=メンバー一覧の上から、配信中の作品があるメンバー） */
+  memberName: string | null;
+  /** 管理画面で確認・編集したナレーション（5文。null=テンプレートの既定文） */
+  lines: Array<{ id: string; text: string; kana: string }> | null;
+}
+
+export type VideoTemplateInput = OshiVodCompareTemplateInput | OshiCardSelectionTemplateInput | OshiSonkamoTemplateInput;
 
 /** personVideoSlug の形式 */
 const PERSON_SLUG_PATTERN = /^p-[0-9a-f]{12}$/;
@@ -83,6 +106,41 @@ export function parseOshiCardSelectionInput(raw: unknown): OshiCardSelectionTemp
   return { version: 1, workIds: [...(ids as string[])], variant: obj.variant };
 }
 
+/** 推し活で損してるかも？の入力を検証して正規化する（人物・グループの存在とページのパスはサーバーで確認する） */
+export function parseOshiSonkamoInput(raw: unknown): OshiSonkamoTemplateInput {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TemplateInputError('人物かグループの指定がありません。');
+  const obj = raw as Record<string, unknown>;
+  if (obj.version !== undefined && obj.version !== 1) throw new TemplateInputError('未対応の入力形式です。');
+  if (obj.target !== 'person' && obj.target !== 'group') throw new TemplateInputError('人物かグループかを選んでください。');
+  const honorific = obj.honorific ?? '';
+  if (typeof honorific !== 'string' || !(OSHI_SONKAMO_HONORIFICS as readonly string[]).includes(honorific)) {
+    throw new TemplateInputError('敬称は「なし・くん・ちゃん・さん」から選んでください。');
+  }
+  let memberName: string | null = null;
+  if (obj.memberName !== undefined && obj.memberName !== null && obj.memberName !== '') {
+    if (obj.target !== 'group') throw new TemplateInputError('紹介するメンバーはグループのときだけ選べます。');
+    if (typeof obj.memberName !== 'string' || !obj.memberName.trim() || obj.memberName.length > 100) throw new TemplateInputError('紹介するメンバーの指定が不正です。');
+    memberName = obj.memberName.trim();
+  }
+  let lines: OshiSonkamoTemplateInput['lines'] = null;
+  if (obj.lines !== undefined && obj.lines !== null) {
+    if (!Array.isArray(obj.lines) || obj.lines.length !== OSHI_SONKAMO_LINE_IDS.length) {
+      throw new TemplateInputError(`ナレーションは${OSHI_SONKAMO_LINE_IDS.length}文すべてを指定してください。`);
+    }
+    lines = OSHI_SONKAMO_LINE_IDS.map((id, i) => {
+      const l = (obj.lines as unknown[])[i] as Record<string, unknown> | null;
+      if (!l || typeof l !== 'object' || l.id !== id) throw new TemplateInputError(`ナレーションの順番が違います（${i + 1}文目）。`);
+      const text = typeof l.text === 'string' ? l.text.trim() : '';
+      const kana = typeof l.kana === 'string' ? l.kana.trim() : '';
+      if (!text || Array.from(text).length > SONKAMO_TEXT_MAX) throw new TemplateInputError(`${i + 1}文目の字幕は1〜${SONKAMO_TEXT_MAX}文字にしてください。`);
+      if (!kana || Array.from(kana).length > SONKAMO_KANA_MAX) throw new TemplateInputError(`${i + 1}文目の読みは1〜${SONKAMO_KANA_MAX}文字にしてください。`);
+      return { id, text, kana };
+    });
+  }
+  const pagePath = typeof obj.pagePath === 'string' ? obj.pagePath : undefined;
+  return { version: 1, target: obj.target, ...(pagePath ? { pagePath } : {}), honorific, memberName, lines };
+}
+
 /** テンプレートの入力種別に応じて検証する */
 export function parseTemplateInput(kind: TemplateInputKind, raw: unknown): VideoTemplateInput {
   switch (kind) {
@@ -90,5 +148,7 @@ export function parseTemplateInput(kind: TemplateInputKind, raw: unknown): Video
       return parseOshiVodCompareInput(raw);
     case OSHI_CARD_SELECTION_INPUT_KIND:
       return parseOshiCardSelectionInput(raw);
+    case OSHI_SONKAMO_INPUT_KIND:
+      return parseOshiSonkamoInput(raw);
   }
 }

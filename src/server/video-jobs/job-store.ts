@@ -12,6 +12,7 @@ import {
   type VideoTemplateInput,
 } from '@/lib/video-template-input';
 import { checkVodCompareSharedCapcut, type SharedCapcutRequirement } from '@/lib/oshi-vod/video-feature';
+import type { SonkamoScriptTemplate } from '@/lib/video-sonkamo-script';
 
 /**
  * 動画生成ジョブ（video_generation_jobs）とWorker情報（video_workers）の読み書き。
@@ -43,6 +44,8 @@ export interface WorkerTemplateInfo {
    * （template_input）を必須にし、この種別で検証する。省略時は従来どおり1ジョブ=1人物（template_inputはNULL）。
    */
   templateInputKind?: TemplateInputKind;
+  /** 推し活で損してるかも？だけ: 台本の雛形（管理画面がナレーション原稿を作って編集できるようにする。正本は oshi-video-maker） */
+  scriptTemplate?: SonkamoScriptTemplate;
 }
 
 export interface WorkerInfo {
@@ -302,7 +305,12 @@ export async function createVideoJobs(input: {
   if (!template.narrationModes.includes(input.narrationMode)) {
     throw new VideoJobError(`「${template.name}」はこのナレーション方式に対応していません。`, 400);
   }
-  const templateInput = resolveJobTemplateInput(template, input.personNames, input.templateInput);
+  let templateInput = resolveJobTemplateInput(template, input.personNames, input.templateInput);
+  // 推し活で損してるかも？: 人物・グループが公開中かを確かめ、撮影するページのパスをDBから付ける（再生成でも作り直す）
+  if (templateInput && 'target' in templateInput) {
+    const { resolveSonkamoTarget } = await import('./sonkamo-target');
+    templateInput = await resolveSonkamoTarget(input.personNames[0], templateInput);
+  }
   // CapCut保存済み音声: Workerが報告した状態がreadyの人物だけ受け付ける（フロントだけに任せない）。
   // 実際に生成する直前にもWorker側で再確認する。
   // テンプレート共通のCapCut音声が使えるテンプレートは、人物ごとのready判定をしない（共通音声が無ければ生成しない）
@@ -384,7 +392,8 @@ export function resolveJobTemplateInput(
     if (err instanceof TemplateInputError) throw new VideoJobError(err.message, 400);
     throw err;
   }
-  // 推し布教カード紹介: 人物1人・ジョブ1件（作品が人物の公開作品かは createVideoJobs で確認する）
+  // 推し布教カード紹介・推し活で損してるかも？: 人物（またはグループ）1つ・ジョブ1件
+  // （作品が人物の公開作品か・人物/グループが公開中かは createVideoJobs で確認する）
   if (!('personSlugs' in parsed)) {
     if (personNames.length !== 1) throw new VideoJobError(`「${template.name}」は人物を1人だけ選んでください。`, 400);
     return parsed;

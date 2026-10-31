@@ -15,7 +15,10 @@ import { matchesQuery } from '@/lib/person-group-filter';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
 import First3WorkSlots, { type First3SlotWork } from './First3WorkSlots';
 import VodCompareTrioPicker, { EMPTY_TRIO, completeTrio, type TrioCapcutCheck, type TrioSlots } from './VodCompareTrioPicker';
-import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND } from '@/lib/video-template-input';
+import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND } from '@/lib/video-template-input';
+import CopyButton from './CopyButton';
+import SonkamoTargetPicker, { EMPTY_SONKAMO_PICK, sonkamoPickReady, type SonkamoGroupOption, type SonkamoPick } from './SonkamoTargetPicker';
+import { parseSonkamoScriptTemplate } from '@/lib/video-sonkamo-script';
 import OshiCardWorkPicker, { EMPTY_OSHI_CARD_PICK, type OshiCardPick } from './OshiCardWorkPicker';
 import { countHashtags, validateCaption, INSTAGRAM_CAPTION_MAX_LENGTH, INSTAGRAM_HASHTAG_MAX_COUNT } from '@/lib/instagram-caption-rules';
 import { HOURLY_TIME_OPTIONS } from '@/lib/instagram-post-times';
@@ -41,6 +44,8 @@ interface WorkerTemplate {
   sharedCapcut?: { ready: boolean; durationSeconds: number | null; message: string };
   /** 人物3人で1本を作るテンプレートだけ（推しでサブスク比較）。このときだけ3人選択の画面を出す */
   templateInputKind?: string;
+  /** 推し活で損してるかも？だけ: 台本の雛形（Worker の報告。parseSonkamoScriptTemplate で読む） */
+  scriptTemplate?: unknown;
 }
 
 interface WorkerInfo {
@@ -157,7 +162,7 @@ interface VideoJob {
   personSlug: string | null;
   templateId: string;
   /** テンプレート固有の入力（推しでサブスク比較: 3人のslug。従来のテンプレートは null） */
-  templateInput?: { personSlugs?: string[]; workIds?: string[]; variant?: string } | null;
+  templateInput?: { personSlugs?: string[]; workIds?: string[]; variant?: string; target?: 'person' | 'group'; memberName?: string | null } | null;
   narrationMode: NarrationMode;
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
   attempts: number;
@@ -253,8 +258,11 @@ export default function VideoMakerClient({
   persons,
   readingCandidates = {},
   personSlugByName = {},
+  groups = [],
 }: {
   persons: PersonOption[];
+  /** 推し活で損してるかも？: 選べるグループ（公開サイトのグループ一覧と同じ）とメンバー */
+  groups?: SonkamoGroupOption[];
   /** 人物名 → 推しサーチDBの人物slug（推しでサブスク比較の3人選択で内部値に使う） */
   personSlugByName?: Record<string, string>;
   /** まず見る3作: 人物名の読みの候補（人物登録データの別名。未確認のため自動では使わない） */
@@ -270,6 +278,8 @@ export default function VideoMakerClient({
   const [trioCapcut, setTrioCapcut] = useState<TrioCapcutCheck | null>(null);
   // 推し布教カード紹介（人物1人＋おすすめ作品1〜3件＋デザイン）の選択
   const [cardPick, setCardPick] = useState<OshiCardPick>(EMPTY_OSHI_CARD_PICK);
+  // 推し活で損してるかも？（人物 または グループ・敬称・ナレーション原稿）の選択
+  const [sonkamoPick, setSonkamoPick] = useState<SonkamoPick>(EMPTY_SONKAMO_PICK);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [narrationMode, setNarrationMode] = useState<NarrationMode | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -358,6 +368,9 @@ export default function VideoMakerClient({
   const trio = completeTrio(trioSlots);
   const cardMode = template?.templateInputKind === OSHI_CARD_SELECTION_INPUT_KIND;
   const cardReady = !!cardPick.personName && cardPick.workIds.length > 0;
+  const sonkamoMode = template?.templateInputKind === OSHI_SONKAMO_INPUT_KIND;
+  const sonkamoTemplate = useMemo(() => (sonkamoMode ? parseSonkamoScriptTemplate(template?.scriptTemplate) : null), [sonkamoMode, template]);
+  const sonkamoReady = sonkamoPickReady(sonkamoPick);
   const nameBySlug = useMemo(() => new Map(Object.entries(personSlugByName).map(([n, s]) => [s, n])), [personSlugByName]);
 
   // CapCut保存済み音声: Workerが報告した状態（正本はMac上の保存音声と台本）。CapCut対応テンプレートでだけ表示する
@@ -759,6 +772,38 @@ export default function VideoMakerClient({
     }
   }
 
+  // 推し活で損してるかも？: グループ紹介はグループ1つで1本、人物紹介は1人につき1本（選んだ順に1件ずつ登録。各ジョブに確認した原稿を付ける）
+  async function submitSonkamo() {
+    if (!template || !narrationMode || !sonkamoReady) return;
+    setSubmitting(true);
+    setMessage(null);
+    let created = 0;
+    try {
+      for (const name of sonkamoPick.names) {
+        await fetchJson<{ jobs: VideoJob[] }>('/api/admin/video-jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            personNames: [name],
+            templateId: template.templateId,
+            narrationMode,
+            templateInput: { version: 1, target: sonkamoPick.target, honorific: sonkamoPick.honorific, memberName: null, lines: sonkamoPick.scripts[name] },
+          }),
+        });
+        created++;
+      }
+      setMessage({ kind: 'ok', text: `${created}件のジョブを登録しました（${sonkamoPick.target === 'group' ? 'グループ紹介' : '人物紹介'}）。Workerが順番に生成します。` });
+      setSonkamoPick((prev) => ({ ...EMPTY_SONKAMO_PICK, target: prev.target }));
+      await load();
+    } catch (err) {
+      const rest = created > 0 ? `（${created}件は登録済み）` : '';
+      setMessage({ kind: 'error', text: `${String(err instanceof Error ? err.message : err)}${rest}` });
+      if (created > 0) await load();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function submit(names: string[] = selectedNames) {
     if (!template || !narrationMode || names.length === 0) return;
     setSubmitting(true);
@@ -873,6 +918,11 @@ export default function VideoMakerClient({
             onCapcutCheck={setTrioCapcut}
           />
         </section>
+        ) : sonkamoMode ? (
+        <section>
+          <h2 className="text-sm font-bold text-slate-700 mb-2">3. グループ紹介／人物紹介とナレーション原稿</h2>
+          <SonkamoTargetPicker template={sonkamoTemplate} persons={persons} groups={groups} value={sonkamoPick} onChange={setSonkamoPick} />
+        </section>
         ) : cardMode ? (
         <section>
           <h2 className="text-sm font-bold text-slate-700 mb-2">3. 人物・おすすめ作品・デザイン</h2>
@@ -914,6 +964,23 @@ export default function VideoMakerClient({
                 : capcutMode && !trioCapcut
                   ? 'CapCut音声を使えるか確認中...'
                   : '生成する（3人で1本）'}
+          </button>
+          ) : sonkamoMode ? (
+          <button
+            type="button"
+            disabled={submitting || !template || !narrationMode || !sonkamoReady}
+            onClick={() => void submitSonkamo()}
+            className="px-5 py-2 rounded-lg bg-violet-600 text-white text-sm font-bold disabled:bg-gray-300"
+          >
+            {submitting
+              ? '登録中...'
+              : sonkamoPick.names.length === 0
+                ? (sonkamoPick.target === 'group' ? 'グループを選ぶと生成できます' : '人物を選ぶと生成できます')
+                : !sonkamoReady
+                  ? 'ナレーション原稿を生成すると生成できます'
+                  : sonkamoPick.target === 'group'
+                    ? '生成する（グループ全体で1本）'
+                    : `生成する（${sonkamoPick.names.length}人・1人1本）`}
           </button>
           ) : cardMode ? (
           <button
@@ -1419,6 +1486,11 @@ export default function VideoMakerClient({
                         ? job.templateInput.personSlugs.map((s) => nameBySlug.get(s) ?? s).join('・')
                         : job.personName}
                     </span>
+                    {job.templateInput?.target && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${job.templateInput.target === 'group' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-800'}`}>
+                        {job.templateInput.target === 'group' ? 'グループ' : '人物'}
+                      </span>
+                    )}
                     <span className="text-gray-600">{templateName(job.templateId)}</span>
                     <span className="text-xs text-gray-500">{NARRATION_LABELS[job.narrationMode] ?? job.narrationMode}</span>
                     {job.status === 'processing' && (
@@ -1468,45 +1540,6 @@ export default function VideoMakerClient({
         )}
       </div>
     </div>
-  );
-}
-
-function CopyButton({
-  text,
-  label,
-  primary = false,
-  disabled = false,
-  disabledTitle,
-}: {
-  text: string;
-  label: string;
-  primary?: boolean;
-  disabled?: boolean;
-  disabledTitle?: string;
-}) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      title={disabled ? disabledTitle : undefined}
-      onClick={() => {
-        if (disabled) return;
-        void navigator.clipboard.writeText(text).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-      className={
-        disabled
-          ? 'text-xs px-2 py-0.5 rounded border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed'
-          : primary
-            ? 'text-xs px-2 py-0.5 rounded border border-violet-500 bg-violet-600 text-white font-bold hover:bg-violet-700'
-            : 'text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:border-violet-400 hover:text-violet-700'
-      }
-    >
-      {copied ? 'コピーしました' : label}
-    </button>
   );
 }
 
@@ -1747,6 +1780,7 @@ function CompletedDetail({
       </div>
     </div>
     {job.templateInput?.workIds && <OshiCardJobOutputs job={job} />}
+    {job.templateInput?.target && <SonkamoJobOutputs job={job} />}
     <InstagramCaptionSection templateId={job.templateId} person={captionPerson} />
     {igReelUrl && (
       <InstagramReelSection
@@ -1816,6 +1850,103 @@ function OshiCardJobOutputs({ job }: { job: VideoJob }) {
         {srt && (
           <button type="button" onClick={downloadSrt} className="text-violet-600 hover:underline">
             ⬇ SRTをダウンロード
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 推し活で損してるかも？: タイトル・撮影した内容、字幕の台本・音声用の読み台本のコピー、SRTのダウンロード */
+function SonkamoJobOutputs({ job }: { job: VideoJob }) {
+  const info = (job.result?.sonkamo ?? null) as {
+    title?: string;
+    target?: string;
+    memberName?: string | null;
+    memberCount?: number | null;
+    worksPerson?: string;
+    worksScope?: 'person' | 'groupMembers';
+    worksCount?: number | null;
+    vodServices?: Array<{ name: string; count: number }>;
+    goodsCount?: number | null;
+    pageUrl?: string;
+    unresolvedReadings?: Array<{ text: string }>;
+    overlongLines?: Array<{ id: string; estimate: number; slot: number }>;
+  } | null;
+  const srt = typeof job.result?.narrationSrt === 'string' ? job.result.narrationSrt : null;
+  const kana = typeof job.result?.narrationKana === 'string' ? job.result.narrationKana : null;
+  const download = (text: string, name: string, type: string) => {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const base = `oshi-sonkamo_${job.personName}`;
+  return (
+    <div className="mt-3 border-t border-gray-100 pt-3 space-y-2 text-xs">
+      <div className="grid grid-cols-[110px_1fr] gap-x-4 gap-y-1">
+        <span className="text-gray-500">動画タイトル</span>
+        <span className="flex items-center gap-2">
+          <span className="font-bold text-slate-800">{info?.title ?? '-'}</span>
+          {info?.title && <CopyButton text={info.title} label="コピー" />}
+        </span>
+        <span className="text-gray-500">対象</span>
+        <span>
+          {job.personName}（{(info?.target ?? job.templateInput?.target) === 'group' ? 'グループ紹介' : '人物紹介'}）
+          {info?.memberCount ? ` ／ メンバー ${info.memberCount}人` : ''}
+          {info?.memberName ? ` ／ 紹介したメンバー: ${info.memberName}` : ''}
+        </span>
+        <span className="text-gray-500">出演作品</span>
+        <span>
+          {info?.worksScope === 'groupMembers'
+            ? `${job.personName}のメンバーの出演作品（配信中）${info.worksCount ?? '-'}件`
+            : info?.worksPerson
+              ? `${info.worksPerson} ${info.worksCount ?? '-'}件`
+              : '-'}
+        </span>
+        <span className="text-gray-500">配信サービス</span>
+        <span>{info?.vodServices?.length ? info.vodServices.map((s) => `${s.name} ${s.count}件`).join(' / ') : '-'}</span>
+        <span className="text-gray-500">関連商品</span>
+        <span>{info?.goodsCount != null ? `${info.goodsCount}件` : '-'}</span>
+        {info?.pageUrl && (
+          <>
+            <span className="text-gray-500">撮影したページ</span>
+            <a href={info.pageUrl} target="_blank" rel="noopener noreferrer" className="text-violet-600 hover:underline break-all">
+              {info.pageUrl}
+            </a>
+          </>
+        )}
+      </div>
+      {info?.unresolvedReadings && info.unresolvedReadings.length > 0 && (
+        <p className="text-amber-700 bg-amber-50 rounded p-2">
+          ⚠ 読み未登録: {info.unresolvedReadings.map((u) => u.text).join('・')}（読みを登録してから、原稿を作り直して再生成してください）
+        </p>
+      )}
+      {job.narrationScript && (
+        <div>
+          <p className="text-gray-500 mb-1">ナレーション台本（字幕）</p>
+          <pre className="whitespace-pre-wrap bg-gray-50 rounded p-2 text-slate-700">{job.narrationScript}</pre>
+        </div>
+      )}
+      {kana && (
+        <div>
+          <p className="text-violet-700 font-bold mb-1">音声生成用台本（読み）← CapCutにはこちらを貼る</p>
+          <pre className="whitespace-pre-wrap bg-violet-50 rounded p-2 text-slate-700">{kana}</pre>
+        </div>
+      )}
+      <div className="flex gap-3 flex-wrap">
+        {job.narrationScript && <CopyButton text={job.narrationScript} label="台本をコピー" />}
+        {kana && <CopyButton text={kana} label="音声用台本をコピー" primary />}
+        {srt && (
+          <button type="button" onClick={() => download(srt, `${base}.srt`, 'application/x-subrip;charset=utf-8')} className="text-violet-600 hover:underline">
+            ⬇ SRTをダウンロード
+          </button>
+        )}
+        {kana && (
+          <button type="button" onClick={() => download(kana, `${base}_読み.txt`, 'text/plain;charset=utf-8')} className="text-violet-600 hover:underline">
+            ⬇ 読み台本をダウンロード
           </button>
         )}
       </div>

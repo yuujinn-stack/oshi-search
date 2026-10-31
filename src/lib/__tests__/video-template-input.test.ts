@@ -6,7 +6,9 @@ import {
   isTemplateInputKind,
   parseOshiCardSelectionInput,
   parseOshiVodCompareInput,
+  parseOshiSonkamoInput,
   parseTemplateInput,
+  OSHI_SONKAMO_INPUT_KIND,
 } from '../video-template-input';
 import { personVideoSlug } from '@/server/video-jobs/person-slug';
 
@@ -72,5 +74,32 @@ describe('推し布教カード紹介（oshi-card-selection）', () => {
       { version: 2, workIds: ['a'], variant: 'cool' },
     ];
     for (const raw of bad) expect(() => parseOshiCardSelectionInput(raw)).toThrow(TemplateInputError);
+  });
+});
+
+describe('推し活で損してるかも？（oshi-sonkamo-target）', () => {
+  const LINES = ['01-hook', '02-works', '03-vod', '04-goods', '05-cta'].map((id) => ({ id, text: ` 字幕${id} `, kana: `よみ${id}` }));
+  it('人物・グループ・敬称・メンバー・原稿を正規化する', () => {
+    expect(isTemplateInputKind(OSHI_SONKAMO_INPUT_KIND)).toBe(true);
+    expect(parseTemplateInput(OSHI_SONKAMO_INPUT_KIND, { target: 'group' })).toEqual({ version: 1, target: 'group', honorific: '', memberName: null, lines: null });
+    const p = parseOshiSonkamoInput({ version: 1, target: 'group', honorific: '', memberName: ' 佐野勇斗 ', lines: LINES });
+    expect(p.memberName).toBe('佐野勇斗');
+    expect(p.lines?.[0]).toEqual({ id: '01-hook', text: '字幕01-hook', kana: 'よみ01-hook' });
+    expect(parseOshiSonkamoInput({ target: 'person', honorific: 'くん' }).honorific).toBe('くん');
+  });
+  it('不正な入力を拒否する', () => {
+    for (const raw of [
+      null,
+      { target: 'x' },
+      { target: 'person', honorific: '様' },
+      { target: 'person', memberName: '誰か' },
+      { target: 'group', lines: LINES.slice(0, 4) },
+      { target: 'group', lines: [LINES[1], LINES[0], ...LINES.slice(2)] },
+      { target: 'group', lines: LINES.map((l) => ({ ...l, kana: '' })) },
+      { target: 'group', lines: LINES.map((l) => ({ ...l, text: 'あ'.repeat(61) })) },
+      { target: 'group', version: 2 },
+    ]) {
+      expect(() => parseOshiSonkamoInput(raw), JSON.stringify(raw)).toThrow(TemplateInputError);
+    }
   });
 });

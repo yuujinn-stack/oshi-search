@@ -13,6 +13,7 @@ import { listPendingScriptRequests, listPronunciationReadings, markScriptRequest
 import { parseSharedCapcutRequirement } from '@/lib/oshi-vod/video-feature';
 import { handleWorkerRequest, num, parseJobId, str } from '@/server/video-jobs/worker-route';
 import { isTemplateInputKind } from '@/lib/video-template-input';
+import { parseSonkamoScriptTemplate } from '@/lib/video-sonkamo-script';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -144,6 +145,8 @@ export async function POST(req: NextRequest) {
           : {}),
         // 複数人物を1本の動画にするテンプレートだけ（推しサーチが知っている種別のみ受け付ける）
         ...(isTemplateInputKind(t.templateInputKind) ? { templateInputKind: t.templateInputKind } : {}),
+        // 推し活で損してるかも？だけ: 台本の雛形（形が違えば保存しない＝管理画面では原稿を作れない）
+        ...(parseSonkamoScriptTemplate(t.scriptTemplate) ? { scriptTemplate: parseSonkamoScriptTemplate(t.scriptTemplate)! } : {}),
       }));
     const persons = (Array.isArray(body.persons) ? body.persons : [])
       .filter((p): p is string => typeof p === 'string')

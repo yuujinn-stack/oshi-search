@@ -66,9 +66,34 @@ const shoppingIntroCaption: CaptionBuilder = (person) => {
   ].join('\n');
 };
 
+/** 推し活で損してるかも？ V1: person.name は人物名またはグループ名（グループのときはグループ名の登録が無いため groupName は null） */
+const sonkamoCaption: CaptionBuilder = (person) => {
+  const tags = ['#推し活', '#推しサーチ', toHashtag(person.name), person.groupName ? toHashtag(person.groupName) : null]
+    .filter((t): t is string => !!t)
+    .join(' ');
+  return [
+    `${person.name}推し、これ知らないと損かも？👀`,
+    '',
+    '推しサーチなら',
+    '✅ 出演作品',
+    '✅ どこで見られるか（配信先）',
+    '✅ 写真集・CD・関連グッズ',
+    'をまとめて探せます🔍',
+    '',
+    '✅ 無料',
+    '✅ 登録不要',
+    '',
+    'プロフィールのリンクから',
+    '「推しサーチ」でチェックしてみてください🔗',
+    '',
+    tags,
+  ].join('\n');
+};
+
 /** テンプレートIDごとの投稿文テンプレート。新しいテンプレートはここに1件追加する */
 const INSTAGRAM_CAPTIONS: Record<string, CaptionBuilder> = {
   'oshi-shopping-intro-v1': shoppingIntroCaption,
+  'oshi-sonkamo-v1': sonkamoCaption,
 };
 
 export function getInstagramCaption(templateId: string, person: CaptionPerson): string | null {
