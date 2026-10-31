@@ -5685,3 +5685,21 @@ oshi-search（未commit）
 - `sonkamoNarration.ts`：最後の文の読み終わりは、字幕の終わりと音声の最後の発話（`voicedSegments`）の遅いほう（読み上げを途中で切らない）。`sonkamoProduce.ts`：QA の長さの基準を「読み終わり + 0.9秒以上」に。管理画面の取り込みパネルの説明を変更（`SonkamoCapcutAudio.tsx`）。音声なしの動画（従来どおり18秒）・他のテンプレートは変更なし。
 - 再生成（実際の CapCut 音声・同じ撮影データ。CLI・DB/Blob への書き込みなし）：`oshi-video-maker/out/sonkamo/M!LK/2026-10-31T13-08-38-018Z/final.mp4`：16.30秒（映像・音声とも）・QA PASS・-15.92 LUFS・黒画面なし。各文の発話区間は元の WAV と同じ時刻で最後（15.16-15.28秒）まで含む。SRT の最後は 16.28秒まで。シーンの切り替え 0/3.17/6.00/8.80/12.23秒（変更前と同じ）。最後の1秒はサイト紹介の画面のまま終了。
 - テスト：oshi-video-maker（シーン配分のテストを更新。実際の M!LK の時刻で 16.3秒＝489フレーム、読み終わりが音声より後なら中止）、oshi-search。
+
+---
+
+## Task 165：LeminoのアフィリエイトURLが配信カードに文字として表示される不具合の修正（2026-10-31）
+
+**目的：** https://oshi-search.jp/work/tmdb-tv-111254 の配信情報 Lemino カードで、`https://tr.affiliate-sp.docomo.ne.jp/cl/d0000000236/5235/2` が文字として表示されていた。他サービスと同じ「Leminoで今すぐ見る →」ボタンにする。
+
+**原因：** 管理画面（/admin/affiliates）で Lemino の素材が種類「HTML広告コード」(raw_html) のまま、`rawCode` に HTML ではなく URL だけが登録されていた。`AffiliateSlot` の raw_html は `dangerouslySetInnerHTML` でそのまま出すため、URL がテキストノードとして表示されていた（Hulu は `<a>` タグの HTML なのでボタン化されていた）。DB の登録データ自体は変更していない。
+
+**変更ファイル：**
+- `src/lib/affiliate-creative.ts`（新規・DB非依存）— `getBareAffiliateUrl()`（rawCode が http(s) の URL 1つだけ＝タグ・空白・引用符なしの場合のみ、trim したURLをそのまま返す）、`affiliateCtaLabel()`（「〇〇で今すぐ見る →」）。
+- `src/components/site/AffiliateSlot.tsx` — raw_html/embed の rawCode が URL だけなら `<a href={URL} target="_blank" rel="sponsored noopener noreferrer">{サービス名}で今すぐ見る →</a>` を描画（href は登録値そのまま。React の属性出力のみで再エンコードなし）。サービス名は `getVodProviderDisplayInfo(vodService)`。`direct_url` でリンク文言(altText)が空のときも、管理用の素材名ではなく同じ標準文言にする。CTA枠（work_provider / oshi_vod_result）ではテキストリンク用クラス（`text-indigo-600` 等）を付けない — `graphic-site.css` が `.text-indigo-600` を `!important` で橙色に上書きしており、ボタン文字色が白にならなかったため。配色・高さ・横幅は既存の `.affiliate-slot--work-provider[data-vod-service] a`（Lemino は既存の赤系グラデーション #BE185D→#C2410C・白文字。`VOD_SERVICE_STYLE` と同期）をそのまま使う。PR 表記は既存の `AdWrapper` のまま。
+- `src/app/admin/affiliates/AffiliateManager.tsx` — HTML広告コード欄に URL だけを入れると「URLだけが入力されています…種類『URLのみ』での登録を推奨」の注意を表示。プレビューもボタン表示にする。保存処理・API は無変更。
+- `src/lib/__tests__/affiliate-bare-url.test.ts`（新規7件）— URL判定、Lemino の URL がボタン（href 一致・URL文字列は href 以外に出ない・PR あり）、クエリ付きURLの無改変、Hulu の HTML 広告コードは従来どおり無改変、direct_url の標準文言。
+
+**影響範囲：** `AffiliateSlot` を使う全箇所（作品詳細・人物ページの「今すぐ見られる作品」/VOD配信アコーディオン・/oshi-vod・/vod/[provider]）に適用。グループページは AffiliateSlot を使っていない。HTML広告コード（Hulu 等）・banner・fallback（VodTrackLink の /api/track 計測）の経路は無変更。広告リンクのクリック計測はこれまでどおり ASP 側（/oshi-vod は既存の OshiVodTracker が `.affiliate-slot` 内リンクを計測）。
+
+**確認：** `npx tsc --noEmit` 0件、`npx vitest run` 162ファイル/2631件成功。ローカル dev（本番DB読み取り）で /work/tmdb-tv-111254 を 390px・1280px で確認（ASP ドメインへの通信は遮断）：Lemino は「Leminoで今すぐ見る →」、href は登録URLと完全一致、カード幅いっぱい（298px / 420px）、高さ40px（Prime Video のボタンと同じ）、背景は赤系グラデーション・文字白、上に PR、URL の文字露出なし、横スクロールなし、コンソールエラーなし。Hulu は従来どおり。人物ページ（吉高由里子・染谷将太）でも Lemino はボタン表示・URL露出0件。

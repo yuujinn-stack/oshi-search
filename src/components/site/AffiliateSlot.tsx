@@ -15,6 +15,8 @@
 // 両端末で同じ素材・同じfallbackが選ばれる場合は二重にDOMへ出力しない。
 import type { ReactNode } from 'react';
 import { resolveAffiliateSlot, type ResolvedAffiliateCreative } from '@/lib/affiliate-store';
+import { getBareAffiliateUrl, affiliateCtaLabel } from '@/lib/affiliate-creative';
+import { getVodProviderDisplayInfo } from '@/lib/vod-dedup';
 
 interface AffiliateSlotProps {
   /** normalizeProviderName() が返す正規化済みVODサービススラグ（例: hulu, lemino） */
@@ -25,13 +27,18 @@ interface AffiliateSlotProps {
   className?: string;
 }
 
+// work_provider と oshi_vod_result（サブスク診断の結果画面）は「○○で今すぐ見る」型のボタンとして置かれる掲載位置。
+function isWorkProviderCtaSlot(slotKey: string): boolean {
+  return slotKey === 'work_provider' || slotKey === 'oshi_vod_result';
+}
+
 function AdWrapper({ children, slotKey, vodService }: { children: ReactNode; slotKey: string; vodService: string }) {
   // work_provider と oshi_vod_result（サブスク診断の結果画面）は、配信サービス別のCTA配色
   // （globals.css の .affiliate-slot--work-provider[data-vod-service] a）を適用する。
   // どちらも「○○で今すぐ見る」型のボタンとして置かれる掲載位置のため。
   // ASP提供コード（rawCode内部のhref/計測img/rel/referrerpolicy等）は一切変更しない。
   // 他のslot（vod_hero/vod_mid/vod_bottom/person_vod）にはこの装飾を適用しない。
-  const isWorkProviderCta = slotKey === 'work_provider' || slotKey === 'oshi_vod_result';
+  const isWorkProviderCta = isWorkProviderCtaSlot(slotKey);
   return (
     <div
       className={isWorkProviderCta ? 'affiliate-slot affiliate-slot--work-provider' : 'affiliate-slot'}
@@ -47,13 +54,27 @@ function AdWrapper({ children, slotKey, vodService }: { children: ReactNode; slo
   );
 }
 
-function CreativeBody({ creative }: { creative: ResolvedAffiliateCreative }) {
+function CreativeBody({ creative, slotKey, vodService }: { creative: ResolvedAffiliateCreative; slotKey: string; vodService: string }) {
+  // CTA枠のリンクは globals.css の .affiliate-slot--work-provider a で配色するため、テキストリンク用の
+  // クラスを付けない（.text-indigo-600 はテーマCSSで !important 上書きされ、ボタンの文字色を崩す）。
+  const textLinkClass = isWorkProviderCtaSlot(slotKey) ? undefined : 'text-sm font-semibold text-indigo-600 hover:underline';
   switch (creative.type) {
     case 'raw_html':
-    case 'embed':
+    case 'embed': {
       if (!creative.rawCode) return null;
+      // HTML広告コード欄にURLだけが登録されている場合は、URLを文字として出さずボタン（リンク）にする。
+      // href は登録値そのまま（改変・再エンコードしない）。配色・高さは .affiliate-slot--work-provider a が担う。
+      const bareUrl = getBareAffiliateUrl(creative.rawCode);
+      if (bareUrl) {
+        return (
+          <a href={bareUrl} target="_blank" rel="sponsored noopener noreferrer" className={textLinkClass}>
+            {affiliateCtaLabel(getVodProviderDisplayInfo(vodService).displayName)}
+          </a>
+        );
+      }
       // eslint-disable-next-line react/no-danger -- ASP提供コードを改変せずそのまま利用する仕様
       return <div dangerouslySetInnerHTML={{ __html: creative.rawCode }} />;
+    }
 
     case 'banner':
       if (!creative.imageUrl || !creative.destinationUrl) return null;
@@ -83,9 +104,11 @@ function CreativeBody({ creative }: { creative: ResolvedAffiliateCreative }) {
           href={creative.destinationUrl}
           target="_blank"
           rel="sponsored noopener noreferrer"
-          className="text-sm font-semibold text-indigo-600 hover:underline"
+          className={textLinkClass}
         >
-          {creative.altText || creative.name}
+          {creative.altText || (creative.type === 'direct_url'
+            ? affiliateCtaLabel(getVodProviderDisplayInfo(vodService).displayName)
+            : creative.name)}
         </a>
       );
 
@@ -95,7 +118,7 @@ function CreativeBody({ creative }: { creative: ResolvedAffiliateCreative }) {
 }
 
 function renderBranch(creative: ResolvedAffiliateCreative | null, fallback: ReactNode, slotKey: string, vodService: string): ReactNode {
-  if (creative) return <AdWrapper slotKey={slotKey} vodService={vodService}><CreativeBody creative={creative} /></AdWrapper>;
+  if (creative) return <AdWrapper slotKey={slotKey} vodService={vodService}><CreativeBody creative={creative} slotKey={slotKey} vodService={vodService} /></AdWrapper>;
   return fallback;
 }
 

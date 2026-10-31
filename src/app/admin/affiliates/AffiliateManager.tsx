@@ -10,6 +10,7 @@ import type {
   AffiliateDevice,
 } from '@/lib/affiliate-store';
 import { KNOWN_SLOT_KEYS } from '@/lib/affiliate-constants';
+import { getBareAffiliateUrl } from '@/lib/affiliate-creative';
 
 const SLOT_LABELS: Record<string, string> = {
   work_provider: '作品詳細の配信サービス欄',
@@ -50,7 +51,11 @@ function fromDateTimeLocal(s: string): number | null {
 function CreativePreview({ creative }: { creative: Creative }) {
   let body: React.ReactNode = null;
   if (creative.type === 'raw_html' || creative.type === 'embed') {
-    body = creative.rawCode
+    const bareUrl = getBareAffiliateUrl(creative.rawCode);
+    body = bareUrl
+      // 公開ページ（AffiliateSlot）ではURLを文字として出さず「〇〇で今すぐ見る →」ボタンにする
+      ? <span className="inline-block rounded-lg bg-gray-700 text-white text-sm font-semibold px-3 py-1.5">（サービス名）で今すぐ見る →</span>
+      : creative.rawCode
       // eslint-disable-next-line react/no-danger -- 管理画面プレビュー。クリックは下記オーバーレイで無効化
       ? <div dangerouslySetInnerHTML={{ __html: creative.rawCode }} />
       : <p className="text-xs text-gray-400">HTMLコード未入力</p>;
@@ -206,6 +211,11 @@ function CreativeFormFields({ form, setForm }: { form: CreativeFormState; setFor
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">ASP提供のHTML広告コード（そのまま貼り付けてください。内容は改変されません）</label>
           <textarea value={form.rawCode} onChange={(e) => setForm({ ...form, rawCode: e.target.value })} rows={5} placeholder="<a href=...>...</a> をそのまま貼り付け" className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm font-mono text-xs" />
+          {getBareAffiliateUrl(form.rawCode) && (
+            <p className="mt-1 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+              URLだけが入力されています。公開ページではURLを表示せず「（サービス名）で今すぐ見る →」ボタンとして表示します（リンク先は入力したURLのまま）。URLのみの広告は種類「URLのみ」での登録を推奨します。
+            </p>
+          )}
         </div>
       )}
 
