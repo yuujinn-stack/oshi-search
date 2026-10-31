@@ -6,6 +6,7 @@ import { notFound, permanentRedirect } from 'next/navigation';
 import { db } from '@/db/client';
 import { workAliases } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { cache } from 'react';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getPublicWorkById, getAllPersonsForWork, getPublishedWorks } from '@/lib/work-store';
 import { getWorkRelatedProducts } from '@/lib/work-related-products';
@@ -43,6 +44,10 @@ async function lookupWorkAlias(workId: string): Promise<string | null> {
   }
 }
 
+// メタデータと本文で同じ作品を読むため、リクエスト内では1回にまとめる（別名の確認・作品の取得）
+const lookupWorkAliasOnce = cache(lookupWorkAlias);
+const getPublicWorkOnce = cache(getPublicWorkById);
+
 // ─── TMDb からジャンルを取得（force-cache で重複呼び出し防止）────────────────
 async function fetchTmdbDetails(
   tmdbId: number,
@@ -77,9 +82,9 @@ async function getRelatedProducts(
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { workId: rawWorkId } = await params;
   const workId = decodeURIComponent(rawWorkId);
-  const canonicalId = await lookupWorkAlias(workId);
+  const canonicalId = await lookupWorkAliasOnce(workId);
   if (canonicalId) permanentRedirect(`/work/${encodeURIComponent(canonicalId)}`);
-  const work = await getPublicWorkById(workId);
+  const work = await getPublicWorkOnce(workId);
   if (!work) return {};
   const year = work.releaseYear ? `${work.releaseYear}年` : '';
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
@@ -134,10 +139,10 @@ export default async function WorkDetailPage({ params }: Props) {
   const { workId: rawWorkId } = await params;
   const workId = decodeURIComponent(rawWorkId);
 
-  const canonicalId = await lookupWorkAlias(workId);
+  const canonicalId = await lookupWorkAliasOnce(workId);
   if (canonicalId) permanentRedirect(`/work/${encodeURIComponent(canonicalId)}`);
 
-  const work = await getPublicWorkById(workId);
+  const work = await getPublicWorkOnce(workId);
   if (!work) notFound();
 
   // 同一作品に紐づく全公開人物を単一クエリで取得（N+1なし）
@@ -147,6 +152,7 @@ export default async function WorkDetailPage({ params }: Props) {
   // 並列データ取得
   const [tmdbDetails, allPersonsData, allWorks, relatedProducts, terminatedSlugs] = await Promise.all([
     work.tmdbId ? fetchTmdbDetails(work.tmdbId, work.type as 'movie' | 'tv') : Promise.resolve({ genres: [] }),
+    // 公開人物の一覧はヘッダー（検索候補）と同じリクエスト内の読み込みを共有する（DBへの問い合わせは増えない）
     getAllPersonsMerged(),
     getPublishedWorks(primaryPersonName),
     getRelatedProducts(primaryPersonName, work.title),

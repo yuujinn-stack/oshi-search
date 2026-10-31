@@ -11,6 +11,7 @@ import {
   VideoJobError,
 } from '@/server/video-jobs/job-store';
 import { loadOshiVodVideoDiagnosis } from '@/server/oshi-vod/video-diagnosis';
+import { markVideoAdminActive } from '@/server/video-jobs/worker-poll';
 import { OSHI_VOD_COMPARE_INPUT_KIND, parseOshiVodCompareInput, TemplateInputError } from '@/lib/video-template-input';
 
 export const dynamic = 'force-dynamic';
@@ -18,7 +19,8 @@ export const dynamic = 'force-dynamic';
 /** 生成履歴（直近100件）＋Workerの状態（オンライン/オフライン、報告されたテンプレート一覧・対応人物） */
 export async function GET() {
   try {
-    await failStaleProcessingJobs();
+    // 管理画面を開いている間は Worker のジョブ確認を15秒ごとに保つ（src/lib/video-worker-poll.ts）
+    await Promise.all([failStaleProcessingJobs(), markVideoAdminActive()]);
     const [jobs, worker] = await Promise.all([listVideoJobs(), getLatestWorker()]);
     // 完了した動画のInstagramリール予約（instagram_post_schedules、media_type='REEL'）の状態
     const reels = await listReelSchedulesForJobs(jobs.filter((j) => j.status === 'completed').map((j) => j.id));
@@ -60,6 +62,7 @@ interface CreateBody {
 
 /** ジョブ作成（人物ごとに1ジョブ）。人物は登録済み人物のみ、テンプレート・方式はWorker報告の能力で検証する */
 export async function POST(req: NextRequest) {
+  await markVideoAdminActive();
   const body = (await req.json().catch(() => ({}))) as CreateBody;
   const personNames = Array.isArray(body.personNames)
     ? [...new Set(body.personNames.filter((p): p is string => typeof p === 'string').map((p) => p.trim()).filter(Boolean))]

@@ -331,6 +331,19 @@ export default function VideoMakerClient({
     void load();
   }, [load]);
 
+  // 画面が表示されている間は5分ごとに「使用中」を知らせ、Workerのジョブ確認を15秒ごとに保つ（非表示・閉じた後は送らない）
+  useEffect(() => {
+    const ping = () => {
+      if (document.visibilityState === 'visible') void fetch('/api/admin/video-jobs/activity', { method: 'POST' }).catch(() => {});
+    };
+    const timer = setInterval(ping, 5 * 60_000);
+    document.addEventListener('visibilitychange', ping);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', ping);
+    };
+  }, []);
+
   // 待機中・生成中のジョブがある間だけ定期更新する
   const hasActive = jobs.some((j) => j.status === 'queued' || j.status === 'processing');
   useEffect(() => {

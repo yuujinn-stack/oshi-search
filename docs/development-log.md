@@ -5501,3 +5501,48 @@ oshi-search（未commit）
 - 楽天ブックスAPI側（写真集の `King & Prince 岸優太` 等）は成功しているため変更していない。
 
 **確認：** `npx tsc --noEmit` エラーなし（iCloud の重複ファイル分を除く）、`npx vitest run` 160ファイル・2,613件すべて成功、`next build` 成功。本番の楽天API・DBに対する実行は行っていない（デプロイ後に岸優太の「楽天再取得」で確認が必要）。
+
+---
+
+## Task 164：Vercel CPU 使用量の削減（優先度1：動画Workerの確認間隔／優先度2a：作品ページの重複処理）（2026-10-31・未commit・未デプロイ）
+
+**目的：** Hobby の Fluid Active CPU 上限超過で停止した件の対策（調査結果：30日で Active CPU 約9.1時間・Provisioned Memory 約388 GB時。7日平均でCPUの47%が作品ページ、約30%が動画Worker・動画管理画面のポーリング）。SEO・商品・配信・動画生成の機能は変えずに、無駄な呼び出しと処理を減らす。
+
+**優先度1：動画Worker（oshi-search 側）**
+- `src/lib/video-worker-poll.ts`（新規・純粋関数）：確認間隔（管理画面使用中・待機中/生成中のジョブあり・今回取得 → 15秒、それ以外 → 60秒）、依頼の状態の要約（requestSignal）、読みの版（`listPronunciationReadings` と同じ「最終更新ms:件数」）。
+- `src/server/video-jobs/worker-poll.ts`（新規）：`recordWorkerPoll()` が1回のSQLで「Worker の last_seen_at 更新・queued/processing の有無・未処理の台本依頼の件数と最大ID・読みの件数と最終更新」を読む（本番DBで `EXPLAIN` により構文確認、読みの版が既存方式と一致することを確認）。失敗時は claim を止めず、従来どおりの動き（15秒・生存報告を送る）になる値を返し、last_seen_at だけ更新する。`markVideoAdminActive()` / `isVideoAdminActive()`：Redis の期限付きキー `video-admin:active`（15分）。Redis 未設定・失敗時は「使用中」扱い（＝従来どおり15秒）。書き込みはインスタンスごとに60秒に1回まで。
+- `src/app/api/worker/video-jobs/claim/route.ts`：ジョブ取得（従来の `FOR UPDATE SKIP LOCKED` の単一UPDATE、変更なし）と並行して上記を行い、応答に `pollSeconds`・`requestSignal`・`hasPendingRequests` を追加。`job` の形は変更なし（旧Workerはそのまま動く）。
+- `src/server/video-jobs/job-store.ts`：`WORKER_ONLINE_WINDOW_MS` を 90秒 → 150秒（新Workerは最長75秒＋判定間隔15秒で連絡する）。
+- `src/app/api/admin/video-jobs/route.ts`：GET（画面表示・自動更新）と POST（ジョブ作成）で `markVideoAdminActive()`。
+- `src/app/api/admin/video-jobs/activity/route.ts`（新規）：画面表示中に5分ごとに呼ばれる軽い通知（DBに触れない）。
+- `src/app/admin/video-maker/VideoMakerClient.tsx`：画面が表示されている間だけ5分ごと＋表示に戻ったときに activity を送る。既存の自動更新（5秒・10秒）は今回は変更していない（優先度6で対応予定）。
+
+**優先度1：動画Worker（oshi-video-maker 側。未commit。既存の未コミット変更があるファイルにも追記）**
+- `src/lib/workerPollSchedule.ts`（新規・純粋関数）＋ `src/lib/__tests__/workerPollSchedule.test.ts`（7件）：確認間隔（推しサーチの指示を5〜120秒に丸める。指示が無ければ従来の固定間隔）、生存報告を送る条件（依頼の状態が変わった／75秒以上連絡なし（生成中・ロック待ち）／前回から10分）、旧版推しサーチ向けの30秒ごとの生存報告。
+- `scripts/worker/searchApiClient.ts`：`claim()` が `{ job, pollSeconds?, requestSignal?, hasPendingRequests? }` を返す。
+- `scripts/worker/videoWorker.ts`：30秒ごとの生存報告を、15秒ごとの判定に変更（送るのは上の条件のときだけ。CapCut音声の状態は従来どおり30秒ごとに変化を確かめて変われば送る）。claim の応答の間隔で待つ。依頼の状態が変わったら生存報告で受け取り、待たずに次のループで処理する。「まず見る3作」の台本準備キュー実行中（または直前の1周で進捗あり）は待機中でも従来の間隔を保つ。起動直後・旧版の推しサーチ（pollSeconds なし）では従来どおり30秒ごとの生存報告＋固定間隔。
+
+**取りこぼし・重複・誤オフラインの扱い：**
+- 重複実行：ジョブ取得は従来の単一UPDATE（`FOR UPDATE SKIP LOCKED`）のまま。
+- 取りこぼし：ジョブは DB に queued のまま残るため、間隔が延びても取得が遅れるだけ。管理画面を開いている間は15秒。15分以上管理画面を使っていないときに作られたジョブ（自動作成等）は最大60秒遅れる。
+- 誤オフライン：新Workerは claim のたびに last_seen_at を更新し、claim できない間（生成中・ロック待ち）も75秒で生存報告を送る（連絡間隔は最長約90秒 < 判定150秒）。旧Worker（30秒ごと）にも影響なし。
+- 依頼（CapCut台本の準備・まず見る3作の台本依頼・読みの登録）：claim の応答の requestSignal が変われば即座に生存報告で受け取る（従来の最大30秒より早い）。
+
+**優先度2a：作品ページ（`src/app/work/[workId]/page.tsx`）**
+- メタデータと本文でそれぞれ実行していた「作品の別名確認」「作品取得（内部で2クエリ）」を React の `cache()` で1回に統合（一時ログで1リクエストあたり別名確認が2回→1回になることを確認）。1表示あたりDB問い合わせ3回減。
+- 全人物の読み込みは、サイト共通のヘッダー（`src/components/Header.tsx`。検索候補用）が全ページで行っており、作品ページ側の読み込みはリクエスト内で共有されて追加の問い合わせにはなっていなかった。出演者だけを読む関数に置き換えると逆に問い合わせが1回増えたため、置き換えはやめた（ヘッダーのキャッシュは 2b の検討事項）。
+- `src/lib/persons.ts`：`getPublishedExtra` のログを件数だけに（338人分の名前を全ページの表示ごとに出していた）。
+- 表示の確認：変更前後の作品ページ20件（200×17・308×2・404×1）のHTMLを開発サーバーで比較し、開発サーバー固有のスタックトレース以外は完全一致。
+
+**計測：** `scripts/perf/vercel-usage-report.ts`（新規）。Vercel Observability（`vercel metrics`）からルート別の Active CPU・呼び出し回数・Provisioned Memory（GB時）・実行時間を1日ずつ集計し保存、`--compare` で1日あたり平均の前後比較表を出す。変更前の基準値：`docs/perf/vercel-usage-before-2026-10-24_2026-10-30.json`（10/24〜10/30。`--until` は含まない日付）。
+
+**テスト：** `src/server/video-jobs/__tests__/worker-poll.test.ts`（新規9件）。既存の claim・管理画面ルートのテスト3ファイルに worker-poll のモックを追加。`npx vitest run` 161ファイル・2,622件成功、`npx tsc --noEmit` エラーなし、`next build` 成功。oshi-video-maker：`npx tsc --noEmit -p .` エラーなし、`workerPollSchedule.test.ts` 7件成功。本番DBに接続したローカル環境で claim を実際に呼ぶと本番の待機ジョブを取ってしまうため、claim のライブ実行はしていない（管理画面の GET・activity・画面表示・未認証時401は確認）。
+
+**反映の順番（デプロイ時）：** 推しサーチ → Worker の順。推しサーチだけ先に反映しても旧Workerは従来どおり動く（claim の応答に項目が増えるだけ）。Worker だけ先に新しくすると、旧推しサーチは pollSeconds を返さないため従来どおりの動き（30秒ごとの生存報告・15秒間隔）になる。
+
+**本番反映前の最終確認（2026-10-31）：**
+- 今回の分だけを HEAD に載せた別の作業ツリーで確認：`npx tsc --noEmit` エラーなし、`npx vitest run` 154ファイル・2,512件成功、`next build` 成功（`/work/[workId]` は従来どおり動的。ISR は未実装）。Worker 側も `tsc` エラーなし・既存テスト189件成功。
+- 作品ページ26件（表示・リダイレクト308・404）を HEAD（本番と同じコード）と今回の分のビルドで同時に取得して比較し、ステータス・リダイレクト先・メタ情報・構造化データ（JSON-LD）・表示テキスト・リンクがすべて一致。
+- 同じファイルにある別作業の未コミット変更（推し活で損してるかも？・U-NEXT訴求・価格の古さ表示・お買い物診断など）は含めず、今回の分だけをステージする。
+- Vercel の Git 作成者：推しサーチのコミットは GitHub の noreply アドレス（`git config --local`）で、直近の本番デプロイはすべてこのアドレスで成功している。
+- 稼働中の Worker は launchd（`jp.oshi-search.video-worker`）で作業ツリーのコードを直接実行するため、再起動すると未コミットの変更も含めて新しいコードになる（旧推しサーチとの組み合わせでも従来どおり動く）。

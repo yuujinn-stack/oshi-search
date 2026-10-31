@@ -162,8 +162,11 @@ export class VideoJobError extends Error {
   }
 }
 
-/** 生存報告がこの時間以内ならオンライン扱い（Workerは30秒ごとに報告する） */
-export const WORKER_ONLINE_WINDOW_MS = 90_000;
+/**
+ * 最終確認がこの時間以内ならオンライン扱い。Workerはジョブ確認（待機中は最長60秒ごと）のたびに最終確認時刻を更新し、
+ * 生成中・確認できない間も75秒以上連絡が途絶えたら生存報告を送る（旧Workerは30秒ごとの生存報告）
+ */
+export const WORKER_ONLINE_WINDOW_MS = 150_000;
 /** processingのまま進捗報告がこの時間途絶えたジョブは失敗扱いにする（Macのスリープ等） */
 export const STALE_PROCESSING_MS = 15 * 60_000;
 export const MAX_PERSONS_PER_REQUEST = 20;

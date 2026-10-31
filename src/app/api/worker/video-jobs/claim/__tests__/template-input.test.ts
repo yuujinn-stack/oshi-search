@@ -5,6 +5,11 @@ import { NextRequest } from 'next/server';
 const state = vi.hoisted(() => ({ job: null as Record<string, unknown> | null }));
 
 vi.mock('server-only', () => ({}));
+// ジョブ確認の間隔・依頼の合図（DB・Redis には接続しない。内容は worker-poll.test.ts で確認）
+vi.mock('@/server/video-jobs/worker-poll', () => ({
+  recordWorkerPoll: async () => ({ hasActiveJobs: false, requestSignal: 'sig', hasPendingRequests: false }),
+  isVideoAdminActive: async () => false,
+}));
 vi.mock('@/server/video-jobs/worker-auth', () => ({
   verifyWorkerRequest: () => ({ ok: true, workerId: 'test-worker' }),
 }));

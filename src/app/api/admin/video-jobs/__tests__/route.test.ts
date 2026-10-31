@@ -9,6 +9,8 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('server-only', () => ({}));
+// 管理画面の使用状況の記録（Redis には接続しない）
+vi.mock('@/server/video-jobs/worker-poll', () => ({ markVideoAdminActive: async () => {} }));
 vi.mock('@/lib/persons', () => ({
   getAllPersonsMerged: async () => ['目黒蓮', '松村北斗', '京本大我'].map((name) => ({ name, group: 'G' })),
 }));

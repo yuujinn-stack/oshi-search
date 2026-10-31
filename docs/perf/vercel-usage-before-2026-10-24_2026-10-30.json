@@ -1,0 +1,62 @@
+{
+  "since": "2026-10-24",
+  "until": "2026-10-31",
+  "days": 7,
+  "generatedAt": "2026-10-31T07:00:09.307Z",
+  "total": {
+    "cpuMs": 8774146.927485587,
+    "invocations": 138746,
+    "gbHours": 106.29833045333332,
+    "durationMs": 204935397
+  },
+  "routes": {
+    "/work/[workId]": {
+      "cpuMs": 3929777.808536173,
+      "invocations": 47138,
+      "gbHours": 38.806946133333305,
+      "durationMs": 74002806
+    },
+    "/api/worker/heartbeat": {
+      "cpuMs": 941862.6428571428,
+      "invocations": 19096,
+      "gbHours": 19.675294151111114,
+      "durationMs": 38076778
+    },
+    "/api/worker/video-jobs/claim": {
+      "cpuMs": 698236.5,
+      "invocations": 34892,
+      "gbHours": 11.220252444444442,
+      "durationMs": 19230502
+    },
+    "/person/[slug]": {
+      "cpuMs": 856502.5318056446,
+      "invocations": 7349,
+      "gbHours": 6.560161564444443,
+      "durationMs": 14409351
+    },
+    "/api/admin/video-jobs": {
+      "cpuMs": 810697.6991341992,
+      "invocations": 8174,
+      "gbHours": 11.542806755555556,
+      "durationMs": 21418403
+    },
+    "/groups/[groupSlug]": {
+      "cpuMs": 318277.4579269906,
+      "invocations": 7631,
+      "gbHours": 1.829929528888889,
+      "durationMs": 4680122
+    },
+    "(その他)": {
+      "cpuMs": 1116594.4984789463,
+      "invocations": 12641,
+      "gbHours": 13.621723022222243,
+      "durationMs": 26555966
+    },
+    "/api/worker/first3-source": {
+      "cpuMs": 102197.78874649029,
+      "invocations": 1825,
+      "gbHours": 3.041216853333334,
+      "durationMs": 6561469
+    }
+  }
+}

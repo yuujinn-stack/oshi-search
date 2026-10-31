@@ -72,7 +72,8 @@ async function getPublishedExtra(): Promise<PersonWithConfig[]> {
   const jsonNames = new Set(ALL_PERSONS.map((p) => p.name));
   const extra = published.filter((p) => !jsonNames.has(p.name));
   if (published.length > 0 || extra.length > 0) {
-    console.log(`[persons] getPublishedExtra: published=${published.length}, extra (not in JSON)=${extra.length}: ${extra.map((p) => p.name).join(', ')}`);
+    // 件数だけ出す（以前は全員の名前を毎回出しており、公開ページの表示のたびに長いログになっていた）
+    console.log(`[persons] getPublishedExtra: published=${published.length}, extra (not in JSON)=${extra.length}`);
   }
   return extra;
 }

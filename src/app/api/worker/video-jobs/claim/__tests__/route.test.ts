@@ -4,6 +4,11 @@ import { NextRequest } from 'next/server';
 // Workerは受け取ったpersonSlugを人物名から計算し直して検証する。応答から落ちると
 // PERSON_REGISTRY未登録人物（推しサーチDBの人物）がすべて「人物の対応付け」で失敗する。
 vi.mock('server-only', () => ({}));
+// ジョブ確認の間隔・依頼の合図（DB・Redis には接続しない。内容は worker-poll.test.ts で確認）
+vi.mock('@/server/video-jobs/worker-poll', () => ({
+  recordWorkerPoll: async () => ({ hasActiveJobs: false, requestSignal: 'sig', hasPendingRequests: false }),
+  isVideoAdminActive: async () => false,
+}));
 vi.mock('@/server/video-jobs/worker-auth', () => ({
   verifyWorkerRequest: () => ({ ok: true, workerId: 'test-worker' }),
 }));
