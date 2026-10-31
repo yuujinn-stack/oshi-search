@@ -73,19 +73,24 @@ export default function SonkamoTargetPicker({
   onChange: (next: SonkamoPick) => void;
 }) {
   const [readings, setReadings] = useState<Record<string, string> | null>(null);
+  // 登録済みの読みの読み込み状態。読み込み中・失敗の間は原稿を作らない（名前が読みに変換されない原稿を防ぐ）
+  const [readingsStatus, setReadingsStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [readingInputs, setReadingInputs] = useState<Record<string, string>>({});
   const [readingBusy, setReadingBusy] = useState<string | null>(null);
   const [note, setNote] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   const loadReadings = useCallback(async () => {
+    setReadingsStatus('loading');
     try {
       const res = await fetch('/api/admin/video-jobs/pronunciation-readings', { cache: 'no-store' });
       const data = (await res.json()) as { readings?: Array<{ sourceText: string; reading: string }>; error?: string };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setReadings(Object.fromEntries((data.readings ?? []).map((r) => [r.sourceText, r.reading])));
+      setReadingsStatus('ready');
     } catch (err) {
+      // 失敗したときは空の一覧で代用しない（全員が「読み未登録」扱いの原稿になってしまうため）。再読み込みできるようにする
       setNote({ kind: 'error', text: `登録済みの読みを読み込めませんでした: ${String(err instanceof Error ? err.message : err)}` });
-      setReadings({});
+      setReadingsStatus('error');
     }
   }, []);
   useEffect(() => {
@@ -101,7 +106,7 @@ export default function SonkamoTargetPicker({
 
   // 原稿を作ったあとで種類・敬称・読みが変わった対象は原稿を自動で作り直し（手で直した文はそのとき消える）、選択から外した対象の原稿は消す
   useEffect(() => {
-    if (!template || !readings) return;
+    if (!template || !readings || readingsStatus !== 'ready') return;
     const scripts: Record<string, SonkamoLine[]> = {};
     const scriptKeys: Record<string, string> = {};
     let changed = false;
@@ -120,7 +125,7 @@ export default function SonkamoTargetPicker({
     }
     if (Object.keys(value.scripts).some((n) => !value.names.includes(n))) changed = true;
     if (changed) onChange({ ...value, scripts, scriptKeys });
-  }, [template, readings, value, kanaByName, onChange]);
+  }, [template, readings, readingsStatus, value, kanaByName, onChange]);
 
   if (!template) {
     return <p className="text-sm text-amber-700 bg-amber-50 rounded p-2">Workerから台本の雛形が届いていません（Workerを最新のコードで再起動してください）。</p>;
@@ -128,7 +133,7 @@ export default function SonkamoTargetPicker({
 
   const set = (patch: Partial<SonkamoPick>) => onChange({ ...value, ...patch });
   const generate = () => {
-    if (value.names.length === 0) return;
+    if (value.names.length === 0 || readingsStatus !== 'ready') return;
     setNote(null);
     const scripts: Record<string, SonkamoLine[]> = {};
     const scriptKeys: Record<string, string> = {};
@@ -225,12 +230,25 @@ export default function SonkamoTargetPicker({
       <div className="flex items-center gap-3 flex-wrap">
         <button
           type="button"
-          disabled={value.names.length === 0}
+          disabled={value.names.length === 0 || readingsStatus !== 'ready'}
           onClick={generate}
           className="px-4 py-1.5 rounded-lg border border-violet-600 text-violet-700 text-sm font-bold disabled:border-gray-300 disabled:text-gray-400"
         >
           {generated.length > 0 ? 'ナレーション原稿を作り直す' : 'ナレーション原稿を生成'}
         </button>
+        {readingsStatus === 'loading' && (
+          <span className="text-xs text-gray-500" role="status">
+            読み仮名を読み込み中…（読み込みが終わると原稿を生成できます）
+          </span>
+        )}
+        {readingsStatus === 'error' && (
+          <span className="text-xs text-red-600" role="alert">
+            読み仮名を読み込めないため、原稿を生成できません。
+            <button type="button" onClick={() => void loadReadings()} className="ml-2 underline hover:text-red-800">
+              再読み込み
+            </button>
+          </span>
+        )}
         {note && <span className={`text-xs ${note.kind === 'ok' ? 'text-emerald-700' : 'text-red-600'}`}>{note.text}</span>}
       </div>
 
