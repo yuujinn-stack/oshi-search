@@ -165,6 +165,100 @@ describe('getProductsByCategory', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 楽天市場APIのキーワード（各単語は半角2文字以上・全角1文字以上。満たさない単語は 400 になる）
+// ─────────────────────────────────────────────────────────────────────────────
+describe('楽天市場キーワード（グループ名に「&」を含む人物）', () => {
+  type Module = typeof import('@/lib/rakuten');
+  let mod: Module;
+  let resetGate: () => void;
+
+  beforeAll(async () => {
+    vi.stubEnv('RAKUTEN_APP_ID', 'test-app-id');
+    vi.stubEnv('RAKUTEN_ACCESS_KEY', 'test-access-key');
+    vi.stubEnv('RAKUTEN_AFFILIATE_ID', '');
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://test.example.com');
+    vi.resetModules();
+    mod = await vi.importActual<Module>('@/lib/rakuten');
+    const gate = await vi.importActual<typeof import('@/lib/rakuten-api-gate')>('@/lib/rakuten-api-gate');
+    resetGate = gate.__resetRakutenApiGateForTests;
+  });
+
+  afterEach(() => {
+    resetGate();
+    vi.restoreAllMocks();
+  });
+
+  const item = (code: string) => ({
+    itemName: `岸優太 グッズ ${code}`,
+    itemPrice: 1000,
+    itemUrl: `https://item.rakuten.co.jp/shop/${code}/`,
+    itemCode: `shop:${code}`,
+    affiliateUrl: '',
+    mediumImageUrls: [],
+    shopName: 'テストショップ',
+  });
+  const keywordOf = (url: unknown) => new URL(String(url)).searchParams.get('keyword') ?? '';
+  const KEYWORD_INVALID = '{"error":"wrong_parameter","error_description":"keyword parameter is not valid"}';
+
+  it('[K1] 条件を満たさない単語（半角1文字・かな1文字・記号1文字）だけを取り除く', () => {
+    expect(mod.toIchibaKeyword('King & Prince グッズ')).toBe('King Prince グッズ');
+    expect(mod.toIchibaKeyword('King & Prince 岸優太 写真集 中古')).toBe('King Prince 岸優太 写真集 中古');
+    expect(mod.toIchibaKeyword('岸優太 グッズ')).toBe('岸優太 グッズ');
+    expect(mod.toIchibaKeyword('嵐 グッズ')).toBe('嵐 グッズ'); // 漢字1文字は有効
+    expect(mod.toIchibaKeyword('A あ ・ グッズ')).toBe('グッズ');
+    expect(mod.toIchibaKeyword('&')).toBe('');
+  });
+
+  it('[K2] グッズ検索で「&」単独の単語をキーワードに含めない（hits・sort・page は従来どおり）', async () => {
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ Items: [], count: 0 }), { status: 200 }));
+    await mod.getProductsByCategory('岸優太', 'King & Prince', 'グッズ');
+    const keywords = fetchSpy.mock.calls.map((c) => keywordOf(c[0]));
+    expect(keywords).toEqual(['岸優太 グッズ', 'King Prince グッズ']);
+    for (const kw of keywords) expect(kw.split(' ')).not.toContain('&');
+    const params = new URL(String(fetchSpy.mock.calls[0]?.[0])).searchParams;
+    expect(params.get('hits')).toBe('30');
+    expect(params.get('sort')).toBe('-reviewCount');
+    expect(params.get('page')).toBe('1');
+  }, 15_000);
+
+  it('[K3] 1キーワードが 400 でも、他のキーワードで取得できた商品は返す', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(global, 'fetch').mockImplementation(async (url) =>
+      keywordOf(url) === '岸優太 グッズ'
+        ? new Response(JSON.stringify({ Items: [{ Item: item('ok-1') }], count: 1 }), { status: 200 })
+        : new Response(KEYWORD_INVALID, { status: 400, headers: { 'content-type': 'application/json' } }));
+    const result = await mod.getProductsByCategory('岸優太', 'King & Prince', 'グッズ');
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') expect(result.products.map((p) => p.itemCode)).toEqual(['shop:ok-1']);
+  }, 15_000);
+
+  it('[K4] 全キーワードが 400 のときは従来どおり upstream_error 400', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(global, 'fetch').mockImplementation(async () =>
+      new Response(KEYWORD_INVALID, { status: 400, headers: { 'content-type': 'application/json' } }));
+    const result = await mod.getProductsByCategory('岸優太', 'King & Prince', 'グッズ');
+    expect(result).toEqual({ status: 'upstream_error', httpStatus: 400 });
+  }, 15_000);
+
+  it('[K5] 失敗ログに検索条件（カテゴリ・キーワード・ページ）と error_description が出て、認証情報は出ない', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(global, 'fetch').mockImplementation(async () =>
+      new Response(KEYWORD_INVALID, { status: 400, headers: { 'content-type': 'application/json' } }));
+    await mod.getProductsByCategory('テスト', '', 'グッズ');
+    const lines = spy.mock.calls.map((c) => String(c[0]));
+    const structured = JSON.parse(lines.find((l) => l.includes('rakuten_api_upstream_error'))!);
+    expect(structured.searchCondition).toEqual({ category: 'グッズ', keyword: 'テスト グッズ', page: 1 });
+    expect(structured.upstreamErrorCode).toBe('wrong_parameter');
+    expect(structured.upstreamErrorMessage).toBe('keyword parameter is not valid');
+    for (const l of lines) {
+      expect(l).not.toContain('test-app-id');
+      expect(l).not.toContain('test-access-key');
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // logRakutenUpstreamError テスト
 // ─────────────────────────────────────────────────────────────────────────────
 describe('logRakutenUpstreamError', () => {

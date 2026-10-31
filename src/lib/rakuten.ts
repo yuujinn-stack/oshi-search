@@ -128,6 +128,8 @@ export async function logRakutenUpstreamError(
     accessKeyHeaderSent: boolean;
     accessKeyQuerySent: boolean;
   },
+  // どの検索条件で失敗したかを特定するための情報（カテゴリ・キーワード・ページ等。認証情報は入れない）
+  searchCondition?: Record<string, string | number>,
 ): Promise<void> {
   // クエリ文字列を除外した pathname のみ取得（値をログに残さない）
   let pathname = '';
@@ -181,6 +183,7 @@ export async function logRakutenUpstreamError(
     pathname,
     apiVersion,
     method: 'GET',
+    ...(searchCondition ? { searchCondition } : {}),
     ...authDiag,
     upstreamStatus: res.status,
     responseContentType: res.headers.get('content-type'),
@@ -607,6 +610,43 @@ async function fetchCd(
   });
 }
 
+// 楽天市場APIの keyword は「各単語が半角2文字以上、または全角1文字以上（ひらがな・カタカナ・記号は2文字以上）」
+// でないと 400 wrong_parameter（keyword parameter is not valid）になる。
+// グループ名「King & Prince」の「&」のような条件を満たさない単語だけを取り除く（残りの単語の AND 検索になる）。
+const ICHIBA_SINGLE_CHAR_WORD_OK = /^[\p{Script=Han}Ａ-Ｚａ-ｚ０-９]$/u;
+export function toIchibaKeyword(raw: string): string {
+  return raw
+    .split(/\s+/)
+    .filter((w) => w !== '' && ([...w].length >= 2 || ICHIBA_SINGLE_CHAR_WORD_OK.test(w)))
+    .join(' ');
+}
+
+// 楽天市場のキーワードを順に検索する。1キーワードの失敗（429以外の 4xx/5xx）は、そのキーワードだけ飛ばして
+// 他のキーワードで取得できた商品は捨てない。全キーワードが失敗した場合だけ最初のエラーを投げる（従来どおり upstream_error）。
+// 429 は全経路共通の停止に関わるため、従来どおりその場で打ち切る。
+async function collectIchibaKeywords(
+  label: string,
+  keywords: Iterable<string>,
+  fetchKw: (keyword: string) => Promise<RakutenItem[]>,
+): Promise<RakutenItem[]> {
+  const all: RakutenItem[] = [];
+  let firstError: RakutenApiError | undefined;
+  let succeeded = 0;
+  for (const keyword of keywords) {
+    try {
+      all.push(...await fetchKw(keyword));
+      succeeded++;
+    } catch (err) {
+      if (!(err instanceof RakutenApiError) || err.httpStatus === 429) throw err;
+      console.error(`[rakuten] ${label}: キーワード検索失敗のためスキップ keyword="${keyword}" httpStatus=${err.httpStatus}`);
+      firstError ??= err;
+    }
+  }
+  if (firstError && succeeded === 0) throw firstError;
+  if (firstError) console.log(`[rakuten] ${label}: 一部のキーワードが失敗したため、成功したキーワードの${all.length}件のみ返します`);
+  return all;
+}
+
 // ---------------------------------------------------------------
 // グッズ: keyword に '${name} グッズ' 等を指定
 //   グループ名/aliases/customKeywords でも検索、hits=30、最大2ページ
@@ -619,12 +659,13 @@ async function fetchIchiba(
 ): Promise<RakutenItem[]> {
   const excludeKeywords = config.excludeKeywords ?? [];
 
-  // 検索キーワード一覧（重複除去）
+  // 検索キーワード一覧（楽天市場APIで無効な単語を除いた上で重複除去）
   const kwSet = new Set<string>();
-  kwSet.add(`${name} グッズ`);
-  if (group) kwSet.add(`${group} グッズ`);
-  for (const alias of config.aliases ?? []) kwSet.add(`${alias} グッズ`);
-  for (const ckw of config.customKeywords ?? []) kwSet.add(`${ckw} グッズ`);
+  const addKw = (kw: string) => { const k = toIchibaKeyword(kw); if (k) kwSet.add(k); };
+  addKw(`${name} グッズ`);
+  if (group) addKw(`${group} グッズ`);
+  for (const alias of config.aliases ?? []) addKw(`${alias} グッズ`);
+  for (const ckw of config.customKeywords ?? []) addKw(`${ckw} グッズ`);
 
   async function fetchKw(keyword: string): Promise<RakutenItem[]> {
     const items: RakutenItem[] = [];
@@ -641,7 +682,7 @@ async function fetchIchiba(
       });
       const res = await rakutenFetch(reqUrl, cacheMode);
       if (!res.ok) {
-        await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
+        await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG, { category: 'グッズ', keyword, page });
         throw new RakutenApiError(res.status);
       }
       const data: RakutenIchibaResponse = await res.json();
@@ -684,10 +725,7 @@ async function fetchIchiba(
     return items;
   }
 
-  const all: RakutenItem[] = [];
-  for (const keyword of kwSet) {
-    all.push(...await fetchKw(keyword));
-  }
+  const all = await collectIchibaKeywords('グッズ', kwSet, fetchKw);
 
   const seen = new Set<string>();
   return all.filter((p) => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
@@ -708,17 +746,18 @@ async function fetchUsed(
   const excludeKeywords = config.excludeKeywords ?? [];
 
   const kwSet = new Set<string>();
+  const addKw = (kw: string) => { const k = toIchibaKeyword(kw); if (k) kwSet.add(k); };
   // 人物名を含むキーワードのみ（グループ単独キーワードは取得量が膨大になるため省略）
-  kwSet.add(`${name} 写真集 中古`);
-  kwSet.add(`${name} CD 中古`);
+  addKw(`${name} 写真集 中古`);
+  addKw(`${name} CD 中古`);
   if (group) {
-    kwSet.add(`${group} ${name} 写真集 中古`);
+    addKw(`${group} ${name} 写真集 中古`);
   }
   for (const alias of config.aliases ?? []) {
-    kwSet.add(`${alias} 中古`);
+    addKw(`${alias} 中古`);
   }
   for (const ckw of config.customKeywords ?? []) {
-    kwSet.add(`${ckw} 中古`);
+    addKw(`${ckw} 中古`);
   }
 
   async function fetchKw(keyword: string): Promise<RakutenItem[]> {
@@ -736,7 +775,7 @@ async function fetchUsed(
       });
       const res = await rakutenFetch(reqUrl, cacheMode);
       if (!res.ok) {
-        await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG);
+        await logRakutenUpstreamError(res, reqUrl, AUTH_DIAG, { category: '中古', keyword, page });
         throw new RakutenApiError(res.status);
       }
       const data: RakutenIchibaResponse = await res.json();
@@ -776,10 +815,7 @@ async function fetchUsed(
     return items;
   }
 
-  const all: RakutenItem[] = [];
-  for (const keyword of kwSet) {
-    all.push(...await fetchKw(keyword));
-  }
+  const all = await collectIchibaKeywords('中古', kwSet, fetchKw);
 
   // 中古であることを確認（タイトルに「中古」を含むもののみ保持）してデdup
   const seen = new Set<string>();
