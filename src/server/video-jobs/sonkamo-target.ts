@@ -4,7 +4,10 @@ import { getAllMembershipRecords } from '@/lib/group-membership-store';
 import { groupMembershipRecords, listGroupNames, personsInGroup } from '@/lib/group-membership';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
-import type { OshiSonkamoTemplateInput } from '@/lib/video-template-input';
+import { eq } from 'drizzle-orm';
+import { db } from '@/db/client';
+import { videoGenerationJobs } from '@/db/schema';
+import { parseOshiSonkamoInput, type OshiSonkamoTemplateInput } from '@/lib/video-template-input';
 import { VideoJobError } from './job-store';
 
 // 動画「推し活で損してるかも？ V1」（oshi-sonkamo-target）の対象（人物 または グループ）。
@@ -53,4 +56,36 @@ export async function resolveSonkamoTarget(name: string, input: OshiSonkamoTempl
     throw new VideoJobError(`${input.memberName}は${name}のメンバーとして登録されていません。`, 400);
   }
   return { ...input, pagePath: groupHrefByName(name, await getAllGroupMetas()) };
+}
+
+export const SONKAMO_TEMPLATE_ID = 'oshi-sonkamo-v1';
+
+/**
+ * CapCut 音声付きのジョブ: 元の音声なし動画のジョブ（完了・同じテンプレート・同じ人物/グループ・音声なし）を確かめ、
+ * 原稿（敬称・5文）と撮影データの場所を元のジョブから付け直す（音声は元のジョブの原稿を読み上げたもののため。画面からの値は使わない）
+ */
+export async function applySonkamoAudioSource(name: string, input: OshiSonkamoTemplateInput): Promise<OshiSonkamoTemplateInput> {
+  const audio = input.audio;
+  if (!audio) return input;
+  const [source] = await db.select().from(videoGenerationJobs).where(eq(videoGenerationJobs.id, audio.sourceJobId));
+  if (!source) throw new VideoJobError('元の動画のジョブが見つかりません。', 400);
+  if (source.templateId !== SONKAMO_TEMPLATE_ID || source.status !== 'completed' || source.narrationMode !== 'none') {
+    throw new VideoJobError('CapCut 音声は「推し活で損してるかも？ V1」の完了した音声なし動画にだけ付けられます。', 400);
+  }
+  if (source.personName !== name) throw new VideoJobError(`元の動画（${source.personName}）と違う人物・グループの音声は付けられません。`, 400);
+  let sourceInput: OshiSonkamoTemplateInput;
+  try {
+    sourceInput = parseOshiSonkamoInput(source.templateInput);
+  } catch {
+    throw new VideoJobError('元の動画のジョブの入力を読み取れません。', 400);
+  }
+  if (sourceInput.target !== input.target) throw new VideoJobError('元の動画と人物/グループの種類が違います。', 400);
+  const result = (source.result ?? {}) as Record<string, unknown>;
+  const outDir = typeof result.outDir === 'string' ? result.outDir : null;
+  return {
+    ...input,
+    honorific: sourceInput.honorific,
+    lines: sourceInput.lines,
+    audio: { sourceJobId: audio.sourceJobId, wavUrl: audio.wavUrl, srtUrl: audio.srtUrl, sourceOutDir: outDir },
+  };
 }

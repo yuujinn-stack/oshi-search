@@ -54,6 +54,40 @@ export interface OshiSonkamoTemplateInput {
   memberName: string | null;
   /** 管理画面で確認・編集したナレーション（5文。null=テンプレートの既定文） */
   lines: Array<{ id: string; text: string; kana: string }> | null;
+  /**
+   * CapCut 音声付きのジョブだけ: 元の音声なし動画のジョブと、そのジョブ用にアップロードした WAV・SRT（Vercel Blob）。
+   * sourceOutDir（元のジョブの撮影データの場所）と原稿は、サーバーが元のジョブから付け直す（画面からの値は使わない）
+   */
+  audio?: OshiSonkamoAudio;
+}
+
+export interface OshiSonkamoAudio {
+  sourceJobId: string;
+  wavUrl: string;
+  srtUrl: string;
+  sourceOutDir?: string | null;
+}
+
+const VIDEO_JOB_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** CapCut 音声のファイルの URL: 元のジョブ専用の Blob のパス（video-jobs/{元のジョブ}/capcut-….wav / .srt）だけを受け付ける */
+export function isSonkamoAudioUrl(value: unknown, sourceJobId: string, ext: '.wav' | '.srt'): value is string {
+  if (typeof value !== 'string' || value.length > 500) return false;
+  try {
+    const u = new URL(value);
+    return u.protocol === 'https:' && u.hostname.endsWith('.public.blob.vercel-storage.com') && u.pathname.startsWith(`/video-jobs/${sourceJobId}/capcut-`) && u.pathname.endsWith(ext);
+  } catch {
+    return false;
+  }
+}
+
+function parseSonkamoAudio(raw: unknown): OshiSonkamoAudio {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TemplateInputError('CapCut 音声の指定がありません。');
+  const o = raw as Record<string, unknown>;
+  if (typeof o.sourceJobId !== 'string' || !VIDEO_JOB_ID_PATTERN.test(o.sourceJobId)) throw new TemplateInputError('元の動画のジョブの指定が不正です。');
+  if (!isSonkamoAudioUrl(o.wavUrl, o.sourceJobId, '.wav')) throw new TemplateInputError('WAV はこの動画用にアップロードしたファイルだけ使えます。');
+  if (!isSonkamoAudioUrl(o.srtUrl, o.sourceJobId, '.srt')) throw new TemplateInputError('SRT はこの動画用にアップロードしたファイルだけ使えます。');
+  return { sourceJobId: o.sourceJobId, wavUrl: o.wavUrl, srtUrl: o.srtUrl, ...(typeof o.sourceOutDir === 'string' ? { sourceOutDir: o.sourceOutDir } : {}) };
 }
 
 export type VideoTemplateInput = OshiVodCompareTemplateInput | OshiCardSelectionTemplateInput | OshiSonkamoTemplateInput;
@@ -138,7 +172,8 @@ export function parseOshiSonkamoInput(raw: unknown): OshiSonkamoTemplateInput {
     });
   }
   const pagePath = typeof obj.pagePath === 'string' ? obj.pagePath : undefined;
-  return { version: 1, target: obj.target, ...(pagePath ? { pagePath } : {}), honorific, memberName, lines };
+  const audio = obj.audio !== undefined && obj.audio !== null ? parseSonkamoAudio(obj.audio) : undefined;
+  return { version: 1, target: obj.target, ...(pagePath ? { pagePath } : {}), honorific, memberName, lines, ...(audio ? { audio } : {}) };
 }
 
 /** テンプレートの入力種別に応じて検証する */

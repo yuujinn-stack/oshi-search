@@ -308,8 +308,14 @@ export async function createVideoJobs(input: {
   let templateInput = resolveJobTemplateInput(template, input.personNames, input.templateInput);
   // 推し活で損してるかも？: 人物・グループが公開中かを確かめ、撮影するページのパスをDBから付ける（再生成でも作り直す）
   if (templateInput && 'target' in templateInput) {
-    const { resolveSonkamoTarget } = await import('./sonkamo-target');
+    const { resolveSonkamoTarget, applySonkamoAudioSource } = await import('./sonkamo-target');
     templateInput = await resolveSonkamoTarget(input.personNames[0], templateInput);
+    // CapCut 音声付き: 元の音声なし動画のジョブに付けた WAV・SRT が必須（音声なしの方式では受け付けない）
+    if (input.narrationMode === 'capcut' && !templateInput.audio) {
+      throw new VideoJobError('音声付きの動画は、完了した音声なし動画に CapCut の WAV・SRT を付けて作ってください。', 400);
+    }
+    if (input.narrationMode !== 'capcut' && templateInput.audio) throw new VideoJobError('CapCut 音声を付けたジョブは CapCut 方式だけで作れます。', 400);
+    templateInput = await applySonkamoAudioSource(input.personNames[0], templateInput);
   }
   // CapCut保存済み音声: Workerが報告した状態がreadyの人物だけ受け付ける（フロントだけに任せない）。
   // 実際に生成する直前にもWorker側で再確認する。
@@ -329,7 +335,9 @@ export async function createVideoJobs(input: {
   if (templateInput && 'workIds' in templateInput) {
     await assertOshiCardWorks(input.personNames[0], templateInput.workIds);
   }
-  if (input.narrationMode === 'capcut' && !template.sharedCapcut) {
+  // 生成ジョブごとに CapCut 音声を付けるテンプレート（推し活で損してるかも？）は、人物ごとの保存済み音声を確かめない
+  const perJobAudio = !!templateInput && 'target' in templateInput && !!templateInput.audio;
+  if (input.narrationMode === 'capcut' && !template.sharedCapcut && !perJobAudio) {
     const notReady = input.personNames
       .map((name) => {
         const entry = [...(worker.capcutStore?.entries ?? []), ...(worker.capcutStore?.scriptOnlyEntries ?? [])]

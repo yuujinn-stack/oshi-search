@@ -17,6 +17,7 @@ import First3WorkSlots, { type First3SlotWork } from './First3WorkSlots';
 import VodCompareTrioPicker, { EMPTY_TRIO, completeTrio, type TrioCapcutCheck, type TrioSlots } from './VodCompareTrioPicker';
 import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND } from '@/lib/video-template-input';
 import CopyButton from './CopyButton';
+import SonkamoCapcutAudio from './SonkamoCapcutAudio';
 import SonkamoTargetPicker, { EMPTY_SONKAMO_PICK, sonkamoPickReady, type SonkamoGroupOption, type SonkamoPick } from './SonkamoTargetPicker';
 import { parseSonkamoScriptTemplate } from '@/lib/video-sonkamo-script';
 import OshiCardWorkPicker, { EMPTY_OSHI_CARD_PICK, type OshiCardPick } from './OshiCardWorkPicker';
@@ -162,7 +163,15 @@ interface VideoJob {
   personSlug: string | null;
   templateId: string;
   /** テンプレート固有の入力（推しでサブスク比較: 3人のslug。従来のテンプレートは null） */
-  templateInput?: { personSlugs?: string[]; workIds?: string[]; variant?: string; target?: 'person' | 'group'; memberName?: string | null } | null;
+  templateInput?: {
+    personSlugs?: string[];
+    workIds?: string[];
+    variant?: string;
+    target?: 'person' | 'group';
+    memberName?: string | null;
+    /** 推し活で損してるかも？の音声付きジョブ: 元の音声なし動画のジョブ */
+    audio?: { sourceJobId?: string } | null;
+  } | null;
   narrationMode: NarrationMode;
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
   attempts: number;
@@ -376,7 +385,8 @@ export default function VideoMakerClient({
   // CapCut保存済み音声: Workerが報告した状態（正本はMac上の保存音声と台本）。CapCut対応テンプレートでだけ表示する
   // テンプレート共通のCapCut音声を使うテンプレートは、人物ごとの音声状態（作成待ち・ready等）を扱わない
   const sharedCapcut = template?.sharedCapcut ?? null;
-  const capcutSupported = !!template?.narrationModes.includes('capcut') && !sharedCapcut;
+  // 推し活で損してるかも？の CapCut 音声は、完了した音声なし動画のジョブごとに付ける（人物ごとの保存済み音声は扱わない）
+  const capcutSupported = !!template?.narrationModes.includes('capcut') && !sharedCapcut && !sonkamoMode;
   const capcutEntries = useMemo(
     () =>
       capcutSupported && template
@@ -699,10 +709,12 @@ export default function VideoMakerClient({
   }, [templateId, templates]);
   useEffect(() => {
     if (!template) return;
-    if (!narrationMode || !template.narrationModes.includes(narrationMode)) {
-      setNarrationMode((NARRATION_ORDER.find((m) => template.narrationModes.includes(m)) as NarrationMode) ?? null);
+    // 推し活で損してるかも？: 作成フォームでは CapCut を選ばない（CapCut 音声は完成した音声なし動画の「詳細」から付ける）
+    const selectable = (m: NarrationMode) => template.narrationModes.includes(m) && !(sonkamoMode && m === 'capcut');
+    if (!narrationMode || !selectable(narrationMode)) {
+      setNarrationMode((NARRATION_ORDER.find(selectable) as NarrationMode) ?? null);
     }
-  }, [template, narrationMode]);
+  }, [template, narrationMode, sonkamoMode]);
   // 推しでサブスク比較: 選んだ3人の診断結果が共通CapCut音声の台本と一致しない場合は、CapCutを選べない（音声なしへ切り替える）。
   // 判定はサーバー（プレビューAPI）。ジョブ作成APIでも必ず再確認する
   const trioCapcutBlocked = trioMode && !!trioCapcut && !trioCapcut.compatible;
@@ -886,7 +898,8 @@ export default function VideoMakerClient({
             {NARRATION_ORDER.map((m) => {
               // 推しでサブスク比較: 選んだ3人が共通CapCut音声を使えない場合は CapCut を選べない（音声なしは常に選べる）
               const blockedForTrio = m === 'capcut' && trioCapcutBlocked;
-              const supported = !!template?.narrationModes.includes(m) && !blockedForTrio;
+              // 推し活で損してるかも？: ここでは音声なしで作り、CapCut 音声は完成した動画の「詳細」から付ける
+              const supported = !!template?.narrationModes.includes(m) && !blockedForTrio && !(sonkamoMode && m === 'capcut');
               const title = supported ? '' : blockedForTrio ? trioCapcut?.reason ?? '' : 'このテンプレート・Workerでは選択できません';
               return (
                 <label key={m} className={supported ? 'cursor-pointer' : 'text-gray-300 cursor-not-allowed'} title={title}>
@@ -1519,6 +1532,7 @@ export default function VideoMakerClient({
                       reelSchedule={reelSchedules[job.id] ?? null}
                       reelAutopublishEnabled={reelAutopublishEnabled}
                       onReelChanged={() => void load()}
+                      allJobs={jobs}
                     />
                   )}
                   {open && job.status === 'failed' && (
@@ -1685,8 +1699,11 @@ function CompletedDetail({
   reelSchedule,
   reelAutopublishEnabled,
   onReelChanged,
+  allJobs = [],
 }: {
   job: VideoJob;
+  /** 推し活で損してるかも？: この動画から作った音声付きのジョブを探すため（生成履歴の全件） */
+  allJobs?: VideoJob[];
   /** Instagram投稿文に差し込む人物（ジョブの人物名と、人物データのグループ名） */
   captionPerson: CaptionPerson;
   onRetry: () => void;
@@ -1781,6 +1798,13 @@ function CompletedDetail({
     </div>
     {job.templateInput?.workIds && <OshiCardJobOutputs job={job} />}
     {job.templateInput?.target && <SonkamoJobOutputs job={job} />}
+    {job.templateInput?.target && job.narrationMode === 'none' && (
+      <SonkamoCapcutAudio
+        job={job}
+        voicedJobs={allJobs.filter((j) => j.templateInput?.audio?.sourceJobId === job.id)}
+        onCreated={onReelChanged}
+      />
+    )}
     <InstagramCaptionSection templateId={job.templateId} person={captionPerson} />
     {igReelUrl && (
       <InstagramReelSection
@@ -1873,6 +1897,7 @@ function SonkamoJobOutputs({ job }: { job: VideoJob }) {
     unresolvedReadings?: Array<{ text: string }>;
     overlongLines?: Array<{ id: string; estimate: number; slot: number }>;
   } | null;
+  const capcut = (job.result?.capcut ?? null) as { audioSeconds?: number; method?: string; warnings?: string[] } | null;
   const srt = typeof job.result?.narrationSrt === 'string' ? job.result.narrationSrt : null;
   const kana = typeof job.result?.narrationKana === 'string' ? job.result.narrationKana : null;
   const download = (text: string, name: string, type: string) => {
@@ -1898,6 +1923,15 @@ function SonkamoJobOutputs({ job }: { job: VideoJob }) {
           {info?.memberCount ? ` ／ メンバー ${info.memberCount}人` : ''}
           {info?.memberName ? ` ／ 紹介したメンバー: ${info.memberName}` : ''}
         </span>
+        {job.narrationMode === 'capcut' && (
+          <>
+            <span className="text-gray-500">音声</span>
+            <span>
+              CapCut ナレーション（元の音声なし動画のジョブ {job.templateInput?.audio?.sourceJobId?.slice(0, 8) ?? '-'}）
+              {capcut?.audioSeconds ? `・音声 ${capcut.audioSeconds.toFixed(1)}秒に合わせてシーンを調整` : ''}
+            </span>
+          </>
+        )}
         <span className="text-gray-500">出演作品</span>
         <span>
           {info?.worksScope === 'groupMembers'

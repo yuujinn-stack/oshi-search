@@ -49,7 +49,7 @@ beforeEach(() => {
     version: 'test',
     templates: [
       { templateId: 'oshi-first3-v1', name: 'まず見る3作 ショートV1', description: '', version: 1, narrationModes: ['none'] },
-      { templateId: T, name: '推し活で損してるかも？ V1', description: '', version: 1, narrationModes: ['none'], templateInputKind: 'oshi-sonkamo-target' },
+      { templateId: T, name: '推し活で損してるかも？ V1', description: '', version: 1, narrationModes: ['capcut', 'none'], templateInputKind: 'oshi-sonkamo-target' },
     ],
     persons: [],
     capcutStore: null,
@@ -118,5 +118,52 @@ describe('createVideoJobs: 推し活で損してるかも？', () => {
     await expect(
       createVideoJobs({ personNames: ['目黒蓮'], templateId: 'oshi-first3-v1', narrationMode: 'none', templateInput: { target: 'person' } }),
     ).rejects.toThrow(/受け付けません/);
+  });
+});
+
+describe('createVideoJobs: 推し活で損してるかも？の CapCut 音声付き', () => {
+  const SRC = '00000000-0000-0000-0000-0000000000a1';
+  const BLOB = `https://abc.public.blob.vercel-storage.com/video-jobs/${SRC}`;
+  const audio = { sourceJobId: SRC, wavUrl: `${BLOB}/capcut-1.wav`, srtUrl: `${BLOB}/capcut-2.srt` };
+  const silent = {
+    id: SRC,
+    personName: 'M!LK',
+    templateId: T,
+    narrationMode: 'none',
+    status: 'completed',
+    templateInput: { version: 1, target: 'group', pagePath: '/groups/M!LK', honorific: '', memberName: null, lines: LINES },
+    result: { outDir: 'out/sonkamo/M!LK/2026-10-31T10-33-19-621Z' },
+  };
+
+  it('完了した音声なし動画に付けた WAV・SRT で、別のジョブを作る（原稿・撮影データの場所は元のジョブから付け直す）', async () => {
+    const { createVideoJobs } = await import('../job-store');
+    state.source = silent;
+    // 画面から別の原稿を送っても使わない
+    const other = LINES.map((l) => ({ ...l, text: '違う原稿' }));
+    await createVideoJobs({ personNames: ['M!LK'], templateId: T, narrationMode: 'capcut', templateInput: { version: 1, target: 'group', honorific: '', lines: other, audio } });
+    expect(state.inserted).toHaveLength(1);
+    expect(state.inserted[0]).toMatchObject({
+      personName: 'M!LK',
+      narrationMode: 'capcut',
+      templateInput: { target: 'group', pagePath: '/groups/M!LK', lines: LINES, audio: { ...audio, sourceOutDir: 'out/sonkamo/M!LK/2026-10-31T10-33-19-621Z' } },
+    });
+  });
+
+  it('別の人物・未完了・音声付きの元ジョブ、音声なしの CapCut、音声付きの音声なし方式、他のジョブ用の URL は拒否する', async () => {
+    const { createVideoJobs } = await import('../job-store');
+    const base = { templateId: T, narrationMode: 'capcut' };
+    state.source = silent;
+    await expect(createVideoJobs({ ...base, personNames: ['Snow Man'], templateInput: { target: 'group', audio } })).rejects.toThrow(/違う人物・グループ/);
+    state.source = { ...silent, status: 'processing' };
+    await expect(createVideoJobs({ ...base, personNames: ['M!LK'], templateInput: { target: 'group', audio } })).rejects.toThrow(/完了した音声なし動画/);
+    state.source = { ...silent, narrationMode: 'capcut' };
+    await expect(createVideoJobs({ ...base, personNames: ['M!LK'], templateInput: { target: 'group', audio } })).rejects.toThrow(/完了した音声なし動画/);
+    state.source = silent;
+    await expect(createVideoJobs({ ...base, personNames: ['M!LK'], templateInput: { target: 'group' } })).rejects.toThrow(/WAV・SRT を付けて/);
+    await expect(createVideoJobs({ ...base, narrationMode: 'none', personNames: ['M!LK'], templateInput: { target: 'group', audio } })).rejects.toThrow(/CapCut 方式だけ/);
+    await expect(
+      createVideoJobs({ ...base, personNames: ['M!LK'], templateInput: { target: 'group', audio: { ...audio, wavUrl: 'https://abc.public.blob.vercel-storage.com/video-jobs/00000000-0000-0000-0000-0000000000ff/capcut-1.wav' } } }),
+    ).rejects.toThrow(/アップロードしたファイルだけ/);
+    expect(state.inserted).toHaveLength(0);
   });
 });
