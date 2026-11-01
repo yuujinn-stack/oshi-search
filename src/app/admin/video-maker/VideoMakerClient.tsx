@@ -15,7 +15,9 @@ import { matchesQuery } from '@/lib/person-group-filter';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
 import First3WorkSlots, { type First3SlotWork } from './First3WorkSlots';
 import VodCompareTrioPicker, { EMPTY_TRIO, completeTrio, type TrioCapcutCheck, type TrioSlots } from './VodCompareTrioPicker';
-import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND } from '@/lib/video-template-input';
+import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND } from '@/lib/video-template-input';
+import FollowReelPicker, { EMPTY_FOLLOW_PICK, followPickReady, followTemplateInput, type FollowPick } from './FollowReelPicker';
+import { isFollowTemplateId, parseFollowScriptReport, type FollowScene } from '@/lib/video-follow-reel';
 import CopyButton from './CopyButton';
 import SonkamoCapcutAudio from './SonkamoCapcutAudio';
 import SonkamoTargetPicker, { EMPTY_SONKAMO_PICK, sonkamoPickReady, type SonkamoGroupOption, type SonkamoPick } from './SonkamoTargetPicker';
@@ -47,6 +49,8 @@ interface WorkerTemplate {
   templateInputKind?: string;
   /** 推し活で損してるかも？だけ: 台本の雛形（Worker の報告。parseSonkamoScriptTemplate で読む） */
   scriptTemplate?: unknown;
+  /** フォロー獲得リールだけ: 固定辞書の読み（Worker の報告。parseFollowScriptReport で読む） */
+  followScript?: unknown;
 }
 
 interface WorkerInfo {
@@ -171,6 +175,12 @@ interface VideoJob {
     memberName?: string | null;
     /** 推し活で損してるかも？の音声付きジョブ: 元の音声なし動画のジョブ */
     audio?: { sourceJobId?: string } | null;
+    /** フォロー獲得リール: 人物/グループ・動画タイトル・シーン・出典 */
+    targetType?: 'person' | 'group';
+    title?: string;
+    scenes?: FollowScene[];
+    sourceUrls?: string[];
+    sourceCheckedAt?: string | null;
   } | null;
   narrationMode: NarrationMode;
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
@@ -289,6 +299,8 @@ export default function VideoMakerClient({
   const [cardPick, setCardPick] = useState<OshiCardPick>(EMPTY_OSHI_CARD_PICK);
   // 推し活で損してるかも？（人物 または グループ・敬称・ナレーション原稿）の選択
   const [sonkamoPick, setSonkamoPick] = useState<SonkamoPick>(EMPTY_SONKAMO_PICK);
+  // フォロー獲得リール（人物 または グループ・作品・確認済みの事実・台本）の選択。テンプレートごとに選び直す
+  const [followPick, setFollowPick] = useState<FollowPick>(EMPTY_FOLLOW_PICK);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [narrationMode, setNarrationMode] = useState<NarrationMode | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -380,13 +392,23 @@ export default function VideoMakerClient({
   const sonkamoMode = template?.templateInputKind === OSHI_SONKAMO_INPUT_KIND;
   const sonkamoTemplate = useMemo(() => (sonkamoMode ? parseSonkamoScriptTemplate(template?.scriptTemplate) : null), [sonkamoMode, template]);
   const sonkamoReady = sonkamoPickReady(sonkamoPick);
+  const followMode = template?.templateInputKind === OSHI_FOLLOW_INPUT_KIND && isFollowTemplateId(template.templateId);
+  const followReady = followMode && followPickReady(followPick, template!.templateId);
+  // 固定辞書の読みは報告を小さくするため1つのテンプレートにだけ付く（全テンプレートの分をまとめる）
+  const followFixedReadings = useMemo(
+    () => Object.assign({}, ...templates.map((t) => parseFollowScriptReport(t.followScript)?.fixedReadings ?? {})) as Record<string, string>,
+    [templates],
+  );
+  useEffect(() => {
+    setFollowPick(EMPTY_FOLLOW_PICK);
+  }, [templateId]);
   const nameBySlug = useMemo(() => new Map(Object.entries(personSlugByName).map(([n, s]) => [s, n])), [personSlugByName]);
 
   // CapCut保存済み音声: Workerが報告した状態（正本はMac上の保存音声と台本）。CapCut対応テンプレートでだけ表示する
   // テンプレート共通のCapCut音声を使うテンプレートは、人物ごとの音声状態（作成待ち・ready等）を扱わない
   const sharedCapcut = template?.sharedCapcut ?? null;
   // 推し活で損してるかも？の CapCut 音声は、完了した音声なし動画のジョブごとに付ける（人物ごとの保存済み音声は扱わない）
-  const capcutSupported = !!template?.narrationModes.includes('capcut') && !sharedCapcut && !sonkamoMode;
+  const capcutSupported = !!template?.narrationModes.includes('capcut') && !sharedCapcut && !sonkamoMode && !followMode;
   const capcutEntries = useMemo(
     () =>
       capcutSupported && template
@@ -710,11 +732,12 @@ export default function VideoMakerClient({
   useEffect(() => {
     if (!template) return;
     // 推し活で損してるかも？: 作成フォームでは CapCut を選ばない（CapCut 音声は完成した音声なし動画の「詳細」から付ける）
-    const selectable = (m: NarrationMode) => template.narrationModes.includes(m) && !(sonkamoMode && m === 'capcut');
+    // フォロー獲得リールも同じ（音声なしで作り、完成した動画の「詳細」から CapCut 音声を付ける）
+    const selectable = (m: NarrationMode) => template.narrationModes.includes(m) && !((sonkamoMode || followMode) && m === 'capcut');
     if (!narrationMode || !selectable(narrationMode)) {
       setNarrationMode((NARRATION_ORDER.find(selectable) as NarrationMode) ?? null);
     }
-  }, [template, narrationMode, sonkamoMode]);
+  }, [template, narrationMode, sonkamoMode, followMode]);
   // 推しでサブスク比較: 選んだ3人の診断結果が共通CapCut音声の台本と一致しない場合は、CapCutを選べない（音声なしへ切り替える）。
   // 判定はサーバー（プレビューAPI）。ジョブ作成APIでも必ず再確認する
   const trioCapcutBlocked = trioMode && !!trioCapcut && !trioCapcut.compatible;
@@ -816,6 +839,27 @@ export default function VideoMakerClient({
     }
   }
 
+  // フォロー獲得リール: 人物 または グループ1つで1本（シーンはサーバーがDBから作り直す）
+  async function submitFollow() {
+    if (!template || !narrationMode || !followReady) return;
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      await fetchJson<{ jobs: VideoJob[] }>('/api/admin/video-jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personNames: [followPick.name], templateId: template.templateId, narrationMode, templateInput: followTemplateInput(followPick) }),
+      });
+      setMessage({ kind: 'ok', text: `1件のジョブを登録しました（${followPick.targetType === 'group' ? 'グループ' : '人物'}: ${followPick.name}）。Workerが順番に生成します。` });
+      setFollowPick((prev) => ({ ...EMPTY_FOLLOW_PICK, targetType: prev.targetType }));
+      await load();
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function submit(names: string[] = selectedNames) {
     if (!template || !narrationMode || names.length === 0) return;
     setSubmitting(true);
@@ -899,7 +943,7 @@ export default function VideoMakerClient({
               // 推しでサブスク比較: 選んだ3人が共通CapCut音声を使えない場合は CapCut を選べない（音声なしは常に選べる）
               const blockedForTrio = m === 'capcut' && trioCapcutBlocked;
               // 推し活で損してるかも？: ここでは音声なしで作り、CapCut 音声は完成した動画の「詳細」から付ける
-              const supported = !!template?.narrationModes.includes(m) && !blockedForTrio && !(sonkamoMode && m === 'capcut');
+              const supported = !!template?.narrationModes.includes(m) && !blockedForTrio && !((sonkamoMode || followMode) && m === 'capcut');
               const title = supported ? '' : blockedForTrio ? trioCapcut?.reason ?? '' : 'このテンプレート・Workerでは選択できません';
               return (
                 <label key={m} className={supported ? 'cursor-pointer' : 'text-gray-300 cursor-not-allowed'} title={title}>
@@ -929,6 +973,18 @@ export default function VideoMakerClient({
             value={trioSlots}
             onChange={setTrioSlots}
             onCapcutCheck={setTrioCapcut}
+          />
+        </section>
+        ) : followMode && template ? (
+        <section>
+          <h2 className="text-sm font-bold text-slate-700 mb-2">3. 人物・グループ、作品・確認済みの情報、台本</h2>
+          <FollowReelPicker
+            templateId={template.templateId as Parameters<typeof FollowReelPicker>[0]['templateId']}
+            persons={persons}
+            groups={groups}
+            fixedReadings={followFixedReadings}
+            value={followPick}
+            onChange={setFollowPick}
           />
         </section>
         ) : sonkamoMode ? (
@@ -977,6 +1033,15 @@ export default function VideoMakerClient({
                 : capcutMode && !trioCapcut
                   ? 'CapCut音声を使えるか確認中...'
                   : '生成する（3人で1本）'}
+          </button>
+          ) : followMode ? (
+          <button
+            type="button"
+            disabled={submitting || !template || !narrationMode || !followReady}
+            onClick={() => void submitFollow()}
+            className="px-5 py-2 rounded-lg bg-violet-600 text-white text-sm font-bold disabled:bg-gray-300"
+          >
+            {submitting ? '登録中...' : !followPick.name ? '人物かグループを選ぶと生成できます' : !followReady ? '台本を生成すると生成できます' : '生成する（音声なし動画・1本）'}
           </button>
           ) : sonkamoMode ? (
           <button
@@ -1499,9 +1564,9 @@ export default function VideoMakerClient({
                         ? job.templateInput.personSlugs.map((s) => nameBySlug.get(s) ?? s).join('・')
                         : job.personName}
                     </span>
-                    {job.templateInput?.target && (
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${job.templateInput.target === 'group' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-800'}`}>
-                        {job.templateInput.target === 'group' ? 'グループ' : '人物'}
+                    {(job.templateInput?.target ?? job.templateInput?.targetType) && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${(job.templateInput?.target ?? job.templateInput?.targetType) === 'group' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-800'}`}>
+                        {(job.templateInput?.target ?? job.templateInput?.targetType) === 'group' ? 'グループ' : '人物'}
                       </span>
                     )}
                     <span className="text-gray-600">{templateName(job.templateId)}</span>
@@ -1805,6 +1870,16 @@ function CompletedDetail({
         onCreated={onReelChanged}
       />
     )}
+    {job.templateInput?.targetType && <FollowJobOutputs job={job} />}
+    {job.templateInput?.targetType && job.narrationMode === 'none' && job.status === 'completed' && (
+      <SonkamoCapcutAudio
+        job={job}
+        voicedJobs={allJobs.filter((j) => j.templateInput?.audio?.sourceJobId === job.id)}
+        onCreated={onReelChanged}
+        endingNote="最後の読み上げの約1秒後に終わります（15秒に満たない場合は締めを長めに表示して15秒）。21秒まで"
+        buildTemplateInput={(audio) => ({ version: 1, targetType: job.templateInput?.targetType ?? 'person', selectedWorkIds: [], facts: [], periodStart: null, pickWorkId: null, lines: null, audio })}
+      />
+    )}
     <InstagramCaptionSection templateId={job.templateId} person={captionPerson} />
     {igReelUrl && (
       <InstagramReelSection
@@ -1877,6 +1952,96 @@ function OshiCardJobOutputs({ job }: { job: VideoJob }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** フォロー獲得リール: タイトル・動画に出した事実（シーン）・出典、台本・読み台本のコピー、SRTのダウンロード */
+function FollowJobOutputs({ job }: { job: VideoJob }) {
+  const input = job.templateInput;
+  const capcut = (job.result?.capcut ?? null) as { audioSeconds?: number; method?: string; warnings?: string[] } | null;
+  const srt = typeof job.result?.narrationSrt === 'string' ? job.result.narrationSrt : null;
+  const kana = typeof job.result?.narrationKana === 'string' ? job.result.narrationKana : null;
+  const download = (text: string, name: string, type: string) => {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const base = `${job.templateId}_${job.personName}`;
+  return (
+    <div className="mt-3 border-t border-gray-100 pt-3 space-y-2 text-xs">
+      <div className="grid grid-cols-[110px_1fr] gap-x-4 gap-y-1">
+        <span className="text-gray-500">動画タイトル</span>
+        <span className="flex items-center gap-2">
+          <span className="font-bold text-slate-800">{input?.title ?? '-'}</span>
+          {input?.title && <CopyButton text={input.title} label="コピー" />}
+        </span>
+        <span className="text-gray-500">対象</span>
+        <span>
+          {job.personName}（{input?.targetType === 'group' ? 'グループ' : '人物'}）
+        </span>
+        {job.narrationMode === 'capcut' && (
+          <>
+            <span className="text-gray-500">音声</span>
+            <span>
+              CapCut ナレーション（元の音声なし動画のジョブ {input?.audio?.sourceJobId?.slice(0, 8) ?? '-'}）
+              {capcut?.audioSeconds ? `・音声 ${capcut.audioSeconds.toFixed(1)}秒に合わせてシーンを調整` : ''}
+            </span>
+          </>
+        )}
+        {input?.sourceUrls && input.sourceUrls.length > 0 && (
+          <>
+            <span className="text-gray-500">出典（確認済み）</span>
+            <span className="space-y-0.5">
+              {input.sourceUrls.map((u) => (
+                <a key={u} href={u} target="_blank" rel="noopener noreferrer" className="block text-violet-600 hover:underline break-all">
+                  {u}
+                </a>
+              ))}
+              {input.sourceCheckedAt && <span className="text-gray-500">確認日時 {input.sourceCheckedAt.replace('T', ' ')}</span>}
+            </span>
+          </>
+        )}
+      </div>
+      {input?.scenes && (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-gray-600">動画に出した内容（シーン {input.scenes.length}）</summary>
+          <ol className="list-decimal ml-5 mt-1 space-y-0.5 text-gray-600">
+            {input.scenes.map((sc) => (
+              <li key={sc.id}>
+                {[sc.label, sc.title, ...(sc.lines ?? [])].filter(Boolean).join(' ／ ')}
+                {sc.bars ? ` ／ ${sc.bars.map((b) => `${b.label} ${b.count}`).join('・')}` : ''}
+                {sc.note ? `（${sc.note}）` : ''}
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+      {job.narrationScript && (
+        <div>
+          <p className="text-gray-500 mb-1">ナレーション台本（字幕）</p>
+          <pre className="whitespace-pre-wrap bg-gray-50 rounded p-2 text-slate-700">{job.narrationScript}</pre>
+        </div>
+      )}
+      {kana && (
+        <div>
+          <p className="text-violet-700 font-bold mb-1">音声生成用台本（読み）← CapCutにはこちらを貼る</p>
+          <pre className="whitespace-pre-wrap bg-violet-50 rounded p-2 text-slate-700">{kana}</pre>
+        </div>
+      )}
+      <div className="flex gap-3 flex-wrap">
+        {job.narrationScript && <CopyButton text={job.narrationScript} label="台本をコピー" />}
+        {kana && <CopyButton text={kana} label="音声用台本をコピー" primary />}
+        {srt && (
+          <button type="button" onClick={() => download(srt, `${base}.srt`, 'application/x-subrip;charset=utf-8')} className="text-violet-600 hover:underline">
+            ⬇ SRTをダウンロード
+          </button>
+        )}
+      </div>
+      {capcut?.warnings && capcut.warnings.length > 0 && <p className="text-amber-700 bg-amber-50 rounded p-2">⚠ {capcut.warnings.join(' / ')}</p>}
     </div>
   );
 }

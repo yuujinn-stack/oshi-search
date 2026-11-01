@@ -5,6 +5,8 @@
 // 入力の種類を宣言し、ジョブ作成時にここで検証した値を template_input に保存する。
 // 人物の識別子は推しサーチDBの人物slug（personVideoSlug: 'p-' + sha256(人物名)の先頭12桁）を正本にする。
 
+import { FOLLOW_TEMPLATE_CATEGORY, type FollowFact, type FollowFactKind, type FollowLine, type FollowScene, type FollowTargetType } from './video-follow-reel';
+
 /** 推しでサブスク比較（3人の推しに合うサブスク診断）: 人物3人 */
 export const OSHI_VOD_COMPARE_INPUT_KIND = 'oshi-vod-compare-persons' as const;
 export const OSHI_VOD_COMPARE_PERSON_COUNT = 3;
@@ -27,8 +29,18 @@ export const OSHI_SONKAMO_LINE_IDS = ['01-hook', '02-works', '03-vod', '04-goods
 const SONKAMO_TEXT_MAX = 60;
 const SONKAMO_KANA_MAX = 90;
 
-export type TemplateInputKind = typeof OSHI_VOD_COMPARE_INPUT_KIND | typeof OSHI_CARD_SELECTION_INPUT_KIND | typeof OSHI_SONKAMO_INPUT_KIND;
-export const TEMPLATE_INPUT_KINDS: readonly TemplateInputKind[] = [OSHI_VOD_COMPARE_INPUT_KIND, OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND];
+/**
+ * フォロー獲得リール（10種類・templateCategory=follow_growth）: 1ジョブ=人物1人 または グループ1つ（person_name に名前）。
+ * 画面で選んだ作品・入力した確認済みの事実・確認した台本を保存し、シーン（画面の文字）はジョブ作成時にサーバーがDBから作り直す
+ * （src/server/video-jobs/follow-target.ts。台本と構成は src/lib/video-follow-reel.ts）
+ */
+export const OSHI_FOLLOW_INPUT_KIND = 'oshi-follow-reel' as const;
+const FOLLOW_TEXT_MAX = 70;
+const FOLLOW_KANA_MAX = 110;
+const FOLLOW_MAX_LINES = 8;
+
+export type TemplateInputKind = typeof OSHI_VOD_COMPARE_INPUT_KIND | typeof OSHI_CARD_SELECTION_INPUT_KIND | typeof OSHI_SONKAMO_INPUT_KIND | typeof OSHI_FOLLOW_INPUT_KIND;
+export const TEMPLATE_INPUT_KINDS: readonly TemplateInputKind[] = [OSHI_VOD_COMPARE_INPUT_KIND, OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND];
 
 export interface OshiVodCompareTemplateInput {
   version: 1;
@@ -61,6 +73,32 @@ export interface OshiSonkamoTemplateInput {
   audio?: OshiSonkamoAudio;
 }
 
+export interface OshiFollowTemplateInput {
+  version: 1;
+  templateCategory: typeof FOLLOW_TEMPLATE_CATEGORY;
+  targetType: FollowTargetType;
+  /** 選んだ作品（works.id・選んだ順） */
+  selectedWorkIds: string[];
+  /** 公式情報で確認した事実（出演予定・新作・配信開始・配信終了予定。出典URL・確認日時つき） */
+  facts: FollowFact[];
+  periodStart: string | null;
+  pickWorkId: string | null;
+  /** 管理画面で確認・編集した台本（字幕・読み。シーンと同じ数・同じ順） */
+  lines: FollowLine[];
+  // ここから下はサーバーがジョブ作成時に付ける（画面からの値は使わない）
+  /** 動画に出す人物（人物のときは本人、グループのときはメンバー） */
+  personNames?: string[];
+  scenes?: FollowScene[];
+  title?: string;
+  /** 推しサーチの人物ページ・グループページ（投稿文のリンク） */
+  pagePath?: string;
+  sourceUrls?: string[];
+  sourceCheckedAt?: string | null;
+  resolvedAt?: string;
+  /** CapCut 音声付きのジョブだけ（推し活で損してるかも？と同じ形。シーン・台本は元のジョブから付け直す） */
+  audio?: OshiSonkamoAudio;
+}
+
 export interface OshiSonkamoAudio {
   sourceJobId: string;
   wavUrl: string;
@@ -90,7 +128,7 @@ function parseSonkamoAudio(raw: unknown): OshiSonkamoAudio {
   return { sourceJobId: o.sourceJobId, wavUrl: o.wavUrl, srtUrl: o.srtUrl, ...(typeof o.sourceOutDir === 'string' ? { sourceOutDir: o.sourceOutDir } : {}) };
 }
 
-export type VideoTemplateInput = OshiVodCompareTemplateInput | OshiCardSelectionTemplateInput | OshiSonkamoTemplateInput;
+export type VideoTemplateInput = OshiVodCompareTemplateInput | OshiCardSelectionTemplateInput | OshiSonkamoTemplateInput | OshiFollowTemplateInput;
 
 /** personVideoSlug の形式 */
 const PERSON_SLUG_PATTERN = /^p-[0-9a-f]{12}$/;
@@ -176,6 +214,72 @@ export function parseOshiSonkamoInput(raw: unknown): OshiSonkamoTemplateInput {
   return { version: 1, target: obj.target, ...(pagePath ? { pagePath } : {}), honorific, memberName, lines, ...(audio ? { audio } : {}) };
 }
 
+const FOLLOW_FACT_KINDS: readonly FollowFactKind[] = ['schedule', 'release', 'streamStart', 'streamEnd'];
+const optStr = (v: unknown, max: number, label: string): string | undefined => {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (typeof v !== 'string' || v.length > max) throw new TemplateInputError(`${label}の指定が不正です。`);
+  return v.trim();
+};
+
+/**
+ * フォロー獲得リールの入力の形を検証して正規化する（作品が公開作品か・事実の日付や出典・台本とシーンの対応は
+ * サーバーで確認する）。サーバーが付ける項目（シーン等）は画面から受け取らない
+ */
+export function parseOshiFollowInput(raw: unknown): OshiFollowTemplateInput {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TemplateInputError('人物かグループの指定がありません。');
+  const obj = raw as Record<string, unknown>;
+  if (obj.version !== undefined && obj.version !== 1) throw new TemplateInputError('未対応の入力形式です。');
+  if (obj.targetType !== 'person' && obj.targetType !== 'group') throw new TemplateInputError('人物かグループかを選んでください。');
+  const ids = obj.selectedWorkIds ?? [];
+  if (!Array.isArray(ids) || ids.length > 5 || ids.some((id) => typeof id !== 'string' || !id.trim() || id.length > WORK_ID_MAX_LENGTH)) {
+    throw new TemplateInputError('作品の指定が不正です。');
+  }
+  const rawFacts = obj.facts ?? [];
+  if (!Array.isArray(rawFacts) || rawFacts.length > 3) throw new TemplateInputError('確認済みの情報は3件までです。');
+  const facts: FollowFact[] = rawFacts.map((f, i) => {
+    const o = (f ?? {}) as Record<string, unknown>;
+    if (!FOLLOW_FACT_KINDS.includes(o.kind as FollowFactKind)) throw new TemplateInputError(`${i + 1}件目の情報の種類が不正です。`);
+    const date = optStr(o.date, 10, '日付') ?? '';
+    const sourceUrl = optStr(o.sourceUrl, 500, '出典URL') ?? '';
+    const checkedAt = optStr(o.checkedAt, 16, '確認日時') ?? '';
+    const fact: FollowFact = { kind: o.kind as FollowFactKind, date, sourceUrl, checkedAt };
+    const workId = optStr(o.workId, WORK_ID_MAX_LENGTH, '作品');
+    const title = optStr(o.title, 40, '番組名・作品名');
+    const provider = optStr(o.provider, 30, '配信サービス');
+    const media = optStr(o.media, 20, '放送局・配信先');
+    const releaseKind = optStr(o.releaseKind, 4, '放送・公開・配信');
+    const time = optStr(o.time, 5, '時刻');
+    return { ...fact, ...(workId ? { workId } : {}), ...(title ? { title } : {}), ...(provider ? { provider } : {}), ...(media ? { media } : {}), ...(releaseKind ? { releaseKind } : {}), ...(time ? { time } : {}) };
+  });
+  const periodStart = optStr(obj.periodStart, 10, '対象期間') ?? null;
+  const pickWorkId = optStr(obj.pickWorkId, WORK_ID_MAX_LENGTH, '最後に勧める作品') ?? null;
+  const audio = obj.audio !== undefined && obj.audio !== null ? parseSonkamoAudio(obj.audio) : undefined;
+  // CapCut 音声付きのジョブは、台本を元のジョブから付け直す（画面からは送らなくてよい）
+  const rawLines = audio && (obj.lines === undefined || obj.lines === null) ? [] : obj.lines;
+  if (!Array.isArray(rawLines) || (!audio && rawLines.length < 2) || rawLines.length > FOLLOW_MAX_LINES) throw new TemplateInputError('台本を生成してからジョブを作ってください。');
+  const lines: FollowLine[] = rawLines.map((l, i) => {
+    const o = (l ?? {}) as Record<string, unknown>;
+    const id = typeof o.id === 'string' && /^\d{2}-[a-z]+$/.test(o.id) ? o.id : null;
+    const text = typeof o.text === 'string' ? o.text.trim() : '';
+    const kana = typeof o.kana === 'string' ? o.kana.trim() : '';
+    if (!id) throw new TemplateInputError(`台本の${i + 1}文目の指定が不正です。`);
+    if (!text || Array.from(text).length > FOLLOW_TEXT_MAX) throw new TemplateInputError(`${i + 1}文目の字幕は1〜${FOLLOW_TEXT_MAX}文字にしてください。`);
+    if (!kana || Array.from(kana).length > FOLLOW_KANA_MAX) throw new TemplateInputError(`${i + 1}文目の読みは1〜${FOLLOW_KANA_MAX}文字にしてください。`);
+    return { id, text, kana };
+  });
+  return {
+    version: 1,
+    templateCategory: FOLLOW_TEMPLATE_CATEGORY,
+    targetType: obj.targetType,
+    selectedWorkIds: (ids as string[]).map((id) => id.trim()),
+    facts,
+    periodStart,
+    pickWorkId,
+    lines,
+    ...(audio ? { audio } : {}),
+  };
+}
+
 /** テンプレートの入力種別に応じて検証する */
 export function parseTemplateInput(kind: TemplateInputKind, raw: unknown): VideoTemplateInput {
   switch (kind) {
@@ -185,5 +289,7 @@ export function parseTemplateInput(kind: TemplateInputKind, raw: unknown): Video
       return parseOshiCardSelectionInput(raw);
     case OSHI_SONKAMO_INPUT_KIND:
       return parseOshiSonkamoInput(raw);
+    case OSHI_FOLLOW_INPUT_KIND:
+      return parseOshiFollowInput(raw);
   }
 }

@@ -6,6 +6,7 @@ import { db } from '@/db/client';
 import { videoGenerationJobs } from '@/db/schema';
 import { maskSecrets } from '@/lib/mask-secrets';
 import { SONKAMO_TEMPLATE_ID } from '@/server/video-jobs/sonkamo-target';
+import { isFollowTemplateId } from '@/lib/video-follow-reel';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -17,7 +18,7 @@ const LIMITS = {
 const TOKEN_TTL_MS = 15 * 60_000;
 
 /**
- * 「推し活で損してるかも？ V1」の音声なし動画のジョブに付ける CapCut の WAV・SRT を、管理画面から Vercel Blob へ直接
+ * 「推し活で損してるかも？ V1」・フォロー獲得リール（10種類）の音声なし動画のジョブに付ける CapCut の WAV・SRT を、管理画面から Vercel Blob へ直接
  * アップロードするための一時許可（client token）を発行する（ファイル本体はこのAPIを通らない。Vercel関数のサイズ上限を避ける）。
  * 許可は「このジョブ専用のパス video-jobs/{ジョブID}/capcut-{乱数}.wav|.srt・種類と大きさの上限・15分で失効・上書き不可」に限定する。
  * 音声付きの動画は、このURLを template_input.audio に入れて別のジョブとして作る（元の音声なし動画は変更しない）。
@@ -35,8 +36,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try {
     const [job] = await db.select().from(videoGenerationJobs).where(eq(videoGenerationJobs.id, id));
     if (!job) return NextResponse.json({ error: 'ジョブが見つかりません' }, { status: 404 });
-    if (job.templateId !== SONKAMO_TEMPLATE_ID || job.status !== 'completed' || job.narrationMode !== 'none') {
-      return NextResponse.json({ error: 'CapCut 音声は「推し活で損してるかも？ V1」の完了した音声なし動画にだけ付けられます' }, { status: 409 });
+    if ((job.templateId !== SONKAMO_TEMPLATE_ID && !isFollowTemplateId(job.templateId)) || job.status !== 'completed' || job.narrationMode !== 'none') {
+      return NextResponse.json({ error: 'CapCut 音声は「推し活で損してるかも？ V1」・フォロー獲得リールの完了した音声なし動画にだけ付けられます' }, { status: 409 });
     }
     const pathname = `video-jobs/${id}/capcut-${randomBytes(8).toString('hex')}.${limit.ext}`;
     const clientToken = await generateClientTokenFromReadWriteToken({

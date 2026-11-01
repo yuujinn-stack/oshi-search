@@ -5703,3 +5703,37 @@ oshi-search（未commit）
 **影響範囲：** `AffiliateSlot` を使う全箇所（作品詳細・人物ページの「今すぐ見られる作品」/VOD配信アコーディオン・/oshi-vod・/vod/[provider]）に適用。グループページは AffiliateSlot を使っていない。HTML広告コード（Hulu 等）・banner・fallback（VodTrackLink の /api/track 計測）の経路は無変更。広告リンクのクリック計測はこれまでどおり ASP 側（/oshi-vod は既存の OshiVodTracker が `.affiliate-slot` 内リンクを計測）。
 
 **確認：** `npx tsc --noEmit` 0件、`npx vitest run` 162ファイル/2631件成功。ローカル dev（本番DB読み取り）で /work/tmdb-tv-111254 を 390px・1280px で確認（ASP ドメインへの通信は遮断）：Lemino は「Leminoで今すぐ見る →」、href は登録URLと完全一致、カード幅いっぱい（298px / 420px）、高さ40px（Prime Video のボタンと同じ）、背景は赤系グラデーション・文字白、上に PR、URL の文字露出なし、横スクロールなし、コンソールエラーなし。Hulu は従来どおり。人物ページ（吉高由里子・染谷将太）でも Lemino はボタン表示・URL露出0件。
+
+---
+
+## Task 166：フォロー獲得リール10種類（templateCategory=follow_growth）の動画テンプレート追加（2026-11-01・未commit・本番デプロイなし・Worker 未再起動）
+
+**目的：** 人物・グループを入れ替えて何度でも作れる Instagram リール用テンプレートを10種類追加する。既存の「動画管理」から選び、台本 → 読み仮名 → 音声なし動画 → CapCut で音声作成 → WAV・SRT 取り込み → 音声付き MP4、の流れは「推し活で損してるかも？ V1」の生成ジョブごとの CapCut 取り込みをそのまま使う。未確認の出演情報・配信情報・日程を作らない。BGM なし（SNS で追加）。
+
+**10種類（templateId／画面の動き）：** follow_three_works（番号カード）／follow_hidden_works（スポットライト）／follow_career_timeline（タイムライン）／follow_weekly_schedule（日めくりカレンダー）／follow_role_gap（A・B 左右比較）／follow_new_release_backcatalog（NEW の判とフィルム）／follow_new_streaming（通知）／follow_streaming_ending（日付の丸囲み・残り日数は出さない）／follow_weekend_watch（プランのチェック）／follow_genre_breakdown（棒グラフと割合の輪）。
+
+**設計：**
+- 入力の種類 `oshi-follow-reel`（1ジョブ=人物1人 または グループ1つ。person_name に名前）。画面から送るのは選んだ作品ID・確認済みの事実（出典URL・確認日時つき）・対象期間・最後に勧める作品・台本（字幕/読み）だけ。シーン（画面の文字）・メンバー・動画タイトル・ページのパス・出典はジョブ作成時にサーバーがDBの公開作品から作り直して template_input に保存（画面から来たシーンは使わない。再生成でも作り直す）。DB スキーマ変更なし。
+- 事実の出どころ: 作品名・出演年・種類（サイトの表示分類 `getDisplayWorkType`）・役名・配信（`getStreamingProviders`＝確認済みの見放題/無料/広告付き）は推しサーチDBの公開作品だけ。グループはメンバーの公開作品を同じ作品（統合先 → TMDb ID → 正規化名+年）ごとに1件へまとめる（ジャンル集計で重複計上しない。役名はメンバーごとに違うため使わない）。役名は「出演」「本人の名前」「〇〇メンバー」「〇〇レギュラー」など明示した一覧・形に当たる登録値を除外（語の意味で推測しない）。
+- DB に無い事実（出演予定・新作・新規配信開始日・配信終了予定日）は管理画面で入力したものだけ。必須: 出典URL・確認日時（未来不可・14日以内）。出演予定は対象期間（既定は来週の月〜日）内・今日以降、配信開始は30日以内（現在配信中と区別）、配信終了予定は今日以降。足りない・不正なら台本を作らず不足を表示し、サーバーもジョブを作らない。音声付きジョブ作成時にも確かめ直す（期限切れなら拒否）。
+- 台本: 各文は必須部分（作品名・日付など）を短く作り、補足（出演年・種類・役名・配信）は目安17秒に収まる範囲でだけ足す。読みは oshi-video-maker の固定辞書（Worker が最初の follow テンプレートにだけ添えて報告）→ 推しサーチDBの登録読み（読み仮名CSVの取り込み先 pronunciation_readings）→ かなだけの語。無い語は「読み未登録」として表示し、その場で登録できる（登録すると台本を作り直す）。読みに漢字・英字が残る間は音声用台本をコピーできない。視聴時間の表現は使わない。
+- 長さ: シーンの長さは読みの見積もり（8音/秒）+0.3秒で、合計を目安17秒まで伸ばす（1シーン12秒まで）。台本の見積もりが21秒を超えるとジョブを作らない（18秒超は管理画面で注意）。CapCut 音声付きは読み上げ開始の0.1秒前に切り替え、最後の読み終わりの1秒後に終える（21秒まで）。
+- Worker は `VIDEO_WORKER_FOLLOW_TEMPLATES=1` のときだけ10種類を報告する（推しサーチ側が未反映のまま報告すると入力の種類を受け取れず通常テンプレート扱いになるため）。CapCut（生成ジョブごと）は既存の `VIDEO_WORKER_SONKAMO_CAPCUT=1` も必要。
+
+**変更ファイル（oshi-search）：**
+- 新規 `src/lib/video-follow-reel.ts`（10種類の条件・事実の検証・台本とシーンの組み立て・読み・日付/時刻の読み・ジャンル集計・Worker 報告の検証。'use client' 可）、`src/server/video-jobs/follow-target.ts`（`loadFollowTarget`・`resolveFollowJobInput`・`applyFollowAudioSource`）、`src/app/api/admin/video-jobs/follow-candidates/route.ts`（公開作品の候補・読み取りのみ）、`src/app/admin/video-maker/FollowReelPicker.tsx`（人物は PersonCombobox・グループは既存の一覧）。
+- `video-template-input.ts`（`OSHI_FOLLOW_INPUT_KIND`・`parseOshiFollowInput`）、`job-store.ts`（follow の解決・音声付きの付け直し・perJobAudio）、`api/admin/video-jobs/route.ts`（グループ名を受け付ける分岐に follow を追加）、`api/worker/heartbeat/route.ts`（`followScript` の保存）、`capcut-upload/route.ts`（follow の音声なし完了ジョブにも許可）、`SonkamoCapcutAudio.tsx`（入力の組み立てと説明文を差し替え可能に。既定は従来どおり）、`VideoMakerClient.tsx`（follow モード・作成フォームでは CapCut を選ばない・履歴の人物/グループ表示・`FollowJobOutputs`・詳細から CapCut 取り込み）。
+- テスト: `video-follow-reel.test.ts`（18件）、`job-store-follow.test.ts`（4件）。
+
+**変更ファイル（oshi-video-maker）：** 新規 `src/compositions/follow/`（`followInput.ts`・`followScript.ts`・`OshiFollowReel.tsx`・`OshiFollowRoot.tsx`・`index.ts`）、`scripts/followProduce.ts`、`src/lib/__tests__/follow.test.ts`。変更 `videoTemplateRegistry.ts`（`FOLLOW_TEMPLATE_REGISTRY` を末尾に追加・pipeline "follow"・入力の種類）、`capcutNarrationConfig.ts`（10種類）、`scripts/produce.ts`（follow 分岐）、`scripts/worker/videoWorker.ts`（報告の切り替え・`--followInput`・ジョブの WAV/SRT 受け取りを共通化・結果に SRT/読み台本/follow）、`scripts/sonkamo/sonkamoNarration.ts`（引数の型を id/text/kana だけに緩めた。処理は同じ）、`aruaruNarration.test.ts`（登録一覧に10種類を追加）。※この4つの共有ファイルには別作業の未コミット差分も含まれる。
+
+**確認：** oshi-search tsc 0件・vitest 164ファイル/2,654件・`next build` 成功。oshi-video-maker tsc 0件・テスト235件（全件成功）。本番DBを読み取りのみで使い、実データ（M!LK グループ・佐野勇斗・山中柔太朗・吉田仁人）で12ケースの入力をサーバーと同じ処理で作成 → 12本すべて描画・QA PASS（音声なし 17.0〜19.8秒）。出演予定・新作・配信開始・配信終了の4種類は公式情報を確認していないため「動作確認用ダミー」と明記した値・example.com の出典で描画だけ確認（公開しない）。CapCut の代わりに macOS の読み上げで作った WAV と SRT で2本（3作品・ジャンル）を音声付きに：一致度1.00・切り替えは読み上げの0.09〜0.11秒前・読み終わりの約1秒後に終了・-16 LUFS・QA PASS。ジョブの作成・Worker の再起動・デプロイは行っていない。
+
+### Task 166 追記：本番反映前の最終確認と修正（2026-11-01・未commit・本番デプロイなし）
+
+- **長さ：** 年表は締めのシーンをやめ、まとめのシーンに推しサーチへの誘導を重ねた（6→5シーン。19.8秒→17.1〜17.4秒）。出演予定の期間の文は「今回の期間はこちら」に短縮（日付は画面に表示）。音声なしの QA に「目安15〜18秒」の警告を追加（18.5秒超）。CapCut 音声付きは最短15秒（読み上げが短いときは締めを長めに表示。音声は切らず速さも変えない）。
+- **台本：** グループのとき出演作についての文の主語を「〇〇メンバー」（発掘・年表・配信開始・配信終了・ジャンル・各タイトル）。2作品のときは「まずは／もう1本は」。補足のつなぎを「、」に統一。新作・週末プランの締めは作品名を読み直さず「まずはこの1本」。配信終了は「『作品』、U-NEXTでの配信は11月13日まで」（「予定」の重複をやめ、終了日の読みを明確に）、冒頭・締めを短縮。日本語の表記が無い役名（TMDb のローマ字「Sasano Koichi」等）は使わない。
+- **冒頭：** 新作は冒頭に「〇〇 出演・日付」を表示（冒頭2秒で人物名が分かるように）。
+- **見た目：** 冒頭と締めは画面の大きな文字がナレーションと同じため字幕を重ねない（SRT には全文）。締めの補足行を削除し、見出しは語の途中で折り返さない2行表示。字幕の改行を自前の規則に（閉じ括弧・句読点を行頭に置かない、英字の語・空白を考慮、作品名の『』の中の読点では画面を区切らない）。年表のカードとレール・まとめの誘導の重なりを解消。
+- **最終テスト：** 実データ14ケース（10種類＋グループ/人物の差し替え）すべて QA PASS（音声なし 17.0〜17.4秒）。音声付き（macOS 読み上げで代用）：年表 17.2秒・出演予定 16.5秒・配信終了 15.0秒・週末 18.6秒、いずれも一致度1.00・切り替え0.09〜0.11秒前・-16 LUFS 前後。既存の「推し活で損してるかも？」を実際の CapCut WAV・SRT と前回の撮影データで再生成 → 本番と同じ 16.3秒・切り替え 0/3.17/6.00/8.80/12.23秒・QA PASS。oshi-search tsc 0件・vitest 164ファイル/2,654件・build 成功、oshi-video-maker tsc 0件・236件成功。
+- **切り分けの確認：** HEAD に今回の変更だけを載せた作業ツリーで、oshi-search（7ファイル変更＋6ファイル新規）は tsc 0件・vitest 159ファイル/2,558件・build 成功。oshi-video-maker は共有6ファイルから今回の差分だけ（22か所）を HEAD に当てて tsc 0件・テスト204件成功（別作業の未コミット差分＝お買い物診断テンプレート・Worker の確認間隔などは含めない）。

@@ -12,6 +12,7 @@ import {
   type VideoTemplateInput,
 } from '@/lib/video-template-input';
 import { checkVodCompareSharedCapcut, type SharedCapcutRequirement } from '@/lib/oshi-vod/video-feature';
+import type { FollowScriptReport } from '@/lib/video-follow-reel';
 import type { SonkamoScriptTemplate } from '@/lib/video-sonkamo-script';
 
 /**
@@ -46,6 +47,8 @@ export interface WorkerTemplateInfo {
   templateInputKind?: TemplateInputKind;
   /** 推し活で損してるかも？だけ: 台本の雛形（管理画面がナレーション原稿を作って編集できるようにする。正本は oshi-video-maker） */
   scriptTemplate?: SonkamoScriptTemplate;
+  /** フォロー獲得リールだけ: 台本の読みに使う oshi-video-maker の固定辞書など（正本は oshi-video-maker） */
+  followScript?: FollowScriptReport;
 }
 
 export interface WorkerInfo {
@@ -317,6 +320,18 @@ export async function createVideoJobs(input: {
     if (input.narrationMode !== 'capcut' && templateInput.audio) throw new VideoJobError('CapCut 音声を付けたジョブは CapCut 方式だけで作れます。', 400);
     templateInput = await applySonkamoAudioSource(input.personNames[0], templateInput);
   }
+  // フォロー獲得リール: 人物・グループと選んだ作品・確認済みの事実をDBで確かめ、シーンを作り直す（再生成でも作り直す）。
+  // CapCut 音声付きは、元の音声なし動画のジョブからシーンと台本を付け直す
+  if (templateInput && 'targetType' in templateInput) {
+    if (input.narrationMode === 'capcut' && !templateInput.audio) {
+      throw new VideoJobError('音声付きの動画は、完了した音声なし動画に CapCut の WAV・SRT を付けて作ってください。', 400);
+    }
+    if (input.narrationMode !== 'capcut' && templateInput.audio) throw new VideoJobError('CapCut 音声を付けたジョブは CapCut 方式だけで作れます。', 400);
+    const { resolveFollowJobInput, applyFollowAudioSource } = await import('./follow-target');
+    templateInput = templateInput.audio
+      ? await applyFollowAudioSource(template.templateId, input.personNames[0], templateInput)
+      : await resolveFollowJobInput(template.templateId, input.personNames[0], templateInput);
+  }
   // CapCut保存済み音声: Workerが報告した状態がreadyの人物だけ受け付ける（フロントだけに任せない）。
   // 実際に生成する直前にもWorker側で再確認する。
   // テンプレート共通のCapCut音声が使えるテンプレートは、人物ごとのready判定をしない（共通音声が無ければ生成しない）
@@ -335,8 +350,8 @@ export async function createVideoJobs(input: {
   if (templateInput && 'workIds' in templateInput) {
     await assertOshiCardWorks(input.personNames[0], templateInput.workIds);
   }
-  // 生成ジョブごとに CapCut 音声を付けるテンプレート（推し活で損してるかも？）は、人物ごとの保存済み音声を確かめない
-  const perJobAudio = !!templateInput && 'target' in templateInput && !!templateInput.audio;
+  // 生成ジョブごとに CapCut 音声を付けるテンプレート（推し活で損してるかも？・フォロー獲得リール）は、人物ごとの保存済み音声を確かめない
+  const perJobAudio = !!templateInput && ('target' in templateInput || 'targetType' in templateInput) && !!templateInput.audio;
   if (input.narrationMode === 'capcut' && !template.sharedCapcut && !perJobAudio) {
     const notReady = input.personNames
       .map((name) => {

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { put } from '@vercel/blob/client';
 
-// 動画「推し活で損してるかも？ V1」: 完了した音声なし動画に、CapCut で書き出した WAV（narration.wav）と SRT（narration.srt）を付けて、
+// 動画「推し活で損してるかも？ V1」・フォロー獲得リール（10種類）: 完了した音声なし動画に、CapCut で書き出した WAV（narration.wav）と SRT（narration.srt）を付けて、
 // 「音声付き動画を生成」で音声付きの動画を別のジョブとして作る（元の音声なし動画はそのまま残る）。
 // ファイルはこのジョブ専用のパスへ Vercel Blob に直接アップロードする（許可は /api/admin/video-jobs/{id}/capcut-upload）。
 // 合成（字幕と台本の対応付け・読み上げに合わせたシーンの伸縮・音声の重ね合わせ）は動画生成Worker（oshi-video-maker）が行う。
@@ -45,11 +45,17 @@ export default function SonkamoCapcutAudio({
   job,
   voicedJobs,
   onCreated,
+  buildTemplateInput,
+  endingNote = '最後の読み上げの約1秒後にサイト紹介で終わります。21秒まで',
 }: {
   job: { id: string; personName: string; templateId: string; templateInput?: { target?: 'person' | 'group' } | null };
   /** この音声なし動画から作った音声付きのジョブ（新しい順） */
   voicedJobs: SonkamoVoicedJob[];
   onCreated: () => void;
+  /** 音声付きのジョブの入力（省略時は推し活で損してるかも？の形）。原稿・シーンはサーバーが元のジョブから付け直す */
+  buildTemplateInput?: (audio: { sourceJobId: string; wavUrl: string; srtUrl: string }) => Record<string, unknown>;
+  /** 説明文の「動画の終わり方」 */
+  endingNote?: string;
 }) {
   const [wav, setWav] = useState<FileState>({ status: 'none' });
   const [srt, setSrt] = useState<FileState>({ status: 'none' });
@@ -84,7 +90,9 @@ export default function SonkamoCapcutAudio({
           templateId: job.templateId,
           narrationMode: 'capcut',
           // 原稿・撮影データの場所はサーバーが元のジョブから付け直す
-          templateInput: { version: 1, target: job.templateInput?.target ?? 'person', honorific: '', memberName: null, lines: null, audio: { sourceJobId: job.id, wavUrl: wav.url, srtUrl: srt.url } },
+          templateInput: buildTemplateInput
+            ? buildTemplateInput({ sourceJobId: job.id, wavUrl: wav.url, srtUrl: srt.url })
+            : { version: 1, target: job.templateInput?.target ?? 'person', honorific: '', memberName: null, lines: null, audio: { sourceJobId: job.id, wavUrl: wav.url, srtUrl: srt.url } },
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -129,7 +137,7 @@ export default function SonkamoCapcutAudio({
       <p className="font-bold text-violet-800">🎙 CapCut 音声を付けて、音声付き動画を作る</p>
       <p className="text-gray-600">
         CapCut に「音声用台本」を貼って好きなAI音声で読み上げ、速度を調整して、音声を WAV（narration.wav）、字幕を SRT（narration.srt）で書き出してから選んでください。
-        字幕と台本を照合し、読み上げに合わせて各シーンを伸縮した動画を作ります（最後の読み上げの約1秒後にサイト紹介で終わります。21秒まで。この音声なし動画はそのまま残ります）。
+        字幕と台本を照合し、読み上げに合わせて各シーンを伸縮した動画を作ります（{endingNote}。この音声なし動画はそのまま残ります）。
       </p>
       {fileRow('wav', wav, '音声（narration.wav）')}
       {fileRow('srt', srt, '字幕（narration.srt）')}

@@ -12,7 +12,7 @@ import {
 } from '@/server/video-jobs/job-store';
 import { loadOshiVodVideoDiagnosis } from '@/server/oshi-vod/video-diagnosis';
 import { markVideoAdminActive } from '@/server/video-jobs/worker-poll';
-import { OSHI_SONKAMO_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND, parseOshiVodCompareInput, TemplateInputError } from '@/lib/video-template-input';
+import { OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND, parseOshiVodCompareInput, TemplateInputError } from '@/lib/video-template-input';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,7 +80,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ jobs });
     }
     // 推し活で損してるかも？: 人物 または グループ1つで1ジョブ（グループ名は人物の登録には無いため、存在確認は createVideoJobs で行う）
-    if (workerTemplate?.templateInputKind === OSHI_SONKAMO_INPUT_KIND) {
+    // フォロー獲得リールも同じ（人物・グループの存在確認と作品・事実の確認は createVideoJobs で行う）
+    if (workerTemplate?.templateInputKind === OSHI_SONKAMO_INPUT_KIND || workerTemplate?.templateInputKind === OSHI_FOLLOW_INPUT_KIND) {
       if (personNames.length !== 1) return NextResponse.json({ error: '人物かグループを1つだけ選んでください。' }, { status: 400 });
       const jobs = await createVideoJobs({ personNames, templateId, narrationMode, templateInput: body.templateInput });
       return NextResponse.json({ jobs });
