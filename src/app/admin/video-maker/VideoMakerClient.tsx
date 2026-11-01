@@ -20,6 +20,8 @@ import FollowReelPicker, { EMPTY_FOLLOW_PICK, followPickReady, followTemplateInp
 import { isFollowTemplateId, parseFollowScriptReport, type FollowScene } from '@/lib/video-follow-reel';
 import CopyButton from './CopyButton';
 import SonkamoCapcutAudio from './SonkamoCapcutAudio';
+import FollowCapcutAutoStatus from './FollowCapcutAutoStatus';
+import type { CapcutAutoEvent } from '@/lib/video-capcut-auto-status';
 import SonkamoTargetPicker, { EMPTY_SONKAMO_PICK, sonkamoPickReady, type SonkamoGroupOption, type SonkamoPick } from './SonkamoTargetPicker';
 import { parseSonkamoScriptTemplate } from '@/lib/video-sonkamo-script';
 import OshiCardWorkPicker, { EMPTY_OSHI_CARD_PICK, type OshiCardPick } from './OshiCardWorkPicker';
@@ -124,6 +126,9 @@ interface CapcutStoreReport {
     message: string | null;
     updatedAt: string;
   };
+  /** フォロー獲得リールの CapCut 音声の自動取り込み（受信フォルダ）の最近の出来事 */
+  jobAudioEvents?: Array<CapcutAutoEvent & { fileBase: string; jobKey: string; sourceJobId: string | null }>;
+  inboxPath?: string;
 }
 
 // まず見る3作: 台本の準備状態（台本完成でも、CapCut音声が無ければCapCutの状態は「音声なし」のまま）
@@ -1598,6 +1603,11 @@ export default function VideoMakerClient({
                       reelAutopublishEnabled={reelAutopublishEnabled}
                       onReelChanged={() => void load()}
                       allJobs={jobs}
+                      capcutAuto={{
+                        inboxDir: worker?.capcutStore?.inboxPath ?? (worker?.capcutStore?.inboxDir ? `oshi-video-maker/${worker.capcutStore.inboxDir}` : null),
+                        events: (worker?.capcutStore?.jobAudioEvents ?? []).filter((e) => (e.sourceJobId ? e.sourceJobId === job.id : e.jobKey === job.id.slice(0, 8))),
+                        workerOnline: !!worker?.online,
+                      }}
                     />
                   )}
                   {open && job.status === 'failed' && (
@@ -1765,8 +1775,11 @@ function CompletedDetail({
   reelAutopublishEnabled,
   onReelChanged,
   allJobs = [],
+  capcutAuto,
 }: {
   job: VideoJob;
+  /** フォロー獲得リール: CapCut 音声の自動取り込み（Worker の受信フォルダ・このジョブの出来事） */
+  capcutAuto?: { inboxDir: string | null; events: CapcutAutoEvent[]; workerOnline: boolean };
   /** 推し活で損してるかも？: この動画から作った音声付きのジョブを探すため（生成履歴の全件） */
   allJobs?: VideoJob[];
   /** Instagram投稿文に差し込む人物（ジョブの人物名と、人物データのグループ名） */
@@ -1872,13 +1885,26 @@ function CompletedDetail({
     )}
     {job.templateInput?.targetType && <FollowJobOutputs job={job} />}
     {job.templateInput?.targetType && job.narrationMode === 'none' && job.status === 'completed' && (
-      <SonkamoCapcutAudio
-        job={job}
-        voicedJobs={allJobs.filter((j) => j.templateInput?.audio?.sourceJobId === job.id)}
-        onCreated={onReelChanged}
-        endingNote="最後の読み上げの約1秒後に終わります（15秒に満たない場合は締めを長めに表示して15秒）。21秒まで"
-        buildTemplateInput={(audio) => ({ version: 1, targetType: job.templateInput?.targetType ?? 'person', selectedWorkIds: [], facts: [], periodStart: null, pickWorkId: null, lines: null, audio })}
-      />
+      <>
+        <FollowCapcutAutoStatus
+          job={job}
+          voicedJobs={allJobs.filter((j) => j.templateInput?.audio?.sourceJobId === job.id)}
+          events={capcutAuto?.events ?? []}
+          inboxDir={capcutAuto?.inboxDir ?? null}
+          workerOnline={capcutAuto?.workerOnline ?? false}
+        />
+        {/* 予備: 自動取り込みが使えないとき（Worker の受信フォルダに書き出せない等）の手動の取り込み */}
+        <details className="mt-2 text-xs">
+          <summary className="cursor-pointer text-gray-600">手動で WAV・SRT を取り込む（予備）</summary>
+          <SonkamoCapcutAudio
+            job={job}
+            voicedJobs={allJobs.filter((j) => j.templateInput?.audio?.sourceJobId === job.id)}
+            onCreated={onReelChanged}
+            endingNote="最後の読み上げの約1秒後に終わります（15秒に満たない場合は締めを長めに表示して15秒）。21秒まで"
+            buildTemplateInput={(audio) => ({ version: 1, targetType: job.templateInput?.targetType ?? 'person', selectedWorkIds: [], facts: [], periodStart: null, pickWorkId: null, lines: null, audio })}
+          />
+        </details>
+      </>
     )}
     <InstagramCaptionSection templateId={job.templateId} person={captionPerson} />
     {igReelUrl && (

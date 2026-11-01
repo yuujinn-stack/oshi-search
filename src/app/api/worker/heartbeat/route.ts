@@ -3,6 +3,7 @@ import {
   touchVideoJobHeartbeat,
   upsertWorkerHeartbeat,
   type CapcutStoreEntry,
+  type CapcutJobAudioEvent,
   type CapcutStoreReport,
   type CapcutStoreStatus,
   type First3QueueProgress,
@@ -116,6 +117,25 @@ function sanitizeQueue(raw: unknown): First3QueueProgress | undefined {
  * Workerの生存報告。テンプレート一覧（正本はoshi-video-makerのVIDEO_TEMPLATE_REGISTRY）と
  * 対応人物名を毎回まとめて受け取り、video_workersへ保存する。実行中ジョブがあればそのheartbeatも更新する。
  */
+const JOB_AUDIO_STATUSES = new Set(['detected', 'attached', 'error']);
+const JOB_ID_RE = /^[0-9a-f-]{36}$/;
+/** フォロー獲得リールの CapCut 音声の自動取り込みの出来事（型・長さを検証。最大30件） */
+function sanitizeJobAudioEvents(raw: unknown[]): CapcutJobAudioEvent[] {
+  return raw
+    .slice(0, 30)
+    .map((e) => (e ?? {}) as Record<string, unknown>)
+    .filter((e) => typeof e.fileBase === 'string' && typeof e.jobKey === 'string' && JOB_AUDIO_STATUSES.has(String(e.status)))
+    .map((e) => ({
+      fileBase: str(e.fileBase, 200)!,
+      jobKey: str(e.jobKey, 20)!,
+      sourceJobId: typeof e.sourceJobId === 'string' && JOB_ID_RE.test(e.sourceJobId) ? e.sourceJobId : null,
+      status: e.status as CapcutJobAudioEvent['status'],
+      message: str(e.message, 500) ?? '',
+      voicedJobId: typeof e.voicedJobId === 'string' && JOB_ID_RE.test(e.voicedJobId) ? e.voicedJobId : null,
+      at: str(e.at, 40) ?? new Date().toISOString(),
+    }));
+}
+
 export async function POST(req: NextRequest) {
   return handleWorkerRequest(req, async ({ workerId, body }) => {
     const templates: WorkerTemplateInfo[] = (Array.isArray(body.templates) ? body.templates : [])
@@ -174,6 +194,8 @@ export async function POST(req: NextRequest) {
           })),
         ...(Array.isArray(rawCapcut.scriptOnlyEntries) ? { scriptOnlyEntries: sanitizeEntries(rawCapcut.scriptOnlyEntries) } : {}),
         ...(sanitizeQueue(rawCapcut.first3Queue) ? { first3Queue: sanitizeQueue(rawCapcut.first3Queue) } : {}),
+        ...(Array.isArray(rawCapcut.jobAudioEvents) ? { jobAudioEvents: sanitizeJobAudioEvents(rawCapcut.jobAudioEvents) } : {}),
+        ...(typeof rawCapcut.inboxPath === 'string' && rawCapcut.inboxPath.startsWith('/') ? { inboxPath: str(rawCapcut.inboxPath, 500)! } : {}),
       };
     }
     const capcutPrepareRequests = await upsertWorkerHeartbeat({ workerId, version: str(body.version, 50), templates, persons, capcutStore });

@@ -160,6 +160,24 @@ export interface CapcutStoreReport {
    */
   scriptOnlyEntries?: CapcutStoreEntry[];
   first3Queue?: First3QueueProgress;
+  /** フォロー獲得リールの CapCut 音声の自動取り込み（受信フォルダ）の最近の出来事（新しい順。管理画面の「詳細」に表示する） */
+  jobAudioEvents?: CapcutJobAudioEvent[];
+  /** 受信フォルダの絶対パス（自動取り込みが有効な Worker だけ。管理画面で CapCut の保存先としてコピーする） */
+  inboxPath?: string;
+}
+
+/**
+ * Worker が受信フォルダで見つけた「{人物slug}__{templateId}__{ジョブIDの先頭8桁}」の WAV・SRT の処理状況。
+ * detected=見つけてアップロード中、attached=音声付き動画のジョブを作成済み、error=取り込めなかった（ファイルは _inbox/_failed へ）
+ */
+export interface CapcutJobAudioEvent {
+  fileBase: string;
+  jobKey: string;
+  sourceJobId: string | null;
+  status: 'detected' | 'attached' | 'error';
+  message: string;
+  voicedJobId: string | null;
+  at: string;
 }
 
 export class VideoJobError extends Error {

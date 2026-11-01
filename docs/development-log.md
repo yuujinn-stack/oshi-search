@@ -5772,3 +5772,28 @@ oshi-search（未commit）
 
 **確認：** tsc 0件・vitest 165ファイル/2,664件・`next build` 成功。本番DBを読み取りのみで M!LK（435件中 配信先あり250件）・佐野勇斗（121件中73件）を確認し、候補に配信先なしが混ざらないこと、ジャンル・サービス・検索の絞り込み、ジャンルを切り替えながら3本選んで台本生成→サーバーのジョブ入力検証まで通ることを確認（ジョブは作っていない）。管理画面のブラウザ操作は未確認（ログインが必要なため）。Worker・動画生成・WAV/SRT 取り込み・読み仮名辞書は変更なし。
 - **データ上の注意（変更していない）：** M!LK に、作品IDが違う同名・同年の登録が6組ある（TMDb と CSV の別登録：ESCAPE それは誘拐のはずだった・口説き文句は決めている・3D彼女 リアルガール・VS.超特急・EBiDAN LIVE SCHOOL!!!、TMDb のドラマと映画で別登録の 君がトクベツ）。公開画面と同じく別の作品として表示する。同じ作品なら既存の作品統合で1件にできる。
+
+---
+
+## Task 168：フォロー獲得リール10種類の CapCut 音声の自動取り込み（Worker の受信フォルダ）（2026-11-01・未commit・本番デプロイなし・Worker 未再起動）
+
+**目的：** CapCut で WAV・SRT を書き出したら、管理画面での手動アップロード・「音声付き動画を生成」を押さずに、音声付きの完成MP4が作られて動画管理に保存されるようにする。
+
+**既存の仕組み（調査結果）：**
+- 自動検知は oshi-video-maker の受信フォルダ `assets/audio-capcut/_inbox`（`scripts/capcutStore.ts` の `processCapcutInbox`）。Worker がジョブ確認のループごとに見る（localhost:4321 の管理画面も同じ関数）。ファイル名 `{人物slug}__{templateId}.wav/.srt`、直下と1階層下のフォルダ、両方そろう・最終更新から3秒たつまで待つ、処理後は `_done`／`_failed`（理由は .error.txt）へ移動して二重に処理しない。これは「人物×テンプレートごとの保存済み音声」（台本ハッシュで管理）で、毎回内容が変わるジョブごとの音声には使えない。
+- 推し活で損してるかも？・フォロー獲得リールの「ジョブごとの音声」は手動: 詳細で WAV・SRT を Blob へ直接アップロード（`capcut-upload` の一時許可・`video-jobs/{元ジョブID}/capcut-*`）→「音声付き動画を生成」で `narrationMode=capcut`・`template_input.audio` の別ジョブを作成 → Worker が取得し、WAV・SRT をダウンロードして `alignSonkamoNarration`（字幕と台本の照合）→ 読み上げに合わせたシーン配分 → 合成・音量正規化・QA → final.mp4 を Blob へ → 完了報告（管理画面は10秒ごとに更新）。
+
+**今回の方式（既存の2つをつなぐだけ。新しい合成処理は作らない）：**
+- 受信フォルダの規則を拡張: `{人物slug}__{templateId}__{ジョブIDの先頭8桁}.wav/.srt` は「生成ジョブごとの音声」として Worker の perJob ハンドラへ渡す（待ち方・移動・二重処理防止は既存の processCapcutInbox のまま）。ハンドラを持たないプロセス（localhost:4321 等）はこの名前のファイルに触らない。
+- Worker（`scripts/worker/capcutAutoImport.ts`）: WAV であること・SRT に字幕があること・音声が読めることを確かめ → `/api/worker/capcut-audio/prepare`（推しサーチがジョブID先頭8桁・人物slug・テンプレート・「完了した音声なし動画」・作成中の音声付きジョブが無いことを確かめ、手動と同じ一時許可を返す）→ 仮動画の完成より前に書き出されたファイルは使わない（2分の余裕）→ Blob へ直接アップロード → `/api/worker/capcut-audio/attach`（手動の「音声付き動画を生成」と同じ createVideoJobs。作る直前に再確認）→ 以降は通常のジョブとして同じ Worker が生成（音声は切らず速さも変えない。21秒を超える音声は理由つきで失敗）。
+- 待機中も受信フォルダ（ローカル）を2秒ごとに見て、ファイルが増えて書き込みが落ち着いたら次のジョブ確認を早める（推しサーチへの通信は増やさない）。
+- 状況表示: Worker は出来事（検知・ジョブ作成・エラー）を既存の生存報告の `capcutStore.jobAudioEvents` で送る（DB スキーマ変更なし）。管理画面の完了した音声なし動画の「詳細」に「仮動画生成完了 → CapCut音声待ち → WAV・SRT検知済み → 音声・字幕を反映中 → 完成MP4生成完了／エラー」とファイル名（コピーボタン）・書き出し先を表示。ジョブ作成後の進み具合は生成履歴（音声付きのジョブ）が正本。手動の取り込みは「手動で WAV・SRT を取り込む（予備）」として残す。
+- 有効条件: Worker の `VIDEO_WORKER_FOLLOW_TEMPLATES=1` と `VIDEO_WORKER_SONKAMO_CAPCUT=1`（どちらも設定済み）。新しい環境変数は不要。
+
+**変更ファイル（oshi-search）：** 新規 `src/server/video-jobs/capcut-auto-import.ts`（元ジョブの確認・一時許可の共通化 `issueCapcutUploadToken`・ジョブ作成）、`src/app/api/worker/capcut-audio/prepare/route.ts`、`.../attach/route.ts`、`src/lib/video-capcut-auto-status.ts`、`src/app/admin/video-maker/FollowCapcutAutoStatus.tsx`。変更 `api/admin/video-jobs/[id]/capcut-upload/route.ts`（許可の発行を共通関数に。条件は同じ）、`job-store.ts`（`CapcutJobAudioEvent` 型）、`api/worker/heartbeat/route.ts`（出来事の検証・保存）、`VideoMakerClient.tsx`（表示の追加・手動を予備の折りたたみに）。テスト新規 `capcut-auto-import.test.ts`（4件）、`video-capcut-auto-status.test.ts`（4件）。
+
+**変更ファイル（oshi-video-maker）：** 新規 `scripts/worker/capcutAutoImport.ts`、`src/lib/__tests__/capcutAutoImport.test.ts`（8件）。変更 `scripts/capcutStore.ts`（perJob・テスト用の inboxDir）、`scripts/worker/videoWorker.ts`（ハンドラの組み込み・出来事の報告・待機中の受信フォルダ確認）、`scripts/worker/searchApiClient.ts`（prepare/attach）。※ videoWorker.ts・searchApiClient.ts には別作業のステージ済み差分（Worker の確認間隔）がある。
+
+**テスト：** oshi-search tsc 0件・vitest 167ファイル/2,673件・build 成功。oshi-video-maker tsc 0件・244件成功。この Mac だけでの通し確認（推しサーチ・Blob はローカルの偽物、CapCut の代わりに macOS の読み上げで作った WAV・SRT）: 3作品×M!LK で仮動画生成 → 一時受信フォルダで検知（_done へ移動）→ 音声付き生成 QA PASS（17.9秒・切り替えは各字幕の0.05〜0.1秒前・-16.0 LUFS）。他の9種類も同じ流れで QA PASS（12.0〜20.0秒の音声。15秒未満は締めを延ばして15秒）。別の人物の名前のファイルは理由つきで _failed。本番APIへの接続・実際の CapCut 書き出しは未確認。
+- **CapCut の操作（追記）：** ファイル名の自動設定は CapCut の自動操作が必要なため行わない（禁止事項）。他テンプレートの受信フォルダ方式（名前 `{人物slug}__{templateId}` を貼って受信フォルダへ書き出す）と同じ手順で、名前の末尾にジョブIDの先頭8桁が付くだけ（ワンクリックでコピー）。手動の取り込み（アップロード・ボタン）より操作は少ない。Worker が受信フォルダの絶対パス（`capcutStore.inboxPath`）を報告し、「詳細」に名前・保存先をそれぞれワンクリックでコピーできるボタンを置いた。
+- **注意：** `scripts/capcutStore.ts` は「起動後に変わったら取り込みを止める」対象のため、起動中の Worker はこの変更以降、受信フォルダの取り込み（全テンプレート）を止めている（ログに表示）。デプロイ後の Worker 再起動で戻る。
