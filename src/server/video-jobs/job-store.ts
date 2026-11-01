@@ -350,6 +350,18 @@ export async function createVideoJobs(input: {
       ? await applyFollowAudioSource(template.templateId, input.personNames[0], templateInput)
       : await resolveFollowJobInput(template.templateId, input.personNames[0], templateInput);
   }
+  // 登録グループ紹介: 現在の登録グループ（トップページと同じ一覧）から区間を作り直す（再生成でも作り直す）。
+  // CapCut 音声付き（リールだけ）は、元の音声なし動画のジョブから区間と台本を付け直す
+  if (templateInput && 'selection' in templateInput) {
+    if (input.narrationMode === 'capcut' && !templateInput.audio) {
+      throw new VideoJobError('音声付きの動画は、完了した音声なし動画に CapCut の WAV・SRT を付けて作ってください。', 400);
+    }
+    if (input.narrationMode !== 'capcut' && templateInput.audio) throw new VideoJobError('CapCut 音声を付けたジョブは CapCut 方式だけで作れます。', 400);
+    const { resolveRegisteredJobInput, applyRegisteredAudioSource } = await import('./registered-target');
+    templateInput = templateInput.audio
+      ? await applyRegisteredAudioSource(template.templateId, input.personNames[0], templateInput)
+      : await resolveRegisteredJobInput(template.templateId, input.personNames[0], templateInput);
+  }
   // CapCut保存済み音声: Workerが報告した状態がreadyの人物だけ受け付ける（フロントだけに任せない）。
   // 実際に生成する直前にもWorker側で再確認する。
   // テンプレート共通のCapCut音声が使えるテンプレートは、人物ごとのready判定をしない（共通音声が無ければ生成しない）
@@ -368,8 +380,8 @@ export async function createVideoJobs(input: {
   if (templateInput && 'workIds' in templateInput) {
     await assertOshiCardWorks(input.personNames[0], templateInput.workIds);
   }
-  // 生成ジョブごとに CapCut 音声を付けるテンプレート（推し活で損してるかも？・フォロー獲得リール）は、人物ごとの保存済み音声を確かめない
-  const perJobAudio = !!templateInput && ('target' in templateInput || 'targetType' in templateInput) && !!templateInput.audio;
+  // 生成ジョブごとに CapCut 音声を付けるテンプレート（推し活で損してるかも？・フォロー獲得リール・登録グループ紹介）は、人物ごとの保存済み音声を確かめない
+  const perJobAudio = !!templateInput && ('target' in templateInput || 'targetType' in templateInput || 'selection' in templateInput) && !!templateInput.audio;
   if (input.narrationMode === 'capcut' && !template.sharedCapcut && !perJobAudio) {
     const notReady = input.personNames
       .map((name) => {

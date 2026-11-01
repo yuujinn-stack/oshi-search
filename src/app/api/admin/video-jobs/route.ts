@@ -12,7 +12,8 @@ import {
 } from '@/server/video-jobs/job-store';
 import { loadOshiVodVideoDiagnosis } from '@/server/oshi-vod/video-diagnosis';
 import { markVideoAdminActive } from '@/server/video-jobs/worker-poll';
-import { OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND, parseOshiVodCompareInput, TemplateInputError } from '@/lib/video-template-input';
+import { OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND, parseOshiVodCompareInput, TemplateInputError } from '@/lib/video-template-input';
+import { REGISTERED_JOB_NAME } from '@/lib/video-registered-groups';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,6 +85,11 @@ export async function POST(req: NextRequest) {
     if (workerTemplate?.templateInputKind === OSHI_SONKAMO_INPUT_KIND || workerTemplate?.templateInputKind === OSHI_FOLLOW_INPUT_KIND) {
       if (personNames.length !== 1) return NextResponse.json({ error: '人物かグループを1つだけ選んでください。' }, { status: 400 });
       const jobs = await createVideoJobs({ personNames, templateId, narrationMode, templateInput: body.templateInput });
+      return NextResponse.json({ jobs });
+    }
+    // 登録グループ紹介: 推しサーチ全体の動画を1本（person_name は「推しサーチ」。グループの一覧・件数は createVideoJobs でDBから作る）
+    if (workerTemplate?.templateInputKind === OSHI_REGISTERED_INPUT_KIND) {
+      const jobs = await createVideoJobs({ personNames: [REGISTERED_JOB_NAME], templateId, narrationMode, templateInput: body.templateInput });
       return NextResponse.json({ jobs });
     }
     const registered = new Set((await getAllPersonsMerged()).map((p) => p.name));

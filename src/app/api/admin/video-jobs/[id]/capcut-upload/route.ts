@@ -5,6 +5,7 @@ import { videoGenerationJobs } from '@/db/schema';
 import { maskSecrets } from '@/lib/mask-secrets';
 import { SONKAMO_TEMPLATE_ID } from '@/server/video-jobs/sonkamo-target';
 import { isFollowTemplateId } from '@/lib/video-follow-reel';
+import { isRegisteredReelId } from '@/lib/video-registered-groups';
 import { issueCapcutUploadToken } from '@/server/video-jobs/capcut-auto-import';
 import { VideoJobError } from '@/server/video-jobs/job-store';
 
@@ -28,8 +29,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try {
     const [job] = await db.select().from(videoGenerationJobs).where(eq(videoGenerationJobs.id, id));
     if (!job) return NextResponse.json({ error: 'ジョブが見つかりません' }, { status: 404 });
-    if ((job.templateId !== SONKAMO_TEMPLATE_ID && !isFollowTemplateId(job.templateId)) || job.status !== 'completed' || job.narrationMode !== 'none') {
-      return NextResponse.json({ error: 'CapCut 音声は「推し活で損してるかも？ V1」・フォロー獲得リールの完了した音声なし動画にだけ付けられます' }, { status: 409 });
+    if ((job.templateId !== SONKAMO_TEMPLATE_ID && !isFollowTemplateId(job.templateId) && !isRegisteredReelId(job.templateId)) || job.status !== 'completed' || job.narrationMode !== 'none') {
+      return NextResponse.json({ error: 'CapCut 音声は「推し活で損してるかも？ V1」・フォロー獲得リール・登録グループ紹介のリールの完了した音声なし動画にだけ付けられます' }, { status: 409 });
     }
     // 許可の中身（パス・種類・大きさ・期限）は自動取り込み（Worker）と共通
     return NextResponse.json(await issueCapcutUploadToken(id, kind, size));

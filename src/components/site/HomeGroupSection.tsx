@@ -2,54 +2,19 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { getHomeGroupCategory, type HomeGroupCategory } from '@/lib/home-group-category';
 
 export interface HomeGroupItem {
   name: string;
   href: string;
 }
 
-type GroupCategory = 'femaleIdol' | 'maleIdol' | 'other';
+type GroupCategory = HomeGroupCategory;
 type Filter = 'all' | GroupCategory;
 
-// トップページ「グループで探す」の絞り込み専用の表示分類（明示的なマッピング）。
-// DB・group_meta・人物データとは独立しており、ここに無いグループ（新規追加など）は「その他」になる。
-// 照合は NFKC 正規化後に行う（例: データ上の「＝LOVE」は全角＝）。
-const HOME_GROUP_CATEGORY: Record<string, GroupCategory> = {
-  // 女性アイドル
-  '乃木坂46': 'femaleIdol',
-  '櫻坂46': 'femaleIdol',
-  '欅坂46': 'femaleIdol',
-  '日向坂46': 'femaleIdol',
-  '=LOVE': 'femaleIdol',
-  'FRUITS ZIPPER': 'femaleIdol',
-  // 男性アイドル・男性アイドル系
-  'Snow Man': 'maleIdol',
-  'SixTONES': 'maleIdol',
-  'なにわ男子': 'maleIdol',
-  'Travis Japan': 'maleIdol',
-  'timelesz': 'maleIdol',
-  '嵐': 'maleIdol',
-  'M!LK': 'maleIdol',
-  // その他（お笑い・バンド・俳優集団など）
-  'バナナマン': 'other',
-  'オードリー': 'other',
-  'モナキ': 'other',
-  'D-BOYS': 'other',
-  'DISH//': 'other',
-  'THE ORAL CIGARETTES': 'other',
-  'BLUE ENCOUNT': 'other',
-  'SPYAIR': 'other',
-  'UVERworld': 'other',
-};
-
-const normalizeGroupKey = (name: string) => name.normalize('NFKC').trim();
-const CATEGORY_BY_KEY = new Map(
-  Object.entries(HOME_GROUP_CATEGORY).map(([name, cat]) => [normalizeGroupKey(name), cat]),
-);
-
-function getGroupCategory(name: string): GroupCategory {
-  return CATEGORY_BY_KEY.get(normalizeGroupKey(name)) ?? 'other';
-}
+// トップページ「グループで探す」の絞り込み専用の表示分類（明示的なマッピング。src/lib/home-group-category.ts）。
+// DB・group_meta・人物データとは独立しており、一覧に無いグループ（新規追加など）は「その他」になる。
+const getGroupCategory = getHomeGroupCategory;
 
 const FILTER_LABEL: Record<Filter, string> = {
   all: 'すべて',

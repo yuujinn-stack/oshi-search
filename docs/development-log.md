@@ -5797,3 +5797,38 @@ oshi-search（未commit）
 **テスト：** oshi-search tsc 0件・vitest 167ファイル/2,673件・build 成功。oshi-video-maker tsc 0件・244件成功。この Mac だけでの通し確認（推しサーチ・Blob はローカルの偽物、CapCut の代わりに macOS の読み上げで作った WAV・SRT）: 3作品×M!LK で仮動画生成 → 一時受信フォルダで検知（_done へ移動）→ 音声付き生成 QA PASS（17.9秒・切り替えは各字幕の0.05〜0.1秒前・-16.0 LUFS）。他の9種類も同じ流れで QA PASS（12.0〜20.0秒の音声。15秒未満は締めを延ばして15秒）。別の人物の名前のファイルは理由つきで _failed。本番APIへの接続・実際の CapCut 書き出しは未確認。
 - **CapCut の操作（追記）：** ファイル名の自動設定は CapCut の自動操作が必要なため行わない（禁止事項）。他テンプレートの受信フォルダ方式（名前 `{人物slug}__{templateId}` を貼って受信フォルダへ書き出す）と同じ手順で、名前の末尾にジョブIDの先頭8桁が付くだけ（ワンクリックでコピー）。手動の取り込み（アップロード・ボタン）より操作は少ない。Worker が受信フォルダの絶対パス（`capcutStore.inboxPath`）を報告し、「詳細」に名前・保存先をそれぞれワンクリックでコピーできるボタンを置いた。
 - **注意：** `scripts/capcutStore.ts` は「起動後に変わったら取り込みを止める」対象のため、起動中の Worker はこの変更以降、受信フォルダの取り込み（全テンプレート）を止めている（ログに表示）。デプロイ後の Worker 再起動で戻る。
+
+---
+
+## Task 169：登録グループ紹介シリーズ（リール5種類・ストーリーズ5種類。templateCategory=registered_groups）の動画テンプレート追加（2026-11-01・未commit・本番デプロイなし・Worker 未再起動）
+
+**目的：** 推しサーチに現在登録されている人物・グループを紹介し、今後も登録を増やしていくことを伝える公式アカウント向けの動画を、既存の動画管理から作れるようにする。主役は特定の人物ではなく推しサーチの登録状況。明るい公式のお知らせ（感動・苦労話・強引なフォロー要求・クイズは使わない）。
+
+**10種類（templateId）：** リール `registered_groups_all`（全グループをジャンル別）／`registered_groups_male`／`registered_groups_female`／`registered_groups_other`（それぞれ一覧＋トップページ「グループで探す」の実画面）／`registered_groups_progress`（登録人物数・グループ数＋実画面＋メッセージ）。ストーリーズ `story_registered_groups_all`／`_male`／`_female`／`_other`／`story_registered_groups_future`（数字＋登録グループの一部）。
+
+**設計：**
+- **データの正本：** グループの一覧はトップページ「グループで探す」・サイトマップと同じ `getAllGroupsMerged`（公開人物の所属グループ＋所属履歴。同じ名前は1件・表示名はトップページと同じ文字列）、人物数はトップページ「登録タレント」と同じ `getAllPersonsMerged`。テンプレートにグループ名・件数を固定しない。ジョブ作成時にサーバー（`registered-target.ts`）が現在の登録データから区間（画面の文字・ページ）を作り直す（画面から送られた区間・件数は使わない）。表示件数＝一覧の名前の数（除外したときは「n組（登録 m組のうち）」）。
+- **ジャンル：** トップページ「グループで探す」の明示的な分類（従来 `HomeGroupSection.tsx` 内にあった一覧を `src/lib/home-group-category.ts` へ移しただけ。値・トップページの動作は同じ）だけを使う。一覧に無いグループ（現在は Aぇ! group・King & Prince・Number_i）は「分類なし」とし、男性・女性・その他の動画には入れない（推測しない。全グループの一覧では「分類なし」の見出しで表示し、管理画面に注意を出す）。group_meta.gender は写真集用の性別でアイドルかどうかは分からないため使わない。
+- **ページ分け：** 1ページは2列×5段（長い名前は1段を使う。並べた順のまま置く）。リールで4ページを超えるときは3列×6段にし、長さの上限を30秒に広げる（管理画面に注意）。ストーリーズは常に2列×5段で、1ページ3秒（ページが増えれば長くなる）。文字は語の途中で切らず（英字の語は空白で折り返す）、収まる大きさまで小さくする。
+- **台本（リール）：** グループ名は読み上げない（画面表示のみ。読みを推測しない）。読むのは固定の文と件数（`kumiKana`・`ninKana`）だけ。締めは「これからも登録グループを増やしていきます！引き続き、推しサーチをよろしくお願いします！」（指定文の短縮版）。音声なしの目安は16.0〜17.6秒（現在のデータ）。
+- **CapCut 音声：** 既存の流れをそのまま使う（台本 → ひらがな台本をコピー → 仮動画 → CapCut → `{人物slug}__{templateId}__{ジョブIDの先頭8桁}` で受信フォルダへ WAV・SRT → Worker が自動検知 → 音声付きのジョブ → 完成MP4）。person_name は「推しサーチ」、人物slug は従来どおり `personVideoSlug`。手動の取り込みも予備として残す。音声付きのジョブは元の音声なし動画の区間・台本・件数をそのまま使う（`applyRegisteredAudioSource`）。配分はフォロー獲得リールと同じ `buildFollowTimeline`（上限だけ引数で指定できるようにした。既定は従来の21秒）。一覧が1ページ1.5秒に足りないときは次の区間への切り替えを遅らせて一覧を最後まで見せる（音声は切らず速さも変えない。QA に警告）。ストーリーズは音声なしだけ。
+- **実画面：** リール R2〜R5 は Worker が本番のトップページを開き「グループで探す」（男性アイドル・女性アイドルはその絞り込みをタップ、その他・登録状況は「すべて」）を撮る（読み取りのみ・計測は遮断）。撮った画面のグループ名を記録し、一覧のグループが同じ絞り込みにあるかを QA で確かめる。撮影画像は出力フォルダの `screens/` に置き、Remotion の `--public-dir` で読む（.gitignore は変更しない）。
+- **ストーリーズ：** 上部のプロフィール表示・下部のリンクスタンプのため主役は 300〜1450px。押せるように見えるボタンは置かない（サイト名とURLは文字だけ）。管理画面・詳細にリンクスタンプの推奨URL（https://oshi-search.jp/）とコピーボタン。
+- **Worker の報告：** `VIDEO_WORKER_REGISTERED_TEMPLATES=1` のときだけ10種類を報告する（推しサーチ側の反映前に報告しないため。未設定＝現状は報告しない）。リールの CapCut は既存の `VIDEO_WORKER_SONKAMO_CAPCUT=1` も必要。自動取り込みはフォロー獲得リールと登録グループ紹介のどちらかが有効なときに動く。
+
+**変更ファイル（oshi-search）：** 新規 `src/lib/video-registered-groups.ts`（10種類の構成・ジャンル・ページ分け・台本・長さ）、`src/lib/home-group-category.ts`、`src/server/video-jobs/registered-target.ts`、`src/app/api/admin/video-jobs/registered-candidates/route.ts`（読み取りのみ）、`src/app/admin/video-maker/RegisteredGroupsPicker.tsx`（対象グループの確認・表示/除外・↑↓で表示順・台本生成・音声用台本のコピー・ページ分けのプレビュー・リンクURLのコピー）。変更 `HomeGroupSection.tsx`（分類の一覧を共通ファイルから読むだけ）、`video-template-input.ts`（`OSHI_REGISTERED_INPUT_KIND`・`parseOshiRegisteredInput`）、`job-store.ts`（区間の作り直し・音声付きの付け直し・perJobAudio）、`api/admin/video-jobs/route.ts`（person_name を「推しサーチ」に固定）、`capcut-upload/route.ts`・`capcut-auto-import.ts`（登録グループ紹介のリールも許可。音声付きのジョブの入力）、`VideoMakerClient.tsx`（テンプレートの分岐・生成ボタン・詳細の `RegisteredJobOutputs`・自動取り込みの表示）。テスト新規 `video-registered-groups.test.ts`（9件）・`registered-target.test.ts`（5件）、`capcut-auto-import.test.ts`（+2件）。DB スキーマ変更なし。
+
+**変更ファイル（oshi-video-maker）：** 新規 `src/compositions/registered/`（`registeredInput.ts`・`registeredScript.ts`・`OshiRegisteredGroups.tsx`・`OshiRegisteredRoot.tsx`・`index.ts`）、`scripts/registeredProduce.ts`、`scripts/registered/captureRegisteredScreens.ts`、`src/lib/__tests__/registered.test.ts`（5件）。変更 `videoTemplateRegistry.ts`（`REGISTERED_TEMPLATE_REGISTRY` を末尾に追加・pipeline "registered"）、`capcutNarrationConfig.ts`（リール5種類）、`scripts/produce.ts`（registered 分岐）、`scripts/worker/videoWorker.ts`（報告の切り替え・`--registeredInput`・ジョブの WAV/SRT・結果）、`scripts/worker/capcutAutoImport.ts`（登録グループ紹介のリールも受け付ける）、`followScript.ts`（`buildFollowTimeline` に上限の引数。既定は同じ）、`aruaruNarration.test.ts`・`capcutAutoImport.test.ts`（登録一覧・メッセージの追随）。※ registry・config・produce・videoWorker には別作業の未コミット差分もある。
+
+**確認（2026-11-01）：**
+- oshi-search: tsc 0件・vitest 169ファイル/2,690件 成功・`next build` 成功。oshi-video-maker: tsc 0件・テスト249件 成功（既存の登録一覧テストに10種類を追加）。
+- 本番DBを読み取りのみで使い、現在のデータ（人物373人・グループ25組＝男性アイドル7・女性アイドル6・その他9・分類なし3）でサーバーと同じ処理で10種類の入力を作成 → 10本すべて生成・QA PASS（リール 16.0〜17.6秒、ストーリーズ 7.2〜16.2秒）。一覧の件数と名前・実画面の絞り込みの一致を QA で確認。除外・並べ替え（嵐・モナキを除外、逆順）でも件数「n組（登録 m組のうち）」と並びが一致。架空の名前を足した59組（長い名前を含む）でリールは3列×6段・23.0秒、ストーリーズは9ページ・31.2秒で QA PASS（文字のはみ出しなし）。
+- CapCut の代わりに macOS の読み上げで作った WAV・SRT で、リール5種類を「仮動画 → 受信フォルダ（一時）→ 本物の processCapcutInbox と自動取り込みハンドラ（推しサーチ・Blob はローカルの偽物）→ 音声付き生成」まで通し、すべて QA PASS（15.0〜17.3秒・各区間は読み上げの約0.1秒前に切り替え・-16 LUFS 前後）。速い読み上げでは一覧を最後まで見せるため締めへの切り替えを0.8秒遅らせた（QA 警告）。別の人物の名前のファイルは理由つきで _failed。
+- 未確認: 本番API・本番Worker での生成、実際の CapCut での書き出し、管理画面のブラウザ操作（Worker が10種類を報告するまで画面に出ないため）。コミット・デプロイ・Worker の環境変数追加と再起動は行っていない。
+
+### Task 169 追記：分類なしの3グループを男性アイドルへ・ストーリーズ1本の上限（2026-11-02）
+
+- **分類：** ユーザーの指示により Aぇ! group・King & Prince・Number_i を `src/lib/home-group-category.ts` の `maleIdol` に追加（既存の分類は femaleIdol／maleIdol／other の3つだけで、ダンス＆ボーカル等の区分は無いため男性アイドル）。トップページ「グループで探す」の絞り込みと動画テンプレートは同じ一覧を使うため、両方に反映される。現在の登録25組はすべて分類あり（男性アイドル10・女性アイドル6・その他9。「分類なし」の見出しは出ない）。今後一覧に無いグループが増えた場合の扱い（動画では「分類なし」、トップページでは「その他」）は従来どおり。
+- **ストーリーズの上限：** 1本の合計が60秒（Instagram のストーリーズ1枚の動画の長さ）を超える一覧は、文字を小さくしたり切り替えを速めたりせず、グループを黙って省略もせず、ジョブを作らない（`REGISTERED_STORY_MAX_SECONDS`。「グループを除外して2本以上に分けて作成してください」と表示）。1ページ3秒・2列×5段のため、全グループのストーリーズは約170組まで1本に収まる。分けるときは除外を使って2本作る。
+- **変更ファイル：** `home-group-category.ts`、`video-registered-groups.ts`（上限）、`capcut-upload/route.ts`（エラーメッセージに登録グループ紹介を追加）、テスト（分類・男性10組・上限）。
+- **確認：** oshi-search tsc 0件・vitest 169ファイル/2,691件・`next build` 成功。oshi-video-maker tsc 0件・249件。本番DB（読み取りのみ）で10種類を作り直して生成し全て QA PASS（R1・S1 は25組、男性は10組。R1 17.0秒・男性 16.2秒・S1 13.2秒・男性ストーリーズ 7.2秒）。男性リールの実画面の照合は、本番のトップページが新しい分類になるまで警告（デプロイ後に再確認）。

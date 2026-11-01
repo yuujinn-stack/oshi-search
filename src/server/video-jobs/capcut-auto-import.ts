@@ -5,9 +5,10 @@ import { generateClientTokenFromReadWriteToken } from '@vercel/blob/client';
 import { db } from '@/db/client';
 import { videoGenerationJobs } from '@/db/schema';
 import { isFollowTemplateId } from '@/lib/video-follow-reel';
+import { isRegisteredReelId, REGISTERED_TEMPLATE_CATEGORY } from '@/lib/video-registered-groups';
 import { createVideoJobs, VideoJobError, type VideoJob } from './job-store';
 
-// フォロー獲得リール（10種類）の CapCut 音声の自動取り込み（Worker の CapCut 受信フォルダ _inbox から）。
+// フォロー獲得リール（10種類）・登録グループ紹介のリール（5種類）の CapCut 音声の自動取り込み（Worker の CapCut 受信フォルダ _inbox から）。
 //
 // ・手動の取り込み（管理画面の「詳細」→ WAV・SRT を選ぶ →「音声付き動画を生成」）と同じ処理をそのまま使う:
 //   WAV・SRT はこのジョブ専用のパス video-jobs/{元のジョブID}/capcut-{乱数}.wav|.srt へ Vercel Blob に直接アップロードし
@@ -62,10 +63,10 @@ export const CAPCUT_JOB_KEY_PATTERN = /^[0-9a-f]{8}$/;
 
 type JobRow = typeof videoGenerationJobs.$inferSelect;
 
-/** 元のジョブ（完了したフォロー獲得リールの音声なし動画）を探す。1件に決まらない・条件に合わないときは理由つきで拒否する */
+/** 元のジョブ（完了したフォロー獲得リール・登録グループ紹介のリールの音声なし動画）を探す。1件に決まらない・条件に合わないときは理由つきで拒否する */
 export async function findCapcutAutoSource(key: CapcutAutoKey): Promise<JobRow> {
   if (!CAPCUT_JOB_KEY_PATTERN.test(key.jobKey)) throw new VideoJobError('ファイル名のジョブID（先頭8桁の英数字）が不正です。', 400);
-  if (!isFollowTemplateId(key.templateId)) throw new VideoJobError(`自動取り込みに対応していないテンプレートです: ${key.templateId}`, 400);
+  if (!isFollowTemplateId(key.templateId) && !isRegisteredReelId(key.templateId)) throw new VideoJobError(`自動取り込みに対応していないテンプレートです: ${key.templateId}`, 400);
   const rows = await db
     .select()
     .from(videoGenerationJobs)
@@ -121,6 +122,17 @@ export async function attachCapcutAutoImport(input: { sourceJobId: string; wavUr
   await findCapcutAutoSource({ jobKey: job.id.slice(0, 8), personSlug: job.personSlug ?? '', templateId: job.templateId });
   const active = await findActiveVoicedJob(job.id);
   if (active) throw new VideoJobError(`この動画の音声付き動画はすでに作成中です（ジョブ ${active.id.slice(0, 8)}）。`, 409);
+  const audio = { sourceJobId: job.id, wavUrl: input.wavUrl, srtUrl: input.srtUrl };
+  // 登録グループ紹介: 区間・台本は元のジョブから付け直す（applyRegisteredAudioSource）
+  if (isRegisteredReelId(job.templateId)) {
+    const [created] = await createVideoJobs({
+      personNames: [job.personName],
+      templateId: job.templateId,
+      narrationMode: 'capcut',
+      templateInput: { version: 1, templateCategory: REGISTERED_TEMPLATE_CATEGORY, selection: { order: null, excluded: [] }, lines: [], audio },
+    });
+    return created;
+  }
   const targetType = (job.templateInput as { targetType?: unknown } | null)?.targetType === 'group' ? 'group' : 'person';
   const [created] = await createVideoJobs({
     personNames: [job.personName],
@@ -134,7 +146,7 @@ export async function attachCapcutAutoImport(input: { sourceJobId: string; wavUr
       periodStart: null,
       pickWorkId: null,
       lines: null,
-      audio: { sourceJobId: job.id, wavUrl: input.wavUrl, srtUrl: input.srtUrl },
+      audio,
     },
   });
   return created;

@@ -120,3 +120,31 @@ describe('attachCapcutAutoImport: 音声付き動画のジョブ作成', () => {
     expect(state.created).toHaveLength(0);
   });
 });
+
+describe('登録グループ紹介のリール: 同じ自動取り込み', () => {
+  const REG = { ...SOURCE, personName: '推しサーチ', templateId: 'registered_groups_all', templateInput: { templateCategory: 'registered_groups' } };
+  const REG_KEY = { ...KEY, templateId: 'registered_groups_all' };
+
+  it('リールは受け付け、音声付きのジョブは区間・台本を元のジョブから付け直す入力で作る', async () => {
+    const { prepareCapcutAutoImport, attachCapcutAutoImport } = await import('../capcut-auto-import');
+    state.queue.push([REG], []);
+    await expect(prepareCapcutAutoImport(REG_KEY, { wavBytes: 1000, srtBytes: 100 })).resolves.toMatchObject({ sourceJobId: REG.id, personName: '推しサーチ' });
+    const wavUrl = `https://abc.public.blob.vercel-storage.com/video-jobs/${REG.id}/capcut-1.wav`;
+    const srtUrl = `https://abc.public.blob.vercel-storage.com/video-jobs/${REG.id}/capcut-2.srt`;
+    state.queue.push([REG], [REG], [], []);
+    await attachCapcutAutoImport({ sourceJobId: REG.id, wavUrl, srtUrl });
+    expect(state.created).toEqual([
+      {
+        personNames: ['推しサーチ'],
+        templateId: 'registered_groups_all',
+        narrationMode: 'capcut',
+        templateInput: { version: 1, templateCategory: 'registered_groups', selection: { order: null, excluded: [] }, lines: [], audio: { sourceJobId: REG.id, wavUrl, srtUrl } },
+      },
+    ]);
+  });
+
+  it('ストーリーズ（音声なしだけ）は自動取り込みの対象外', async () => {
+    const { prepareCapcutAutoImport } = await import('../capcut-auto-import');
+    await expect(prepareCapcutAutoImport({ ...KEY, templateId: 'story_registered_groups_all' }, { wavBytes: 1000, srtBytes: 100 })).rejects.toThrow(/対応していないテンプレート/);
+  });
+});

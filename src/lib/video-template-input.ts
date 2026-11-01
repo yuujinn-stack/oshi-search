@@ -6,6 +6,7 @@
 // 人物の識別子は推しサーチDBの人物slug（personVideoSlug: 'p-' + sha256(人物名)の先頭12桁）を正本にする。
 
 import { FOLLOW_TEMPLATE_CATEGORY, type FollowFact, type FollowFactKind, type FollowLine, type FollowScene, type FollowTargetType } from './video-follow-reel';
+import { REGISTERED_TEMPLATE_CATEGORY, type RegisteredCounts, type RegisteredLine, type RegisteredSegment, type RegisteredSelection } from './video-registered-groups';
 
 /** 推しでサブスク比較（3人の推しに合うサブスク診断）: 人物3人 */
 export const OSHI_VOD_COMPARE_INPUT_KIND = 'oshi-vod-compare-persons' as const;
@@ -39,8 +40,18 @@ const FOLLOW_TEXT_MAX = 70;
 const FOLLOW_KANA_MAX = 110;
 const FOLLOW_MAX_LINES = 8;
 
-export type TemplateInputKind = typeof OSHI_VOD_COMPARE_INPUT_KIND | typeof OSHI_CARD_SELECTION_INPUT_KIND | typeof OSHI_SONKAMO_INPUT_KIND | typeof OSHI_FOLLOW_INPUT_KIND;
-export const TEMPLATE_INPUT_KINDS: readonly TemplateInputKind[] = [OSHI_VOD_COMPARE_INPUT_KIND, OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND];
+/**
+ * 登録グループ紹介（リール5種類・ストーリーズ5種類・templateCategory=registered_groups）: 1ジョブ=1本（person_name は「推しサーチ」）。
+ * 画面で選んだ除外・並べ替えと確認した台本を保存し、区間（グループ名・件数・ページ）はジョブ作成時にサーバーがDBから作り直す
+ * （src/server/video-jobs/registered-target.ts。構成は src/lib/video-registered-groups.ts）
+ */
+export const OSHI_REGISTERED_INPUT_KIND = 'oshi-registered-groups' as const;
+const REGISTERED_MAX_LINES = 6;
+const REGISTERED_MAX_GROUPS = 500;
+const GROUP_NAME_MAX = 100;
+
+export type TemplateInputKind = typeof OSHI_VOD_COMPARE_INPUT_KIND | typeof OSHI_CARD_SELECTION_INPUT_KIND | typeof OSHI_SONKAMO_INPUT_KIND | typeof OSHI_FOLLOW_INPUT_KIND | typeof OSHI_REGISTERED_INPUT_KIND;
+export const TEMPLATE_INPUT_KINDS: readonly TemplateInputKind[] = [OSHI_VOD_COMPARE_INPUT_KIND, OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND];
 
 export interface OshiVodCompareTemplateInput {
   version: 1;
@@ -99,6 +110,26 @@ export interface OshiFollowTemplateInput {
   audio?: OshiSonkamoAudio;
 }
 
+export interface OshiRegisteredTemplateInput {
+  version: 1;
+  templateCategory: typeof REGISTERED_TEMPLATE_CATEGORY;
+  /** 管理画面で選んだ除外・並べ替え（グループ名） */
+  selection: RegisteredSelection;
+  /** リールだけ: 管理画面で確認・編集した台本（字幕・読み。区間と同じ数・同じ順）。ストーリーズは空 */
+  lines: RegisteredLine[];
+  // ここから下はサーバーがジョブ作成時に付ける（画面からの値は使わない）
+  segments?: RegisteredSegment[];
+  title?: string;
+  counts?: RegisteredCounts;
+  /** 一覧に表示したグループ（表示順） */
+  shownGroups?: string[];
+  /** ストーリーズだけ: リンクスタンプに設定する推奨URL（リンクスタンプは Instagram 側で手動） */
+  storyLinkUrl?: string | null;
+  resolvedAt?: string;
+  /** CapCut 音声付きのジョブだけ（区間・台本は元のジョブから付け直す） */
+  audio?: OshiSonkamoAudio;
+}
+
 export interface OshiSonkamoAudio {
   sourceJobId: string;
   wavUrl: string;
@@ -128,7 +159,7 @@ function parseSonkamoAudio(raw: unknown): OshiSonkamoAudio {
   return { sourceJobId: o.sourceJobId, wavUrl: o.wavUrl, srtUrl: o.srtUrl, ...(typeof o.sourceOutDir === 'string' ? { sourceOutDir: o.sourceOutDir } : {}) };
 }
 
-export type VideoTemplateInput = OshiVodCompareTemplateInput | OshiCardSelectionTemplateInput | OshiSonkamoTemplateInput | OshiFollowTemplateInput;
+export type VideoTemplateInput = OshiVodCompareTemplateInput | OshiCardSelectionTemplateInput | OshiSonkamoTemplateInput | OshiFollowTemplateInput | OshiRegisteredTemplateInput;
 
 /** personVideoSlug の形式 */
 const PERSON_SLUG_PATTERN = /^p-[0-9a-f]{12}$/;
@@ -280,6 +311,42 @@ export function parseOshiFollowInput(raw: unknown): OshiFollowTemplateInput {
   };
 }
 
+const groupNames = (v: unknown, label: string): string[] => {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v) || v.length > REGISTERED_MAX_GROUPS || v.some((n) => typeof n !== 'string' || !n.trim() || n.length > GROUP_NAME_MAX)) {
+    throw new TemplateInputError(`${label}の指定が不正です。`);
+  }
+  return [...new Set((v as string[]).map((n) => n.trim()))];
+};
+
+/**
+ * 登録グループ紹介の入力の形を検証して正規化する（グループが登録済みか・台本と区間の対応はサーバーで確認する）。
+ * サーバーが付ける項目（区間・件数等）は画面から受け取らない
+ */
+export function parseOshiRegisteredInput(raw: unknown): OshiRegisteredTemplateInput {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TemplateInputError('登録グループ紹介の指定がありません。');
+  const obj = raw as Record<string, unknown>;
+  if (obj.version !== undefined && obj.version !== 1) throw new TemplateInputError('未対応の入力形式です。');
+  const sel = (obj.selection ?? {}) as Record<string, unknown>;
+  if (typeof sel !== 'object' || Array.isArray(sel)) throw new TemplateInputError('表示するグループの指定が不正です。');
+  const order = sel.order === null || sel.order === undefined ? null : groupNames(sel.order, '表示順');
+  const excluded = groupNames(sel.excluded, '除外するグループ');
+  const audio = obj.audio !== undefined && obj.audio !== null ? parseSonkamoAudio(obj.audio) : undefined;
+  const rawLines = obj.lines ?? [];
+  if (!Array.isArray(rawLines) || rawLines.length > REGISTERED_MAX_LINES) throw new TemplateInputError('台本の指定が不正です。');
+  const lines: RegisteredLine[] = rawLines.map((l, i) => {
+    const o = (l ?? {}) as Record<string, unknown>;
+    const id = typeof o.id === 'string' && /^\d{2}-[a-z]+$/.test(o.id) ? o.id : null;
+    const text = typeof o.text === 'string' ? o.text.trim() : '';
+    const kana = typeof o.kana === 'string' ? o.kana.trim() : '';
+    if (!id) throw new TemplateInputError(`台本の${i + 1}文目の指定が不正です。`);
+    if (!text || Array.from(text).length > FOLLOW_TEXT_MAX) throw new TemplateInputError(`${i + 1}文目の字幕は1〜${FOLLOW_TEXT_MAX}文字にしてください。`);
+    if (!kana || Array.from(kana).length > FOLLOW_KANA_MAX) throw new TemplateInputError(`${i + 1}文目の読みは1〜${FOLLOW_KANA_MAX}文字にしてください。`);
+    return { id, text, kana };
+  });
+  return { version: 1, templateCategory: REGISTERED_TEMPLATE_CATEGORY, selection: { order, excluded }, lines, ...(audio ? { audio } : {}) };
+}
+
 /** テンプレートの入力種別に応じて検証する */
 export function parseTemplateInput(kind: TemplateInputKind, raw: unknown): VideoTemplateInput {
   switch (kind) {
@@ -291,5 +358,7 @@ export function parseTemplateInput(kind: TemplateInputKind, raw: unknown): Video
       return parseOshiSonkamoInput(raw);
     case OSHI_FOLLOW_INPUT_KIND:
       return parseOshiFollowInput(raw);
+    case OSHI_REGISTERED_INPUT_KIND:
+      return parseOshiRegisteredInput(raw);
   }
 }
