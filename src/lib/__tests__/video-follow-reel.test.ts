@@ -28,6 +28,8 @@ const work = (id: string, over: Partial<FollowWork> = {}): FollowWork => ({
   roleName: null,
   persons: ['佐野勇斗'],
   streaming: [],
+  // 確認済みの配信先（作品選択欄用。見放題でなくてもよい）
+  available: [{ key: 'amazonvideo', provider: 'Prime Video', typeLabel: 'レンタル', channel: false }],
   ...over,
 });
 const WORKS: FollowWork[] = [
@@ -43,6 +45,17 @@ const plan = (templateId: (typeof FOLLOW_TEMPLATE_IDS)[number], selection: Parti
   buildFollowPlan({ templateId, targetType, name: '佐野勇斗', works: WORKS, selection: { ...empty, ...selection }, readings: READINGS, nowMs: NOW });
 
 describe('フォロー獲得リール: 必要な情報が足りないときは台本を作らない', () => {
+  it('3作品・意外な出演作は、配信先が確認できない作品を選べない（候補にも出さない）。年表は選べる', () => {
+    const none = work('z', { available: [] });
+    const works = [...WORKS, none];
+    for (const id of ['follow_three_works', 'follow_hidden_works'] as const) {
+      expect(isEligibleFollowWork(id, none), id).toBe(false);
+      const r = buildFollowPlan({ templateId: id, targetType: 'person', name: '佐野勇斗', works, selection: { ...empty, selectedWorkIds: ['a', 'b', 'z'] }, readings: READINGS, nowMs: NOW });
+      expect(r.ok, id).toBe(false);
+      if (!r.ok) expect(r.missing.join(' ')).toMatch(/『作品z』は配信先が確認されていません/);
+    }
+    expect(isEligibleFollowWork('follow_career_timeline', none)).toBe(true);
+  });
   it('作品の選択が必要なテンプレートは、未選択なら不足を返す', () => {
     for (const id of FOLLOW_TEMPLATE_IDS.filter((t) => FOLLOW_TEMPLATE_SPECS[t].works.min > 0)) {
       const r = plan(id, {});

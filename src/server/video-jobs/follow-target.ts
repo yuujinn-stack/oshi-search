@@ -7,10 +7,11 @@ import { getAllMembershipRecords } from '@/lib/group-membership-store';
 import { groupMembershipRecords, listGroupNames, personsInGroup } from '@/lib/group-membership';
 import { getPublishedWorksOrThrow } from '@/lib/work-store';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
-import { getStreamingProviders } from '@/lib/vod-availability';
+import { getConfirmedProviders, getStreamingProviders } from '@/lib/vod-availability';
+import { getVodProviderDisplayInfo, isPrimeVideoChannel, normalizeProviderName } from '@/lib/vod-dedup';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
 import { VOD_TYPE_LABEL } from '@/types/vod';
-import type { WorkRecord } from '@/types/work';
+import type { VodProvider, WorkRecord } from '@/types/work';
 import {
   FOLLOW_MAX_SECONDS,
   allocateFollowSlots,
@@ -18,6 +19,7 @@ import {
   isActingRoleName,
   isFollowTemplateId,
   validateFollowFacts,
+  type FollowAvailability,
   type FollowTargetType,
   type FollowWork,
 } from '@/lib/video-follow-reel';
@@ -40,11 +42,25 @@ export interface FollowTargetData {
   works: FollowWork[];
 }
 
-/** 同じ作品の判定（作品の統合先 → TMDb の作品ID → 正規化した作品名と年） */
+/**
+ * 同じ作品の判定（作品の統合先 → TMDb の作品ID → 正規化した作品名と年）。
+ * これより先に、同じ作品ID の登録は公開画面のグループページと同じく1件にまとめる（loadFollowTarget。
+ * CSV の作品はメンバーごとに出演年が違う登録があり、作品名と年だけでは別の作品になってしまうため）
+ */
 function workKey(w: WorkRecord): string {
   if (w.canonicalWorkId) return `c:${w.canonicalWorkId}`;
   if (w.tmdbId) return `t:${w.type}:${w.tmdbId}`;
   return `n:${w.normalizedTitle}|${w.releaseYear ?? ''}`;
+}
+
+/** 確認済みの配信先（公開画面のグループページと同じ getConfirmedProviders。表示名・追加チャンネルの判定も公開画面と同じ関数） */
+function toAvailability(providers: VodProvider[], inactive: Set<string>): FollowAvailability[] {
+  return getConfirmedProviders(providers, inactive).map((p) => ({
+    key: normalizeProviderName(p.providerName),
+    provider: getVodProviderDisplayInfo(p.providerName).displayName,
+    typeLabel: VOD_TYPE_LABEL[p.type],
+    channel: isPrimeVideoChannel(p.providerName),
+  }));
 }
 
 function toFollowWork(w: WorkRecord, inactive: Set<string>): FollowWork {
@@ -59,6 +75,7 @@ function toFollowWork(w: WorkRecord, inactive: Set<string>): FollowWork {
     roleName: isActingRoleName(w.roleName, w.personName) ? w.roleName!.trim() : null,
     persons: [w.personName],
     streaming: getStreamingProviders(w, inactive).map((p) => ({ provider: p.providerName, typeLabel: VOD_TYPE_LABEL[p.type], checkedDate: p.checkedDate ?? null })),
+    available: toAvailability(w.vodProviders ?? [], inactive),
   };
 }
 
@@ -78,16 +95,23 @@ export async function loadFollowTarget(targetType: FollowTargetType, name: strin
   }
   const lists = await Promise.all(personNames.map((n) => getPublishedWorksOrThrow(n)));
   const byKey = new Map<string, FollowWork>();
+  // グループで同じ作品に複数のメンバーの登録があるときは、全員分の配信情報を合わせて判定し直す（同じサービスは1件に集約される）
+  const rawProviders = new Map<string, VodProvider[]>();
+  const keyById = new Map<string, string>();
   const order: string[] = [];
   for (const records of lists) {
     for (const r of records) {
-      const key = workKey(r);
+      const key = keyById.get(r.id) ?? workKey(r);
+      keyById.set(r.id, key);
       const existing = byKey.get(key);
       if (!existing) {
         byKey.set(key, toFollowWork(r, inactive));
+        rawProviders.set(key, [...(r.vodProviders ?? [])]);
         order.push(key);
         continue;
       }
+      rawProviders.get(key)!.push(...(r.vodProviders ?? []));
+      existing.available = toAvailability(rawProviders.get(key)!, inactive);
       // 同じ作品に出演しているメンバーを足す。役名・出演年・配信は最初の登録を使い、無い項目だけ補う
       if (!existing.persons.includes(r.personName)) existing.persons.push(r.personName);
       if (existing.year === null && r.releaseYear) existing.year = r.releaseYear;

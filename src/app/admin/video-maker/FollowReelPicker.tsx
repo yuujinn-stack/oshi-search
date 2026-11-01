@@ -25,12 +25,25 @@ import {
   type FollowTemplateId,
   type FollowWork,
 } from '@/lib/video-follow-reel';
+import {
+  DEFAULT_FOLLOW_WORK_FILTER,
+  FOLLOW_PICK_GENRES,
+  FOLLOW_PICK_GENRE_LABEL,
+  FOLLOW_WORK_SORT_LABEL,
+  countFollowPickGenres,
+  filterFollowWorks,
+  listFollowServices,
+  type FollowWorkFilter,
+  type FollowWorkSort,
+} from '@/lib/video-follow-work-filter';
 
 // 動画「フォロー獲得リール」（10種類）の対象・作品・確認済みの事実・台本。
 // 1. 人物 または グループを選ぶ → 推しサーチの公開作品を読み込む（グループはメンバーの作品を同じ作品ごとにまとめる）
 // 2. テンプレートに必要な作品を選ぶ／公式情報で確認した事実を出典URL・確認日時と一緒に入力する（足りなければ不足を表示して作らない）
 // 3. 「台本を生成」→ 読み仮名（固定辞書・登録読み）を当てた台本。読み未登録の語はここで登録できる → 音声用台本を一括コピーして CapCut へ
 // 選択・事実・読みが変わったら台本は作り直す（作り直すまで生成できない）。シーンはジョブ作成時にサーバーがDBから作り直す。
+// 作品の一覧は、配信先が確認できる作品だけを既定で表示し、ジャンル・配信サービス・作品名で絞り込む（src/lib/video-follow-work-filter.ts）。
+// 絞り込みは表示だけで、選んだ作品（selection）は条件を変えても残る。ジャンル集計（follow_genre_breakdown）は絞り込みと関係なく全作品を数える。
 
 export interface FollowPick {
   targetType: FollowTargetType;
@@ -91,6 +104,8 @@ export default function FollowReelPicker({
   const [note, setNote] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
   const [unresolved, setUnresolved] = useState<string[]>([]);
+  const [filter, setFilter] = useState<FollowWorkFilter>(DEFAULT_FOLLOW_WORK_FILTER);
+  const patchFilter = (patch: Partial<FollowWorkFilter>) => setFilter((f) => ({ ...f, ...patch }));
 
   const loadReadings = useCallback(async () => {
     setReadingsStatus('loading');
@@ -114,6 +129,7 @@ export default function FollowReelPicker({
     setWorks(null);
     setWorksError(null);
     setPersonNames([]);
+    setFilter(DEFAULT_FOLLOW_WORK_FILTER);
     if (!value.name) return;
     let cancelled = false;
     void (async () => {
@@ -177,6 +193,13 @@ export default function FollowReelPicker({
     if (ids.includes(id)) setSelection({ selectedWorkIds: ids.filter((x) => x !== id), pickWorkId: value.selection.pickWorkId === id ? null : value.selection.pickWorkId });
     else if (ids.length < spec.works.max) setSelection({ selectedWorkIds: [...ids, id] });
   };
+  const moveWork = (index: number, delta: -1 | 1) => {
+    const ids = [...value.selection.selectedWorkIds];
+    const to = index + delta;
+    if (to < 0 || to >= ids.length) return;
+    [ids[index], ids[to]] = [ids[to], ids[index]];
+    setSelection({ selectedWorkIds: ids });
+  };
   const facts = value.selection.facts;
   const setFact = (i: number, patch: Partial<FollowFact>) => setSelection({ facts: facts.map((f, k) => (k === i ? { ...f, ...patch } : f)) });
   const addFact = () => spec.facts && setSelection({ facts: [...facts, { kind: spec.facts.kind, date: '', sourceUrl: '', checkedAt: '', ...(spec.facts.kind === 'release' ? { releaseKind: '放送' } : {}) }] });
@@ -204,7 +227,15 @@ export default function FollowReelPicker({
     }
   }
 
-  const eligible = works?.filter((w) => isEligibleFollowWork(templateId, w)) ?? [];
+  const eligible = useMemo(() => works?.filter((w) => isEligibleFollowWork(templateId, w)) ?? [], [works, templateId]);
+  // 配信先の有無を必須にしていないテンプレート（年表・役柄の比較・新作と過去作）は、配信先のない作品も表示に切り替えられる
+  const availableRequired = !!(spec.works.requireAvailable || spec.works.requireStreaming);
+  const effectiveFilter = useMemo(() => (availableRequired ? { ...filter, availableOnly: true } : filter), [availableRequired, filter]);
+  const shownWorks = useMemo(() => filterFollowWorks(eligible, effectiveFilter), [eligible, effectiveFilter]);
+  const genreCounts = useMemo(() => countFollowPickGenres(eligible, effectiveFilter), [eligible, effectiveFilter]);
+  const services = useMemo(() => listFollowServices(eligible, effectiveFilter), [eligible, effectiveFilter]);
+  const selectedIds = value.selection.selectedWorkIds;
+  const remaining = Math.max(0, spec.works.min - selectedIds.length);
   const nowMs = Date.now();
   const liveErrors = works ? [...validateFollowWorks(templateId, value.targetType, value.selection, works), ...validateFollowFacts(templateId, value.selection, works, nowMs)] : [];
   const stale = !!value.lines && !(value.scriptKey ?? '').startsWith(selectionKey(value, templateId));
@@ -258,17 +289,100 @@ export default function FollowReelPicker({
       )}
 
       {works && spec.works.max > 0 && (
-        <div className="space-y-1">
+        <div className="space-y-2">
           <p className="text-xs font-bold text-slate-700">
             作品（{spec.works.min === spec.works.max ? `${spec.works.min}本` : `${spec.works.min}〜${spec.works.max}本`}・選んだ順に紹介）
+            <span className={`ml-2 font-normal ${remaining > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+              {remaining > 0 ? `あと${remaining}本選んでください（${selectedIds.length}/${spec.works.max}）` : `${selectedIds.length}本選択済み（最大${spec.works.max}本）`}
+            </span>
           </p>
-          {eligible.length < spec.works.min && <p className="text-xs text-amber-800 bg-amber-50 rounded p-2">⚠ 条件に合う作品が{spec.works.min}本に足りません（{eligible.length}本）。このテンプレートでは生成できません。</p>}
-          <div className="max-h-64 overflow-y-auto border border-gray-100 rounded divide-y divide-gray-50">
-            {eligible.map((w) => {
-              const order = value.selection.selectedWorkIds.indexOf(w.id);
+          {eligible.length < spec.works.min && (
+            <p className="text-xs text-amber-800 bg-amber-50 rounded p-2">⚠ 条件に合う作品が{spec.works.min}本に足りません（{eligible.length}本）。このテンプレートでは生成できません。</p>
+          )}
+
+          {selectedIds.length > 0 && (
+            <ol className="rounded border border-violet-200 bg-violet-50/60 divide-y divide-violet-100">
+              {selectedIds.map((id, i) => {
+                const w = works.find((x) => x.id === id);
+                return (
+                  <li key={id} className="flex items-center gap-2 px-2 py-1.5 text-xs">
+                    <span className="w-5 h-5 shrink-0 rounded-full bg-violet-600 text-white font-bold flex items-center justify-center">{i + 1}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="font-bold text-slate-800">{w?.title ?? id}</span>
+                      {w && <span className="text-gray-500"> {w.year ? `${w.year}年` : '年不明'}・{w.genreLabel}</span>}
+                    </span>
+                    <button type="button" onClick={() => moveWork(i, -1)} disabled={i === 0} aria-label={`${i + 1}番目を上へ`} className="px-1.5 rounded border border-gray-300 bg-white disabled:opacity-30">
+                      ↑
+                    </button>
+                    <button type="button" onClick={() => moveWork(i, 1)} disabled={i === selectedIds.length - 1} aria-label={`${i + 1}番目を下へ`} className="px-1.5 rounded border border-gray-300 bg-white disabled:opacity-30">
+                      ↓
+                    </button>
+                    <button type="button" onClick={() => toggleWork(id)} className="text-red-600 hover:underline whitespace-nowrap">
+                      解除
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+
+          <div className="flex flex-wrap gap-1" role="group" aria-label="ジャンル">
+            {(['all', ...FOLLOW_PICK_GENRES] as const).map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => patchFilter({ genre: g })}
+                aria-pressed={filter.genre === g}
+                disabled={g !== 'all' && genreCounts[g] === 0 && filter.genre !== g}
+                className={`px-2 py-0.5 rounded-full border text-xs ${filter.genre === g ? 'bg-violet-600 border-violet-600 text-white' : 'border-gray-300 text-slate-700 disabled:text-gray-300 disabled:border-gray-200'}`}
+              >
+                {g === 'all' ? 'すべて' : FOLLOW_PICK_GENRE_LABEL[g]} {genreCounts[g]}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <input
+              type="search"
+              value={filter.query}
+              onChange={(e) => patchFilter({ query: e.target.value })}
+              placeholder="作品名で検索"
+              aria-label="作品名で検索"
+              className="border border-gray-300 rounded px-2 py-1 w-48"
+            />
+            <select value={filter.service} onChange={(e) => patchFilter({ service: e.target.value })} aria-label="配信サービス" className="border border-gray-300 rounded px-2 py-1">
+              <option value="all">配信サービス: すべて</option>
+              {services.map((sv) => (
+                <option key={sv.key} value={sv.key}>
+                  {sv.label}（{sv.count}）
+                </option>
+              ))}
+              {filter.service !== 'all' && !services.some((sv) => sv.key === filter.service) && <option value={filter.service}>選択中のサービス（0）</option>}
+            </select>
+            <select value={filter.sort} onChange={(e) => patchFilter({ sort: e.target.value as FollowWorkSort })} aria-label="並び順" className="border border-gray-300 rounded px-2 py-1">
+              {(Object.keys(FOLLOW_WORK_SORT_LABEL) as FollowWorkSort[]).map((k) => (
+                <option key={k} value={k}>
+                  {FOLLOW_WORK_SORT_LABEL[k]}
+                </option>
+              ))}
+            </select>
+            {availableRequired ? (
+              <span className="text-gray-500">配信先が確認できる作品だけを表示</span>
+            ) : (
+              <label className="flex items-center gap-1 text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={!filter.availableOnly} onChange={(e) => patchFilter({ availableOnly: !e.target.checked })} />
+                配信先が確認できない作品も表示
+              </label>
+            )}
+            <span className="text-gray-500">{shownWorks.length}件</span>
+          </div>
+
+          <div className="max-h-80 overflow-y-auto border border-gray-100 rounded divide-y divide-gray-50">
+            {shownWorks.length === 0 && <p className="px-2 py-3 text-xs text-gray-500">条件に合う作品がありません。</p>}
+            {shownWorks.map((w) => {
+              const order = selectedIds.indexOf(w.id);
               return (
                 <label key={w.id} className="flex items-start gap-2 px-2 py-1.5 text-xs cursor-pointer hover:bg-violet-50">
-                  <input type="checkbox" checked={order >= 0} disabled={order < 0 && value.selection.selectedWorkIds.length >= spec.works.max} onChange={() => toggleWork(w.id)} className="mt-0.5" />
+                  <input type="checkbox" checked={order >= 0} disabled={order < 0 && selectedIds.length >= spec.works.max} onChange={() => toggleWork(w.id)} className="mt-0.5" />
                   <span className="w-5 text-violet-700 font-bold">{order >= 0 ? order + 1 : ''}</span>
                   <span className="flex-1">
                     <span className="font-bold text-slate-800">{w.title}</span>
@@ -276,8 +390,18 @@ export default function FollowReelPicker({
                       {' '}
                       {w.year ? `${w.year}年` : '年不明'}・{w.genreLabel}
                       {w.roleName ? `・${w.roleName}役` : ''}
-                      {w.streaming.length > 0 ? `・${w.streaming.map((s) => `${s.provider}（${s.typeLabel}）`).join('・')}` : ''}
                       {value.targetType === 'group' ? `・出演: ${w.persons.join('・')}` : ''}
+                    </span>
+                    <span className="block text-gray-600">
+                      {w.available && w.available.length > 0 ? (
+                        w.available.map((a) => (
+                          <span key={a.key} className="mr-2 whitespace-nowrap">
+                            {a.provider}（{a.typeLabel}）{a.channel && <span className="ml-0.5 px-1 rounded bg-amber-100 text-amber-800">追加チャンネル</span>}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-gray-400">配信先の確認なし</span>
+                      )}
                     </span>
                   </span>
                 </label>

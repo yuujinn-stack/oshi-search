@@ -35,8 +35,10 @@ vi.mock('@/lib/persons', () => ({
 }));
 vi.mock('@/lib/group-membership-store', () => ({ getAllMembershipRecords: async () => [] }));
 vi.mock('@/lib/group-meta', () => ({ getAllGroupMetas: async () => [{ groupName: 'M!LK', slug: 'milk' }] }));
-vi.mock('@/lib/provider-store', () => ({ getInactiveProviderSlugs: async () => new Set<string>() }));
+// Hulu は管理画面で停止中（配信終了済み）のサービスとして扱う
+vi.mock('@/lib/provider-store', () => ({ getInactiveProviderSlugs: async () => new Set<string>(['hulu']) }));
 // 公開作品: 同じ作品（TMDb の作品ID が同じ）に2人が出演している
+const vp = (providerName: string, type: string, over: Record<string, unknown> = {}) => ({ providerId: 0, providerName, type, countryCode: 'JP', source: 'manual', ...over });
 const rec = (personName: string, id: string, over: Record<string, unknown> = {}) => ({
   id,
   personName,
@@ -51,8 +53,24 @@ const rec = (personName: string, id: string, over: Record<string, unknown> = {})
 vi.mock('@/lib/work-store', () => ({
   getPublishedWorksOrThrow: async (name: string) =>
     name === '佐野勇斗'
-      ? [rec('佐野勇斗', 'a', { tmdbId: 1, roleName: 'たろう' }), rec('佐野勇斗', 'b', { tmdbId: 2 }), rec('佐野勇斗', 'c', { tmdbId: 3, roleName: 'じろう' })]
-      : [rec('吉田仁人', 'x', { tmdbId: 1 }), rec('吉田仁人', 'y', { tmdbId: 4, releaseYear: null })],
+      ? [
+          rec('佐野勇斗', 'a', { tmdbId: 1, roleName: 'たろう' }),
+          rec('佐野勇斗', 'b', { tmdbId: 2 }),
+          rec('佐野勇斗', 'c', { tmdbId: 3, roleName: 'じろう' }),
+          // 配信先が確認できない作品: 配信情報なし／unknown だけ／非表示・停止中サービス・AI低確度だけ
+          rec('佐野勇斗', 'n', { tmdbId: 5, vodProviders: [] }),
+          rec('佐野勇斗', 'u', { tmdbId: 6, vodProviders: [vp('unknown', 'unknown')] }),
+          rec('佐野勇斗', 'h', { tmdbId: 7, vodProviders: [vp('U-NEXT', 'flatrate', { hidden: true }), vp('Hulu', 'flatrate'), vp('Netflix', 'flatrate', { source: 'openai_web_search', confidence: 'low' })] }),
+          // Prime Video の通常の見放題と追加チャンネル、レンタル
+          rec('佐野勇斗', 'csv-tv-1', { title: 'CSV番組', normalizedTitle: 'CSV番組', releaseYear: 2026 }),
+          rec('佐野勇斗', 'p', { tmdbId: 8, vodProviders: [vp('Amazon Prime Video', 'flatrate'), vp('Amazon Prime Video（TELASA）', 'flatrate'), vp('Lemino', 'rent')] }),
+        ]
+      : [
+          rec('吉田仁人', 'x', { tmdbId: 1, vodProviders: [vp('Netflix', 'rent')] }),
+          rec('吉田仁人', 'y', { tmdbId: 4, releaseYear: null }),
+          // CSV の作品: 同じ作品ID でメンバーごとに出演年が違う（TMDb の作品ID なし）
+          rec('吉田仁人', 'csv-tv-1', { title: 'CSV番組', normalizedTitle: 'CSV番組', releaseYear: 2025 }),
+        ],
 }));
 
 const T = 'follow_three_works';
@@ -80,11 +98,40 @@ describe('loadFollowTarget', () => {
     const { loadFollowTarget } = await import('../follow-target');
     const g = await loadFollowTarget('group', 'M!LK');
     expect(g.personNames).toEqual(['佐野勇斗', '吉田仁人']);
-    expect(g.works).toHaveLength(4);
+    expect(g.works).toHaveLength(9);
     expect(g.works.find((w) => w.id === 'a')).toMatchObject({ persons: ['佐野勇斗', '吉田仁人'], roleName: null });
     const p = await loadFollowTarget('person', '佐野勇斗');
-    expect(p.works.map((w) => [w.id, w.roleName])).toEqual([['a', 'たろう'], ['b', null], ['c', 'じろう']]);
+    expect(p.works.filter((w) => 'abc'.includes(w.id)).map((w) => [w.id, w.roleName])).toEqual([['a', 'たろう'], ['b', null], ['c', 'じろう']]);
     expect(p.works[0].streaming).toEqual([{ provider: 'U-NEXT', typeLabel: '見放題', checkedDate: '2026-10-20' }]);
+  });
+});
+
+describe('loadFollowTarget: 作品選択欄の配信先（公開画面と同じ判定）', () => {
+  it('配信情報なし・unknown だけ・非表示／停止中サービス／AI低確度だけの作品は配信先なし。区分・追加チャンネルを分けて付ける', async () => {
+    const { loadFollowTarget } = await import('../follow-target');
+    const p = await loadFollowTarget('person', '佐野勇斗');
+    const av = (id: string) => p.works.find((w) => w.id === id)!.available;
+    expect(av('n')).toEqual([]);
+    expect(av('u')).toEqual([]);
+    expect(av('h')).toEqual([]);
+    expect(av('a')).toEqual([{ key: 'unext', provider: 'U-NEXT', typeLabel: '見放題', channel: false }]);
+    expect(av('p')).toEqual([
+      { key: 'primevideo', provider: 'Prime Video', typeLabel: '見放題', channel: false },
+      { key: 'telasaamazonchannel', provider: 'Prime Video内 TELASAチャンネル', typeLabel: '見放題', channel: true },
+      { key: 'lemino', provider: 'Lemino', typeLabel: 'レンタル', channel: false },
+    ]);
+    // 台本に使う「今すぐ見られる配信」（見放題・無料）は今までどおり。レンタルは入らない
+    expect(p.works.find((w) => w.id === 'p')!.streaming.map((s) => s.provider)).toEqual(['Amazon Prime Video', 'Amazon Prime Video（TELASA）']);
+  });
+
+  it('グループで同じ作品に複数メンバーの登録があるときは1件にまとめ、配信先は全員分の登録から判定する', async () => {
+    const { loadFollowTarget } = await import('../follow-target');
+    const g = await loadFollowTarget('group', 'M!LK');
+    expect(g.works.filter((w) => w.id === 'a' || w.id === 'x')).toHaveLength(1);
+    // 同じ作品ID は出演年が違っても1件（公開画面のグループページと同じ）。ID の重複が無い
+    expect(g.works.filter((w) => w.id === 'csv-tv-1')).toEqual([expect.objectContaining({ persons: ['佐野勇斗', '吉田仁人'], year: 2026 })]);
+    expect(new Set(g.works.map((w) => w.id)).size).toBe(g.works.length);
+    expect(g.works.find((w) => w.id === 'a')!.available!.map((a) => `${a.provider}:${a.typeLabel}`)).toEqual(['U-NEXT:見放題', 'Netflix:レンタル']);
   });
 });
 
@@ -110,6 +157,7 @@ describe('createVideoJobs: フォロー獲得リール', () => {
     const base = { personNames: ['佐野勇斗'], templateId: T, narrationMode: 'none' };
     await expect(createVideoJobs({ ...base, templateInput: { targetType: 'person', selectedWorkIds: ['a', 'b', 'zzz'], lines: LINES } })).rejects.toThrow(/必要な情報が足りない/);
     await expect(createVideoJobs({ ...base, templateInput: { targetType: 'person', selectedWorkIds: ['a', 'b'], lines: LINES } })).rejects.toThrow(/3本選んでください/);
+    await expect(createVideoJobs({ ...base, templateInput: { targetType: 'person', selectedWorkIds: ['a', 'b', 'n'], lines: LINES } })).rejects.toThrow(/配信先が確認されていません/);
     await expect(createVideoJobs({ ...base, templateInput: { targetType: 'person', selectedWorkIds: ['a', 'b', 'c'], lines: LINES.slice(0, 4) } })).rejects.toThrow(/構成と合いません/);
     await expect(createVideoJobs({ ...base, personNames: ['架空の人'], templateInput: { targetType: 'person', selectedWorkIds: ['a', 'b', 'c'], lines: LINES } })).rejects.toThrow(/登録されていない人物/);
     await expect(createVideoJobs({ ...base, narrationMode: 'capcut', templateInput: { targetType: 'person', selectedWorkIds: ['a', 'b', 'c'], lines: LINES } })).rejects.toThrow(/WAV・SRT を付けて/);

@@ -35,7 +35,15 @@ export type FollowFactKind = 'schedule' | 'release' | 'streamStart' | 'streamEnd
 
 /** 作品の選択条件・入力が必要な事実（管理画面の入力欄とサーバーの検証の両方に使う） */
 export interface FollowTemplateSpec {
-  works: { min: number; max: number; requireYear?: boolean; requireRole?: boolean; requireStreaming?: boolean };
+  works: {
+    min: number;
+    max: number;
+    requireYear?: boolean;
+    requireRole?: boolean;
+    requireStreaming?: boolean;
+    /** 配信先（見放題・無料・レンタル・購入など）が1つ以上確認できる作品だけ選べる */
+    requireAvailable?: boolean;
+  };
   facts?: { kind: FollowFactKind; min: number; max: number };
   /** 出演予定の対象期間（開始日から7日間）を入力する */
   period?: boolean;
@@ -50,8 +58,8 @@ export interface FollowTemplateSpec {
 }
 
 export const FOLLOW_TEMPLATE_SPECS: Record<FollowTemplateId, FollowTemplateSpec> = {
-  follow_three_works: { works: { min: 3, max: 3 }, guide: '登録済みの出演作品から3本を選びます（選んだ順に紹介。ポイントは出演年・種類・役名・配信状況の登録情報だけ）。' },
-  follow_hidden_works: { works: { min: 1, max: 3 }, guide: '紹介したい出演作品を1〜3本選びます（「意外な出演作」「まだ観ていないかもしれない作品」として紹介。知名度は断定しません）。' },
+  follow_three_works: { works: { min: 3, max: 3, requireAvailable: true }, guide: '配信先が確認できる出演作品から3本を選びます（選んだ順に紹介。ポイントは出演年・種類・役名・配信状況の登録情報だけ）。' },
+  follow_hidden_works: { works: { min: 1, max: 3, requireAvailable: true }, guide: '配信先が確認できる出演作品から、紹介したい作品を1〜3本選びます（「意外な出演作」「まだ観ていないかもしれない作品」として紹介。知名度は断定しません）。' },
   follow_career_timeline: { works: { min: 3, max: 3, requireYear: true }, guide: '出演年が登録された作品から3本を選びます（古い順に並べ替えて年表にします。出演年が無い作品は選べません）。' },
   follow_weekly_schedule: { works: { min: 0, max: 0 }, facts: { kind: 'schedule', min: 1, max: 3 }, period: true, guide: '対象期間と、公式情報で確認できた出演予定（最大3件）を、出典URL・確認日時と一緒に入力します。' },
   follow_role_gap: { works: { min: 2, max: 2, requireRole: true }, personOnly: true, guide: '役名が登録された作品から2本を選びます（1人の人物だけ。役名が無い作品は選べません）。' },
@@ -99,6 +107,18 @@ export interface FollowStreaming {
   checkedDate: string | null;
 }
 
+/** 確認済みの配信先（公開画面と同じ判定。見放題・無料に限らずレンタル・購入も含む。作品選択欄の表示・絞り込み用） */
+export interface FollowAvailability {
+  /** 正規化したサービス名（normalizeProviderName。Prime Video の追加チャンネルは本体と別のキー） */
+  key: string;
+  /** 公開画面の表示名（追加チャンネルは「Prime Video内 ○○」） */
+  provider: string;
+  /** 見放題・レンタル・購入・無料・広告付き無料 */
+  typeLabel: string;
+  /** Prime Video の追加チャンネル（別途チャンネル登録が必要） */
+  channel: boolean;
+}
+
 /** 推しサーチDBの公開作品（グループのときはメンバーの作品を同じ作品ごとにまとめたもの） */
 export interface FollowWork {
   id: string;
@@ -111,6 +131,8 @@ export interface FollowWork {
   persons: string[];
   /** 今すぐ見られる配信（見放題・無料・広告付き無料。確認済みの情報だけ） */
   streaming: FollowStreaming[];
+  /** 確認済みの配信先すべて（作品選択欄の表示・絞り込みと requireAvailable の判定だけに使う。台本には使わない） */
+  available?: FollowAvailability[];
 }
 
 export interface FollowFact {
@@ -519,6 +541,7 @@ export function validateFollowWorks(templateId: FollowTemplateId, targetType: Fo
     if (spec.works.requireYear && w.year === null) errors.push(`『${w.title}』は出演年が登録されていません`);
     if (spec.works.requireRole && !w.roleName) errors.push(`『${w.title}』は役名が登録されていません`);
     if (spec.works.requireStreaming && w.streaming.length === 0) errors.push(`『${w.title}』は見放題・無料の配信が確認されていません`);
+    if (spec.works.requireAvailable && !w.available?.length) errors.push(`『${w.title}』は配信先が確認されていません`);
   }
   if (spec.works.requireYear && templateId === 'follow_career_timeline') {
     const years = picked.filter((w): w is FollowWork => !!w && w.year !== null).map((w) => w.year!);
@@ -545,7 +568,7 @@ export function isActingRoleName(role: string | null | undefined, personName: st
 /** 作品の条件に合う候補か（管理画面の一覧で選べるかどうか） */
 export function isEligibleFollowWork(templateId: FollowTemplateId, w: FollowWork): boolean {
   const s = FOLLOW_TEMPLATE_SPECS[templateId].works;
-  return !(s.requireYear && w.year === null) && !(s.requireRole && !w.roleName) && !(s.requireStreaming && w.streaming.length === 0);
+  return !(s.requireYear && w.year === null) && !(s.requireRole && !w.roleName) && !(s.requireStreaming && w.streaming.length === 0) && !(s.requireAvailable && !w.available?.length);
 }
 
 // ─── ジャンル集計 ───────────────────────────────
