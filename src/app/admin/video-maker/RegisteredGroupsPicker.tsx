@@ -131,7 +131,7 @@ export default function RegisteredGroupsPicker({ templateId, value, onChange }: 
     if (!value.lines || !value.segments) return;
     const lines = value.lines.map((l) => (l.id === id ? { ...l, [key]: text } : l));
     // 読みが変わったら区間の長さ（見積もり）も合わせる（サーバーもジョブ作成時に同じ計算をする）
-    const slots = allocateRegisteredSlots(spec.kind, value.segments, lines);
+    const slots = allocateRegisteredSlots(spec.kind, value.segments, lines, spec.reelTiming);
     onChange({ ...value, lines, segments: value.segments.map((s, i) => ({ ...s, slotSeconds: slots[i] })) });
   };
 

@@ -89,14 +89,28 @@ export interface RegisteredTemplateSpec {
   screen?: RegisteredScreen;
   /** 登録人物数・グループ数の区間 */
   stats?: boolean;
+  /** リールの音声なし動画の時間配分を固定する（冒頭・一覧の1ページ・締めの秒数）。読み上げの見積もりからは決めない */
+  reelTiming?: RegisteredReelTiming;
   title: string;
   guide: string;
+}
+
+/**
+ * リールの固定の時間配分。一覧は「ページ数×perPage」秒、ただし合計が total 秒に満たなければ一覧を伸ばす（ページが少ないとき）。
+ * 一覧が4ページを超える（3列×6段）ときは使わず、従来の見積もりの配分にする
+ */
+export interface RegisteredReelTiming {
+  hook: number;
+  perPage: number;
+  outro: number;
+  total: number;
 }
 
 const ALL: readonly RegisteredCategory[] = REGISTERED_CATEGORIES;
 
 export const REGISTERED_TEMPLATE_SPECS: Record<RegisteredTemplateId, RegisteredTemplateSpec> = {
-  registered_groups_all: { kind: 'reel', categories: ALL, byCategory: true, title: '推しサーチの登録グループをご紹介！', guide: '現在登録されている全グループを、ジャンル別にページを分けて表示します（グループ名は画面表示のみ。読み上げは件数と案内だけ）。' },
+  // 一挙紹介は一覧（ジャンルごとのページ）を読みやすく: 冒頭2秒・1ページ4秒・締め3秒（3ページで17秒）
+  registered_groups_all: { kind: 'reel', categories: ALL, byCategory: true, reelTiming: { hook: 2, perPage: 4, outro: 3, total: 17 }, title: '推しサーチの登録グループをご紹介！', guide: '現在登録されている全グループを、ジャンル別にページを分けて表示します（グループ名は画面表示のみ。読み上げは件数と案内だけ）。' },
   registered_groups_male: { kind: 'reel', categories: ['male'], byCategory: false, screen: 'male', title: '男性アイドル・グループも多数登録中！', guide: 'トップページの分類で「男性アイドル」のグループを一覧表示し、トップページ「グループで探す」（男性アイドル）の実画面を見せます。' },
   registered_groups_female: { kind: 'reel', categories: ['female'], byCategory: false, screen: 'female', title: '女性アイドルグループも登録しています！', guide: 'トップページの分類で「女性アイドル」のグループを一覧表示し、トップページ「グループで探す」（女性アイドル）の実画面を見せます。' },
   registered_groups_other: { kind: 'reel', categories: ['other'], byCategory: false, screen: 'all', title: 'アイドル以外のグループも登録中！', guide: 'トップページの分類で「その他（お笑い・バンド・俳優集団など）」に登録されたグループだけを一覧表示します（分類なしのグループは入れません）。実画面はトップページ「グループで探す」です。' },
@@ -301,6 +315,20 @@ const OUTRO_LINE: RegisteredLine = {
   kana: 'これからもとうろくぐるーぷをふやしていきます！ひきつづき、おしさーちをよろしくおねがいします！',
 };
 
+/**
+ * 一挙紹介リール（画面と音声を合わせる5区分）のジャンルごとの文。件数は表示するグループの数（DB から作る）。
+ * 画面に出ている内容だけを読む（グループ名は読まない）
+ */
+const ALL_REEL_CATEGORY_LINE: Record<RegisteredCategory, (n: number, kumi: string) => Omit<RegisteredLine, 'id'>> = {
+  male: (n, kumi) => ({ text: `男性アイドルは${n}組が登録中です！`, kana: `だんせいあいどるは${kumi}がとうろくちゅうです！` }),
+  female: (n, kumi) => ({ text: `女性アイドルも${n}組が登録中！`, kana: `じょせいあいどるも${kumi}がとうろくちゅう！` }),
+  other: (n, kumi) => ({ text: `バンドやお笑いなども${n}組チェックできます！`, kana: `ばんどやおわらいなども${kumi}ちぇっくできます！` }),
+  unclassified: (n, kumi) => ({ text: `ほかにも${n}組が登録されています！`, kana: `ほかにも${kumi}がとうろくされています！` }),
+};
+/** 一挙紹介リール（5区分）の冒頭・締め（画面の見出しと同じ内容。冒頭2秒・締め3秒に収まる長さ） */
+const ALL_REEL_HOOK_LINE: Omit<RegisteredLine, 'id'> = { text: '登録グループをご紹介！', kana: 'とうろくぐるーぷをごしょうかい！' };
+const ALL_REEL_OUTRO_LINE: Omit<RegisteredLine, 'id'> = { text: 'これからも増やしていきます！', kana: 'これからもふやしていきます！' };
+
 /** 一覧のジャンルの言い方（台本。表示するグループにあるジャンルだけ） */
 function categoryPhrase(shown: RegisteredGroup[]): { text: string; kana: string } | null {
   const has = (c: RegisteredCategory) => shown.some((g) => g.category === c);
@@ -363,8 +391,22 @@ export function buildRegisteredPlan(opts: {
   const shownNote = counts.excluded > 0 ? `（登録 ${target.length}組のうち）` : '';
   switch (templateId) {
     case 'registered_groups_all': {
+      const hookLines = [`${counts.excluded > 0 ? '紹介' : '登録'}グループ ${n}組${shownNote}`];
+      if (spec.reelTiming && pages.length <= REGISTERED_REEL_STANDARD_MAX_PAGES) {
+        // 画面と音声を合わせる5区分: 冒頭 → ジャンルごとの一覧（1ジャンル1区分・その件数を読む）→ 締め
+        d.push({ kind: 'hook', label: '推しサーチ', title: '登録グループを\nご紹介！', lines: hookLines, line: ALL_REEL_HOOK_LINE });
+        for (const c of REGISTERED_CATEGORIES) {
+          const catPages = pages.filter((p) => p.heading === REGISTERED_CATEGORY_LABEL[c]);
+          if (catPages.length === 0) continue;
+          const count = catPages[0].count;
+          d.push({ kind: 'list', pages: catPages, line: ALL_REEL_CATEGORY_LINE[c](count, kumiKana(count)) });
+        }
+        d.push({ kind: 'outro', title: 'これからも登録グループを\n増やしていきます！', lines: ['引き続き、推しサーチをよろしくお願いします！'], line: ALL_REEL_OUTRO_LINE });
+        break;
+      }
+      // 登録が多く一覧が4ページを超える（3列×6段）ときは従来の3区分（一覧はまとめて1文）
       const phrase = categoryPhrase(shown);
-      d.push({ kind: 'hook', label: '推しサーチ', title: '登録グループを\nご紹介！', lines: [`${counts.excluded > 0 ? '紹介' : '登録'}グループ ${n}組${shownNote}`], line: { text: '推しサーチの登録グループをご紹介！', kana: 'おしさーちのとうろくぐるーぷをごしょうかい！' } });
+      d.push({ kind: 'hook', label: '推しサーチ', title: '登録グループを\nご紹介！', lines: hookLines, line: { text: '推しサーチの登録グループをご紹介！', kana: 'おしさーちのとうろくぐるーぷをごしょうかい！' } });
       d.push({
         kind: 'list',
         pages,
@@ -446,7 +488,7 @@ export function buildRegisteredPlan(opts: {
 
   const segments: RegisteredSegment[] = d.map(({ line: _line, ...s }, i) => ({ ...s, id: `${pad2(i + 1)}-${s.kind}`, slotSeconds: 0 }));
   const lines: RegisteredLine[] = spec.kind === 'reel' ? d.map((x, i) => ({ id: segments[i].id, text: x.line!.text, kana: x.line!.kana })) : [];
-  const slots = allocateRegisteredSlots(spec.kind, segments, lines);
+  const slots = allocateRegisteredSlots(spec.kind, segments, lines, spec.reelTiming);
   const totalSeconds = slots.reduce((a, b) => a + b, 0);
   if (spec.kind === 'story' && totalSeconds > REGISTERED_STORY_MAX_SECONDS + 1e-9) {
     // 1本に収まらないときは文字を小さくしたり切り替えを速めたりせず、グループを省略もしない（除外で分けて複数のストーリーズにする）
@@ -488,10 +530,22 @@ const pageCount = (s: Pick<RegisteredSegment, 'pages'>) => s.pages?.length ?? 0;
 
 /**
  * 区間の長さ。リール: 読み上げの見積もり+0.3秒（一覧はページ数×2.2秒以上）を、合計が約16秒になるよう伸ばす（冒頭は伸ばさない）。
+ * timing（テンプレートの reelTiming）があるリールは、冒頭・一覧・締めの固定の配分（一覧が4ページ以下のとき）。
  * ストーリーズ: 冒頭1.8秒・一覧はページ数×3秒・数字2.8秒・締め2.4秒（合計7秒未満なら一覧・締めを伸ばす）
  */
-export function allocateRegisteredSlots(kind: 'reel' | 'story', segments: Array<Pick<RegisteredSegment, 'kind' | 'pages'>>, lines: Array<Pick<RegisteredLine, 'kana'>>): number[] {
+export function allocateRegisteredSlots(
+  kind: 'reel' | 'story',
+  segments: Array<Pick<RegisteredSegment, 'kind' | 'pages'>>,
+  lines: Array<Pick<RegisteredLine, 'kana'>>,
+  timing?: RegisteredReelTiming,
+): number[] {
   const r1 = (x: number) => Math.round(x * 10) / 10;
+  const listPages = segments.reduce((a, s) => a + pageCount(s), 0);
+  if (kind === 'reel' && timing && listPages > 0 && listPages <= REGISTERED_REEL_STANDARD_MAX_PAGES && segments.every((s) => s.kind === 'hook' || s.kind === 'list' || s.kind === 'outro')) {
+    const fixed = segments.reduce((a, s) => a + (s.kind === 'hook' ? timing.hook : s.kind === 'outro' ? timing.outro : 0), 0);
+    const list = Math.max(listPages * timing.perPage, timing.total - fixed);
+    return segments.map((s) => r1(s.kind === 'hook' ? timing.hook : s.kind === 'outro' ? timing.outro : (list * pageCount(s)) / listPages));
+  }
   if (kind === 'story') {
     const base = segments.map((s) => (s.kind === 'hook' ? 1.8 : s.kind === 'list' ? Math.max(1, pageCount(s)) * REGISTERED_STORY_PAGE_SECONDS : s.kind === 'stats' ? 2.8 : 2.4));
     const sum = base.reduce((a, b) => a + b, 0);

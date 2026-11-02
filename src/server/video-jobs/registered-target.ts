@@ -60,7 +60,7 @@ export async function resolveRegisteredJobInput(templateId: string, personName: 
     // ストーリーズは音声なし（台本は使わない）
     lines = [];
   }
-  const slots = allocateRegisteredSlots(spec.kind, plan.segments, lines);
+  const slots = allocateRegisteredSlots(spec.kind, plan.segments, lines, spec.reelTiming);
   const total = slots.reduce((a, b) => a + b, 0);
   const maxSeconds = registeredReelMaxSeconds(plan.segments);
   if (spec.kind === 'reel' && total > maxSeconds + 1e-9) {

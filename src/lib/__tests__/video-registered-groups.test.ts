@@ -8,6 +8,7 @@ import {
   REGISTERED_REEL_MAX_SECONDS,
   REGISTERED_STORY_IDS,
   REGISTERED_TEMPLATE_IDS,
+  REGISTERED_TEMPLATE_SPECS,
   allocateRegisteredSlots,
   applyRegisteredSelection,
   buildRegisteredPlan,
@@ -82,7 +83,7 @@ describe('登録グループ紹介: 10種類の構成', () => {
   it('全グループはジャンル別（男性10・女性6・その他9）。分類なしの見出しは出ない。男性・女性・その他の動画に分類なしは入らない', () => {
     const all = plan('registered_groups_all');
     if (!all.ok) throw new Error('plan');
-    expect(all.segments[1].pages!.map((p) => [p.heading, p.count])).toEqual([
+    expect(all.segments.flatMap((sg) => sg.pages ?? []).map((p) => [p.heading, p.count])).toEqual([
       ['男性アイドル', 10],
       ['女性アイドル', 6],
       ['バンド・アーティスト・お笑いなど', 9],
@@ -90,7 +91,7 @@ describe('登録グループ紹介: 10種類の構成', () => {
     expect(all.warnings.join()).not.toContain('分類なし');
     const withNew = plan('registered_groups_all', { groups: groups([...NAMES, '新しいグループ']) });
     if (!withNew.ok) throw new Error('withNew');
-    expect(withNew.segments[1].pages!.at(-1)).toMatchObject({ heading: '分類なし', count: 1 });
+    expect(withNew.segments.flatMap((sg) => sg.pages ?? []).at(-1)).toMatchObject({ heading: '分類なし', count: 1 });
     expect(withNew.warnings.join()).toContain('新しいグループ');
     for (const id of ['registered_groups_male', 'story_registered_groups_male'] as const) {
       const p = plan(id);
@@ -137,6 +138,45 @@ describe('登録グループ紹介: 10種類の構成', () => {
       expect(list.slotSeconds / list.pages!.length, id).toBeGreaterThanOrEqual(2.9);
     }
     expect(allocateRegisteredSlots('story', [{ kind: 'hook' }, { kind: 'list', pages: [] }, { kind: 'outro' }], []).reduce((a, b) => a + b, 0)).toBeCloseTo(7.2, 1);
+  });
+
+  it('一挙紹介のリールは画面と音声を合わせる5区分（冒頭・ジャンルごとの一覧・締め）。件数はデータから読む', () => {
+    const all = plan('registered_groups_all');
+    if (!all.ok) throw new Error('plan');
+    expect(all.segments.map((sg) => [sg.id, sg.slotSeconds, (sg.pages ?? []).map((p) => p.heading)])).toEqual([
+      ['01-hook', 2, []],
+      ['02-list', 4, ['男性アイドル']],
+      ['03-list', 4, ['女性アイドル']],
+      ['04-list', 4, ['バンド・アーティスト・お笑いなど']],
+      ['05-outro', 3, []],
+    ]);
+    expect(all.lines.map((l) => l.text)).toEqual(['登録グループをご紹介！', '男性アイドルは10組が登録中です！', '女性アイドルも6組が登録中！', 'バンドやお笑いなども9組チェックできます！', 'これからも増やしていきます！']);
+    expect(all.lines[1].kana).toBe('だんせいあいどるはじゅうくみがとうろくちゅうです！');
+    // 除外すると件数も変わる（画面の件数と同じ）
+    const ex = plan('registered_groups_all', { selection: { order: null, excluded: ['嵐'] } });
+    if (!ex.ok) throw new Error('ex');
+    expect(ex.lines[1].text).toBe('男性アイドルは9組が登録中です！');
+    // 分類なしのグループがあればその区分も作る（4ページまで。合計21秒）
+    const withNew = plan('registered_groups_all', { groups: groups([...NAMES, '新しいグループ']) });
+    if (!withNew.ok) throw new Error('withNew');
+    expect(withNew.lines.map((l) => l.id)).toEqual(['01-hook', '02-list', '03-list', '04-list', '05-list', '06-outro']);
+    expect(withNew.lines[4].text).toBe('ほかにも1組が登録されています！');
+    expect(withNew.segments.reduce((a, sg) => a + sg.slotSeconds, 0)).toBe(21);
+  });
+
+  it('一挙紹介のリールは固定の配分（冒頭2秒・1ページ4秒・締め3秒。読み上げの見積もりでは変わらない）', () => {
+    const timing = REGISTERED_TEMPLATE_SPECS.registered_groups_all.reelTiming;
+    const page = { heading: 'x', count: 1, part: 1, parts: 1, columns: 2, rows: 5, items: [] };
+    const seg = (pages: number) => [{ kind: 'hook' as const }, { kind: 'list' as const, pages: Array.from({ length: pages }, () => page) }, { kind: 'outro' as const }];
+    const longLines = [{ kana: 'あ'.repeat(40) }, { kana: 'あ'.repeat(30) }, { kana: 'あ'.repeat(60) }];
+    expect(allocateRegisteredSlots('reel', seg(3), longLines, timing)).toEqual([2, 12, 3]);
+    expect(allocateRegisteredSlots('reel', seg(4), longLines, timing)).toEqual([2, 16, 3]);
+    // ページが少なくても合計17秒（一覧を伸ばす）
+    expect(allocateRegisteredSlots('reel', seg(1), longLines, timing)).toEqual([2, 12, 3]);
+    // 4ページを超える（3列×6段）ときは従来の見積もりの配分
+    expect(allocateRegisteredSlots('reel', seg(5), longLines, timing)).toEqual(allocateRegisteredSlots('reel', seg(5), longLines));
+    // ほかのリールは固定の配分を持たない
+    expect(REGISTERED_TEMPLATE_SPECS.registered_groups_male.reelTiming).toBeUndefined();
   });
 
   it('除外・並べ替え: 表示件数が減り「登録 n組のうち」と出す。並べた順がページの順になる。登録に無い名前は作らない', () => {
