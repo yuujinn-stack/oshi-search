@@ -15,7 +15,7 @@ import { matchesQuery } from '@/lib/person-group-filter';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
 import First3WorkSlots, { type First3SlotWork } from './First3WorkSlots';
 import VodCompareTrioPicker, { EMPTY_TRIO, completeTrio, type TrioCapcutCheck, type TrioSlots } from './VodCompareTrioPicker';
-import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND } from '@/lib/video-template-input';
+import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND, TEMPLATE_INPUT_KINDS } from '@/lib/video-template-input';
 import RegisteredGroupsPicker, { EMPTY_REGISTERED_PICK, registeredPickReady, registeredTemplateInput, type RegisteredPick } from './RegisteredGroupsPicker';
 import { REGISTERED_TEMPLATE_CATEGORY, REGISTERED_TEMPLATE_SPECS, isRegisteredTemplateId, type RegisteredCounts, type RegisteredSegment } from '@/lib/video-registered-groups';
 import FollowReelPicker, { EMPTY_FOLLOW_PICK, followPickReady, followTemplateInput, type FollowPick } from './FollowReelPicker';
@@ -291,8 +291,11 @@ export default function VideoMakerClient({
   readingCandidates = {},
   personSlugByName = {},
   groups = [],
+  appBuild = null,
 }: {
   persons: PersonOption[];
+  /** この画面を配信した版（Vercel のコミット）。API が返す版と違えば、開いたあとにデプロイされた（画面のコードが古い） */
+  appBuild?: string | null;
   /** 推し活で損してるかも？: 選べるグループ（公開サイトのグループ一覧と同じ）とメンバー */
   groups?: SonkamoGroupOption[];
   /** 人物名 → 推しサーチDBの人物slug（推しでサブスク比較の3人選択で内部値に使う） */
@@ -320,6 +323,7 @@ export default function VideoMakerClient({
   const [narrationMode, setNarrationMode] = useState<NarrationMode | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [serverBuild, setServerBuild] = useState<string | null>(null);
   const [openJobId, setOpenJobId] = useState<string | null>(null);
   const [reelSchedules, setReelSchedules] = useState<Record<string, ReelSchedule>>({});
   const [reelAutopublishEnabled, setReelAutopublishEnabled] = useState(false);
@@ -362,7 +366,9 @@ export default function VideoMakerClient({
         worker: WorkerInfo | null;
         reelSchedules?: Record<string, ReelSchedule>;
         reelAutopublishEnabled?: boolean;
+        appBuild?: string | null;
       }>('/api/admin/video-jobs');
+      setServerBuild(data.appBuild ?? null);
       setJobs(data.jobs);
       setWorker(data.worker);
       setReelSchedules(data.reelSchedules ?? {});
@@ -417,8 +423,14 @@ export default function VideoMakerClient({
   useEffect(() => {
     setFollowPick(EMPTY_FOLLOW_PICK);
     setRegisteredPick(EMPTY_REGISTERED_PICK);
+    // 前のテンプレートで登録したときのメッセージを残さない（別のテンプレートのジョブと誤解しないため）
+    setMessage(null);
   }, [templateId]);
   const registeredMode = template?.templateInputKind === OSHI_REGISTERED_INPUT_KIND && isRegisteredTemplateId(template.templateId);
+  // この画面のコードが知らない入力の種類のテンプレート（開いたあとにデプロイ・Worker が更新された）。人物選択に落とさず、再読み込みを求める
+  const unsupportedTemplate = !!template?.templateInputKind && !(TEMPLATE_INPUT_KINDS as readonly string[]).includes(template.templateInputKind);
+  // 画面を開いたあとに新しい版がデプロイされた（ローカルなど版が分からないときは比べない）
+  const staleBuild = !!appBuild && !!serverBuild && appBuild !== serverBuild;
   const registeredReady = registeredMode && registeredPickReady(registeredPick, template!.templateId as Parameters<typeof registeredPickReady>[1]);
   const nameBySlug = useMemo(() => new Map(Object.entries(personSlugByName).map(([n, s]) => [s, n])), [personSlugByName]);
 
@@ -1037,6 +1049,13 @@ export default function VideoMakerClient({
           <h2 className="text-sm font-bold text-slate-700 mb-2">3. グループ紹介／人物紹介とナレーション原稿</h2>
           <SonkamoTargetPicker template={sonkamoTemplate} persons={persons} groups={groups} value={sonkamoPick} onChange={setSonkamoPick} />
         </section>
+        ) : unsupportedTemplate ? (
+        <section>
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-3">
+            このテンプレートは今開いている画面では選択欄を表示できません（画面を開いたあとに更新されました）。
+            <button type="button" onClick={() => window.location.reload()} className="ml-2 underline font-bold">ページを再読み込み</button>
+          </p>
+        </section>
         ) : cardMode ? (
         <section>
           <h2 className="text-sm font-bold text-slate-700 mb-2">3. 人物・おすすめ作品・デザイン</h2>
@@ -1063,7 +1082,11 @@ export default function VideoMakerClient({
         )}
 
         <div className="flex items-center gap-3 flex-wrap">
-          {trioMode ? (
+          {staleBuild || unsupportedTemplate ? (
+          <button type="button" onClick={() => window.location.reload()} className="px-5 py-2 rounded-lg bg-amber-500 text-white text-sm font-bold">
+            管理画面が更新されました。再読み込みしてから生成してください
+          </button>
+          ) : trioMode ? (
           <button
             type="button"
             // CapCut（共通音声）は、選んだ3人の適合をサーバーで確認できるまで生成できない
@@ -1139,7 +1162,7 @@ export default function VideoMakerClient({
             {submitting ? '登録中...' : `生成する（${selectedNames.length}件）`}
           </button>
           )}
-          {capcutMode && !sharedCapcut && (
+          {capcutMode && !sharedCapcut && !staleBuild && !unsupportedTemplate && (
             <button
               type="button"
               disabled={submitting || capcutReadyTargets.length === 0}

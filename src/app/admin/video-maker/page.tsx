@@ -7,6 +7,7 @@ import VideoMakerClient from './VideoMakerClient';
 import { listPersonReadingCandidates } from '@/server/video-jobs/script-prep-store';
 import { personVideoSlug } from '@/server/video-jobs/person-slug';
 import { listSonkamoGroups } from '@/server/video-jobs/sonkamo-target';
+import { currentAppBuild } from '@/lib/app-build';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,7 +52,7 @@ export default async function VideoMakerPage() {
           <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
-      <VideoMakerClient persons={personOptions} readingCandidates={readingCandidates} personSlugByName={personSlugByName} groups={groups} />
+      <VideoMakerClient persons={personOptions} readingCandidates={readingCandidates} personSlugByName={personSlugByName} groups={groups} appBuild={currentAppBuild()} />
     </div>
   );
 }

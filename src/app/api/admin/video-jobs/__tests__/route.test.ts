@@ -61,6 +61,32 @@ beforeEach(() => {
 });
 
 describe('POST /api/admin/video-jobs', () => {
+  it('登録グループ紹介: 選んだグループで「推しサーチ」1件だけ作る。人物の一覧だけ（古い画面）は400でジョブを作らない', async () => {
+    state.templates.push({ templateId: 'registered_groups_all', narrationModes: ['none', 'capcut'], templateInputKind: 'oshi-registered-groups' });
+    const input = { version: 1, selection: { order: null, excluded: [] }, lines: [] };
+    const ok = await post({ personNames: ['目黒蓮', '松村北斗'], templateId: 'registered_groups_all', narrationMode: 'none', templateInput: input });
+    expect(ok.status).toBe(200);
+    expect(state.created).toEqual([{ personNames: ['推しサーチ'], templateId: 'registered_groups_all', narrationMode: 'none', templateInput: input }]);
+    state.created = [];
+    const old = await post({ personNames: ['目黒蓮', '松村北斗', '京本大我'], templateId: 'registered_groups_all', narrationMode: 'none' });
+    expect(old.status).toBe(400);
+    expect(old.data.error).toMatch(/再読み込み/);
+    expect(state.created).toEqual([]);
+  });
+
+  it('GET は配信中の版を返す（画面を開いたあとのデプロイに気づくため）', async () => {
+    const prev = process.env.VERCEL_GIT_COMMIT_SHA;
+    process.env.VERCEL_GIT_COMMIT_SHA = 'abc123';
+    try {
+      const { GET } = await import('../route');
+      const data = await (await GET()).json();
+      expect(data.appBuild).toBe('abc123');
+    } finally {
+      if (prev === undefined) delete process.env.VERCEL_GIT_COMMIT_SHA;
+      else process.env.VERCEL_GIT_COMMIT_SHA = prev;
+    }
+  });
+
   it('従来のテンプレートは人物名のリストのまま作成する（テンプレート固有入力なし）', async () => {
     const { status } = await post({ personNames: ['目黒蓮', '松村北斗'], templateId: 'oshi-first3-v1', narrationMode: 'none' });
     expect(status).toBe(200);

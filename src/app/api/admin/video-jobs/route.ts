@@ -14,6 +14,7 @@ import { loadOshiVodVideoDiagnosis } from '@/server/oshi-vod/video-diagnosis';
 import { markVideoAdminActive } from '@/server/video-jobs/worker-poll';
 import { OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND, parseOshiVodCompareInput, TemplateInputError } from '@/lib/video-template-input';
 import { REGISTERED_JOB_NAME } from '@/lib/video-registered-groups';
+import { currentAppBuild } from '@/lib/app-build';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,6 +48,8 @@ export async function GET() {
       reelSchedules,
       // リールが実際に自動投稿される状態か（スイッチの有効/無効だけ。値そのものは返さない）
       reelAutopublishEnabled: isAutopublishEnabled() && isReelsAutopublishEnabled(),
+      // 配信中の版（画面を開いたあとにデプロイされたかを管理画面で比べる）
+      appBuild: currentAppBuild(),
     });
   } catch (err) {
     return NextResponse.json({ error: maskSecrets(String(err instanceof Error ? err.message : err)) }, { status: 500 });
@@ -89,6 +92,10 @@ export async function POST(req: NextRequest) {
     }
     // 登録グループ紹介: 推しサーチ全体の動画を1本（person_name は「推しサーチ」。グループの一覧・件数は createVideoJobs でDBから作る）
     if (workerTemplate?.templateInputKind === OSHI_REGISTERED_INPUT_KIND) {
+      // 人物の一覧だけを送る古い画面（このテンプレートの選択欄を知らない）からは作らない。人物ごとのジョブも作らない
+      if (!body.templateInput || typeof body.templateInput !== 'object') {
+        return NextResponse.json({ error: '登録グループ紹介は、表示するグループを選んで1本だけ作ります（人物の選択では作れません）。管理画面を再読み込みしてください。' }, { status: 400 });
+      }
       const jobs = await createVideoJobs({ personNames: [REGISTERED_JOB_NAME], templateId, narrationMode, templateInput: body.templateInput });
       return NextResponse.json({ jobs });
     }

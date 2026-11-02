@@ -5,6 +5,7 @@ import CopyButton from './CopyButton';
 import { nonReadableParts } from '@/lib/video-sonkamo-script';
 import {
   EMPTY_REGISTERED_SELECTION,
+  REGISTERED_CATEGORIES,
   REGISTERED_CATEGORY_LABEL,
   REGISTERED_REEL_SOFT_MAX_SECONDS,
   REGISTERED_TEMPLATE_SPECS,
@@ -22,6 +23,7 @@ import {
   type RegisteredSelection,
   type RegisteredTemplateId,
 } from '@/lib/video-registered-groups';
+import { REGISTERED_VIDEO_COLORS, registeredHeadingAccent } from '@/lib/registered-video-design';
 
 // 動画「登録グループ紹介」（リール5種類・ストーリーズ5種類）の対象グループ・表示順・台本・プレビュー。
 // 1. 現在の登録グループ（トップページ「グループで探す」と同じ一覧・同じ順）と登録人物数を読み込む
@@ -156,6 +158,12 @@ export default function RegisteredGroupsPicker({ templateId, value, onChange }: 
         <div className="text-xs text-gray-700 flex flex-wrap gap-4 items-center">
           <span>
             現在の登録: 人物 <b>{personCount}</b>人・グループ <b>{groups.length}</b>組（トップページと同じ一覧）
+            {/* ジャンル別の内訳（トップページの分類。0組のジャンルは出さない） */}
+            {'　'}
+            {REGISTERED_CATEGORIES.map((c) => [c, groups.filter((g) => g.category === c).length] as const)
+              .filter(([, n]) => n > 0)
+              .map(([c, n]) => `${REGISTERED_CATEGORY_LABEL[c]} ${n}組`)
+              .join('・')}
           </span>
           <button type="button" onClick={() => void load()} className="text-violet-600 hover:underline">
             最新の登録を読み込み直す
@@ -169,6 +177,7 @@ export default function RegisteredGroupsPicker({ templateId, value, onChange }: 
             <span className="font-bold text-slate-700">
               {spec.sampleOnly ? '表示するグループ（先頭の1ページ分だけ動画に出ます）' : '表示するグループ'}: {shownCount}組 / 対象 {targets.length}組
             </span>
+            <span className="text-gray-500">選んだグループをまとめて1本の動画にします（人物ごとには作りません）</span>
             {selection.order && (
               <button type="button" onClick={() => setSelection({ ...selection, order: null })} className="text-violet-600 hover:underline">
                 表示順を元に戻す
@@ -297,56 +306,102 @@ export default function RegisteredGroupsPicker({ templateId, value, onChange }: 
   );
 }
 
-/** ページ分けのプレビュー（動画の各画面を縮小して並べる。文字の大きさ・位置は目安。実際の画面は生成した動画で確認） */
+/**
+ * プレビューの名前の文字の大きさ（縮小した枠でも英語の語の途中で折り返さないよう、長い英語の語ほど小さくする。日本語は1文字ずつ折り返してよい）。
+ * 語の幅は動画と同じ目安（英大文字=0.8・英小文字/数字=0.64・記号=0.5 文字分）。動画は語の途中で切らずに折り返す
+ */
+function previewNameSize(name: string, columns: number): number {
+  const em = (w: string) => Array.from(w).reduce((a, ch) => a + (/[A-Z]/.test(ch) ? 0.8 : /[a-z0-9]/.test(ch) ? 0.64 : 0.5), 0);
+  const longest = Math.max(0, ...(name.match(/[\x21-\x7E]+/g) ?? []).map(em));
+  const innerPx = columns >= 3 ? 26 : columns === 2 ? 42 : 96;
+  return longest === 0 ? 9 : Math.max(6, Math.min(9, Math.floor(innerPx / longest)));
+}
+
+/** ページ分けのプレビュー（動画の各画面を縮小して並べる。配色・ラベル・締めの黄色のパネルは完成動画と同じ。文字の大きさ・位置は目安。実際の画面は生成した動画で確認） */
 function RegisteredPreview({ segments, story }: { segments: RegisteredSegment[]; story: boolean }) {
+  const C = REGISTERED_VIDEO_COLORS;
   const frames: Array<{ sg: RegisteredSegment; page: RegisteredPage | null; k: number }> = segments.flatMap((sg) =>
     sg.pages && sg.pages.length > 0 ? sg.pages.map((p, k) => ({ sg, page: p as RegisteredPage | null, k })) : [{ sg, page: null, k: 0 }],
   );
+  const marker = (color: string) => ({ backgroundImage: `linear-gradient(transparent 60%, ${color} 60%)` });
   return (
     <div>
       <p className="text-xs font-bold text-slate-700 mb-1">プレビュー（{frames.length}画面・{story ? 'ストーリーズ' : 'リール'}）</p>
       <div className="flex gap-2 overflow-x-auto pb-2">
-        {frames.map(({ sg, page, k }) => (
-          <div key={`${sg.id}-${k}`} className="shrink-0 w-[135px] h-[240px] rounded-lg bg-[#0B1330] text-white p-2 flex flex-col text-[9px] leading-tight">
-            <div className="text-[8px] text-yellow-300 mb-1">
-              {sg.slotSeconds.toFixed(1)}秒{sg.pages && sg.pages.length > 1 ? ` ÷ ${sg.pages.length}` : ''} ・ {SEGMENT_KIND_LABEL[sg.kind]}
-            </div>
-            {page ? (
-              <>
-                <div className="flex justify-between items-baseline font-bold mb-1">
-                  <span className="truncate">{page.heading}</span>
-                  <span className="text-yellow-300 shrink-0">
-                    {page.count}組{page.parts > 1 ? ` ${page.part}/${page.parts}` : ''}
-                  </span>
-                </div>
-                <div className={`grid gap-1`} style={{ gridTemplateColumns: `repeat(${page.columns}, minmax(0, 1fr))` }}>
-                  {page.items.map((it) => (
-                    <div key={it.name} style={it.wide ? { gridColumn: '1 / -1' } : undefined} className={`rounded bg-white/10 border border-white/20 px-1 py-1.5 text-center font-bold break-words `}>
-                      {it.name}
-                    </div>
+        {frames.map(({ sg, page, k }) => {
+          const accent = page ? registeredHeadingAccent(page.heading) : null;
+          return (
+            <div
+              key={`${sg.id}-${k}`}
+              data-testid="registered-preview-frame"
+              className="shrink-0 w-[135px] h-[240px] rounded-lg border p-2 flex flex-col text-[9px] leading-tight"
+              style={{ background: `linear-gradient(180deg, ${C.bgTop} 0%, ${C.bgMid} 42%, ${C.bgBottom} 100%)`, borderColor: C.line, color: C.ink }}
+            >
+              <div className="text-[8px] mb-1" style={{ color: C.muted }}>
+                {sg.slotSeconds.toFixed(1)}秒{sg.pages && sg.pages.length > 1 ? ` ÷ ${sg.pages.length}` : ''} ・ {SEGMENT_KIND_LABEL[sg.kind]}
+              </div>
+              {page && accent ? (
+                <>
+                  <div className="flex justify-between items-center font-bold mb-1 gap-1">
+                    <span className="truncate rounded-full px-1" style={{ backgroundColor: accent.soft, color: accent.ink }}>{page.heading}</span>
+                    <span className="shrink-0" style={{ color: C.head }}>
+                      <span style={marker(C.yellow)}>{page.count}</span>
+                      <span className="ml-0.5" style={{ color: C.ink }}>組</span>
+                      {page.parts > 1 ? (
+                        <span className="ml-1 rounded-full border bg-white px-1 text-[7px]" style={{ color: C.muted, borderColor: C.line }}>
+                          {page.part}/{page.parts}
+                        </span>
+                      ) : null}
+                    </span>
+                  </div>
+                  <div className={`grid gap-1`} style={{ gridTemplateColumns: `repeat(${page.columns}, minmax(0, 1fr))` }}>
+                    {page.items.map((it) => (
+                      <div
+                        key={it.name}
+                        style={{ ...(it.wide ? { gridColumn: '1 / -1' } : {}), backgroundColor: C.surface, borderColor: C.line, boxShadow: `inset 0 -2px 0 ${accent.soft}, 0 2px 0 ${C.yellow}`, fontSize: previewNameSize(it.name, it.wide ? 1 : page.columns) }}
+                        className="rounded-md border px-1 py-1.5 text-center font-bold [overflow-wrap:anywhere]"
+                      >
+                        {it.name}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-center gap-1">
+                  {sg.label && (
+                    <span className="rounded-full px-1.5 font-bold border" style={sg.kind === 'outro' ? { color: C.head } : { backgroundColor: C.yellow, borderColor: C.yellowDeep, color: C.head }}>
+                      {sg.label}
+                    </span>
+                  )}
+                  {sg.title &&
+                    (sg.kind === 'outro' ? (
+                      <span className="font-bold text-[11px] whitespace-pre-line rounded-lg border-2 border-white px-1 py-1.5 w-full" style={{ backgroundColor: C.yellow, color: C.head }}>
+                        {sg.title}
+                      </span>
+                    ) : (
+                      <span className="font-bold text-[11px] whitespace-pre-line" style={{ color: C.head }}>{sg.title}</span>
+                    ))}
+                  {sg.stats && (
+                    <span>
+                      登録人物 <b style={{ color: C.head }}>{sg.stats.persons}</b>人<br />
+                      登録グループ <b style={{ color: C.head }}>{sg.stats.groups}</b>組
+                    </span>
+                  )}
+                  {sg.screen && <span style={{ color: C.muted }}>（トップページ「グループで探す」{sg.screen === 'male' ? '男性アイドル' : sg.screen === 'female' ? '女性アイドル' : 'すべて'}の実画面を撮影）</span>}
+                  {(sg.lines ?? []).map((l) => (
+                    <span
+                      key={l}
+                      className="font-bold rounded-full border px-1.5"
+                      style={sg.kind === 'outro' ? { backgroundColor: C.surface, borderColor: C.pink, color: C.ink } : { backgroundColor: C.yellow, borderColor: C.yellowDeep, color: C.head }}
+                    >
+                      {l}
+                    </span>
                   ))}
                 </div>
-              </>
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-center gap-1">
-                {sg.label && <span className="rounded-full bg-yellow-300 text-[#0B1330] px-1.5 font-bold">{sg.label}</span>}
-                {sg.title && <span className="font-bold text-[11px] whitespace-pre-line">{sg.title}</span>}
-                {sg.stats && (
-                  <span>
-                    登録人物 <b className="text-yellow-300">{sg.stats.persons}</b>人<br />
-                    登録グループ <b className="text-yellow-300">{sg.stats.groups}</b>組
-                  </span>
-                )}
-                {sg.screen && <span className="text-gray-300">（トップページ「グループで探す」{sg.screen === 'male' ? '男性アイドル' : sg.screen === 'female' ? '女性アイドル' : 'すべて'}の実画面を撮影）</span>}
-                {(sg.lines ?? []).map((l) => (
-                  <span key={l} className="text-yellow-300">
-                    {l}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
