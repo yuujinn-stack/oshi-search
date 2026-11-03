@@ -15,7 +15,9 @@ import { matchesQuery } from '@/lib/person-group-filter';
 import PersonMultiSelect from '../instagram-schedule/PersonMultiSelect';
 import First3WorkSlots, { type First3SlotWork } from './First3WorkSlots';
 import VodCompareTrioPicker, { EMPTY_TRIO, completeTrio, type TrioCapcutCheck, type TrioSlots } from './VodCompareTrioPicker';
-import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND, TEMPLATE_INPUT_KINDS } from '@/lib/video-template-input';
+import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_SITE_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND, TEMPLATE_INPUT_KINDS } from '@/lib/video-template-input';
+import SiteReelPicker, { EMPTY_SITE_PICK, sitePickReady, siteTemplateInput, type SitePick } from './SiteReelPicker';
+import { SITE_CTA_OPTIONS, SITE_TEMPLATE_CATEGORY, isSiteTemplateId, type SiteLinks, type SiteTarget } from '@/lib/video-site-reel';
 import RegisteredGroupsPicker, { EMPTY_REGISTERED_PICK, registeredPickReady, registeredTemplateInput, type RegisteredPick } from './RegisteredGroupsPicker';
 import { REGISTERED_TEMPLATE_CATEGORY, REGISTERED_TEMPLATE_SPECS, isRegisteredTemplateId, type RegisteredCounts, type RegisteredSegment } from '@/lib/video-registered-groups';
 import FollowReelPicker, { EMPTY_FOLLOW_PICK, followPickReady, followTemplateInput, type FollowPick } from './FollowReelPicker';
@@ -194,6 +196,11 @@ interface VideoJob {
     counts?: RegisteredCounts;
     shownGroups?: string[];
     storyLinkUrl?: string | null;
+    /** サイト誘導リール: 対象（DBで確かめた名前・正式なパス）・締めの言葉・推奨リンク */
+    siteSelection?: { name?: string } | null;
+    siteTarget?: SiteTarget;
+    cta?: { key?: string; text?: string };
+    links?: SiteLinks;
   } | null;
   narrationMode: NarrationMode;
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
@@ -319,6 +326,8 @@ export default function VideoMakerClient({
   const [followPick, setFollowPick] = useState<FollowPick>(EMPTY_FOLLOW_PICK);
   // 登録グループ紹介（除外・表示順・台本）の選択。テンプレートごとに選び直す
   const [registeredPick, setRegisteredPick] = useState<RegisteredPick>(EMPTY_REGISTERED_PICK);
+  // サイト誘導リール（対象・締めの言葉・台本）の選択。テンプレートごとに選び直す
+  const [sitePick, setSitePick] = useState<SitePick>(EMPTY_SITE_PICK);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [narrationMode, setNarrationMode] = useState<NarrationMode | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -423,10 +432,13 @@ export default function VideoMakerClient({
   useEffect(() => {
     setFollowPick(EMPTY_FOLLOW_PICK);
     setRegisteredPick(EMPTY_REGISTERED_PICK);
+    setSitePick(EMPTY_SITE_PICK);
     // 前のテンプレートで登録したときのメッセージを残さない（別のテンプレートのジョブと誤解しないため）
     setMessage(null);
   }, [templateId]);
   const registeredMode = template?.templateInputKind === OSHI_REGISTERED_INPUT_KIND && isRegisteredTemplateId(template.templateId);
+  const siteMode = template?.templateInputKind === OSHI_SITE_INPUT_KIND && isSiteTemplateId(template.templateId);
+  const siteReady = siteMode && sitePickReady(sitePick, template!.templateId);
   // この画面のコードが知らない入力の種類のテンプレート（開いたあとにデプロイ・Worker が更新された）。人物選択に落とさず、再読み込みを求める
   const unsupportedTemplate = !!template?.templateInputKind && !(TEMPLATE_INPUT_KINDS as readonly string[]).includes(template.templateInputKind);
   // 画面を開いたあとに新しい版がデプロイされた（ローカルなど版が分からないときは比べない）
@@ -438,7 +450,7 @@ export default function VideoMakerClient({
   // テンプレート共通のCapCut音声を使うテンプレートは、人物ごとの音声状態（作成待ち・ready等）を扱わない
   const sharedCapcut = template?.sharedCapcut ?? null;
   // 推し活で損してるかも？の CapCut 音声は、完了した音声なし動画のジョブごとに付ける（人物ごとの保存済み音声は扱わない）
-  const capcutSupported = !!template?.narrationModes.includes('capcut') && !sharedCapcut && !sonkamoMode && !followMode && !registeredMode;
+  const capcutSupported = !!template?.narrationModes.includes('capcut') && !sharedCapcut && !sonkamoMode && !followMode && !registeredMode && !siteMode;
   const capcutEntries = useMemo(
     () =>
       capcutSupported && template
@@ -764,11 +776,11 @@ export default function VideoMakerClient({
     // 推し活で損してるかも？: 作成フォームでは CapCut を選ばない（CapCut 音声は完成した音声なし動画の「詳細」から付ける）
     // フォロー獲得リールも同じ（音声なしで作り、完成した動画の「詳細」から CapCut 音声を付ける）
     // 登録グループ紹介のリールも同じ（ストーリーズは音声なしだけ）
-    const selectable = (m: NarrationMode) => template.narrationModes.includes(m) && !((sonkamoMode || followMode || registeredMode) && m === 'capcut');
+    const selectable = (m: NarrationMode) => template.narrationModes.includes(m) && !((sonkamoMode || followMode || registeredMode || siteMode) && m === 'capcut');
     if (!narrationMode || !selectable(narrationMode)) {
       setNarrationMode((NARRATION_ORDER.find(selectable) as NarrationMode) ?? null);
     }
-  }, [template, narrationMode, sonkamoMode, followMode, registeredMode]);
+  }, [template, narrationMode, sonkamoMode, followMode, registeredMode, siteMode]);
   // 推しでサブスク比較: 選んだ3人の診断結果が共通CapCut音声の台本と一致しない場合は、CapCutを選べない（音声なしへ切り替える）。
   // 判定はサーバー（プレビューAPI）。ジョブ作成APIでも必ず再確認する
   const trioCapcutBlocked = trioMode && !!trioCapcut && !trioCapcut.compatible;
@@ -912,6 +924,27 @@ export default function VideoMakerClient({
     }
   }
 
+  // サイト誘導リール: 主な対象1つで1本（撮影するページのパス・区間はサーバーがDBで確かめて作り直す）
+  async function submitSite() {
+    if (!template || !narrationMode || !siteReady) return;
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      await fetchJson<{ jobs: VideoJob[] }>('/api/admin/video-jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personNames: [sitePick.selection.name], templateId: template.templateId, narrationMode, templateInput: siteTemplateInput(sitePick) }),
+      });
+      setMessage({ kind: 'ok', text: `1件のジョブを登録しました（${template.name}・${sitePick.selection.name}）。Workerが推しサーチの画面を操作・撮影して生成します。` });
+      setSitePick(EMPTY_SITE_PICK);
+      await load();
+    } catch (err) {
+      setMessage({ kind: 'error', text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function submit(names: string[] = selectedNames) {
     if (!template || !narrationMode || names.length === 0) return;
     setSubmitting(true);
@@ -995,7 +1028,7 @@ export default function VideoMakerClient({
               // 推しでサブスク比較: 選んだ3人が共通CapCut音声を使えない場合は CapCut を選べない（音声なしは常に選べる）
               const blockedForTrio = m === 'capcut' && trioCapcutBlocked;
               // 推し活で損してるかも？: ここでは音声なしで作り、CapCut 音声は完成した動画の「詳細」から付ける
-              const supported = !!template?.narrationModes.includes(m) && !blockedForTrio && !((sonkamoMode || followMode || registeredMode) && m === 'capcut');
+              const supported = !!template?.narrationModes.includes(m) && !blockedForTrio && !((sonkamoMode || followMode || registeredMode || siteMode) && m === 'capcut');
               const title = supported ? '' : blockedForTrio ? trioCapcut?.reason ?? '' : 'このテンプレート・Workerでは選択できません';
               return (
                 <label key={m} className={supported ? 'cursor-pointer' : 'text-gray-300 cursor-not-allowed'} title={title}>
@@ -1025,6 +1058,18 @@ export default function VideoMakerClient({
             value={trioSlots}
             onChange={setTrioSlots}
             onCapcutCheck={setTrioCapcut}
+          />
+        </section>
+        ) : siteMode && template ? (
+        <section>
+          <h2 className="text-sm font-bold text-slate-700 mb-2">3. 対象・締めの言葉・台本、投稿文とリンク</h2>
+          <SiteReelPicker
+            templateId={template.templateId as Parameters<typeof SiteReelPicker>[0]['templateId']}
+            persons={persons}
+            groups={groups}
+            fixedReadings={followFixedReadings}
+            value={sitePick}
+            onChange={setSitePick}
           />
         </section>
         ) : registeredMode && template ? (
@@ -1101,6 +1146,15 @@ export default function VideoMakerClient({
                 : capcutMode && !trioCapcut
                   ? 'CapCut音声を使えるか確認中...'
                   : '生成する（3人で1本）'}
+          </button>
+          ) : siteMode ? (
+          <button
+            type="button"
+            disabled={submitting || !template || !narrationMode || !siteReady}
+            onClick={() => void submitSite()}
+            className="px-5 py-2 rounded-lg bg-violet-600 text-white text-sm font-bold disabled:bg-gray-300"
+          >
+            {submitting ? '登録中...' : !sitePick.selection.name ? '対象を選ぶと生成できます' : !siteReady ? '台本を生成すると生成できます' : '生成する（音声なし動画・1本）'}
           </button>
           ) : registeredMode ? (
           <button
@@ -1962,6 +2016,29 @@ function CompletedDetail({
       />
     )}
     {job.templateInput?.targetType && <FollowJobOutputs job={job} />}
+    {job.templateInput?.templateCategory === SITE_TEMPLATE_CATEGORY && <SiteJobOutputs job={job} />}
+    {job.templateInput?.templateCategory === SITE_TEMPLATE_CATEGORY && job.narrationMode === 'none' && job.status === 'completed' && isSiteTemplateId(job.templateId) && (
+      <>
+        <FollowCapcutAutoStatus
+          job={job}
+          voicedJobs={allJobs.filter((j) => j.templateInput?.audio?.sourceJobId === job.id)}
+          events={capcutAuto?.events ?? []}
+          inboxDir={capcutAuto?.inboxDir ?? null}
+          workerOnline={capcutAuto?.workerOnline ?? false}
+        />
+        {/* 予備: 自動取り込みが使えないときの手動の取り込み（対象・区間・台本は元のジョブから付け直す） */}
+        <details className="mt-2 text-xs">
+          <summary className="cursor-pointer text-gray-600">手動で WAV・SRT を取り込む（予備）</summary>
+          <SonkamoCapcutAudio
+            job={job}
+            voicedJobs={allJobs.filter((j) => j.templateInput?.audio?.sourceJobId === job.id)}
+            onCreated={onReelChanged}
+            endingNote="最後の読み上げの約1秒後に終わります。24秒まで"
+            buildTemplateInput={(audio) => ({ version: 1, templateCategory: SITE_TEMPLATE_CATEGORY, siteSelection: { kind: 'person', name: job.personName }, cta: { key: 'profile' }, lines: [], audio })}
+          />
+        </details>
+      </>
+    )}
     {job.templateInput?.templateCategory === REGISTERED_TEMPLATE_CATEGORY && <RegisteredJobOutputs job={job} />}
     {job.templateInput?.templateCategory === REGISTERED_TEMPLATE_CATEGORY && job.narrationMode === 'none' && job.status === 'completed' && isRegisteredTemplateId(job.templateId) && REGISTERED_TEMPLATE_SPECS[job.templateId].kind === 'reel' && (
       <>
@@ -2079,6 +2156,88 @@ function OshiCardJobOutputs({ job }: { job: VideoJob }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** サイト誘導リール: タイトル・投稿文案・推奨リンク（UTM付き）・締めの言葉・開いたページ、台本・SRT */
+function SiteJobOutputs({ job }: { job: VideoJob }) {
+  const input = job.templateInput;
+  const info = (job.result?.site ?? null) as { pageUrls?: string[]; capturedAt?: string; facts?: Record<string, unknown> } | null;
+  const capcut = (job.result?.capcut ?? null) as { warnings?: string[] } | null;
+  const srt = typeof job.result?.narrationSrt === 'string' ? job.result.narrationSrt : null;
+  const kana = typeof job.result?.narrationKana === 'string' ? job.result.narrationKana : null;
+  const caption = job.postTexts?.default ?? null;
+  const links = input?.links;
+  const download = (text: string, name: string, type: string) => {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  return (
+    <div className="mt-3 border-t border-gray-100 pt-3 space-y-2 text-xs">
+      <div className="grid grid-cols-[130px_1fr] gap-x-4 gap-y-1">
+        <span className="text-gray-500">動画タイトル</span>
+        <span className="flex items-center gap-2">
+          <span className="font-bold text-slate-800">{input?.title ?? '-'}</span>
+          {input?.title && <CopyButton text={input.title} label="コピー" />}
+        </span>
+        <span className="text-gray-500">形式</span>
+        <span>{job.narrationMode === 'capcut' ? `リール・CapCut ナレーション（元の音声なし動画のジョブ ${input?.audio?.sourceJobId?.slice(0, 8) ?? '-'}）` : 'リール（音声なし）'}</span>
+        <span className="text-gray-500">締めの言葉（CTA）</span>
+        <span>{input?.cta?.text ?? (input?.cta?.key === 'try' ? SITE_CTA_OPTIONS.try.text : SITE_CTA_OPTIONS.profile.text)}</span>
+        {links && (
+          <>
+            <span className="text-gray-500">推奨リンク先URL</span>
+            <span className="flex items-center gap-2 flex-wrap">
+              <code className="bg-gray-50 border border-gray-200 rounded px-1.5 break-all">{decodeURI(links.pageUrl)}</code>
+              <CopyButton text={links.pageUrl} label="URLをコピー" />
+            </span>
+            <span className="text-gray-500">UTM付きリンク</span>
+            <span className="flex items-center gap-2 flex-wrap">
+              <code className="bg-gray-50 border border-gray-200 rounded px-1.5 break-all">{decodeURI(links.utmUrl)}</code>
+              <CopyButton text={links.utmUrl} label="コピー" primary />
+            </span>
+            <span className="text-gray-500">プロフィールのリンク用</span>
+            <span className="flex items-center gap-2 flex-wrap">
+              <code className="bg-gray-50 border border-gray-200 rounded px-1.5 break-all">{links.profileUrl}</code>
+              <CopyButton text={links.profileUrl} label="コピー" />
+            </span>
+          </>
+        )}
+        {info?.pageUrls && info.pageUrls.length > 0 && (
+          <>
+            <span className="text-gray-500">撮影したページ</span>
+            <span className="break-all">{info.pageUrls.join(' → ')}</span>
+          </>
+        )}
+      </div>
+      {caption && (
+        <div>
+          <p className="text-gray-500 mb-1">Instagram 投稿文案</p>
+          <pre className="whitespace-pre-wrap bg-gray-50 border border-gray-200 rounded p-2 text-slate-700">{caption}</pre>
+          <CopyButton text={caption} label="投稿文をコピー" />
+        </div>
+      )}
+      {kana && (
+        <div>
+          <p className="text-violet-700 font-bold mb-1">音声生成用台本（ひらがな）← CapCutにはこちらを貼る</p>
+          <pre className="whitespace-pre-wrap bg-violet-50 rounded p-2 text-slate-700">{kana}</pre>
+        </div>
+      )}
+      <div className="flex gap-3 flex-wrap">
+        {job.narrationScript && <CopyButton text={job.narrationScript} label="台本をコピー" />}
+        {kana && <CopyButton text={kana} label="音声用台本をコピー" primary />}
+        {srt && (
+          <button type="button" onClick={() => download(srt, `${job.templateId}.srt`, 'application/x-subrip;charset=utf-8')} className="text-violet-600 hover:underline">
+            ⬇ SRTをダウンロード
+          </button>
+        )}
+      </div>
+      {capcut?.warnings && capcut.warnings.length > 0 && <p className="text-amber-700 bg-amber-50 rounded p-2">⚠ {capcut.warnings.join(' / ')}</p>}
     </div>
   );
 }

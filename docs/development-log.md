@@ -5925,3 +5925,42 @@ oshi-search（未commit）
 - **反映前：** 処理中のジョブ0件・Worker 稼働中（29テンプレート）。
 - **oshi-video-maker：** 作業ツリーの3ファイル（`registeredScript.ts`・`registeredProduce.ts`・`registered.test.ts`。作業フォルダ側は HEAD と同じで別作業の変更なし）を作業フォルダへ反映し、この3ファイルだけを commit `cfee78c`（ローカル。別作業のステージ済み変更はそのまま）。tsc 0件・テスト252件。Worker はジョブごとに `produce.ts` を子プロセスで起動し `registeredProduce` を読み込むため再起動不要。作業フォルダから CapCut 自動取り込み（ローカル）を実行し、音声付き 17.0秒・2/4/4/4/3・QA PASS。
 - **oshi-search：** 5区分の台本・17秒の配分（`video-registered-groups.ts`・`registered-target.ts`・`RegisteredGroupsPicker.tsx`・テスト）と開発ログの Task 169 追記8〜11 を commit。
+
+## Task 170：サイト誘導リール10種類（templateCategory=site_referral・pipeline "site"）の動画テンプレート追加（2026-11-03・未commit・本番デプロイなし・Worker 未再起動）
+
+**目的：** Instagram のリールを見た人が「自分の推しでも試したい」と思い、プロフィールのリンクから推しサーチへ来る動画を作る。機能の説明ではなく、実際の人物・作品で推しサーチ本番を操作した画面と結果を見せる。既存29種類（A フォロー獲得・登録グループ紹介ほか）は維持。
+
+**10種類（templateId）：** B1 `site_person_search`（名前で検索 → 人物ページ → 出演作品 → 配信先 → 関連商品）／B2 `site_group_member_search`（グループ名で検索 → メンバー一覧 → メンバーの人物ページ）／B3 `site_work_cast_search`（人物ページの出演作品「作品名で検索」→ 作品ページ → 出演者（当サイト登録）→ 別の出演者）／B4 `site_three_person_search`（2〜3人を続けて検索。1人目=出演作品・2人目=配信中・最後=関連商品。比較・順位は作らない）／B5 `site_live_search_demo`（実画面の録画。テロップ最小限）／B6 `site_subscription_diagnosis`（実際のサブスク診断。グループはサイトと同じ「全員を選択」）／B7 `site_shopping_diagnosis`（推し・用途・予算 → 実際の結果。価格は取得時点・購入は楽天の商品ページと注記）／B8 `site_photobook_search`（写真集の一覧 → 人物で絞り込み → 掲載中の写真集。楽天へは移動しない）／B9 `site_fan_card_demo`（既存の推し布教カードの撮影 captureOshiCardPages をそのまま使う）／B10 `site_vod_service_search`（トップページの配信サービス → サービスのページ →「配信作品から人物を探す」→ 人物の配信中の出演作品）。冒頭の文はユーザー指定の文（B2 は「{グループ}の{人数}人、ここから探せます」、B4 は人数）。
+
+**設計：**
+- **入力の種類 `oshi-site-reel`**（1ジョブ=主な対象1つ。person_name は人物名・グループ名）。画面から送るのは選んだ名前・ID・選択肢・締めの言葉・台本だけ。対象をDBで確かめ、撮影するページの正式なパス（人物 `/person/…`・グループ `groupHrefByName`・作品 `getWorkPublicUrl`・配信サービス `/vod/{slug}`）、区間、リンクはジョブ作成時にサーバーが作り直す（`site-target.ts`。template_input には `siteTarget` として保存。sonkamo の `target` と区別）。DB スキーマ変更なし。
+- **対象の確認：** B2 の人数はグループページのメンバー欄と同じ判定（卒業・脱退メンバーがいれば現役のみ）。B3 は推しサーチに出演者が2人以上登録された作品だけ（統合された作品は除く）。B6 のグループはサイトの上限12人まで。B8 は写真集の一覧に掲載中の人物だけ。B9 は推し布教カードで選べる作品だけ。B10 はサービスのページの「配信作品から人物を探す」（12人）に出る人物だけ。存在しない機能は使わない（サイトの検索欄は作品名を検索できないため、B3 は人物ページの「作品名で検索」を使う）。
+- **撮影（Worker・oshi-video-maker `scripts/site/captureSiteFlow.ts`）：** 本番をスマホ相当（390×844・3倍）で実際に入力・タップ・スクロールして撮る。名前・人数・出演者・候補・診断結果が画面と合わなければ理由つきで中止。計測（/api/track・/api/search-track）とアクセス解析は遮断。外部ショップ・配信サービスへは移動しない。B5 は Chrome の画面録画（CDP screencast・`--force-device-scale-factor=3` で3倍のまま）を届いた時刻どおりに並べた動画を等速で再生（スクリーンショットの再現映像を録画として扱わない）。
+- **デザイン：** 登録グループ紹介の黄色基調（背景・飾り・字幕・小見出し・冒頭・締め）を再利用（`OshiRegisteredGroups.tsx` の部品に export を付けただけ。描画は変更なし）。実画面は白い角丸＋黄色の縁の枠に入れ、色は変えない。重ねるのは注目する場所の枠と、実際にタップした場所の印だけ。
+- **台本：** 冒頭 → 手順 → 締め（区間=1文）。名前の読みは固定辞書 → 登録読み → かなだけの名前（無ければ「読み未登録」）。作品名・商品名は読まない。締めの言葉は「あなたの推しも、プロフィールのリンクから検索してみてね！」（基本）／「自分の推しでも試してみてね。推しサーチはプロフィールから！」（別案）から1つ。締めの画面に次に入れる言葉（検索ワード・機能名）を出す。長さは読みの見積もり（8音/秒）から目安15〜20秒、24秒まで。
+- **管理画面（`SiteReelPicker.tsx`）：** 対象の選択（人物は PersonCombobox）・締めの言葉・台本の生成と編集・読みの登録・音声用台本のコピー・動画タイトル・Instagram 投稿文案（URL は本文に入れない）・推奨リンク先URL・UTM付きリンク（utm_source=instagram・utm_medium=social・utm_campaign=site_referral・utm_content=テンプレートID）・プロフィール用リンクのコピー。ジョブの詳細にも同じ情報と CapCut 自動取り込みの状態。
+- **CapCut：** フォロー獲得・登録グループ紹介と同じ（ひらがな台本 → CapCut → `{人物slug}__{templateId}__{ジョブIDの先頭8桁}` で受信フォルダへ WAV・SRT → Worker が自動検知 → 音声付きのジョブ → 完成MP4。手動の取り込みも予備）。音声付きは読み上げ開始の0.1秒前に切り替え、読み終わりの1秒後に終える（`buildFollowTimeline`・24秒まで）。
+- **Worker の報告：** `VIDEO_WORKER_SITE_TEMPLATES=1` のときだけ10種類を報告（未設定＝現状は報告しない）。CapCut は既存の `VIDEO_WORKER_SONKAMO_CAPCUT=1` も必要。
+
+**変更ファイル（oshi-search）：** 新規 `src/lib/video-site-reel.ts`・`src/server/video-jobs/site-target.ts`・`src/app/api/admin/video-jobs/site-candidates/route.ts`（読み取りのみ）・`src/app/admin/video-maker/SiteReelPicker.tsx`・`src/lib/__tests__/video-site-reel.test.ts`（11件）。変更 `video-template-input.ts`（`OSHI_SITE_INPUT_KIND`・`parseOshiSiteInput`）・`job-store.ts`（作り直し・音声付きの付け直し・perJobAudio）・`api/admin/video-jobs/route.ts`・`capcut-upload/route.ts`・`capcut-auto-import.ts`・`VideoMakerClient.tsx`。
+
+**変更ファイル（oshi-video-maker・別の作業ツリーで作成。本体のフォルダは未変更）：** 新規 `src/compositions/site/`（`siteInput.ts`・`siteCapture.ts`・`siteScript.ts`・`OshiSiteReel.tsx`・`OshiSiteRoot.tsx`・`index.ts`）・`scripts/site/captureSiteFlow.ts`・`scripts/siteProduce.ts`・`src/lib/__tests__/site.test.ts`（6件）。変更 `videoTemplateRegistry.ts`（`SITE_TEMPLATE_REGISTRY`）・`capcutNarrationConfig.ts`・`scripts/produce.ts`・`scripts/worker/videoWorker.ts`・`scripts/worker/capcutAutoImport.ts`・`OshiRegisteredGroups.tsx`（export のみ）・`aruaruNarration.test.ts`・`capcutAutoImport.test.ts`。※ registry・config・produce・videoWorker は本体のフォルダに別作業の未コミット差分があるため、反映時は差分を当てる。
+
+**確認（2026-11-03）：** oshi-search tsc 0件・vitest 171ファイル/2,711件・`next build` 成功（作業ツリー全体の複製で実行）。oshi-video-maker tsc 0件・テスト226件。本番DB（読み取りのみ）でサーバーと同じ処理で10種類の入力を作り、本番サイトを操作・撮影して10本すべて音声なしMP4を生成・QA PASS（15.8〜21.3秒）。サンプル・比較画像は `tmp/site-referral-preview/`。未確認: 管理画面のブラウザ操作（Worker が報告するまで出ない）・CapCut 音声付きの生成・本番 Worker での生成。
+
+### Task 170 追記：本番反映前の見た目・操作内容の確認と軽微修正（2026-11-03・未commit・本番デプロイなし・Worker 未再起動）
+
+- **確認用サンプル：** B1・B2・B6（参考に B3・B5）の冒頭・操作中・結果・締めを原寸（1080×1920）と4場面の比較画像で `tmp/site-referral-preview/large/README.md` に用意（MP4 も同じフォルダ）。
+- **待ち時間：** 音声なしの区間の長さを見直し、操作の区間の最短を3.0秒 → 2.6秒にした（読み終わりから次の区間までの余りは最大約1秒。合計が15秒に満たないときだけ3秒まで延ばす。`allocateSiteSlots`）。B1 20.3 → 19.8秒、B3 21.3 → 20.9秒、B2 16.6 → 15.8秒。CapCut 音声付きは従来どおり読み上げに合わせる（各区間は読み上げの約0.1秒前に切り替え）。
+- **B3：** サイトの検索欄で作品名を検索できるように見えないよう、手順の見出しを「目黒蓮の出演作品から」→「目黒蓮のページの「作品名で検索」」に変更（人物ページの出演作品の絞り込みであることを明示）。
+- **B5：** 「● 実際の画面を録画」の表示が実画面のロゴに重なっていたため、実画面の外（見出しの位置）へ移動。録画は3倍の解像度で、スマホの幅相当でも本文・件数が読めることを確認。
+- **締め：** 機能名の案内（B6〜B9）を「サイトで」と「「機能名」」の2行に分け、中央そろえにした（機能名の途中で改行されないように）。
+- **確認結果：** 動画内の画面はすべて本番を操作して撮ったもので、重ねているのは注目の枠と実際にタップした場所の印だけ（存在しない機能・架空の結果なし）。黄色のデザインは背景・見出し・字幕・冒頭・締めだけで、実画面は白い枠に入れて色を変えていない。10本すべて再生成し QA PASS（15.1〜20.9秒）。oshi-search tsc 0件・vitest 171ファイル/2,711件、oshi-video-maker tsc 0件・テスト226件。既存29種類・CapCut の WAV・SRT 取り込みは変更なし。
+
+### Task 170 追記2：B1・B2・B6 の実画面の見せ方の調整（2026-11-03・未commit・本番デプロイなし・Worker 未再起動）
+
+- **B2：** メンバー一覧の実画面（高さ約620px）が枠（約440px）に入りきらず、5人目が映っていなかった。同じ実画面を、まず上から下まで送ってメンバー全員を見せ、そのあと紹介するメンバーの位置でタップの印を出す2場面にした（`captureSiteFlow.ts`）。メンバー一覧の区間の最短を3.6秒に（`SITE_STEP_MIN_BY_TEMPLATE`）。紹介するメンバーの人物ページの出演作品も作品カードの先頭から見せる。
+- **B1：** 出演作品の欄を、上の絞り込み（タブ・検索欄・選択欄）を飛ばして作品カードの先頭から、作品名が読める速さで送る（約380px）。出演作品の区間の最短を3.4秒に。
+- **B6：** 診断結果を見出し → サービス名・見放題で見られる作品数 → カバー率・料金まで（結果のカードの下端まで）ゆっくり送る。
+- 実画面の拡大率・配色・装飾・全体構成は変更なし。架空の情報・画面は追加していない。ほかの7種類の配分・撮影は変更なし。
+- **確認：** B1 20.3秒・B2 16.8秒・B6 17.6秒を再生成し QA PASS。oshi-search tsc 0件・vitest 171ファイル/2,712件、oshi-video-maker tsc 0件・テスト226件。

@@ -7,6 +7,7 @@
 
 import { FOLLOW_TEMPLATE_CATEGORY, type FollowFact, type FollowFactKind, type FollowLine, type FollowScene, type FollowTargetType } from './video-follow-reel';
 import { REGISTERED_TEMPLATE_CATEGORY, type RegisteredCounts, type RegisteredLine, type RegisteredSegment, type RegisteredSelection } from './video-registered-groups';
+import { SITE_TEMPLATE_CATEGORY, isSiteCtaKey, type SiteCtaKey, type SiteLine, type SiteLinks, type SiteSegment, type SiteSelection, type SiteTarget } from './video-site-reel';
 
 /** 推しでサブスク比較（3人の推しに合うサブスク診断）: 人物3人 */
 export const OSHI_VOD_COMPARE_INPUT_KIND = 'oshi-vod-compare-persons' as const;
@@ -50,8 +51,16 @@ const REGISTERED_MAX_LINES = 6;
 const REGISTERED_MAX_GROUPS = 500;
 const GROUP_NAME_MAX = 100;
 
-export type TemplateInputKind = typeof OSHI_VOD_COMPARE_INPUT_KIND | typeof OSHI_CARD_SELECTION_INPUT_KIND | typeof OSHI_SONKAMO_INPUT_KIND | typeof OSHI_FOLLOW_INPUT_KIND | typeof OSHI_REGISTERED_INPUT_KIND;
-export const TEMPLATE_INPUT_KINDS: readonly TemplateInputKind[] = [OSHI_VOD_COMPARE_INPUT_KIND, OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND];
+/**
+ * サイト誘導リール（10種類・templateCategory=site_referral）: 1ジョブ=1本（person_name は主な対象の人物名・グループ名）。
+ * 画面で選んだ対象（名前・ID・選択肢）・締めの言葉・確認した台本を保存し、撮影するページの正式なパス・区間・リンクは
+ * ジョブ作成時にサーバーがDBで確かめて作り直す（src/server/video-jobs/site-target.ts。構成は src/lib/video-site-reel.ts）
+ */
+export const OSHI_SITE_INPUT_KIND = 'oshi-site-reel' as const;
+const SITE_MAX_LINES = 7;
+
+export type TemplateInputKind = typeof OSHI_VOD_COMPARE_INPUT_KIND | typeof OSHI_CARD_SELECTION_INPUT_KIND | typeof OSHI_SONKAMO_INPUT_KIND | typeof OSHI_FOLLOW_INPUT_KIND | typeof OSHI_REGISTERED_INPUT_KIND | typeof OSHI_SITE_INPUT_KIND;
+export const TEMPLATE_INPUT_KINDS: readonly TemplateInputKind[] = [OSHI_VOD_COMPARE_INPUT_KIND, OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_SITE_INPUT_KIND];
 
 export interface OshiVodCompareTemplateInput {
   version: 1;
@@ -130,6 +139,26 @@ export interface OshiRegisteredTemplateInput {
   audio?: OshiSonkamoAudio;
 }
 
+export interface OshiSiteTemplateInput {
+  version: 1;
+  templateCategory: typeof SITE_TEMPLATE_CATEGORY;
+  /** 管理画面で選んだ対象（名前・ID・選択肢の値だけ） */
+  siteSelection: SiteSelection;
+  cta: { key: SiteCtaKey; text?: string };
+  /** 管理画面で確認・編集した台本（字幕・読み。区間と同じ数・同じ順） */
+  lines: SiteLine[];
+  // ここから下はサーバーがジョブ作成時に付ける（画面からの値は使わない）
+  templateId?: string;
+  /** 撮影する対象（DBで確かめた名前・正式なパス。oshi-video-maker の parseSiteInput が読む） */
+  siteTarget?: SiteTarget;
+  segments?: SiteSegment[];
+  title?: string;
+  links?: SiteLinks;
+  resolvedAt?: string;
+  /** CapCut 音声付きのジョブだけ（対象・区間・台本は元のジョブから付け直す） */
+  audio?: OshiSonkamoAudio;
+}
+
 export interface OshiSonkamoAudio {
   sourceJobId: string;
   wavUrl: string;
@@ -159,7 +188,7 @@ function parseSonkamoAudio(raw: unknown): OshiSonkamoAudio {
   return { sourceJobId: o.sourceJobId, wavUrl: o.wavUrl, srtUrl: o.srtUrl, ...(typeof o.sourceOutDir === 'string' ? { sourceOutDir: o.sourceOutDir } : {}) };
 }
 
-export type VideoTemplateInput = OshiVodCompareTemplateInput | OshiCardSelectionTemplateInput | OshiSonkamoTemplateInput | OshiFollowTemplateInput | OshiRegisteredTemplateInput;
+export type VideoTemplateInput = OshiVodCompareTemplateInput | OshiCardSelectionTemplateInput | OshiSonkamoTemplateInput | OshiFollowTemplateInput | OshiRegisteredTemplateInput | OshiSiteTemplateInput;
 
 /** personVideoSlug の形式 */
 const PERSON_SLUG_PATTERN = /^p-[0-9a-f]{12}$/;
@@ -347,6 +376,62 @@ export function parseOshiRegisteredInput(raw: unknown): OshiRegisteredTemplateIn
   return { version: 1, templateCategory: REGISTERED_TEMPLATE_CATEGORY, selection: { order, excluded }, lines, ...(audio ? { audio } : {}) };
 }
 
+const siteName = (v: unknown, label: string, required = false): string | null => {
+  if (v === undefined || v === null || v === '') {
+    if (required) throw new TemplateInputError(`${label}を選んでください。`);
+    return null;
+  }
+  if (typeof v !== 'string' || !v.trim() || v.length > 200 || /[\u0000-\u001f]/.test(v)) throw new TemplateInputError(`${label}の指定が不正です。`);
+  return v.trim();
+};
+
+/**
+ * サイト誘導リールの入力の形を検証して正規化する（対象が登録済みか・台本と区間の対応はサーバーで確認する）。
+ * サーバーが付ける項目（ページのパス・区間・リンク等）は画面から受け取らない
+ */
+export function parseOshiSiteInput(raw: unknown): OshiSiteTemplateInput {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TemplateInputError('サイト誘導リールの指定がありません。');
+  const obj = raw as Record<string, unknown>;
+  if (obj.version !== undefined && obj.version !== 1) throw new TemplateInputError('未対応の入力形式です。');
+  const audio = obj.audio !== undefined && obj.audio !== null ? parseSonkamoAudio(obj.audio) : undefined;
+  const sel = (obj.siteSelection ?? {}) as Record<string, unknown>;
+  if (typeof sel !== 'object' || Array.isArray(sel)) throw new TemplateInputError('対象の指定が不正です。');
+  const kind = sel.kind === 'group' ? 'group' : 'person';
+  const list = (v: unknown, label: string, max: number): string[] | null => {
+    if (v === undefined || v === null) return null;
+    if (!Array.isArray(v) || v.length > max) throw new TemplateInputError(`${label}の指定が不正です。`);
+    return v.map((x) => siteName(x, label, true)!);
+  };
+  const siteSelection: SiteSelection = {
+    kind,
+    name: siteName(sel.name, kind === 'group' ? 'グループ' : '人物', !audio) ?? '',
+    member: siteName(sel.member, 'メンバー'),
+    workId: siteName(sel.workId, '作品'),
+    toPerson: siteName(sel.toPerson, '出演者'),
+    persons: list(sel.persons, '人物', 3),
+    use: siteName(sel.use, '用途'),
+    budget: siteName(sel.budget, '予算'),
+    workIds: list(sel.workIds, 'おすすめ作品', 3),
+    variant: sel.variant === 'cute' ? 'cute' : sel.variant === 'cool' ? 'cool' : null,
+    provider: siteName(sel.provider, '配信サービス'),
+  };
+  const ctaRaw = (obj.cta ?? {}) as Record<string, unknown>;
+  const ctaKey = isSiteCtaKey(ctaRaw.key) ? ctaRaw.key : 'profile';
+  const rawLines = obj.lines ?? [];
+  if (!Array.isArray(rawLines) || (!audio && rawLines.length < 3) || rawLines.length > SITE_MAX_LINES) throw new TemplateInputError('台本を生成してからジョブを作ってください。');
+  const lines: SiteLine[] = rawLines.map((l, i) => {
+    const o = (l ?? {}) as Record<string, unknown>;
+    const id = typeof o.id === 'string' && /^\d{2}-[a-z]+$/.test(o.id) ? o.id : null;
+    const text = typeof o.text === 'string' ? o.text.trim() : '';
+    const kana = typeof o.kana === 'string' ? o.kana.trim() : '';
+    if (!id) throw new TemplateInputError(`台本の${i + 1}文目の指定が不正です。`);
+    if (!text || Array.from(text).length > FOLLOW_TEXT_MAX) throw new TemplateInputError(`${i + 1}文目の字幕は1〜${FOLLOW_TEXT_MAX}文字にしてください。`);
+    if (!kana || Array.from(kana).length > FOLLOW_KANA_MAX) throw new TemplateInputError(`${i + 1}文目の読みは1〜${FOLLOW_KANA_MAX}文字にしてください。`);
+    return { id, text, kana };
+  });
+  return { version: 1, templateCategory: SITE_TEMPLATE_CATEGORY, siteSelection, cta: { key: ctaKey }, lines, ...(audio ? { audio } : {}) };
+}
+
 /** テンプレートの入力種別に応じて検証する */
 export function parseTemplateInput(kind: TemplateInputKind, raw: unknown): VideoTemplateInput {
   switch (kind) {
@@ -360,5 +445,7 @@ export function parseTemplateInput(kind: TemplateInputKind, raw: unknown): Video
       return parseOshiFollowInput(raw);
     case OSHI_REGISTERED_INPUT_KIND:
       return parseOshiRegisteredInput(raw);
+    case OSHI_SITE_INPUT_KIND:
+      return parseOshiSiteInput(raw);
   }
 }
