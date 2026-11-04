@@ -1,0 +1,117 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   推し活グッズ制作サービス比較（/oshikatsu/goods-making）専用スタイル。
+   公開ページ共通の C案「Graphic Pop」（graphic-site.css・GraphicPageStyles）を前提に、
+   ページ固有の部品（.gm-*）だけをここで定義する。スコープは .gm-page 配下のみ。
+   スマホ最優先（基準 360〜430px）。PC は max-w-3xl の1カラム（サービスカードのみ2列）。
+   アニメーションは使わない。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--goodsmaking { --graphic-page-label: 'COMPARE / GOODS MAKING'; }
+
+.gm-page { overflow-wrap: anywhere; }
+.gm-page .gm-h1 { font-size: clamp(24px, 6vw, 34px); line-height: 1.3; margin: 0 0 12px; }
+.gm-page .gm-h1-sub { display: block; margin-top: 4px; font-size: clamp(15px, 4vw, 18px); color: var(--graphic-orange-text); }
+.gm-page .gm-h2 { font-size: 18px; line-height: 1.4; margin: 0 0 12px; }
+.gm-page .gm-h4 { margin: 14px 0 6px; font-size: 13px; font-weight: 800; color: var(--graphic-ink); }
+.gm-page .gm-lead { font-size: 14px; line-height: 1.8; color: var(--graphic-body); margin: 0 0 8px; }
+.gm-page .gm-checked { display: inline-block; margin: 0; padding: 2px 8px; font-size: 12px; font-weight: 700; color: var(--graphic-body); background: var(--graphic-panel); border: 1px solid var(--graphic-border); }
+.gm-page .gm-text { font-size: 14px; line-height: 1.8; color: var(--graphic-body); margin: 0; }
+.gm-page .gm-note { font-size: 12px; line-height: 1.7; color: var(--graphic-muted); margin: 10px 0 0; }
+.gm-page .gm-sections { display: flex; flex-direction: column; gap: 32px; margin-top: 24px; }
+.gm-page .gm-sections > section { border-top: 1.5px solid var(--graphic-rule); padding-top: 18px; }
+
+.gm-page .gm-list { margin: 0; padding-left: 1.2em; list-style: disc; font-size: 14px; line-height: 1.75; color: var(--graphic-body); }
+.gm-page .gm-list > li + li { margin-top: 4px; }
+.gm-page .gm-list--check { list-style: none; padding-left: 0; }
+.gm-page .gm-list--check > li { position: relative; padding-left: 1.4em; }
+.gm-page .gm-list--check > li::before { content: '✓'; position: absolute; left: 0; font-weight: 900; color: var(--graphic-orange-text); }
+
+/* ② どんなグッズを作りたい？ */
+.gm-page .gm-want { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.gm-page .gm-want-link {
+  display: flex; flex-direction: column; gap: 2px; min-height: 56px; padding: 10px 12px;
+  background: #FFFFFF; border: 1.5px solid var(--graphic-border-strong); color: var(--graphic-text); text-decoration: none;
+}
+.gm-page .gm-want-link:hover { border-color: var(--graphic-ink); }
+.gm-page .gm-want-label { font-size: 15px; font-weight: 800; color: var(--graphic-ink); }
+.gm-page .gm-want-desc { font-size: 12px; color: var(--graphic-muted); }
+.gm-page .gm-want-to { margin-top: 2px; font-size: 12px; font-weight: 700; color: var(--graphic-orange-text); }
+
+/* ③ サービスカード */
+.gm-page .gm-cards { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.gm-page .gm-card { display: flex; flex-direction: column; padding: 16px; background: #FFFFFF; border: 2px solid var(--graphic-ink); box-shadow: 4px 4px 0 var(--graphic-orange); scroll-margin-top: 16px; }
+.gm-page .gm-card-head { display: flex; align-items: center; gap: 12px; }
+.gm-page .gm-mark {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+  font-family: var(--graphic-font-jp); font-weight: 900; font-size: 20px; background: var(--graphic-orange-soft);
+  color: var(--graphic-ink); border: 1.5px solid var(--graphic-ink);
+}
+.gm-page .gm-card-name { margin: 0; font-family: var(--graphic-font-jp); font-weight: 900; font-size: 19px; line-height: 1.3; color: var(--graphic-ink); }
+.gm-page .gm-card-op { margin: 2px 0 0; font-size: 11px; color: var(--graphic-muted); }
+.gm-page .gm-card-catch { margin: 12px 0 0; padding: 8px 10px; font-size: 14px; font-weight: 700; line-height: 1.6; background: var(--graphic-panel); border-left: 3px solid var(--graphic-orange); color: var(--graphic-text); }
+.gm-page .gm-creative { margin-top: 14px; text-align: center; }
+.gm-page .gm-creative img { display: inline-block; max-width: 100%; height: auto; }
+.gm-page .gm-card-cta { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: auto; padding-top: 16px; }
+.gm-page .gm-btn {
+  display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 10px 14px; text-align: center;
+  font-weight: 800; font-size: 14px; background: #FFFFFF; color: var(--graphic-ink);
+  border: 2px solid var(--graphic-ink); text-decoration: none;
+}
+.gm-page .gm-btn:hover { background: var(--graphic-ink); color: #FFFFFF; }
+.gm-page .gm-pr {
+  align-self: flex-start; padding: 0 8px; font-size: 11px; font-weight: 700;
+  border: 1px solid var(--graphic-border-strong); color: var(--graphic-muted); background: var(--graphic-panel);
+}
+
+/* ④ 比較表（スマホは表の中だけ横スクロール） */
+/* 横スクロールの案内。表（min-width 540px）が枠に収まらない幅（〜575px）だけ表示し、576px 以上では隠す */
+.gm-page .gm-scroll-hint { margin: 0 0 6px; font-size: 12px; font-weight: 700; line-height: 1.5; text-align: center; color: var(--graphic-orange-text); }
+@media (min-width: 576px) {
+  .gm-page .gm-scroll-hint { display: none; }
+}
+.gm-page .gm-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1.5px solid var(--graphic-ink); background: #FFFFFF; }
+.gm-page .gm-table-wrap:focus-visible { outline: 2px solid var(--graphic-orange); outline-offset: 2px; }
+.gm-page .gm-table { width: 100%; min-width: 540px; border-collapse: collapse; font-size: 13px; line-height: 1.65; color: var(--graphic-body); }
+.gm-page .gm-table th,
+.gm-page .gm-table td { padding: 10px; vertical-align: top; text-align: left; border-bottom: 1px solid var(--graphic-border); }
+.gm-page .gm-table thead th { font-family: var(--graphic-font-jp); font-weight: 900; font-size: 14px; color: var(--graphic-ink); background: var(--graphic-orange-soft); border-bottom: 1.5px solid var(--graphic-ink); }
+.gm-page .gm-table tbody th { width: 96px; font-weight: 800; font-size: 12px; color: var(--graphic-ink); background: var(--graphic-panel); }
+.gm-page .gm-table td { width: calc((100% - 96px) / 2); }
+.gm-page .gm-table tbody tr:last-child > * { border-bottom: 0; }
+
+/* ⑤ 目的別の選び方 */
+.gm-page .gm-choose { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.gm-page .gm-choose > li { padding: 12px; background: #FFFFFF; border: 1px solid var(--graphic-border); }
+.gm-page .gm-choose-want { margin: 0; font-size: 15px; font-weight: 800; line-height: 1.5; color: var(--graphic-ink); }
+.gm-page .gm-choose-to { margin: 2px 0 4px; font-size: 14px; font-weight: 800; color: var(--graphic-orange-text); }
+.gm-page .gm-choose-to a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.gm-page .gm-choose .gm-text { font-size: 13px; }
+
+/* ⑥ 注意事項 */
+.gm-page .gm-caution { padding: 14px; background: var(--graphic-orange-soft); border: 1.5px solid var(--graphic-orange); }
+.gm-page .gm-caution-head { margin: 0 0 8px; font-size: 15px; font-weight: 900; line-height: 1.5; color: var(--graphic-ink); }
+.gm-page .gm-caution .gm-list { font-size: 13px; }
+
+/* ⑦ FAQ（/support-ads と同じ開閉スタイル） */
+.gm-page .gm-faq { display: flex; flex-direction: column; }
+.gm-page .gm-more { margin-top: 10px; border: 1px solid var(--graphic-border); background: #FFFFFF; }
+.gm-page .gm-more > summary {
+  display: flex; align-items: center; min-height: 44px; padding: 10px 12px; cursor: pointer;
+  font-size: 14px; font-weight: 700; line-height: 1.5; color: var(--graphic-ink); list-style: none;
+}
+.gm-page .gm-more > summary::-webkit-details-marker { display: none; }
+.gm-page .gm-more > summary::after { content: '＋'; margin-left: auto; padding-left: 8px; color: var(--graphic-orange-text); }
+.gm-page .gm-more[open] > summary::after { content: '－'; }
+.gm-page .gm-more > .gm-text { margin: 0 12px 12px; font-size: 13px; }
+
+/* 出典・関連 */
+.gm-page .gm-sources { margin: 10px 0 0; padding: 0; list-style: none; font-size: 12px; line-height: 1.9; color: var(--graphic-muted); }
+.gm-page .gm-sources a,
+.gm-page .gm-related a { color: var(--graphic-orange-text); text-decoration: underline; text-underline-offset: 2px; }
+.gm-page .gm-sources-name { font-weight: 700; color: var(--graphic-body); }
+.gm-page .gm-related { margin: 14px 0 0; font-size: 13px; color: var(--graphic-body); }
+
+@media (min-width: 640px) {
+  .gm-page .gm-want { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .gm-page .gm-cards { grid-template-columns: 1fr 1fr; }
+}
