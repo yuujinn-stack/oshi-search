@@ -115,3 +115,9 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--goodsmaking {
   .gm-page .gm-want { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .gm-page .gm-cards { grid-template-columns: 1fr 1fr; }
 }
+
+/* 管理画面で登録したASP広告タグ（OshikatsuAdTag）。タグ自体（リンク先・文言・画像サイズ・計測用画像）は変更しない。
+   独自のボタンには変換せず、テキスト広告は読みやすいリンク表示にするだけ。横幅が足りないバナーは枠内で横スクロール。 */
+.gm-page .gm-card-cta--ad { align-items: flex-start; }
+.gm-page .gm-ad-tag { max-width: 100%; overflow-x: auto; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.gm-page .gm-ad-tag a { color: var(--graphic-orange-text); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }

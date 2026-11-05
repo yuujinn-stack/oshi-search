@@ -3,6 +3,7 @@ import Link from 'next/link';
 import GraphicPageStyles from '@/components/site/GraphicPageStyles';
 import PrNotice from '@/components/site/PrNotice';
 import ServiceOutboundLink from '@/components/oshikatsu/ServiceOutboundLink';
+import OshikatsuAdTag from '@/components/oshikatsu/OshikatsuAdTag';
 import { secLabel } from '@/components/oshi-vod/sec-label';
 import {
   CHECK_OFFICIAL,
@@ -17,12 +18,18 @@ import {
 } from '@/lib/oshikatsu-services/goods-making';
 import { OSHIKATSU_SERVICE_LINKS, hasAffiliateLink, resolveServiceLink } from '@/lib/oshikatsu-services/links';
 import { OSHIKATSU_PATH } from '@/lib/oshikatsu-services/categories';
+import { getPublicOshikatsuAds } from '@/lib/oshikatsu-affiliate/store';
 import './goods-making.css';
 
-// 推し活グッズ制作サービス比較。DB・外部APIは使わない静的ページ。
+// 推し活グッズ制作サービス比較。外部APIは使わない。
 // 掲載内容（料金・送料・納期など）は src/lib/oshikatsu-services/goods-making.ts、
 // リンク先（公式サイト／提携後の広告リンク）は src/lib/oshikatsu-services/links.ts に集約。
 // 広告リンクが1つでも有効になると、PR表記とリンク横の「PR」が自動で表示される。
+// ASPの広告タグは管理画面（/admin/affiliates?tab=oshikatsu）で登録し、DB（oshikatsu_affiliate_*）から読む。
+// 承認済み・広告有効・安全確認OKの素材があるサービスだけ、サービス紹介カードの公式サイトボタンの位置に
+// 広告タグをそのまま表示する。それ以外のサービスは従来どおり公式サイトへの通常リンク。
+// 管理画面で変更すると revalidatePath でこのページを再生成する（DB障害時は広告なし＝通常リンクで表示）。
+export const revalidate = 3600;
 
 const SITE_ORIGIN = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
 const CANONICAL_URL = `${SITE_ORIGIN}${GOODS_MAKING_PATH}`;
@@ -46,8 +53,9 @@ function PrTag() {
   return <span className="gm-pr">PR</span>;
 }
 
-export default function GoodsMakingPage() {
-  const adIncluded = hasAffiliateLink(GOODS_MAKING_SERVICES.map((s) => s.id));
+export default async function GoodsMakingPage() {
+  const adTags = await getPublicOshikatsuAds(GOODS_MAKING_SERVICES.map((s) => s.id));
+  const adIncluded = hasAffiliateLink(GOODS_MAKING_SERVICES.map((s) => s.id)) || Object.keys(adTags).length > 0;
 
   const breadcrumbJsonLd = {
     '@context': 'https://schema.org',
@@ -116,6 +124,7 @@ export default function GoodsMakingPage() {
             {GOODS_MAKING_SERVICES.map((s) => {
               const link = OSHIKATSU_SERVICE_LINKS[s.id];
               const resolved = resolveServiceLink(link);
+              const adTag = adTags[s.id];
               return (
                 <article key={s.id} id={s.anchor} className="gm-card" aria-labelledby={`${s.anchor}-name`}>
                   <header className="gm-card-head">
@@ -136,6 +145,13 @@ export default function GoodsMakingPage() {
                   <h4 className="gm-h4">こんな人におすすめ</h4>
                   <ul className="gm-list gm-list--check">{s.recommendedFor.map((x) => <li key={x}>{x}</li>)}</ul>
 
+                  {adTag ? (
+                    // 管理画面で登録したASPの広告タグ（改変せずに表示。PR表記は枠の外側に付ける）
+                    <div className="gm-card-cta gm-card-cta--ad">
+                      <PrTag />
+                      <OshikatsuAdTag html={adTag.adHtml} serviceId={s.id} category={CATEGORY} placement="card_ad_tag" className="gm-ad-tag" />
+                    </div>
+                  ) : (<>
                   {resolved.isAffiliate && link.creative && (
                     <div className="gm-creative">
                       <ServiceOutboundLink href={resolved.href} isAffiliate serviceId={s.id} category={CATEGORY} placement="card_creative">
@@ -159,6 +175,7 @@ export default function GoodsMakingPage() {
                       {link.serviceName}の公式サイトを見る ↗
                     </ServiceOutboundLink>
                   </div>
+                  </>)}
                 </article>
               );
             })}

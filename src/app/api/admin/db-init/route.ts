@@ -268,6 +268,35 @@ const CREATE_STATEMENTS = [
   )`,
   sql`CREATE INDEX IF NOT EXISTS apl_creative_id_idx ON affiliate_placements (creative_id)`,
   sql`CREATE INDEX IF NOT EXISTS apl_slot_key_idx ON affiliate_placements (slot_key)`,
+  // ── 推し活サービスのアフィリエイト（drizzle/0023_oshikatsu_affiliates.sql）。VOD用の affiliate_* とは別テーブル ──
+  sql`CREATE TABLE IF NOT EXISTS oshikatsu_affiliate_services (
+    id                  SERIAL PRIMARY KEY,
+    service_key         TEXT NOT NULL,
+    service_name        TEXT NOT NULL,
+    category            TEXT NOT NULL,
+    asp_id              TEXT NOT NULL,
+    program_id          TEXT,
+    official_url        TEXT NOT NULL,
+    partnership_status  TEXT NOT NULL DEFAULT 'pending',
+    is_ad_enabled       BOOLEAN NOT NULL DEFAULT FALSE,
+    note                TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS oas_service_key_idx ON oshikatsu_affiliate_services (service_key)`,
+  sql`CREATE INDEX IF NOT EXISTS oas_category_idx ON oshikatsu_affiliate_services (category)`,
+  sql`CREATE TABLE IF NOT EXISTS oshikatsu_affiliate_creatives (
+    id          SERIAL PRIMARY KEY,
+    service_id  INTEGER NOT NULL,
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    ad_html     TEXT NOT NULL,
+    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  sql`CREATE INDEX IF NOT EXISTS oac_service_id_idx ON oshikatsu_affiliate_creatives (service_id)`,
   sql`CREATE TABLE IF NOT EXISTS instagram_posts (
     id             SERIAL PRIMARY KEY,
     person_name    TEXT NOT NULL,
@@ -487,6 +516,9 @@ TABLE_NAMES.push('price_reviews', 'price_review_logs');
 
 // 人物とグループの所属履歴（drizzle/0021_person_group_memberships.sql）
 TABLE_NAMES.push('person_group_memberships');
+
+// 推し活サービスのアフィリエイト（drizzle/0023_oshikatsu_affiliates.sql）
+TABLE_NAMES.push('oshikatsu_affiliate_services', 'oshikatsu_affiliate_creatives');
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。

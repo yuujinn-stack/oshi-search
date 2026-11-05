@@ -756,3 +756,49 @@ export const rakutenEventProducts = pgTable('rakuten_event_products', {
   uniqueIndex('rakuten_event_products_link_idx').on(t.eventId, t.personName, t.productId),
   index('rakuten_event_products_event_idx').on(t.eventId),
 ]);
+
+// ── 推し活サービスのアフィリエイト案件（oshikatsu_affiliate_services）──────────
+// グッズ制作・グッズ買取・ファッションレンタルなど推し活サービスのASP提携情報。
+// VODアフィリエイト（affiliate_programs 等）とは別テーブル（VOD側の判定・表示には一切関与しない）。
+// service_key は公開ページのサービス（例: cherish_palette, shimauma_plus）と結びつける識別子。
+// program_id・note はASP内部の管理情報のため公開ページには出さない。
+// 公開ページに広告タグを出すのは partnership_status='approved' かつ is_ad_enabled=true のときだけ
+// （src/lib/oshikatsu-affiliate/core.ts）。初期状態は広告無効。
+export const oshikatsuAffiliateServices = pgTable('oshikatsu_affiliate_services', {
+  id:                serial('id').primaryKey(),
+  serviceKey:        text('service_key').notNull(),
+  serviceName:       text('service_name').notNull(),
+  // goods_making | goods_buyback | fashion_rental
+  category:          text('category').notNull(),
+  // a8（src/lib/oshikatsu-affiliate/constants.ts の OSHIKATSU_ASPS）
+  aspId:             text('asp_id').notNull(),
+  programId:         text('program_id'),
+  officialUrl:       text('official_url').notNull(),
+  // pending | approved | rejected | ended
+  partnershipStatus: text('partnership_status').notNull().default('pending'),
+  isAdEnabled:       boolean('is_ad_enabled').notNull().default(false),
+  note:              text('note'),
+  createdAt:         timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:         timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex('oas_service_key_idx').on(t.serviceKey),
+  index('oas_category_idx').on(t.category),
+]);
+
+// ── 推し活サービスの広告素材（oshikatsu_affiliate_creatives）──────────────────
+// ad_html は ASP が発行した広告HTMLタグをそのまま保存する（1文字も改変しない）。
+// 保存時と表示時に src/lib/oshikatsu-affiliate/ad-tag.ts の checkAdTag で安全確認し、通らないタグは保存も表示もしない。
+export const oshikatsuAffiliateCreatives = pgTable('oshikatsu_affiliate_creatives', {
+  id:         serial('id').primaryKey(),
+  serviceId:  integer('service_id').notNull(),
+  name:       text('name').notNull(),
+  // text | banner
+  kind:       text('kind').notNull(),
+  adHtml:     text('ad_html').notNull(),
+  isActive:   boolean('is_active').notNull().default(true),
+  sortOrder:  integer('sort_order').notNull().default(0),
+  createdAt:  timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:  timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('oac_service_id_idx').on(t.serviceId),
+]);
