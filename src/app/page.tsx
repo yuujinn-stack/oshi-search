@@ -22,6 +22,7 @@ import PhotobookHomeSection from '@/components/site/PhotobookHomeSection';
 import HomeGroupSection from '@/components/site/HomeGroupSection';
 import OshiVodEntryCta from '@/components/oshi-vod/OshiVodEntryCta';
 import OshiShoppingEntryCta from '@/components/oshi-shopping/OshiShoppingEntryCta';
+import OshikatsuServicesHomeSection from '@/components/oshikatsu/OshikatsuServicesHomeSection';
 import OshiCardEntryCta from '@/components/oshi-card/OshiCardEntryCta';
 import type { HomeGroupItem } from '@/components/site/HomeGroupSection';
 import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
@@ -327,6 +328,10 @@ export default async function HomePage() {
           className="home-oshicard-cta"
           style={{ marginBottom: '32px' }}
         />
+
+        {/* 推し活サービス（グッズ制作・グッズ買取・ファッションレンタル）。3つの機能カードの後、「ジャンルで探す」の前。
+            <aside> で描画するため既存のセクション番号CSS（section:nth-of-type）には影響しない。 */}
+        <OshikatsuServicesHomeSection />
 
         {/* ジャンルで探す（主要ジャンルのみ初期表示。残りは <details> で展開。リンクはすべてサーバーHTMLに含まれる） */}
         <section>

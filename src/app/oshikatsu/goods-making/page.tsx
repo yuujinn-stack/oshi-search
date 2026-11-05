@@ -16,6 +16,7 @@ import {
   WANT_OPTIONS,
 } from '@/lib/oshikatsu-services/goods-making';
 import { OSHIKATSU_SERVICE_LINKS, hasAffiliateLink, resolveServiceLink } from '@/lib/oshikatsu-services/links';
+import { OSHIKATSU_PATH } from '@/lib/oshikatsu-services/categories';
 import './goods-making.css';
 
 // 推し活グッズ制作サービス比較。DB・外部APIは使わない静的ページ。
@@ -53,7 +54,8 @@ export default function GoodsMakingPage() {
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'ホーム', item: SITE_ORIGIN },
-      { '@type': 'ListItem', position: 2, name: PAGE_NAME, item: CANONICAL_URL },
+      { '@type': 'ListItem', position: 2, name: '推し活サービス', item: `${SITE_ORIGIN}${OSHIKATSU_PATH}` },
+      { '@type': 'ListItem', position: 3, name: PAGE_NAME, item: CANONICAL_URL },
     ],
   };
   const faqJsonLd = {
@@ -70,6 +72,8 @@ export default function GoodsMakingPage() {
 
       <nav aria-label="パンくずリスト" className="text-xs mb-4" style={{ color: 'var(--ds-muted)' }}>
         <Link href="/" className="theme-text-link">ホーム</Link>
+        <span className="mx-1.5" style={{ opacity: 0.4 }}>›</span>
+        <Link href={OSHIKATSU_PATH} className="theme-text-link">推し活サービス</Link>
         <span className="mx-1.5" style={{ opacity: 0.4 }}>›</span>
         <span>{PAGE_NAME}</span>
       </nav>
@@ -262,6 +266,9 @@ export default function GoodsMakingPage() {
               </li>
             ))}
           </ul>
+          <p className="gm-related">
+            ほかのジャンルを見るなら <Link href={OSHIKATSU_PATH}>推し活サービス</Link>
+          </p>
           <p className="gm-related">
             推しの関連商品や推し活に便利なアイテムを探すなら <Link href="/oshi-shopping">推し活お買い物診断</Link>
           </p>

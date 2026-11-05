@@ -57,6 +57,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'monthly' as const,
       priority: 0.5,
     },
+    // 推し活サービスの総合ページ（静的ページ。ジャンルを追加・公開したら lastModified も更新する）
+    {
+      url: `${BASE_URL}/oshikatsu`,
+      lastModified: new Date('2026-11-04'),
+      changeFrequency: 'monthly' as const,
+      priority: 0.5,
+    },
     // 推し活グッズ制作サービス比較（静的ページ。公式サイトの確認内容を更新したら lastModified も更新する）
     {
       url: `${BASE_URL}/oshikatsu/goods-making`,

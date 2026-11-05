@@ -1,0 +1,51 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   推し活サービス（ホームのコーナー・/oshikatsu）共通スタイル（.oks-*）。
+   ホーム（home-graphic.css）と C案の公開ページ（graphic-site.css）の両方で同じ見た目になるよう、
+   色は既存の導線カード（OshiShoppingEntryCta 等）と同じ固定値（白・黒 #0A0A0A・オレンジ #FF5A00）を使う。
+   スマホは1列（横長カード）、640px以上は3列。アニメーションなし。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.oks-cards { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.oks-cards > li { display: flex; min-width: 0; }
+
+.oks-card {
+  display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 12px 14px;
+  background: #FFFFFF; color: #0A0A0A; text-decoration: none; overflow-wrap: anywhere;
+}
+.oks-card--on { border: 2px solid #0A0A0A; box-shadow: 3px 3px 0 #FF5A00; }
+.oks-card--on:hover { background: #FFF7F1; }
+.oks-card--on:focus-visible { outline: 2px solid #FF5A00; outline-offset: 2px; }
+.oks-card--soon { border: 1.5px dashed #BDBCB6; background: #FAFAF8; color: #62625C; }
+
+.oks-card-head { display: flex; align-items: center; gap: 10px; }
+.oks-icon {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px;
+  background: #FFF1E6; color: #C84A00; border: 1.5px solid #0A0A0A;
+}
+.oks-card--soon .oks-icon { background: #F1F0EC; color: #8A8983; border-color: #BDBCB6; }
+.oks-name { font-size: 16px; font-weight: 900; line-height: 1.35; }
+.oks-soon {
+  margin-left: auto; flex-shrink: 0; padding: 1px 8px; font-size: 11px; font-weight: 700; line-height: 1.6;
+  color: #62625C; background: #FFFFFF; border: 1px solid #BDBCB6;
+}
+.oks-summary { display: block; font-size: 13px; line-height: 1.65; color: #3D3D38; }
+.oks-card--soon .oks-summary { color: #62625C; }
+.oks-purposes { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.oks-purpose { position: relative; display: block; padding-left: 1.2em; font-size: 12.5px; line-height: 1.65; color: #3D3D38; }
+.oks-purpose::before { content: '・'; position: absolute; left: 0; }
+.oks-card--soon .oks-purpose { color: #62625C; }
+.oks-services { display: block; font-size: 11.5px; line-height: 1.6; color: #62625C; }
+.oks-go { display: block; margin-top: auto; padding-top: 2px; font-size: 13px; font-weight: 800; color: #C84A00; }
+
+/* ホームのコーナー（既存の導線カードと同じ程度の大きさにとどめる） */
+.oks-home { margin: 0 0 32px; }
+.oks-eyebrow { margin: 0 0 4px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; color: #C84A00; }
+.oks-home-title { margin: 0 0 6px; font-size: 18px; font-weight: 900; line-height: 1.4; color: #0A0A0A; }
+.oks-home-lead { margin: 0 0 12px; font-size: 13px; line-height: 1.7; color: #62625C; }
+.oks-home-more { margin: 10px 0 0; font-size: 13px; text-align: right; }
+.oks-home-more a { font-weight: 700; color: #0A0A0A; text-decoration: underline; text-underline-offset: 3px; }
+
+@media (min-width: 640px) {
+  .oks-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .oks-card { padding: 14px; }
+}

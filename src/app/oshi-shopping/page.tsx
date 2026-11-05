@@ -28,7 +28,6 @@ import {
 import { productTabAnchorId } from '@/lib/product-tabs';
 import { PRICE_FRESH_DAYS } from '@/lib/price-freshness';
 import PrNotice from '@/components/site/PrNotice';
-import { GOODS_MAKING_PATH } from '@/lib/oshikatsu-services/goods-making';
 import './oshi-shopping.css';
 
 // 結果は searchParams に依存するため動的レンダリング（一般商品の楽天APIの結果は商品ごとに24時間キャッシュ）。
@@ -372,12 +371,6 @@ export default async function OshiShoppingPage({ searchParams }: Props) {
           </section>
         </div>
       )}
-
-      {/* 推し活グッズ制作サービス比較への控えめな導線（診断・商品より目立たせないテキストリンク） */}
-      <p className="os-note" style={{ marginTop: '32px' }}>
-        自分だけのグッズや推し色アイテムが欲しいときは：
-        <Link href={GOODS_MAKING_PATH} className="theme-text-link" style={{ fontWeight: 700 }}>グッズ制作・推し色アイテムのサービスを比較 →</Link>
-      </p>
 
       <div className="os-foot">
         <p>このページは推しサーチが制作・運営しています。商品の購入・配送・返品は、楽天市場の各ショップ（楽天ブックスを含む）とのお取引になります。価格・在庫・仕様は変わることがあるため、購入前に商品ページでご確認ください。商品のレビュー件数は人気の目安で、品質や安全性を保証するものではありません。</p>

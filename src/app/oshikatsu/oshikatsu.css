@@ -1,0 +1,18 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   推し活サービスの総合ページ（/oshikatsu）専用スタイル（.ok-*）。
+   公開ページ共通の C案「Graphic Pop」（graphic-site.css・GraphicPageStyles）を前提にする。
+   ジャンルカード自体は src/components/oshikatsu/oshikatsu-services.css（.oks-*）。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshikatsu { --graphic-page-label: 'OSHIKATSU / SERVICES'; }
+
+.ok-page { overflow-wrap: anywhere; }
+.ok-page .ok-h1 { font-size: clamp(24px, 6vw, 34px); line-height: 1.3; margin: 0 0 12px; }
+.ok-page .ok-h1-sub { display: block; margin-top: 4px; font-size: clamp(15px, 4vw, 18px); color: var(--graphic-orange-text); }
+.ok-page .ok-h2 { font-size: 18px; line-height: 1.4; margin: 0 0 12px; }
+.ok-page .ok-lead { font-size: 14px; line-height: 1.8; color: var(--graphic-body); margin: 0; }
+.ok-page .ok-note { font-size: 12px; line-height: 1.7; color: var(--graphic-muted); margin: 10px 0 0; }
+.ok-page .ok-sections { display: flex; flex-direction: column; gap: 32px; margin-top: 24px; }
+.ok-page .ok-sections > section { border-top: 1.5px solid var(--graphic-rule); padding-top: 18px; }
+.ok-page .ok-list { margin: 0; padding-left: 1.2em; list-style: disc; font-size: 13px; line-height: 1.8; color: var(--graphic-body); }
+.ok-page .ok-list > li + li { margin-top: 4px; }
