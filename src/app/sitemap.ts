@@ -2,6 +2,7 @@ import type { MetadataRoute } from 'next';
 import { getAllPersonsMerged, getAllGroupsMerged, getAllGenresMerged } from '@/lib/persons';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
+import { LIVE_ARCHIVE_GROUPS } from '@/lib/live-archive/catalog';
 import { getAllPublishedWorkPersonMap, getAllPublishedWorkLastModified, getAllWorkAliasSourceIds } from '@/lib/work-store';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import { VOD_PAGE_PROVIDERS, getVodProviderWorkCounts } from '@/lib/vod-page';
@@ -115,6 +116,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         priority: 0.9,
       };
     }),
+    // 過去のライブ映像特集（対象グループのみ・グループのメンバーがいるときだけ）
+    ...LIVE_ARCHIVE_GROUPS.filter((g) => groups.includes(g.groupName)).map((g) => ({
+      url: `${BASE_URL}${groupHrefByName(g.groupName, groupMetas)}/live`,
+      changeFrequency: 'weekly' as const,
+      priority: 0.6,
+    })),
     ...genres.map((genre) => ({
       url: `${BASE_URL}/genre/${encodeURIComponent(genre)}`,
       changeFrequency: 'weekly' as const,

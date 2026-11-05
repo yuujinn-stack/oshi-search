@@ -9,7 +9,8 @@ import { isMissingEventTable, listEvents, neonEventDb, type EventWithCounts } fr
 import RakutenEventsClient from './RakutenEventsClient';
 
 // 楽天イベント管理。表示（GET）は読み取りのみ。登録・編集・紐付け・確認状態の変更は /api/admin/rakuten-events（POST）で行う。
-// 一般公開ページには何も表示しない（SNS投稿文の作成と、投稿前の確認のための管理機能）。
+// SNS投稿文の作成と、投稿前の確認のための管理機能。一般公開ページには、公開・公式確認済みのイベントの名前・期間・公式ページへのリンクだけを
+// ライブ映像特集の「楽天のキャンペーン情報」枠に出す（src/lib/rakuten-campaign/core.ts。商品の紐付け・特典・投稿文は出さない）。
 export const dynamic = 'force-dynamic';
 
 export default async function RakutenEventsPage() {
@@ -45,7 +46,7 @@ export default async function RakutenEventsPage() {
             イベント候補から登録 → 公式条件を確認 → 推しサーチの楽天商品から紹介候補を選んで紐付け → 特典を確認 → SNS投稿文をコピー（投稿は手動）。
           </p>
           <p className="text-xs text-gray-400 mt-0.5">
-            日時はすべて日本時間です。一般公開ページには表示しません。商品画像・写真集の表紙はSNS素材に使わないでください。
+            日時はすべて日本時間です。「公開」のイベントは、開催中（開始7日前からは開催予定）の間だけライブ映像特集の楽天キャンペーン枠に名前・期間・公式リンクを表示します（紐付けた商品・特典・投稿文は表示しません）。商品画像・写真集の表紙はSNS素材に使わないでください。
           </p>
         </div>
         <LogoutButton className="text-gray-400 hover:text-red-500 text-xs mt-1 shrink-0" />

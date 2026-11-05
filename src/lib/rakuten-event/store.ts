@@ -336,3 +336,16 @@ export async function getItemCodesFor(db: EventDb, targets: LinkTarget[]): Promi
 }
 
 export const linkTargetKey = (t: LinkTarget) => `${t.personName}\u0000${t.category}\u0000${t.productId}`;
+
+/**
+ * 公開ページの「楽天のキャンペーン」枠用（読み取りのみ）。公開（published）で、まだ終わっていないイベント。
+ * 表示してよいか（公式確認済み・開催中または開始7日前以内・楽天の公式URL）は src/lib/rakuten-campaign/core.ts publicCampaigns で決める。
+ */
+export async function listPublishedOpenEvents(db: EventDb): Promise<RakutenEvent[]> {
+  const rows = await db.query(`
+    SELECT ${EVENT_COLS} FROM rakuten_events
+    WHERE visibility = 'published' AND ends_at > now()
+    ORDER BY starts_at ASC, id ASC
+    LIMIT 20`);
+  return rows.map(toEvent);
+}

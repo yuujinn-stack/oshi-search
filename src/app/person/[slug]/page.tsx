@@ -68,6 +68,8 @@ import { buildHeroBadgeTitles, buildInfoGenreList, normalizeTag } from '@/lib/pe
 import { ACTIVITY_LABEL } from '@/lib/person-badges';
 import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
 import PrNotice from '@/components/site/PrNotice';
+import LiveArchiveEntryLink from '@/components/live-archive/LiveArchiveEntryLink';
+import { liveArchiveGroupsForPerson } from '@/lib/live-archive/core';
 import './person-graphic.css';
 
 // 人物ページのデザイン「C. Graphic Pop」用フォント（person-graphic.css の --pp-* を上書き）。
@@ -314,6 +316,9 @@ export default async function PersonPage({ params }: Props) {
     }
   }
   const membershipGroupHref = (g: string) => groupHrefByName(g, allGroupMetas);
+  // 過去のライブ映像特集への導線：現在の所属グループのうち特集の対象（M!LK・Snow Man・SixTONES）だけ。
+  // 卒業・脱退など過去の所属は対象にしない（在籍していない時期の公演を本人に結びつけない）
+  const liveArchiveGroups = liveArchiveGroupsForPerson(currentGroups.map((m) => m.groupName));
   const displayOrders = displayOrdersResult.status === 'fulfilled' ? displayOrdersResult.value : {};
   const inactiveSlugs: Set<string> = terminatedSlugs.status === 'fulfilled' ? terminatedSlugs.value : new Set();
   const redisError =
@@ -887,6 +892,11 @@ export default async function PersonPage({ params }: Props) {
               style={{ marginBottom: '32px' }}
             />
           )}
+
+          {/* 所属グループの過去のライブ映像（/groups/<slug>/live）への導線。対象グループの現在のメンバーのみ */}
+          {liveArchiveGroups.map((g) => (
+            <LiveArchiveEntryLink key={g} groupName={g} href={`${membershipGroupHref(g)}/live`} />
+          ))}
 
           {/* ━━━ 関連商品 ━━━ */}
           <section id="products" aria-labelledby="products-heading">

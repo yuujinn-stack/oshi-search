@@ -36,6 +36,11 @@ import type { GroupMeta } from '@/types/group';
 import PageViewTracker from '@/components/site/PageViewTracker';
 import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
 import PrNotice from '@/components/site/PrNotice';
+import LiveArchiveBrowser from '@/components/live-archive/LiveArchiveBrowser';
+import RakutenCampaignBox from '@/components/live-archive/RakutenCampaignBox';
+import { liveArchiveGroupOf } from '@/lib/live-archive/core';
+import { liveArchiveFromStored, loadPublicCampaigns } from '@/lib/live-archive/data';
+import type { PublicCampaign } from '@/lib/rakuten-campaign/core';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,6 +52,8 @@ interface Props {
 const MAX_PRODUCTS_PER_SECTION = 12;
 const MAX_WORKS_PER_PROVIDER = 6;
 const MAX_WORKS_PER_DECADE = 12;
+/** 「過去のライブ映像を探す」コーナーに出す公演数（残りは /groups/<slug>/live） */
+const MAX_LIVE_ARCHIVE_ON_GROUP = 3;
 
 // ─── 活動状態 ──────────────────────────────────────────────────────────────────
 const ACTIVITY_LABEL: Record<ActivityStatus, string> = {
@@ -360,7 +367,9 @@ export default async function GroupsPage({ params }: Props) {
   const genre = members[0]?.genre;
 
   // ── 全メンバーのデータ + PersonMeta + 終了済みVODスラグ を並列取得 ──
-  const [memberDataList, personMetaMap, terminatedSlugs] = await Promise.all([
+  // 過去のライブ映像特集の対象グループ（src/lib/live-archive/catalog.ts）だけ、楽天のキャンペーン枠のイベントも読む
+  const liveArchiveGroup = liveArchiveGroupOf(groupName);
+  const [memberDataList, personMetaMap, terminatedSlugs, liveCampaigns] = await Promise.all([
     Promise.all(
       members.map(async (m) => {
         const [works, storedProducts, verdicts] = await Promise.all([
@@ -373,6 +382,7 @@ export default async function GroupsPage({ params }: Props) {
     ),
     getAllPersonMetas().catch(() => ({} as Record<string, PersonMeta>)),
     getInactiveProviderSlugs(),
+    liveArchiveGroup ? loadPublicCampaigns(Date.now()) : Promise.resolve([] as PublicCampaign[]),
   ]);
 
   // ── メンバー分類 ──────────────────────────────────────────────────────────────
@@ -525,6 +535,13 @@ export default async function GroupsPage({ params }: Props) {
   });
 
   const totalProductCount = newProductMap.size + usedProductMap.size;
+
+  // ── 過去のライブ映像（掲載リストの商品だけ。読み込み済みの商品データから作る） ──
+  const liveEntries = liveArchiveGroup
+    ? liveArchiveFromStored(groupName, memberDataList.map((d) => d.storedProducts), Date.now())
+    : [];
+  const groupPath = groupHrefByName(groupName, allGroupMetas);
+  const groupGaId = resolvedMeta ? canonicalGroupSlug(resolvedMeta) : groupSlug;
 
   // ── 関連グループ ──
   const allGroups = listGroupNames(allPersons, recordsByPerson);
@@ -962,6 +979,29 @@ export default async function GroupsPage({ params }: Props) {
                   );
                 })}
               </div>
+            </section>
+          )}
+
+          {/* ━━━ 5.5 過去のライブ映像を探す（対象グループのみ） ━━━ */}
+          {liveArchiveGroup && (
+            <section id="live-archive" aria-labelledby="live-archive-heading">
+              <h2 id="live-archive-heading" className="text-base font-bold mb-1" style={{ color: 'var(--ds-text)' }}>過去のライブ映像を探す</h2>
+              <p className="text-xs mb-4" style={{ color: 'var(--ds-muted)' }}>
+                好きになる前のライブも、ライブDVD・Blu-rayで見られます。公演ごとにDVD／Blu-ray・初回盤／通常盤をまとめています。
+              </p>
+              <LiveArchiveBrowser
+                groupName={groupName}
+                groupId={groupGaId}
+                entries={liveEntries}
+                placement="group_page"
+                limit={MAX_LIVE_ARCHIVE_ON_GROUP}
+                moreHref={`${groupPath}/live`}
+              />
+              {liveCampaigns.length > 0 && (
+                <div className="mt-4">
+                  <RakutenCampaignBox campaigns={liveCampaigns} placement="group_live_archive" groupId={groupGaId} />
+                </div>
+              )}
             </section>
           )}
 

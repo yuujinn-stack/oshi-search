@@ -47,7 +47,7 @@ export const ENTRY_REQUIRED_LABEL: Record<EntryRequired, string> = {
 export const VISIBILITIES = ['published', 'hidden'] as const;
 export type Visibility = (typeof VISIBILITIES)[number];
 export const VISIBILITY_LABEL: Record<Visibility, string> = {
-  published: '公開（投稿に使用可）',
+  published: '公開（投稿・サイトのキャンペーン枠に使用可）',
   hidden: '非公開（下書き）',
 };
 

@@ -389,7 +389,7 @@ function EventForm({ event, prefill, operator, now, onSaved, onDeleted }: {
           <select id="ev-vis" className={inputCls} value={f.visibility} onChange={set('visibility')}>
             {VISIBILITIES.map((v) => <option key={v} value={v}>{VISIBILITY_LABEL[v]}</option>)}
           </select>
-          <p className="text-[11px] text-gray-400 mt-1">公開にするには公式情報URLと最終確認日時が必要です。一般公開ページには表示しません。</p>
+          <p className="text-[11px] text-gray-400 mt-1">公開にするには公式情報URLと最終確認日時が必要です。公開にすると、開催中（開始7日前からは「開催予定」）の間だけ、ライブ映像特集（Snow Man・SixTONES・M!LK のグループページ・/groups/…/live）の「楽天のキャンペーン情報」にイベント名・期間・公式ページ（エントリーURLがあればそちら）へのリンクを表示します。倍率・特典・条件は表示しません。</p>
         </div>
         <div>
           <label className={labelCls} htmlFor="ev-start">開催開始日時（日本時間）*</label>
