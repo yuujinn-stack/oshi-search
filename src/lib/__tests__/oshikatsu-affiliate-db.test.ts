@@ -180,6 +180,13 @@ describe.skipIf(!hasPglite)('推し活アフィリエイト × 分離DB（pglite
     expect(html).toContain(SHIMAUMA_BTN);
     expect(html).not.toContain(CHERISH_BTN);
     expect(html).toContain(`<div class="gm-ad-tag">${A8_TEXT}</div>`);
+    // 広告掲載エリア（PR表記つき）の中にタグが1回だけ。広告リンク・計測用画像が二重に出ない
+    expect(html).toMatch(/<aside class="gm-ad gm-ad--text" aria-label="Cherish Paletteの広告"><p class="gm-ad-head"><span class="gm-pr">PR<\/span>/);
+    expect(html.split('px.a8.net').length - 1).toBe(1);
+    expect(html.split('/0.gif?').length - 1).toBe(1);
+    // 目的別の選び方は同じページのカードへの内部リンク
+    expect(html).toContain('<a href="#gm-svc-cherish">Cherish Palette<!-- -->の紹介を見る ↑</a>');
+    expect(html).toContain('<a href="#gm-svc-shimauma">しまうまプラス<!-- -->の紹介を見る ↑</a>');
     expect(html).toContain('本ページにはアフィリエイト広告が含まれます');
     expect(html).not.toContain('s00000000000001'); // プログラムIDは公開ページに出ない
 
@@ -195,6 +202,7 @@ describe.skipIf(!hasPglite)('推し活アフィリエイト × 分離DB（pglite
     const htmlOff = renderToString(await GoodsMakingPage());
     expect(htmlOff).toContain(CHERISH_BTN);
     expect(htmlOff).not.toContain('px.a8.net');
+    expect(htmlOff).not.toContain('class="gm-ad ');
 
     // VODアフィリエイト側（テーブル・表示判定）は一切変わっていない
     expect(await snapshot(vodTables)).toBe(vodBefore);

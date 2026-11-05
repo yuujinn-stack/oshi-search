@@ -39,7 +39,7 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--goodsmaking {
 
 /* ③ サービスカード */
 .gm-page .gm-cards { display: grid; grid-template-columns: 1fr; gap: 16px; }
-.gm-page .gm-card { display: flex; flex-direction: column; padding: 16px; background: #FFFFFF; border: 2px solid var(--graphic-ink); box-shadow: 4px 4px 0 var(--graphic-orange); scroll-margin-top: 16px; }
+.gm-page .gm-card { display: flex; flex-direction: column; padding: 16px; background: #FFFFFF; border: 2px solid var(--graphic-ink); box-shadow: 4px 4px 0 var(--graphic-orange); scroll-margin-top: 88px; } /* 固定ヘッダー（高さ70px）の下に隠れないよう、目的別の選び方などのページ内リンクの移動先を下げる */
 .gm-page .gm-card-head { display: flex; align-items: center; gap: 12px; }
 .gm-page .gm-mark {
   flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px;
@@ -117,7 +117,22 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--goodsmaking {
 }
 
 /* 管理画面で登録したASP広告タグ（OshikatsuAdTag）。タグ自体（リンク先・文言・画像サイズ・計測用画像）は変更しない。
-   独自のボタンには変換せず、テキスト広告は読みやすいリンク表示にするだけ。横幅が足りないバナーは枠内で横スクロール。 */
-.gm-page .gm-card-cta--ad { align-items: flex-start; }
-.gm-page .gm-ad-tag { max-width: 100%; overflow-x: auto; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
-.gm-page .gm-ad-tag a { color: var(--graphic-orange-text); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+   タグの外側に広告掲載エリア（白背景・オレンジの枠線・余白）と PR 表記を付け、隣のサービスの公式サイトボタンと同じ位置で見つけやすくする。
+   テキスト広告は文字の大きさ・太さ・色・下線だけを調整する（ボタン化・リンクへの余白追加・擬似要素での文言追加はしない）。
+   バナー広告は画像のサイズを変えず中央に置き、枠に収まらない幅は枠内で横スクロール。 */
+.gm-page .gm-card-cta--ad { align-items: stretch; }
+.gm-page .gm-ad {
+  padding: 12px 14px 14px; text-align: center; background: #FFFFFF;
+  border: 2px solid var(--graphic-orange); box-shadow: 3px 3px 0 var(--graphic-ink);
+}
+.gm-page .gm-ad-head { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0 0 8px; }
+.gm-page .gm-ad-head .gm-pr { align-self: center; }
+.gm-page .gm-ad-caption { font-size: 12px; font-weight: 700; color: var(--graphic-muted); }
+.gm-page .gm-ad-tag { max-width: 100%; overflow-x: auto; overflow-wrap: anywhere; }
+.gm-page .gm-ad--text .gm-ad-tag { font-size: 18px; line-height: 1.6; }
+.gm-page .gm-ad--text .gm-ad-tag a {
+  color: var(--graphic-orange-text); font-weight: 900;
+  text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px;
+}
+.gm-page .gm-ad--text .gm-ad-tag a:hover { color: var(--graphic-ink); }
+.gm-page .gm-ad--text .gm-ad-tag a:focus-visible { outline: 2px solid var(--graphic-ink); outline-offset: 2px; }

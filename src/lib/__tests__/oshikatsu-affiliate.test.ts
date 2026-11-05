@@ -161,6 +161,19 @@ describe('導線・既存機能', () => {
     expect(page).toContain('の公式サイトを見る ↗');
   });
 
+  test('広告タグはサービス紹介カードの広告掲載エリア1か所だけ（PR表記つき）。目的別の選び方は同じページ内のカードへの内部リンク', () => {
+    const page = read('src/app/oshikatsu/goods-making/page.tsx');
+    expect(page.match(/<OshikatsuAdTag/g)).toHaveLength(1);
+    const ad = page.slice(page.indexOf('<aside className={`gm-ad'), page.indexOf('</aside>'));
+    expect(ad).toContain('<PrTag />');
+    expect(ad).toContain('<OshikatsuAdTag');
+    // 広告エリアに独自のリンクやクリック領域を足さない
+    expect(ad).not.toMatch(/<a\b|ServiceOutboundLink|onClick/);
+    const choose = page.slice(page.indexOf('gm-choose-to'), page.indexOf('</section>', page.indexOf('gm-choose-to')));
+    expect(choose).toContain('href={`#${svc.anchor}`}');
+    expect(choose).not.toMatch(/ServiceOutboundLink|OshikatsuAdTag|resolveServiceLink|https?:/);
+  });
+
   test('広告タグの表示コンポーネントはタグを加工しない（そのまま innerHTML に渡す）', () => {
     const src = read('src/components/oshikatsu/OshikatsuAdTag.tsx');
     expect(src).toContain('dangerouslySetInnerHTML={{ __html: html }}');

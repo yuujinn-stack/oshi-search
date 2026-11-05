@@ -146,10 +146,17 @@ export default async function GoodsMakingPage() {
                   <ul className="gm-list gm-list--check">{s.recommendedFor.map((x) => <li key={x}>{x}</li>)}</ul>
 
                   {adTag ? (
-                    // 管理画面で登録したASPの広告タグ（改変せずに表示。PR表記は枠の外側に付ける）
+                    // 管理画面で登録したASPの広告タグ。タグ自体（リンク・文言・画像・計測用1×1画像）は改変せずに表示し、
+                    // 見つけやすくするための広告掲載エリア（白背景・枠線・余白）と PR 表記はタグの外側にだけ付ける。
+                    // リンク部分を広げる余白・透明なクリック領域・独自のボタン文言は付けない（クリック計測は OshikatsuAdTag の1か所だけ）。
                     <div className="gm-card-cta gm-card-cta--ad">
-                      <PrTag />
-                      <OshikatsuAdTag html={adTag.adHtml} serviceId={s.id} category={CATEGORY} placement="card_ad_tag" className="gm-ad-tag" />
+                      <aside className={`gm-ad gm-ad--${adTag.kind === 'banner' ? 'banner' : 'text'}`} aria-label={`${link.serviceName}の広告`}>
+                        <p className="gm-ad-head">
+                          <PrTag />
+                          <span className="gm-ad-caption">{link.serviceName}の公式サイト</span>
+                        </p>
+                        <OshikatsuAdTag html={adTag.adHtml} serviceId={s.id} category={CATEGORY} placement="card_ad_tag" className="gm-ad-tag" />
+                      </aside>
                     </div>
                   ) : (<>
                   {resolved.isAffiliate && link.creative && (
@@ -224,7 +231,8 @@ export default async function GoodsMakingPage() {
                 <li key={g.want}>
                   <p className="gm-choose-want">「{g.want}」</p>
                   <p className="gm-choose-to">
-                    → <a href={`#${svc.anchor}`}>{OSHIKATSU_SERVICE_LINKS[g.serviceId].serviceName}</a>
+                    {/* 同じページのサービス紹介カードへの内部リンク（広告リンクではない） */}
+                    → <a href={`#${svc.anchor}`}>{OSHIKATSU_SERVICE_LINKS[g.serviceId].serviceName}の紹介を見る ↑</a>
                   </p>
                   <p className="gm-text">{g.reason}</p>
                 </li>
