@@ -187,6 +187,7 @@ html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-
 html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section#streaming-now h2::before { content: counter(pp-sec, decimal-leading-zero) ' — WATCH NOW'; }
 html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section#vod h2::before { content: counter(pp-sec, decimal-leading-zero) ' — STREAMING'; }
 html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section:has(#featured-products-heading) h2::before { content: counter(pp-sec, decimal-leading-zero) ' — PICK UP'; }
+html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section[id^="live-archive"] h2::before { content: counter(pp-sec, decimal-leading-zero) ' — LIVE ARCHIVE'; }
 html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section#products h2::before { content: counter(pp-sec, decimal-leading-zero) ' — ITEMS'; }
 html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section#works h2::before { content: counter(pp-sec, decimal-leading-zero) ' — WORKS'; }
 html:not([data-proto]):has(.oshi-person-graphic) .page-bg > div[class*="space-y-10"] > section#profile h2::before { content: counter(pp-sec, decimal-leading-zero) ' — PROFILE'; }

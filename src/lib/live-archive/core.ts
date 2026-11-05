@@ -156,3 +156,35 @@ export function itemLabel(i: Pick<LiveArchiveItem, 'format' | 'edition' | 'spec'
 export function countItems(entries: LiveArchiveEntry[]): number {
   return entries.reduce((n, e) => n + e.items.length, 0);
 }
+
+/**
+ * 人物ページのコーナーに出す公演を選ぶ（発売日の古い順の entries から）。
+ * 公演数が上限以下ならすべて。多い場合は最古・最新を含めて発売時期が散らばるよう等間隔に選ぶ
+ * （同じ公演の DVD／Blu-ray で枠を埋めない＝1公演1枠）。並びは古い順。
+ */
+export function pickSpreadPerformances(entries: LiveArchiveEntry[], max = 3): LiveArchiveEntry[] {
+  const sorted = sortEntries(entries, 'old');
+  if (max <= 0) return [];
+  if (sorted.length <= max) return sorted;
+  if (max === 1) return [sorted[sorted.length - 1]];
+  const picked: LiveArchiveEntry[] = [];
+  const used = new Set<number>();
+  for (let i = 0; i < max; i++) {
+    let idx = Math.round((i * (sorted.length - 1)) / (max - 1));
+    while (used.has(idx) && idx < sorted.length - 1) idx++;
+    used.add(idx);
+    picked.push(sorted[idx]);
+  }
+  return picked;
+}
+
+/** 公演の代表リンク：形式ごとに1つ（通常盤を優先、無ければ初回盤）。Blu-ray → DVD の順 */
+export function formatLinksOf(entry: LiveArchiveEntry): LiveArchiveItem[] {
+  const out: LiveArchiveItem[] = [];
+  for (const format of ['Blu-ray', 'DVD'] as const) {
+    const items = entry.items.filter((i) => i.format === format);
+    const pick = items.find((i) => i.edition === '通常盤') ?? items[0];
+    if (pick) out.push(pick);
+  }
+  return out;
+}

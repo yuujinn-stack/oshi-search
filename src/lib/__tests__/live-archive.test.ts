@@ -2,13 +2,13 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
-import LiveArchiveEntryLink from '@/components/live-archive/LiveArchiveEntryLink';
+import PersonLiveArchiveSection from '@/components/live-archive/PersonLiveArchiveSection';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIVE_ARCHIVE_GROUPS, LIVE_PERFORMANCES } from '@/lib/live-archive/catalog';
 import {
   booksProductNumberOf, buildLiveArchive, countItems, filterEntries, formatReleaseDate, indexByBooksNumber, isLiveArchiveGroup,
-  itemLabel, liveArchiveGroupsForPerson, sortEntries,
+  formatLinksOf, itemLabel, liveArchiveGroupsForPerson, pickSpreadPerformances, sortEntries,
 } from '@/lib/live-archive/core';
 import {
   LIVE_ARCHIVE_GA_EVENTS, liveArchiveFilterEvent, liveArchiveProductClickEvent, liveArchiveViewEvent, rakutenCampaignClickEvent,
@@ -330,19 +330,75 @@ describe('人物ページの導線', () => {
     expect(liveArchiveGroupsForPerson(currentMemberships(active).map((m) => m.groupName))).toEqual(['M!LK']);
   });
 
-  it('人物ページは関連商品の前に、所属グループの /live への導線を出す（出演作品として表示しない）', () => {
+  it('人物ページ：サブスク診断（配信セクション）の後・関連商品ピックアップの直前にコーナーを置き、以前の導線カードは無い', () => {
     const src = read('src/app/person/[slug]/page.tsx');
     expect(src).toContain('liveArchiveGroupsForPerson(currentGroups.map((m) => m.groupName))');
-    const at = src.indexOf('<LiveArchiveEntryLink');
-    expect(at).toBeGreaterThan(0);
-    expect(at).toBeLessThan(src.indexOf('<section id="products"'));
-    expect(src).toContain('href={`${membershipGroupHref(g)}/live`}');
-    const html = renderToString(createElement(LiveArchiveEntryLink, { groupName: 'M!LK', href: '/groups/M!LK/live' }));
-    expect(html.startsWith('<aside')).toBe(true); // 人物ページのセクション番号（> section のカウンタ）に影響しない
+    const at = src.indexOf('<PersonLiveArchiveSection');
+    expect(at).toBeGreaterThan(src.indexOf('title="この人を含めてサブスク診断"'));
+    expect(at).toBeLessThan(src.indexOf('<FeaturedProductsSection'));
+    expect(src).toContain('pickSpreadPerformances(entries, 3)');
+    expect(src).toContain('listHref={`${membershipGroupHref(a.groupName)}/live`}');
+    expect(src).not.toContain('LiveArchiveEntryLink');
+    expect(fs.existsSync(path.join(ROOT, 'src/components/live-archive/LiveArchiveEntryLink.tsx'))).toBe(false);
+    // セクション番号：既存の番号つき見出しと同じ仕組みで「LIVE ARCHIVE」
+    expect(read('src/app/person/[slug]/person-graphic.css')).toContain(`section[id^="live-archive"] h2::before { content: counter(pp-sec, decimal-leading-zero) ' — LIVE ARCHIVE'; }`);
+  });
+});
+
+describe('人物ページの「過去ライブ映像を発掘」コーナー', () => {
+  const all = (g: string) => buildLiveArchive(g, indexByBooksNumber(
+    LIVE_PERFORMANCES.filter((p) => p.groupName === g).flatMap((p) => p.variants.map((v) => item(v.productNumber))),
+  ));
+
+  it('3公演を発売時期が散らばるように選ぶ（最古・最新を含む・1公演1枠・古い順）', () => {
+    expect(pickSpreadPerformances(all('SixTONES')).map((e) => e.id)).toEqual(['sixtones-2020-trackone-impact', 'sixtones-2023-kansei-in-dome', 'sixtones-2025-young-old']);
+    expect(pickSpreadPerformances(all('Snow Man')).map((e) => e.id)).toEqual(['snowman-2021-mania', 'snowman-2023-idome', 'snowman-2025-on']);
+    expect(pickSpreadPerformances(all('M!LK')).map((e) => e.id)).toEqual(['milk-2022-next-winner', 'milk-2024-hero', 'milk-2024-i-can-drink']);
+    for (const g of ['SixTONES', 'Snow Man', 'M!LK']) {
+      const ids = pickSpreadPerformances(all(g)).map((e) => e.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+    expect(pickSpreadPerformances(all('SixTONES').slice(0, 2))).toHaveLength(2);
+    expect(pickSpreadPerformances([])).toEqual([]);
+    // 4公演でも重複しない
+    const four = pickSpreadPerformances(all('SixTONES').slice(0, 4));
+    expect(new Set(four.map((e) => e.id)).size).toBe(3);
+  });
+
+  it('形式ごとに1つのリンク（通常盤を優先、Blu-ray → DVD）', () => {
+    const [labo] = all('Snow Man').filter((e) => e.id === 'snowman-2022-labo');
+    expect(formatLinksOf(labo).map(itemLabel)).toEqual(['Blu-ray 通常盤', 'DVD 通常盤']);
+    const [nw] = all('M!LK').filter((e) => e.id === 'milk-2022-next-winner');
+    expect(formatLinksOf(nw).map(itemLabel)).toEqual(['Blu-ray 通常盤', 'DVD 通常盤']);
+    const onlyFirst = { ...labo, items: labo.items.filter((i) => i.edition === '初回盤') };
+    expect(formatLinksOf(onlyFirst).map(itemLabel)).toEqual(['Blu-ray 初回盤', 'DVD 初回盤']);
+  });
+
+  it('表示：見出し・説明文・画像・公演名・発売年・形式・楽天リンク・一覧へのリンク。未確認の情報は出さない', () => {
+    const entries = pickSpreadPerformances(all('M!LK'));
+    const html = renderToString(createElement(PersonLiveArchiveSection, { id: 'live-archive', groupName: 'M!LK', entries, listHref: '/groups/M!LK/live' }));
+    expect(html.startsWith('<section id="live-archive"')).toBe(true);
+    expect(html).toContain('M!LK<!-- -->の過去ライブ映像を発掘');
+    expect(html).toContain('好きになる前のライブもチェック！過去のDVD・Blu-rayを探してみよう。');
+    expect((html.match(/<img /g) ?? [])).toHaveLength(3);
+    expect(html).toContain('2022<!-- -->年発売');
+    expect(html).toContain('M!LK CONCERT TOUR 2024「HERO」');
+    const links = [...html.matchAll(/<a href="([^"]+)" target="_blank" rel="noopener noreferrer sponsored"/g)].map((m) => m[1].replace(/&amp;/g, '&'));
+    expect(links).toHaveLength(6); // 3公演 × Blu-ray・DVD
+    expect(links.every((u) => u.startsWith('https://hb.afl.rakuten.co.jp/hgc/'))).toBe(true);
     expect(html).toContain('href="/groups/M!LK/live"');
-    expect(html).toContain('M!LK<!-- -->の過去のライブ映像を探す');
-    expect(html).toContain('グループのライブDVD・Blu-ray');
-    expect(html).toContain('出演メンバーは公式情報でご確認ください');
-    expect(html).not.toMatch(/出演作品/);
+    expect(html).toContain('M!LK<!-- -->のライブ映像をすべて見る');
+    expect(html).not.toMatch(/¥|円|本人出演|出演作品|特典付き|先着/);
+  });
+
+  it('確認済みの商品が無ければ何も出さない', () => {
+    expect(renderToString(createElement(PersonLiveArchiveSection, { id: 'live-archive', groupName: 'M!LK', entries: [], listHref: '/x' }))).toBe('');
+  });
+
+  it('クリック計測は既存の TrackedRakutenLink（affiliate_click）だけで、ライブ特集の新しいイベントは送らない', () => {
+    const src = read('src/components/live-archive/PersonLiveArchiveSection.tsx');
+    expect(src).toContain('<TrackedRakutenLink');
+    expect(src).toContain("pageType: 'person'");
+    expect(src).not.toMatch(/sendGaEvent|live_archive_product_click|liveArchiveProductClickEvent/);
   });
 });

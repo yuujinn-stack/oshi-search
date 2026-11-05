@@ -68,8 +68,9 @@ import { buildHeroBadgeTitles, buildInfoGenreList, normalizeTag } from '@/lib/pe
 import { ACTIVITY_LABEL } from '@/lib/person-badges';
 import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
 import PrNotice from '@/components/site/PrNotice';
-import LiveArchiveEntryLink from '@/components/live-archive/LiveArchiveEntryLink';
-import { liveArchiveGroupsForPerson } from '@/lib/live-archive/core';
+import PersonLiveArchiveSection from '@/components/live-archive/PersonLiveArchiveSection';
+import { liveArchiveGroupsForPerson, pickSpreadPerformances } from '@/lib/live-archive/core';
+import { loadLiveArchive } from '@/lib/live-archive/data';
 import './person-graphic.css';
 
 // 人物ページのデザイン「C. Graphic Pop」用フォント（person-graphic.css の --pp-* を上書き）。
@@ -319,6 +320,16 @@ export default async function PersonPage({ params }: Props) {
   // 過去のライブ映像特集への導線：現在の所属グループのうち特集の対象（M!LK・Snow Man・SixTONES）だけ。
   // 卒業・脱退など過去の所属は対象にしない（在籍していない時期の公演を本人に結びつけない）
   const liveArchiveGroups = liveArchiveGroupsForPerson(currentGroups.map((m) => m.groupName));
+  // 「〇〇の過去ライブ映像を発掘」コーナー：所属グループのメンバーの商品データから、確認済みの公演を3つまで（読めなければ出さない）
+  const liveArchives = await Promise.all(liveArchiveGroups.map(async (g) => {
+    const memberNames = personsInGroup(g, allPersons, recordsByPerson).map((p) => p.name);
+    const entries = await loadLiveArchive(g, memberNames, Date.now()).catch((err) => {
+      const e = err as { name?: string; code?: string } | null;
+      console.error('[live-archive] person corner unavailable:', e?.name ?? 'Error', e?.code ?? '');
+      return [];
+    });
+    return { groupName: g, entries: pickSpreadPerformances(entries, 3) };
+  }));
   const displayOrders = displayOrdersResult.status === 'fulfilled' ? displayOrdersResult.value : {};
   const inactiveSlugs: Set<string> = terminatedSlugs.status === 'fulfilled' ? terminatedSlugs.value : new Set();
   const redisError =
@@ -875,6 +886,17 @@ export default async function PersonPage({ params }: Props) {
             </section>
           )}
 
+          {/* ━━━ 所属グループの過去ライブ映像（対象グループの現在のメンバーのみ・確認済みの商品がある場合だけ） ━━━ */}
+          {liveArchives.filter((a) => a.entries.length > 0).map((a, i) => (
+            <PersonLiveArchiveSection
+              key={a.groupName}
+              id={i === 0 ? 'live-archive' : `live-archive-${i + 1}`}
+              groupName={a.groupName}
+              entries={a.entries}
+              listHref={`${membershipGroupHref(a.groupName)}/live`}
+            />
+          ))}
+
           {/* ━━━ 関連商品ピックアップ（プレビュー） ━━━ */}
           <FeaturedProductsSection
             sectionResults={featuredSectionResults}
@@ -892,11 +914,6 @@ export default async function PersonPage({ params }: Props) {
               style={{ marginBottom: '32px' }}
             />
           )}
-
-          {/* 所属グループの過去のライブ映像（/groups/<slug>/live）への導線。対象グループの現在のメンバーのみ */}
-          {liveArchiveGroups.map((g) => (
-            <LiveArchiveEntryLink key={g} groupName={g} href={`${membershipGroupHref(g)}/live`} />
-          ))}
 
           {/* ━━━ 関連商品 ━━━ */}
           <section id="products" aria-labelledby="products-heading">
