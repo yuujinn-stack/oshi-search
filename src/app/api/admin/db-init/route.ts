@@ -499,6 +499,9 @@ const ALTER_STATEMENTS = [
   // ── video_generation_jobs（drizzle/0018_video_generation_jobs_template_input.sql）─
   sql.raw(`ALTER TABLE video_generation_jobs ADD COLUMN IF NOT EXISTS template_input JSONB`),
 
+  // ── oshikatsu_affiliate_services（drizzle/0024_oshikatsu_affiliate_checked_at.sql）──
+  sql.raw(`ALTER TABLE oshikatsu_affiliate_services ADD COLUMN IF NOT EXISTS checked_at TIMESTAMPTZ`),
+
   // ── instagram_post_schedules（drizzle/0016_instagram_post_schedules_reel.sql）─
   sql.raw(`ALTER TABLE instagram_post_schedules ADD COLUMN IF NOT EXISTS media_type TEXT NOT NULL DEFAULT 'CAROUSEL'`),
   sql.raw(`ALTER TABLE instagram_post_schedules ADD COLUMN IF NOT EXISTS video_url TEXT`),

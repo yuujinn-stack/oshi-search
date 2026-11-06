@@ -72,6 +72,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'monthly' as const,
       priority: 0.5,
     },
+    // 推し活グッズ買取サービス比較（静的ページ。公式サイトの確認内容を更新したら lastModified も更新する。?group= の絞り込みURLは含めない）
+    {
+      url: `${BASE_URL}/oshikatsu/goods-buyback`,
+      lastModified: new Date('2026-11-06'),
+      changeFrequency: 'monthly' as const,
+      priority: 0.5,
+    },
     {
       url: `${BASE_URL}/about`,
       lastModified: new Date('2026-08-12'),

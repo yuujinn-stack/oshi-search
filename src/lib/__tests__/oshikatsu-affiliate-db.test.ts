@@ -123,7 +123,7 @@ describe.skipIf(!hasPglite)('推し活アフィリエイト × 分離DB（pglite
 
     // 初期案件の登録（2回押しても重複しない）
     const first = await (await list.POST(req('/api/admin/oshikatsu-affiliates', 'POST', { presets: true }))).json();
-    expect(first.created.map((s: { serviceKey: string }) => s.serviceKey)).toEqual(KEYS);
+    expect(first.created.map((s: { serviceKey: string }) => s.serviceKey)).toEqual([...KEYS, 'kaitori_ouji', 'justy', 'oshitoku', 'surugaya']);
     const second = await (await list.POST(req('/api/admin/oshikatsu-affiliates', 'POST', { presets: true }))).json();
     expect(second.created).toEqual([]);
     const services = await (await list.GET()).json();
@@ -207,6 +207,93 @@ describe.skipIf(!hasPglite)('推し活アフィリエイト × 分離DB（pglite
     // VODアフィリエイト側（テーブル・表示判定）は一切変わっていない
     expect(await snapshot(vodTables)).toBe(vodBefore);
     expect((await resolveAffiliateSlot('hulu', 'work_provider')).desktop?.name).toBe('Hulu CTA');
+  });
+
+  test('グッズ買取：承認済み・有効の JUSTY だけ広告タグを表示。サイト側で止めている駿河屋は有効にしても出さない。最終確認日時を保存できる', async () => {
+    const one = await import('@/app/api/admin/oshikatsu-affiliates/[id]/route');
+    const creatives = await import('@/app/api/admin/oshikatsu-affiliates/[id]/creatives/route');
+    const { getPublicOshikatsuAds } = await import('@/lib/oshikatsu-affiliate/store');
+    const id = async (key: string) => (await pg.query(`SELECT id FROM oshikatsu_affiliate_services WHERE service_key=$1`, [key])).rows[0].id as number;
+    const justy = await id('justy');
+    const suruga = await id('surugaya');
+    const BUY_KEYS = ['kaitori_ouji', 'justy', 'oshitoku', 'surugaya'];
+
+    // ASPなし（none）の案件にはタグを登録できない
+    expect((await creatives.POST(req('/', 'POST', { name: 'x', kind: 'text', adHtml: A8_TEXT }), params(suruga))).status).toBe(400);
+
+    // 最終確認日時の保存
+    expect((await one.PUT(req('/', 'PUT', { checkedAt: '2026-11-06T10:00:00+09:00' }), params(justy))).status).toBe(200);
+    expect((await pg.query(`SELECT checked_at FROM oshikatsu_affiliate_services WHERE id=$1`, [justy])).rows[0].checked_at).not.toBeNull();
+
+    // JUSTY: タグ登録 → 承認・有効化で表示
+    expect((await creatives.POST(req('/', 'POST', { name: 'JUSTY テキスト', kind: 'text', adHtml: A8_TEXT }), params(justy))).status).toBe(201);
+    expect(await getPublicOshikatsuAds(BUY_KEYS)).toEqual({});
+    await one.PUT(req('/', 'PUT', { partnershipStatus: 'approved', isAdEnabled: true }), params(justy));
+    // 駿河屋: ASPを A8 に変えてタグを登録し、承認・有効にしても表示しない（OSHIKATSU_AD_BLOCKED）
+    await one.PUT(req('/', 'PUT', { aspId: 'a8', partnershipStatus: 'approved', isAdEnabled: true }), params(suruga));
+    expect((await creatives.POST(req('/', 'POST', { name: 'suruga', kind: 'text', adHtml: A8_TEXT }), params(suruga))).status).toBe(201);
+    const ads = await getPublicOshikatsuAds(BUY_KEYS);
+    expect(Object.keys(ads)).toEqual(['justy']);
+    expect(ads.justy.adHtml).toBe(A8_TEXT);
+
+    // 公開ページの判定は checked_at 列を読まない（本番で db-init 前でも広告表示が止まらない）
+    await pg.query('ALTER TABLE oshikatsu_affiliate_services DROP COLUMN checked_at');
+    try {
+      expect(Object.keys(await getPublicOshikatsuAds(BUY_KEYS))).toEqual(['justy']);
+    } finally {
+      await pg.query('ALTER TABLE oshikatsu_affiliate_services ADD COLUMN IF NOT EXISTS checked_at TIMESTAMPTZ');
+    }
+
+    // 買取比較ページ：JUSTY は広告枠＋PR、買取王子・推しトク・駿河屋は公式サイトへの通常リンク
+    const { default: GoodsBuybackPage } = await import('@/app/oshikatsu/goods-buyback/page');
+    const html = renderToString(await GoodsBuybackPage());
+    expect(html).toContain(`<aside class="gm-ad gm-ad--text" aria-label="JUSTYの広告"><span class="gm-pr">PR</span><div class="gm-ad-tag">${A8_TEXT}</div></aside>`);
+    expect(html).toContain('本ページにはアフィリエイト広告が含まれます');
+    expect(html).toContain('href="https://www.kaitoriouji.jp/item/idolgoods/" target="_blank" rel="noopener noreferrer" class="gm-btn"');
+    expect(html).toContain('href="https://www.suruga-ya.jp/man/kaitori/kantan.html" target="_blank" rel="noopener noreferrer" class="gm-btn"');
+    expect(html).not.toContain('https://justy-consul.com/idols/" target="_blank" rel="noopener noreferrer" class="gm-btn"');
+    expect(html).toContain('href="https://kaitori-janiyard.jp/idol" target="_blank" rel="noopener noreferrer" class="gm-btn"');
+    expect(html.split('px.a8.net').length - 1).toBe(1);
+
+    // 広告を無効にすると JUSTY も公式サイトへの通常リンクに戻る
+    await one.PUT(req('/', 'PUT', { isAdEnabled: false }), params(justy));
+    const htmlOff = renderToString(await GoodsBuybackPage());
+    expect(htmlOff).not.toContain('px.a8.net');
+    expect(htmlOff).not.toContain('本ページにはアフィリエイト広告が含まれます');
+    expect(htmlOff).toContain('href="https://justy-consul.com/idols/" target="_blank" rel="noopener noreferrer" class="gm-btn"');
+  });
+
+  test('本番公開から db-init までの間（checked_at 列なし）：公開ページの広告は表示され、管理画面の一覧だけがエラー。db-init でデータを失わずに復旧する', async () => {
+    const one = await import('@/app/api/admin/oshikatsu-affiliates/[id]/route');
+    const store = await import('@/lib/oshikatsu-affiliate/store');
+    const { POST: dbInit } = await import('@/app/api/admin/db-init/route');
+    const justy = (await pg.query(`SELECT id FROM oshikatsu_affiliate_services WHERE service_key='justy'`)).rows[0].id as number;
+    await one.PUT(req('/', 'PUT', { isAdEnabled: true }), params(justy));
+    const before = await snapshot(['oshikatsu_affiliate_services', 'oshikatsu_affiliate_creatives', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements']);
+
+    // 旧バージョンのDB（列なし）を再現
+    await pg.query('ALTER TABLE oshikatsu_affiliate_services DROP COLUMN checked_at');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // 公開ページ：広告判定は影響を受けない
+      expect(Object.keys(await store.getPublicOshikatsuAds(['justy', 'kaitori_ouji']))).toEqual(['justy']);
+      const { default: GoodsBuybackPage } = await import('@/app/oshikatsu/goods-buyback/page');
+      expect(renderToString(await GoodsBuybackPage())).toContain('aria-label="JUSTYの広告"');
+      // 管理画面の推し活タブ・推し活の管理API：列がないためエラー（VOD側の affiliate_* は対象外）
+      await expect(store.listOshikatsuAffiliateServicesOrThrow()).rejects.toThrow();
+      const { getAllAffiliateProgramsOrThrow } = await import('@/lib/affiliate-store');
+      await expect(getAllAffiliateProgramsOrThrow()).resolves.toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+
+    // db-init（ADD COLUMN IF NOT EXISTS）で復旧。2回実行しても同じ。既存の行は変わらない（checked_at は NULL で追加）
+    for (let i = 0; i < 2; i++) expect((await (await dbInit()).json()).ok).toBe(true);
+    await expect(store.listOshikatsuAffiliateServicesOrThrow()).resolves.toHaveLength(6);
+    const after = await snapshot(['oshikatsu_affiliate_services', 'oshikatsu_affiliate_creatives', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements']);
+    const strip = (x: string) => JSON.parse(x, (k, v) => (k === 'checked_at' || k === '__columns' || k === '__indexes' ? undefined : v));
+    expect(strip(after)).toEqual(strip(before));
+    await one.PUT(req('/', 'PUT', { isAdEnabled: false }), params(justy));
   });
 
   test('テーブル未作成・DB障害時も公開ページは落ちず、通常リンクで表示する', async () => {

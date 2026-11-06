@@ -29,7 +29,8 @@ interface AspTagRule {
 
 const A8_HOST = /^(?:[a-z0-9-]+\.)*a8\.net$/;
 
-export const ASP_TAG_RULES: Record<OshikatsuAspId, AspTagRule> = {
+// ルールの無いASP（none など）のタグは常に不可。
+export const ASP_TAG_RULES: Partial<Record<OshikatsuAspId, AspTagRule>> = {
   a8: { label: 'A8.net', linkHost: A8_HOST, imageHost: A8_HOST, requiresTrackingPixel: true },
 };
 

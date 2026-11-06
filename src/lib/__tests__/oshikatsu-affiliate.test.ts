@@ -136,10 +136,14 @@ describe('管理APIの入力チェック', () => {
 });
 
 describe('初期案件・掲載先', () => {
-  test('初期案件は Cherish Palette（承認済み）・しまうまプラス（審査中）。プログラムIDはリポジトリに書かない', () => {
-    expect(OSHIKATSU_AFFILIATE_PRESETS.map((p) => [p.serviceKey, p.partnershipStatus])).toEqual([
-      ['cherish_palette', 'approved'],
-      ['shimauma_plus', 'pending'],
+  test('初期案件：グッズ制作は Cherish Palette（承認済み）・しまうまプラス（審査中）、グッズ買取は JUSTY だけ審査中（A8.net）。プログラムIDはリポジトリに書かない', () => {
+    expect(OSHIKATSU_AFFILIATE_PRESETS.map((p) => [p.serviceKey, p.partnershipStatus, p.aspId])).toEqual([
+      ['cherish_palette', 'approved', 'a8'],
+      ['shimauma_plus', 'pending', 'a8'],
+      ['kaitori_ouji', 'not_applied', 'none'],
+      ['justy', 'pending', 'a8'],
+      ['oshitoku', 'not_applied', 'none'],
+      ['surugaya', 'not_applied', 'none'],
     ]);
     for (const f of ['src/lib/oshikatsu-affiliate/constants.ts', 'src/app/admin/affiliates/OshikatsuAffiliateManager.tsx']) {
       expect(read(f)).not.toMatch(/s0000000?\d{6,}/);

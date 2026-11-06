@@ -69,6 +69,7 @@ import { ACTIVITY_LABEL } from '@/lib/person-badges';
 import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
 import PrNotice from '@/components/site/PrNotice';
 import PersonLiveArchiveSection from '@/components/live-archive/PersonLiveArchiveSection';
+import BuybackEntryCta from '@/components/oshikatsu/BuybackEntryCta';
 import { liveArchiveGroupsForPerson, pickSpreadPerformances } from '@/lib/live-archive/core';
 import { loadLiveArchive, loadLiveArchiveCampaigns } from '@/lib/live-archive/data';
 import './person-graphic.css';
@@ -949,6 +950,9 @@ export default async function PersonPage({ params }: Props) {
               <ProductTabList items={allProductItems} personSlug={name} />
             )}
           </section>
+
+          {/* ━━━ グッズの整理・買取サービスを探す（推し活グッズ買取サービス比較への案内。現在の所属グループで絞り込んで開く） ━━━ */}
+          <BuybackEntryCta groupNames={currentGroups.map((m) => m.groupName)} placement="person_page" />
 
           {/* ━━━ 出演作品 ━━━ */}
           {publishedWorks.length > 0 ? (

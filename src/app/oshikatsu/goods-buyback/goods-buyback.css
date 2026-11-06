@@ -1,0 +1,49 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   推し活グッズ買取サービス比較（/oshikatsu/goods-buyback）専用スタイル（.bb-*）。
+   カード・比較表・広告枠などの共通部品はグッズ制作比較の goods-making.css（.gm-*。.gm-page 配下）を使う。
+   スマホ最優先（基準 360〜430px）。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--goodsbuyback { --graphic-page-label: 'COMPARE / GOODS BUYBACK'; }
+
+/* 絞り込み */
+.bb-page .bb-filters { display: flex; flex-direction: column; gap: 14px; margin: 0 0 18px; padding: 14px; background: #FFFFFF; border: 1.5px solid var(--graphic-ink); }
+.bb-page .bb-filter { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.bb-page .bb-filter-label { font-size: 13px; font-weight: 800; color: var(--graphic-ink); padding: 0; }
+.bb-page .bb-search { width: 100%; min-height: 44px; padding: 8px 10px; font-size: 16px; background: #FFFFFF; color: var(--graphic-text); border: 1.5px solid var(--graphic-border-strong); }
+.bb-page .bb-select { width: 100%; min-height: 44px; padding: 8px 10px; font-size: 16px; background: #FFFFFF; color: var(--graphic-text); border: 1.5px solid var(--graphic-border-strong); }
+.bb-page .bb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.bb-page .bb-chip {
+  min-height: 36px; padding: 6px 10px; font-size: 13px; font-weight: 700; line-height: 1.3;
+  background: #FFFFFF; color: var(--graphic-ink); border: 1.5px solid var(--graphic-border-strong); cursor: pointer;
+}
+.bb-page .bb-chip[aria-pressed='true'] { background: var(--graphic-ink); color: #FFFFFF; border-color: var(--graphic-ink); }
+.bb-page .bb-result { margin: 0; font-size: 14px; font-weight: 800; line-height: 1.6; color: var(--graphic-ink); }
+.bb-page .bb-reset { margin-left: 8px; padding: 2px 8px; font-size: 12px; font-weight: 700; background: var(--graphic-panel); color: var(--graphic-ink); border: 1px solid var(--graphic-border-strong); cursor: pointer; }
+.bb-page .bb-filter-note { margin: 0; }
+.bb-page .bb-empty { padding: 14px; font-size: 14px; line-height: 1.7; background: var(--graphic-panel); border: 1px solid var(--graphic-border); color: var(--graphic-body); }
+
+/* サービスカード（.gm-card を使い、中身だけここで定義） */
+.bb-page .bb-group-hit { margin: 12px 0 0; padding: 8px 10px; font-size: 13px; line-height: 1.6; background: #FFFFFF; border: 1.5px solid var(--graphic-ink); color: var(--graphic-body); }
+.bb-page .bb-group-hit-label { display: inline-block; margin-right: 6px; font-weight: 900; color: var(--graphic-ink); }
+.bb-page .bb-group-hit-note { display: block; margin-top: 2px; font-size: 12px; color: var(--graphic-muted); }
+.bb-page .bb-facts { margin: 12px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.bb-page .bb-facts > div { display: grid; grid-template-columns: 7.5em 1fr; gap: 8px; font-size: 13px; line-height: 1.6; padding-bottom: 6px; border-bottom: 1px solid var(--graphic-border); }
+.bb-page .bb-facts dt { font-weight: 800; color: var(--graphic-ink); }
+.bb-page .bb-facts dd { margin: 0; color: var(--graphic-body); }
+.bb-page .bb-goods { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.bb-page .bb-goods-item { display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 13px; line-height: 1.5; }
+.bb-page .bb-goods-name { font-weight: 800; color: var(--graphic-ink); }
+.bb-page .bb-goods-status { color: var(--graphic-body); }
+.bb-page .bb-goods-item--excluded .bb-goods-status { color: var(--graphic-muted); }
+.bb-page .bb-more-body { padding: 0 12px 12px; }
+.bb-page .bb-h5 { margin: 10px 0 4px; font-size: 12px; font-weight: 800; color: var(--graphic-ink); }
+.bb-page .bb-small { margin: 0; font-size: 12px; line-height: 1.7; color: var(--graphic-body); }
+.bb-page .bb-small-list { font-size: 12px; }
+.bb-page .bb-no-link { margin: 0; padding: 12px; font-size: 13px; text-align: center; color: var(--graphic-muted); background: var(--graphic-panel); border: 1.5px dashed var(--graphic-border-strong); }
+
+/* 比較表（サービス数に合わせて列幅を自動にする） */
+.bb-page .bb-compare { margin-top: 24px; }
+.bb-page .bb-compare-title { margin: 0 0 10px; font-size: 16px; font-weight: 900; color: var(--graphic-ink); }
+.bb-page .bb-table { min-width: 640px; }
+.bb-page .bb-table td { width: auto; min-width: 140px; }

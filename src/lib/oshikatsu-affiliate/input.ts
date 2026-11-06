@@ -58,8 +58,9 @@ export function parseServiceInput(body: unknown, mode: 'create' | 'update'): Res
     out.programId = v || null;
   }
   if (has('officialUrl')) {
+    // 公式サイトを確認できていないサービス（例: 推しトク）は空欄で登録できる
     const v = str(b.officialUrl);
-    const err = v ? checkOfficialUrl(v) : '公式サイトURLを入力してください';
+    const err = v ? checkOfficialUrl(v) : null;
     if (err) return { ok: false, error: err };
     out.officialUrl = v;
   }
@@ -73,6 +74,17 @@ export function parseServiceInput(body: unknown, mode: 'create' | 'update'): Res
   } else if ('isAdEnabled' in b) {
     if (typeof b.isAdEnabled !== 'boolean') return { ok: false, error: '広告掲載の有効・無効の値が正しくありません' };
     out.isAdEnabled = b.isAdEnabled;
+  }
+  if ('checkedAt' in b) {
+    // 最終確認日時（提携状況・広告素材を最後に確認した日時）。空欄は未確認
+    if (b.checkedAt === null || b.checkedAt === '') out.checkedAt = null;
+    else {
+      const t = typeof b.checkedAt === 'number' ? b.checkedAt : Date.parse(String(b.checkedAt));
+      if (!Number.isFinite(t)) return { ok: false, error: '最終確認日時の形式が正しくありません' };
+      out.checkedAt = t;
+    }
+  } else if (mode === 'create') {
+    out.checkedAt = null;
   }
   if (has('note')) {
     const v = str(b.note);

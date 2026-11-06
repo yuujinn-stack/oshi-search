@@ -778,6 +778,8 @@ export const oshikatsuAffiliateServices = pgTable('oshikatsu_affiliate_services'
   partnershipStatus: text('partnership_status').notNull().default('pending'),
   isAdEnabled:       boolean('is_ad_enabled').notNull().default(false),
   note:              text('note'),
+  // 提携状況・広告素材を最後に確認した日時（drizzle/0024 で追加。未確認は NULL）
+  checkedAt:         timestamp('checked_at', { withTimezone: true }),
   createdAt:         timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt:         timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [

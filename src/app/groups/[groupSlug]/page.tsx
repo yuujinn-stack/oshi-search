@@ -38,6 +38,7 @@ import { getGroupHeroGradient } from '@/lib/groupHeroGradient';
 import PrNotice from '@/components/site/PrNotice';
 import LiveArchiveBrowser from '@/components/live-archive/LiveArchiveBrowser';
 import RakutenCampaignBox from '@/components/live-archive/RakutenCampaignBox';
+import BuybackEntryCta from '@/components/oshikatsu/BuybackEntryCta';
 import { liveArchiveGroupOf } from '@/lib/live-archive/core';
 import { liveArchiveFromStored, loadLiveArchiveCampaigns } from '@/lib/live-archive/data';
 import type { PublicCampaign } from '@/lib/rakuten-campaign/core';
@@ -1050,6 +1051,9 @@ export default async function GroupsPage({ params }: Props) {
               </p>
             )}
           </section>
+
+          {/* ━━━ グッズの整理・買取サービスを探す（推し活グッズ買取サービス比較への案内。このグループで絞り込んで開く） ━━━ */}
+          <BuybackEntryCta groupNames={[groupName]} placement="group_page" />
 
           {/* ━━━ 7. 関連グループ ━━━ */}
           {relatedGroupNames.length > 0 && (

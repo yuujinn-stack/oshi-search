@@ -7,6 +7,7 @@
 // - 各サービスの外部リンク（公式サイト／提携後の広告リンク）は links.ts で管理する。ここには書かない。
 
 import { GOODS_MAKING_PATH } from './goods-making';
+import { GOODS_BUYBACK_PATH } from './goods-buyback';
 
 export const OSHIKATSU_PATH = '/oshikatsu';
 
@@ -52,9 +53,9 @@ export const OSHIKATSU_CATEGORIES: OshikatsuCategory[] = [
       '使わなくなったグッズを、次のファンに引き継ぎたい',
     ],
     icon: 'box',
-    status: 'coming_soon',
-    href: null,
-    serviceNames: [],
+    status: 'available',
+    href: GOODS_BUYBACK_PATH,
+    serviceNames: ['買取王子', 'JUSTY', '推しトク', '駿河屋'],
   },
   {
     id: 'fashion_rental',

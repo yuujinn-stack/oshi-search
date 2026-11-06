@@ -12,7 +12,7 @@ import {
   oshikatsuAffiliateServices as servicesTable,
   oshikatsuAffiliateCreatives as creativesTable,
 } from '@/db/schema';
-import type { CreativeKind, OshikatsuAspId, OshikatsuCategoryId, PartnershipStatus } from './constants';
+import { adBlockedReason, type CreativeKind, type OshikatsuAspId, type OshikatsuCategoryId, type PartnershipStatus } from './constants';
 import { pickPublicAdCreative, type PublicAdCreative } from './core';
 
 export interface OshikatsuAffiliateService {
@@ -26,6 +26,8 @@ export interface OshikatsuAffiliateService {
   partnershipStatus: PartnershipStatus;
   isAdEnabled: boolean;
   note: string | null;
+  /** 提携状況・広告素材を最後に確認した日時（未確認は null） */
+  checkedAt: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -58,6 +60,7 @@ function serviceRow(r: typeof servicesTable.$inferSelect): OshikatsuAffiliateSer
     partnershipStatus: r.partnershipStatus as PartnershipStatus,
     isAdEnabled: r.isAdEnabled,
     note: r.note,
+    checkedAt: r.checkedAt ? r.checkedAt.getTime() : null,
     createdAt: r.createdAt.getTime(),
     updatedAt: r.updatedAt.getTime(),
   };
@@ -117,10 +120,16 @@ export interface OshikatsuAffiliateServiceInput {
   partnershipStatus: PartnershipStatus;
   isAdEnabled: boolean;
   note: string | null;
+  checkedAt: number | null;
+}
+
+function toDbValues<T extends { checkedAt?: number | null }>(input: T): Omit<T, 'checkedAt'> & { checkedAt?: Date | null } {
+  const { checkedAt, ...rest } = input;
+  return checkedAt === undefined ? rest : { ...rest, checkedAt: checkedAt === null ? null : new Date(checkedAt) };
 }
 
 export async function createOshikatsuAffiliateService(input: OshikatsuAffiliateServiceInput): Promise<OshikatsuAffiliateService> {
-  const [row] = await db.insert(servicesTable).values({ ...input }).returning();
+  const [row] = await db.insert(servicesTable).values(toDbValues(input)).returning();
   return serviceRow(row);
 }
 
@@ -130,7 +139,7 @@ export async function updateOshikatsuAffiliateService(
   patch: Partial<Omit<OshikatsuAffiliateServiceInput, 'serviceKey'>>,
 ): Promise<OshikatsuAffiliateService | null> {
   const [row] = await db.update(servicesTable)
-    .set({ ...patch, updatedAt: new Date() })
+    .set({ ...toDbValues(patch), updatedAt: new Date() })
     .where(eq(servicesTable.id, id))
     .returning();
   return row ? serviceRow(row) : null;
@@ -173,17 +182,29 @@ async function touchService(serviceId: number): Promise<void> {
 /**
  * 公開ページの各サービスに表示する広告タグ。広告を出さないサービスは結果に含めない（＝通常リンクを表示）。
  * 例外は投げない（テーブル未作成・DB障害時は空を返す）。
+ * サイト側の方針で広告を止めているサービス（OSHIKATSU_AD_BLOCKED）は、管理画面で有効にしても含めない。
+ * 判定に必要な列だけを読む（あとから追加した列（checked_at など）が本番DBに未反映でも、公開ページの広告表示に影響させないため）。
  */
 export async function getPublicOshikatsuAds(serviceKeys: readonly string[]): Promise<Record<string, PublicAdCreative>> {
-  if (serviceKeys.length === 0) return {};
+  const keys = serviceKeys.filter((k) => adBlockedReason(k) === null);
+  if (keys.length === 0) return {};
   try {
-    const services = await db.select().from(servicesTable).where(inArray(servicesTable.serviceKey, [...serviceKeys]));
+    const services = await db
+      .select({
+        id: servicesTable.id,
+        serviceKey: servicesTable.serviceKey,
+        aspId: servicesTable.aspId,
+        partnershipStatus: servicesTable.partnershipStatus,
+        isAdEnabled: servicesTable.isAdEnabled,
+      })
+      .from(servicesTable)
+      .where(inArray(servicesTable.serviceKey, keys));
     const candidates = services.filter((s) => s.partnershipStatus === 'approved' && s.isAdEnabled);
     if (candidates.length === 0) return {};
     const creatives = await db.select().from(creativesTable)
       .where(inArray(creativesTable.serviceId, candidates.map((s) => s.id)));
     const result: Record<string, PublicAdCreative> = {};
-    for (const s of candidates.map(serviceRow)) {
+    for (const s of candidates) {
       const picked = pickPublicAdCreative(s, creatives.filter((c) => c.serviceId === s.id).map(creativeRow));
       if (picked) result[s.serviceKey] = picked;
     }

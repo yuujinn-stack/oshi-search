@@ -14,6 +14,7 @@ import {
   OSHIKATSU_ASPS,
   OSHIKATSU_CATEGORY_PAGE_PATHS,
   OSHIKATSU_PAGE_SERVICE_KEYS,
+  adBlockedReason,
   PARTNERSHIP_STATUSES,
   type CreativeKind,
   type PartnershipStatus,
@@ -32,6 +33,7 @@ const label = <T extends string>(list: { id: T; label?: string; name?: string }[
 };
 
 const STATUS_BADGE: Record<PartnershipStatus, string> = {
+  not_applied: 'bg-gray-100 text-gray-600',
   pending: 'bg-amber-100 text-amber-800',
   approved: 'bg-emerald-100 text-emerald-800',
   rejected: 'bg-red-100 text-red-700',
@@ -181,6 +183,20 @@ function CreativeForm({
 interface ServiceFormValue {
   serviceKey: string; serviceName: string; category: string; aspId: string;
   programId: string; officialUrl: string; partnershipStatus: PartnershipStatus; note: string;
+  /** datetime-local の値（空欄は未確認） */
+  checkedAt: string;
+}
+
+function toLocalInput(ts: number | null): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** フォームの値をAPIへ送る形にする（最終確認日時は空欄なら null） */
+function toPayload(v: ServiceFormValue): Record<string, unknown> {
+  return { ...v, checkedAt: v.checkedAt ? new Date(v.checkedAt).getTime() : null };
 }
 
 function ServiceForm({
@@ -238,8 +254,11 @@ function ServiceForm({
             {PARTNERSHIP_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
         </label>
-        <label className="text-xs font-semibold text-gray-600 sm:col-span-2">公式サイトURL（広告を出さないときの通常リンクは公開ページ側の設定を使います）
-          <input type="url" value={v.officialUrl} onChange={set('officialUrl')} required className={input} />
+        <label className="text-xs font-semibold text-gray-600 sm:col-span-2">公式サイトURL（広告を出さないときの通常リンクは公開ページ側の設定を使います。未確認なら空欄）
+          <input type="url" value={v.officialUrl} onChange={set('officialUrl')} className={input} />
+        </label>
+        <label className="text-xs font-semibold text-gray-600">最終確認日時（提携状況・広告素材を最後に確認した日時）
+          <input type="datetime-local" value={v.checkedAt} onChange={set('checkedAt')} className={input} />
         </label>
         <label className="text-xs font-semibold text-gray-600 sm:col-span-2">メモ（管理用・報酬条件などASP内部の情報はここだけに書く。公開ページには出ません）
           <textarea value={v.note} onChange={set('note')} rows={3} maxLength={2000} className={input} />
@@ -370,6 +389,9 @@ function ServiceEditor({ service, onChange, onClose }: { service: Service; onCha
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-sm font-bold text-slate-700">広告掲載</span>
           <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${AD_BADGE[status]}`}>{AD_STATUS_LABELS[status]}</span>
+          {adBlockedReason(service.serviceKey) && (
+            <span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700">サイト側で広告停止中</span>
+          )}
           <button type="button" disabled={adBusy} onClick={toggleAd}
             className={`ml-auto rounded-lg px-4 py-1.5 text-sm font-bold disabled:opacity-40 ${service.isAdEnabled ? 'bg-gray-200 text-gray-700' : 'bg-emerald-600 text-white'}`}>
             {adBusy ? '切り替え中…' : service.isAdEnabled ? '広告を無効にする' : '広告を有効にする'}
@@ -379,6 +401,11 @@ function ServiceEditor({ service, onChange, onClose }: { service: Service; onCha
           公開ページに広告タグが表示されるのは「提携状態が承認済み」「広告が有効」「有効な素材があり安全確認OK」のすべてを満たすときだけです。
           それ以外は公式サイトへの通常リンクのまま表示されます。切り替えると公開ページはすぐ再生成されます。
         </p>
+        {adBlockedReason(service.serviceKey) && (
+          <p className="mt-1 text-xs font-semibold text-red-700">
+            このサービスはサイト側の方針で広告を出していません（{adBlockedReason(service.serviceKey)}）。有効にしても公開ページには広告が表示されません。
+          </p>
+        )}
         {adError && <p className="mt-1 text-xs text-red-600">{adError}</p>}
       </section>
 
@@ -424,9 +451,10 @@ function ServiceEditor({ service, onChange, onClose }: { service: Service; onCha
           initial={{
             serviceKey: service.serviceKey, serviceName: service.serviceName, category: service.category, aspId: service.aspId,
             programId: service.programId ?? '', officialUrl: service.officialUrl, partnershipStatus: service.partnershipStatus, note: service.note ?? '',
+            checkedAt: toLocalInput(service.checkedAt),
           }}
           onSubmit={async (v) => {
-            const { serviceKey: _ignored, ...patch } = v;
+            const { serviceKey: _ignored, ...patch } = toPayload(v);
             void _ignored;
             await updateService(patch);
           }}
@@ -511,6 +539,7 @@ export default function OshikatsuAffiliateManager({ initialServices }: { initial
                   </td>
                   <td className="px-3 py-2">
                     <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${AD_BADGE[st]}`}>{AD_STATUS_LABELS[st]}</span>
+                    {adBlockedReason(s.serviceKey) && <span className="ml-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">停止中</span>}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <button type="button" onClick={() => { setOpenId(s.id === openId ? null : s.id); setCreating(false); }}
@@ -532,10 +561,10 @@ export default function OshikatsuAffiliateManager({ initialServices }: { initial
           <h3 className="text-base font-bold text-slate-800 mb-3">新規案件登録</h3>
           <ServiceForm
             isNew
-            initial={{ serviceKey: '', serviceName: '', category: 'goods_making', aspId: 'a8', programId: '', officialUrl: '', partnershipStatus: 'pending', note: '' }}
+            initial={{ serviceKey: '', serviceName: '', category: 'goods_making', aspId: 'a8', programId: '', officialUrl: '', partnershipStatus: 'not_applied', note: '', checkedAt: '' }}
             onCancel={() => setCreating(false)}
             onSubmit={async (v) => {
-              const record = await call<Omit<Service, 'creatives'>>(API, 'POST', v);
+              const record = await call<Omit<Service, 'creatives'>>(API, 'POST', toPayload(v));
               setServices((list) => [...list, { ...record, creatives: [] }]);
               setCreating(false);
               setOpenId(record.id);

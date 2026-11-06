@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
       const created = [];
       for (const p of OSHIKATSU_AFFILIATE_PRESETS) {
         if (await findOshikatsuAffiliateServiceByKey(p.serviceKey)) continue;
-        created.push(await createOshikatsuAffiliateService({ ...p, programId: null, isAdEnabled: false, note: null }));
+        created.push(await createOshikatsuAffiliateService({ ...p, programId: null, isAdEnabled: false, note: null, checkedAt: null }));
       }
       return NextResponse.json({ created }, { status: 201 });
     }
