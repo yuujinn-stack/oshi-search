@@ -50,7 +50,7 @@ export default async function FashionRentalPage() {
   };
 
   return (
-    <div className="oshi-graphic-page oshi-graphic-page--fashionrental gm-page bb-page fr-page max-w-3xl mx-auto px-4 py-6">
+    <div className="oshi-graphic-page oshi-graphic-page--fashionrental gm-page bb-page fr-page max-w-[1080px] mx-auto px-4 py-6">
       <GraphicPageStyles />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }} />
 

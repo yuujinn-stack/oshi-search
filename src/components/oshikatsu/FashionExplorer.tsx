@@ -37,10 +37,11 @@ function writeParam(purpose: string) {
   }
 }
 
+// カード下部の公式サイトボタン／広告枠（従来どおり）。
 function Cta({ s, adHtml }: { s: FashionService; adHtml: string | undefined }) {
   if (adHtml) {
     return (
-      <div className="gm-card-cta gm-card-cta--ad">
+      <div id={`fr-${s.id}-cta`} className="gm-card-cta gm-card-cta--ad">
         <aside className="gm-ad gm-ad--text" aria-label={`${s.name}の広告`}>
           <span className="gm-pr">PR</span>
           <OshikatsuAdTag html={adHtml} serviceId={s.id} category={CATEGORY} placement="card_ad_tag" className="gm-ad-tag" />
@@ -49,11 +50,32 @@ function Cta({ s, adHtml }: { s: FashionService; adHtml: string | undefined }) {
     );
   }
   return (
-    <div className="gm-card-cta">
+    <div id={`fr-${s.id}-cta`} className="gm-card-cta">
       <ServiceOutboundLink href={s.officialUrl} isAffiliate={false} serviceId={s.id} category={CATEGORY} placement="card" className="gm-btn">
         {s.name}の公式サイトで確認する ↗
       </ServiceOutboundLink>
     </div>
+  );
+}
+
+// 料金プランの直後の公式サイトボタン。
+// - 広告がない（提携未承認・広告OFF）ときは、下部と同じ公式サイトへの通常リンク（GA4 は placement=card_plan）。
+// - 広告タグがあるとき（承認済み・広告有効）は、広告タグを2回出さない（計測用画像が二重に読み込まれるため）。
+//   公式サイトへ直接移動すると誤解されないよう「PRリンクを見る」とし、カード下部の広告枠（A8の正規タグ）へ移動するページ内リンクにする。
+function PlanCta({ s, hasAd }: { s: FashionService; hasAd: boolean }) {
+  if (hasAd) {
+    return (
+      <p className="fr-plan-cta">
+        <a href={`#fr-${s.id}-cta`} className="gm-btn fr-plan-btn" aria-label={`${s.name}のPRリンク（このカードの下部の広告）を見る`}>PRリンクを見る ↓</a>
+      </p>
+    );
+  }
+  return (
+    <p className="fr-plan-cta">
+      <ServiceOutboundLink href={s.officialUrl} isAffiliate={false} serviceId={s.id} category={CATEGORY} placement="card_plan" className="gm-btn fr-plan-btn">
+        {s.name}の公式サイトで確認する ↗
+      </ServiceOutboundLink>
+    </p>
   );
 }
 
@@ -77,6 +99,7 @@ function ServiceCard({ s, purpose, adHtml }: { s: FashionService; purpose: Fashi
         </p>
       )}
 
+      {/* 比較に重要な情報（常に表示）：料金・プラン → 公式サイトボタン → 選び方・送料・交換・サイズ */}
       <h4 className="gm-h4">月額料金とプラン</h4>
       <ul className="fr-plans">
         {s.plans.map((p) => (
@@ -88,6 +111,7 @@ function ServiceCard({ s, purpose, adHtml }: { s: FashionService; purpose: Fashi
         ))}
       </ul>
       {s.priceNote && <p className="gm-note fr-price-note">{s.priceNote}</p>}
+      <PlanCta s={s} hasAd={Boolean(adHtml)} />
 
       <dl className="bb-facts fr-facts">
         <div><dt>服の選び方</dt><dd>{s.selection}</dd></div>
@@ -97,30 +121,45 @@ function ServiceCard({ s, purpose, adHtml }: { s: FashionService; purpose: Fashi
         <div><dt>サイズ</dt><dd>{s.sizes}</dd></div>
       </dl>
 
-      <h4 className="gm-h4">契約・解約</h4>
-      <dl className="bb-facts fr-facts fr-contract">
-        <div><dt>自動更新</dt><dd>{s.autoRenew}</dd></div>
-        <div><dt>1か月だけの利用</dt><dd>{s.oneMonth}</dd></div>
-        <div><dt>長期コース・途中解約金</dt><dd>{s.longTerm}</dd></div>
-        <div><dt>返却期限</dt><dd>{s.returnDeadline}</dd></div>
-      </dl>
+      {/* 利用者に不利になりうる条件・追加料金の概要（折りたたまずに表示） */}
+      <div className="fr-cautions">
+        <h4 className="fr-cautions-title">注意したい条件・追加費用</h4>
+        <ul className="gm-list fr-cautions-list">{s.cautionSummary.map((x) => <li key={x}>{x}</li>)}</ul>
+      </div>
 
       <p className="fr-availability">{s.availability}</p>
 
-      <details className="gm-more">
-        <summary>汚損・紛失時の費用・解約・購入・注意事項</summary>
+      {/* 詳しい条件（開閉できる。details/summary なのでキーボード・タップで操作できる） */}
+      <details className="gm-more fr-more">
+        <summary>契約・解約の詳しい条件（自動更新・途中解約金・返却期限）</summary>
         <div className="bb-more-body">
-          <h5 className="bb-h5">汚損・破損・紛失時</h5>
+          <dl className="bb-facts fr-facts fr-contract">
+            <div><dt>自動更新</dt><dd>{s.autoRenew}</dd></div>
+            <div><dt>1か月だけの利用</dt><dd>{s.oneMonth}</dd></div>
+            <div><dt>長期コース・途中解約金</dt><dd>{s.longTerm}</dd></div>
+            <div><dt>返却期限</dt><dd>{s.returnDeadline}</dd></div>
+            <div><dt>解約・休会の手続き</dt><dd>{s.cancel}</dd></div>
+          </dl>
+        </div>
+      </details>
+
+      <details className="gm-more fr-more">
+        <summary>汚損・破損・紛失時の費用と補償</summary>
+        <div className="bb-more-body">
           <p className="bb-small">{s.damage}</p>
           <p className="bb-small fr-links">
             {s.damageLinks.map((l, i) => (
               <span key={l.url}>{i > 0 && '・'}<a href={l.url} target="_blank" rel="noopener noreferrer">{l.label}</a></span>
             ))}
           </p>
+        </div>
+      </details>
+
+      <details className="gm-more fr-more">
+        <summary>借りられる服・購入・注意事項</summary>
+        <div className="bb-more-body">
           <h5 className="bb-h5">借りられる服</h5>
           <p className="bb-small">{s.items}</p>
-          <h5 className="bb-h5">解約・休会の手続き</h5>
-          <p className="bb-small">{s.cancel}</p>
           <h5 className="bb-h5">レンタルした服の購入</h5>
           <p className="bb-small">{s.purchase}</p>
           {s.notes.length > 0 && (

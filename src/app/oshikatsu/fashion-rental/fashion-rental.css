@@ -28,3 +28,30 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--fashionrental
 @media (min-width: 640px) {
   .fr-page .fr-costs { grid-template-columns: 1fr 1fr; }
 }
+
+/* PCでは本文幅を 1080px まで広げる（page.tsx の max-w-[1080px]）。サービスカードの2列表示は 900px 以上から
+   （タブレット幅では1列のまま。goods-making.css の 640px 以上で2列を、このページだけ上書き）。 */
+.fr-page .gm-cards { grid-template-columns: 1fr; }
+@media (min-width: 900px) {
+  .fr-page .gm-cards { grid-template-columns: 1fr 1fr; gap: 20px; }
+}
+/* 長い説明文は読みやすい行の長さに抑える（カード・表の中は除く） */
+.fr-page .gm-lead,
+.fr-page .gm-sections > section > .gm-text,
+.fr-page .gm-sections > section > .gm-list { max-width: 50em; }
+
+/* 料金プラン直後の公式サイトボタン（下部のボタンと同じ見た目） */
+.fr-page .fr-plan-cta { margin: 12px 0 0; }
+.fr-page .fr-plan-btn { width: 100%; box-sizing: border-box; max-width: 100%; }
+/* 「PRリンクを見る」の移動先（カード下部の広告枠）が固定ヘッダー（高さ70px）に隠れないようにする */
+.fr-page .fr-card .gm-card-cta { scroll-margin-top: 88px; }
+
+/* 注意したい条件・追加費用（常に表示） */
+.fr-page .fr-cautions { margin: 12px 0 0; padding: 10px 12px; background: #FFFFFF; border: 1.5px solid var(--graphic-ink); }
+.fr-page .fr-cautions-title { margin: 0 0 6px; font-size: 13px; font-weight: 900; color: var(--graphic-ink); }
+.fr-page .fr-cautions-list { font-size: 13px; line-height: 1.7; }
+.fr-page .fr-cautions-list > li + li { margin-top: 2px; }
+
+/* 詳しい条件の開閉（summary はキーボードでも開閉できる。フォーカス時の枠を見えるように） */
+.fr-page .fr-more > summary:focus-visible { outline: 2px solid var(--graphic-ink); outline-offset: 2px; }
+.fr-page .fr-more .fr-contract { margin-top: 0; }

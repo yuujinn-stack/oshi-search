@@ -280,6 +280,9 @@ describe.skipIf(!hasPglite)('推し活アフィリエイト × 分離DB（pglite
     let html = renderToString(await FashionRentalPage());
     expect(html).toContain('href="https://mechakari.com/" target="_blank" rel="noopener noreferrer" class="gm-btn"');
     expect(html).toContain('href="https://www.air-closet.com/" target="_blank" rel="noopener noreferrer" class="gm-btn"');
+    // 料金プラン直後の公式サイトボタン（通常リンク）
+    expect(html).toContain('href="https://mechakari.com/" target="_blank" rel="noopener noreferrer" class="gm-btn fr-plan-btn"');
+    expect(html).toContain('href="https://www.air-closet.com/" target="_blank" rel="noopener noreferrer" class="gm-btn fr-plan-btn"');
     expect(html).not.toContain('px.a8.net');
     expect(html).not.toContain('本ページにはアフィリエイト広告が含まれます');
 
@@ -293,9 +296,20 @@ describe.skipIf(!hasPglite)('推し活アフィリエイト × 分離DB（pglite
     expect(Object.keys(await getPublicOshikatsuAds(FR_KEYS))).toEqual(['mechakari']);
     html = renderToString(await FashionRentalPage());
     expect(html).toContain(`<aside class="gm-ad gm-ad--text" aria-label="メチャカリの広告"><span class="gm-pr">PR</span><div class="gm-ad-tag">${A8_TEXT}</div></aside>`);
+    // 広告タグ（計測用画像）は1か所だけ。上の公式サイトボタンは下部の広告枠へのページ内リンク
+    expect(html.split('px.a8.net').length - 1).toBe(1);
+    expect(html).toContain('href="#fr-mechakari-cta"');
+    expect(html).toMatch(/<a href="#fr-mechakari-cta" class="gm-btn fr-plan-btn"[^>]*>PRリンクを見る ↓<\/a>/);
+    // 広告がない airCloset は従来どおり公式サイトへの通常リンク（上下とも）
+    expect(html).toContain('href="https://www.air-closet.com/" target="_blank" rel="noopener noreferrer" class="gm-btn fr-plan-btn"');
+    expect(html).not.toContain('href="https://mechakari.com/" target="_blank" rel="noopener noreferrer" class="gm-btn fr-plan-btn"');
     expect(html).toContain('本ページにはアフィリエイト広告が含まれます');
     await one.PUT(req('/', 'PUT', { isAdEnabled: false, partnershipStatus: 'not_applied' }), params(mecha));
     expect(await getPublicOshikatsuAds(FR_KEYS)).toEqual({});
+    html = renderToString(await FashionRentalPage());
+    expect(html).toContain('href="https://mechakari.com/" target="_blank" rel="noopener noreferrer" class="gm-btn fr-plan-btn"');
+    expect(html).not.toContain('PRリンクを見る');
+    expect(html).not.toContain('px.a8.net');
 
     // 既存のグッズ制作・グッズ買取の案件は変わっていない
     const others = (await pg.query(`SELECT service_key, partnership_status FROM oshikatsu_affiliate_services WHERE category <> 'fashion_rental' ORDER BY id`)).rows;

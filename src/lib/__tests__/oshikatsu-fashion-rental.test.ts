@@ -104,6 +104,40 @@ describe('掲載データ', () => {
   });
 });
 
+describe('読みやすさ・公式サイトへの導線', () => {
+  test('PCでは本文幅を1080pxまで広げる（カードの2列は900px以上）', () => {
+    expect(read('src/app/oshikatsu/fashion-rental/page.tsx')).toContain('max-w-[1080px]');
+    expect(read('src/app/oshikatsu/fashion-rental/fashion-rental.css')).toMatch(/@media \(min-width: 900px\) \{\s*\.fr-page \.gm-cards \{ grid-template-columns: 1fr 1fr;/);
+  });
+
+  test('料金プランの直後と下部の両方に「〇〇の公式サイトで確認する」。広告があるときは上は「PRリンクを見る」（ページ内リンク・広告タグは1か所だけ）', () => {
+    const ex = read('src/components/oshikatsu/FashionExplorer.tsx');
+    expect(ex.match(/の公式サイトで確認する/g)?.length).toBe(2); // 下部（通常リンク）・上部（通常リンク）
+    expect(ex).toContain('>PRリンクを見る ↓</a>');
+    expect(ex.match(/<OshikatsuAdTag/g)).toHaveLength(1);
+    expect(ex).toContain('placement="card_plan"');
+    expect(ex).toContain('href={`#fr-${s.id}-cta`}');
+    // 公式URLは掲載データ（officialUrl）をそのまま使う
+    expect(ex).not.toMatch(/href="https?:\/\//);
+  });
+
+  test('注意したい条件・追加費用の概要は常に表示し、詳しい条件は開閉できる（details/summary）', () => {
+    const ex = read('src/components/oshikatsu/FashionExplorer.tsx');
+    const card = ex.slice(ex.indexOf('function ServiceCard'), ex.indexOf('export default function FashionExplorer'));
+    const firstDetails = card.indexOf('<details');
+    expect(card.indexOf('s.cautionSummary')).toBeGreaterThan(0);
+    expect(card.indexOf('s.cautionSummary')).toBeLessThan(firstDetails);
+    expect(card.indexOf('s.availability')).toBeLessThan(firstDetails);
+    for (const k of ['s.autoRenew', 's.longTerm', 's.returnDeadline', 's.damage', 's.damageLinks']) expect(card.indexOf(k), k).toBeGreaterThan(firstDetails);
+    expect(card.match(/<details/g)).toHaveLength(3);
+    for (const s of FASHION_SERVICES) expect(s.cautionSummary.length).toBeGreaterThanOrEqual(4);
+    // 概要は既存の内容の言い換え（主要な金額が元の項目と一致）
+    expect(byId('mechakari').cautionSummary.join()).toContain('418円');
+    expect(byId('aircloset').cautionSummary.join()).toContain('330円');
+    expect(byId('aircloset').cautionSummary.join()).toContain('途中解約金');
+  });
+});
+
 describe('目的別の絞り込み', () => {
   test('5つの目的。公式サイトに記載がある（一部を含む）サービスだけ', () => {
     expect(FASHION_PURPOSES.map((p) => p.id)).toEqual(['self_select', 'stylist', 'new_items', 'buy_later', 'no_deadline']);
