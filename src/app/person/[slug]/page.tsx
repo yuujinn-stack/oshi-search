@@ -70,7 +70,7 @@ import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
 import PrNotice from '@/components/site/PrNotice';
 import PersonLiveArchiveSection from '@/components/live-archive/PersonLiveArchiveSection';
 import { liveArchiveGroupsForPerson, pickSpreadPerformances } from '@/lib/live-archive/core';
-import { loadLiveArchive } from '@/lib/live-archive/data';
+import { loadLiveArchive, loadLiveArchiveCampaigns } from '@/lib/live-archive/data';
 import './person-graphic.css';
 
 // 人物ページのデザイン「C. Graphic Pop」用フォント（person-graphic.css の --pp-* を上書き）。
@@ -321,6 +321,8 @@ export default async function PersonPage({ params }: Props) {
   // 卒業・脱退など過去の所属は対象にしない（在籍していない時期の公演を本人に結びつけない）
   const liveArchiveGroups = liveArchiveGroupsForPerson(currentGroups.map((m) => m.groupName));
   // 「〇〇の過去ライブ映像を発掘」コーナー：所属グループのメンバーの商品データから、確認済みの公演を3つまで（読めなければ出さない）
+  // 楽天のイベント情報（管理画面で公開・公式確認済み・開催中のものだけ。対象グループのメンバーのときだけ読む。読めなければ出さない）
+  const liveCampaignsPromise = liveArchiveGroups.length ? loadLiveArchiveCampaigns(Date.now()) : Promise.resolve([]);
   const liveArchives = await Promise.all(liveArchiveGroups.map(async (g) => {
     const memberNames = personsInGroup(g, allPersons, recordsByPerson).map((p) => p.name);
     const entries = await loadLiveArchive(g, memberNames, Date.now()).catch((err) => {
@@ -330,6 +332,7 @@ export default async function PersonPage({ params }: Props) {
     });
     return { groupName: g, entries: pickSpreadPerformances(entries, 3) };
   }));
+  const liveCampaigns = await liveCampaignsPromise;
   const displayOrders = displayOrdersResult.status === 'fulfilled' ? displayOrdersResult.value : {};
   const inactiveSlugs: Set<string> = terminatedSlugs.status === 'fulfilled' ? terminatedSlugs.value : new Set();
   const redisError =
@@ -894,6 +897,8 @@ export default async function PersonPage({ params }: Props) {
               groupName={a.groupName}
               entries={a.entries}
               listHref={`${membershipGroupHref(a.groupName)}/live`}
+              // 同じキャンペーンを1ページに何度も出さない（複数の対象グループに所属していても最初のコーナーだけ）
+              campaigns={i === 0 ? liveCampaigns : []}
             />
           ))}
 

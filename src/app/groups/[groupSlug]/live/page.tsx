@@ -15,7 +15,7 @@ import { groupMembershipRecords, personsInGroup } from '@/lib/group-membership';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { canonicalGroupSlug, resolveGroupFromSlug, resolveGroupName } from '@/lib/group-slug';
 import { countItems, liveArchiveGroupOf } from '@/lib/live-archive/core';
-import { loadLiveArchive, loadPublicCampaigns } from '@/lib/live-archive/data';
+import { loadLiveArchive, loadLiveArchiveCampaigns } from '@/lib/live-archive/data';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,7 +65,7 @@ export default async function GroupLiveArchivePage({ params }: Props) {
       console.error('[live-archive] products unavailable:', e?.name ?? 'Error', e?.code ?? '');
       return null;
     }),
-    loadPublicCampaigns(now),
+    loadLiveArchiveCampaigns(now),
   ]);
 
   const groupPath = `/groups/${slug}`;
@@ -108,12 +108,6 @@ export default async function GroupLiveArchivePage({ params }: Props) {
             </p>
           </header>
 
-          {campaigns.length > 0 && (
-            <div className="mb-6">
-              <RakutenCampaignBox campaigns={campaigns} placement="live_list" groupId={slug} />
-            </div>
-          )}
-
           {entries == null ? (
             <p className="text-sm px-4 py-3 rounded-xl" style={{ color: 'var(--ds-muted)', background: 'var(--ds-surface)', border: '1px solid var(--ds-border)' }}>
               商品情報を一時的に読み込めませんでした。時間をおいて再度お試しください。
@@ -126,6 +120,11 @@ export default async function GroupLiveArchivePage({ params }: Props) {
               placement="live_list"
               officialListUrl={archiveGroup.officialListUrl}
             />
+          )}
+
+          {/* 楽天のイベント情報（開催中のものだけ）。商品カードの下に置き、商品の購入リンクとは分ける */}
+          {campaigns.length > 0 && entries != null && entries.length > 0 && (
+            <RakutenCampaignBox campaigns={campaigns} placement="live_list" groupId={slug} className="mt-6" />
           )}
 
           <p className="mt-8 text-center">

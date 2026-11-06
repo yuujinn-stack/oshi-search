@@ -39,7 +39,7 @@ import PrNotice from '@/components/site/PrNotice';
 import LiveArchiveBrowser from '@/components/live-archive/LiveArchiveBrowser';
 import RakutenCampaignBox from '@/components/live-archive/RakutenCampaignBox';
 import { liveArchiveGroupOf } from '@/lib/live-archive/core';
-import { liveArchiveFromStored, loadPublicCampaigns } from '@/lib/live-archive/data';
+import { liveArchiveFromStored, loadLiveArchiveCampaigns } from '@/lib/live-archive/data';
 import type { PublicCampaign } from '@/lib/rakuten-campaign/core';
 
 export const dynamic = 'force-dynamic';
@@ -382,7 +382,7 @@ export default async function GroupsPage({ params }: Props) {
     ),
     getAllPersonMetas().catch(() => ({} as Record<string, PersonMeta>)),
     getInactiveProviderSlugs(),
-    liveArchiveGroup ? loadPublicCampaigns(Date.now()) : Promise.resolve([] as PublicCampaign[]),
+    liveArchiveGroup ? loadLiveArchiveCampaigns(Date.now()) : Promise.resolve([] as PublicCampaign[]),
   ]);
 
   // ── メンバー分類 ──────────────────────────────────────────────────────────────

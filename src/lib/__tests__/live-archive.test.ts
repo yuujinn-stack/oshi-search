@@ -15,7 +15,11 @@ import {
 } from '@/lib/live-archive/ga';
 import { sendGaEvent } from '@/lib/ga-event';
 import { currentMemberships, resolvePersonMemberships } from '@/lib/group-membership';
-import { UPCOMING_WINDOW_MS, campaignPeriodLabel, publicCampaigns, statusAt, type CampaignSource } from '@/lib/rakuten-campaign/core';
+import {
+  CONDITIONS_MAX_CHARS, UPCOMING_WINDOW_MS, campaignEndLabel, campaignPeriodLabel, liveArchiveCampaigns, liveCampaignKindOf,
+  publicCampaigns, shortConditions, statusAt, type CampaignSource, type PublicCampaign,
+} from '@/lib/rakuten-campaign/core';
+import { EVENT_TYPES } from '@/lib/rakuten-event/core';
 import type { RakutenItem } from '@/types/rakuten';
 
 const ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -220,6 +224,74 @@ describe('楽天のキャンペーン枠（publicCampaigns）', () => {
   });
 });
 
+describe('ライブ映像特集の楽天イベント案内（liveArchiveCampaigns）', () => {
+  const H = 60 * 60 * 1000;
+  const now = Date.parse('2026-11-05T12:00:00+09:00');
+  const src = (over: Partial<CampaignSource>): CampaignSource => ({
+    id: 1, name: '楽天お買い物マラソン', eventType: 'marathon',
+    startsAt: now - 2 * H, endsAt: now + 48 * H,
+    officialUrl: 'https://event.rakuten.co.jp/campaign/point-up/marathon/', entryUrl: null,
+    lastCheckedAt: now - H, visibility: 'published', entryRequired: 'required', conditions: null,
+    ...over,
+  });
+  const pick = (events: CampaignSource[], at = now) => liveArchiveCampaigns(publicCampaigns(events, at), at);
+
+  it('楽天ブックスのDVD・Blu-ray関連キャンペーンを管理画面の種類に追加（DBの変更なしで選べる）', () => {
+    expect(EVENT_TYPES).toContain('books_media');
+  });
+
+  it('買いまわり（マラソン・スーパーSALE・ブラックフライデー）と楽天ブックスのDVD・Blu-ray関連だけを2系統に分けて出す', () => {
+    expect(liveCampaignKindOf('marathon')).toBe('market_kaimawari');
+    expect(liveCampaignKindOf('super_sale')).toBe('market_kaimawari');
+    expect(liveCampaignKindOf('black_friday')).toBe('market_kaimawari');
+    expect(liveCampaignKindOf('books_media')).toBe('books_media');
+    // 5と0のつく日・クーポン・その他・未知の種類は出さない（名前などから推測しない）
+    for (const t of ['five_zero', 'coupon', 'other', 'unknown_type']) expect(liveCampaignKindOf(t)).toBeNull();
+    const events = [
+      src({ id: 1 }),
+      src({ id: 2, eventType: 'five_zero', officialUrl: 'https://event.rakuten.co.jp/campaign/card/pointday/' }),
+      src({ id: 3, eventType: 'books_media', name: '楽天ブックス DVD・Blu-rayポイントアップ', officialUrl: 'https://books.rakuten.co.jp/event/dvd/' }),
+      src({ id: 4, eventType: 'other', name: 'ブックス DVDセール', officialUrl: 'https://books.rakuten.co.jp/event/x/' }),
+    ];
+    expect(pick(events).map((c) => c.id)).toEqual([1, 3]);
+  });
+
+  it('開催中だけ（開始前・終了後・非公開・公式未確認は出さない）', () => {
+    expect(pick([src({ startsAt: now + H, endsAt: now + 10 * H })])).toEqual([]);
+    expect(pick([src({ endsAt: now })])).toEqual([]);
+    expect(pick([src({ visibility: 'hidden' })])).toEqual([]);
+    expect(pick([src({ lastCheckedAt: null })])).toEqual([]);
+  });
+
+  it('終了時刻ちょうどで外れる（開いたままのページで端末の時刻で選び直したとき）', () => {
+    const list = pick([src({ endsAt: now + 1000 })]);
+    expect(liveArchiveCampaigns(list, now + 999)).toHaveLength(1);
+    expect(liveArchiveCampaigns(list, now + 1000)).toEqual([]);
+    // 選び直しても開始前に戻ったものは出さない
+    expect(liveArchiveCampaigns(list, list[0].startsAt - 1)).toEqual([]);
+  });
+
+  it('同じイベント（同じID・同じリンク先）は1回だけ', () => {
+    const a = src({ id: 1 });
+    const list = publicCampaigns([a, src({ id: 5, name: '別名で二重登録' })], now);
+    expect(liveArchiveCampaigns([...list, list[0]], now).map((c) => c.id)).toEqual([1]);
+  });
+
+  it('簡潔な参加条件：エントリーの要否＋参加条件（長いものは省略。未確認・空なら出さない）', () => {
+    const [c] = pick([src({ conditions: '  エントリーのうえ、\n 楽天カードで支払い ' })]);
+    expect(c.conditions).toBe('エントリーのうえ、 楽天カードで支払い');
+    expect(shortConditions(c)).toBe('エントリー必要・エントリーのうえ、 楽天カードで支払い');
+    expect(shortConditions({ entryRequired: 'unknown', conditions: null })).toBeNull();
+    expect(shortConditions({ entryRequired: 'not_required', conditions: null })).toBe('エントリー不要');
+    const long = 'あ'.repeat(CONDITIONS_MAX_CHARS + 10);
+    expect(shortConditions({ entryRequired: 'unknown', conditions: long })).toBe(`${'あ'.repeat(CONDITIONS_MAX_CHARS)}…`);
+  });
+
+  it('終了日時の表示（日本時間）', () => {
+    expect(campaignEndLabel({ endsAt: Date.parse('2026-11-11T01:59:00+09:00') })).toBe('11月11日(水)01:59まで');
+  });
+});
+
 describe('画面・計測の配置', () => {
   it('グループページは対象グループだけコーナーを出し、既存の関連商品の前に置く', () => {
     const src = read('src/app/groups/[groupSlug]/page.tsx');
@@ -275,7 +347,7 @@ describe('GA4 イベント（パラメータと送信）', () => {
     sendGaEvent(...liveArchiveFilterEvent('snow-man', 'live_list', { sort: 'new' }));
     sendGaEvent(...liveArchiveProductClickEvent('snow-man', 'live_list',
       { id: 'snowman-2022-labo', releaseYear: 2023 }, { productId: 'dv-17520096', format: 'DVD', edition: '通常盤' }, 4, { sort: 'new', format: 'DVD' }));
-    sendGaEvent(...rakutenCampaignClickEvent({ id: 7, isEntry: true }, 'active', 'live_list', 'snow-man'));
+    sendGaEvent(...rakutenCampaignClickEvent({ id: 7, isEntry: true, eventType: 'marathon' }, 'active', 'live_list', 'snow-man'));
     expect(gtag.mock.calls).toEqual([
       ['event', 'live_archive_view', { group_id: 'snow-man', group_name: 'Snow Man', placement: 'group_page', performance_count: 5 }],
       ['event', 'live_archive_filter', { group_id: 'snow-man', placement: 'live_list', filter_type: 'format', filter_value: 'DVD' }],
@@ -284,7 +356,7 @@ describe('GA4 イベント（パラメータと送信）', () => {
         group_id: 'snow-man', product_id: 'dv-17520096', performance_id: 'snowman-2022-labo', format: 'DVD', edition: '通常盤',
         release_year: 2023, placement: 'live_list', position: 4, sort_order: 'new', filter_format: 'DVD',
       }],
-      ['event', 'rakuten_campaign_click', { campaign_id: 7, campaign_status: 'active', link_type: 'entry', placement: 'live_list', group_id: 'snow-man' }],
+      ['event', 'rakuten_campaign_click', { rakuten_event_id: 7, campaign_status: 'active', campaign_kind: 'market_kaimawari', link_type: 'entry', placement: 'live_list', group_id: 'snow-man' }],
     ]);
   });
 
@@ -400,5 +472,74 @@ describe('人物ページの「過去ライブ映像を発掘」コーナー', (
     expect(src).toContain('<TrackedRakutenLink');
     expect(src).toContain("pageType: 'person'");
     expect(src).not.toMatch(/sendGaEvent|live_archive_product_click|liveArchiveProductClickEvent/);
+  });
+});
+
+describe('人物ページのコーナーの楽天イベント案内', () => {
+  const now = Date.now();
+  const H = 60 * 60 * 1000;
+  const campaign = (over: Partial<PublicCampaign> = {}): PublicCampaign => ({
+    id: 11, name: '楽天お買い物マラソン', typeLabel: 'お買い物マラソン', status: 'active',
+    startsAt: now - H, endsAt: now + 24 * H,
+    url: 'https://event.rakuten.co.jp/campaign/point-up/marathon/entry/', isEntry: true,
+    eventType: 'marathon', entryRequired: 'required', conditions: '楽天カードで支払い', ...over,
+  });
+  const entries = () => buildLiveArchive('M!LK', indexByBooksNumber(
+    LIVE_PERFORMANCES.filter((p) => p.groupName === 'M!LK').flatMap((p) => p.variants)
+      .map((v) => ({ ...item(v.productNumber), affiliateUrl: `https://hb.afl.rakuten.co.jp/hgc/test/?pc=https%3A%2F%2Fbooks.rakuten.co.jp%2Frb%2F${v.productNumber}%2F` })),
+  ));
+  const render = (campaigns?: PublicCampaign[]) => renderToString(createElement(PersonLiveArchiveSection, {
+    id: 'live-archive', groupName: 'M!LK', entries: pickSpreadPerformances(entries(), 3), listHref: '/groups/M!LK/live', campaigns,
+  }));
+  const hrefs = (html: string) => [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1].replace(/&amp;/g, '&'));
+
+  it('キャンペーンが無いときは案内を出さない（通常のコーナーだけ）', () => {
+    expect(render()).not.toContain('楽天のイベント情報');
+    expect(render([])).not.toContain('楽天のイベント情報');
+  });
+
+  it('種類・イベント名・終了日時・参加条件・公式のエントリーページを出し、商品の楽天リンクは変えない', () => {
+    const without = render();
+    const html = render([campaign(), campaign({ id: 12, name: '楽天ブックス DVDポイントアップ', eventType: 'books_media', url: 'https://books.rakuten.co.jp/event/dvd/', isEntry: false, entryRequired: 'unknown', conditions: null })]);
+    expect(html).toContain('楽天のイベント情報');
+    expect(html).toContain('楽天市場の買いまわり');
+    expect(html).toContain('楽天ブックスのキャンペーン');
+    expect(html).toContain('楽天お買い物マラソン');
+    expect(html).toMatch(/開催中・(<!-- -->)?\d+月\d+日\(.\)\d\d:\d\dまで/);
+    expect(html).toMatch(/参加条件：(<!-- -->)?エントリー必要・楽天カードで支払い/);
+    expect(html).toContain('エントリーページ ›');
+    expect(html).toContain('楽天公式ページ ›');
+    // 商品リンク（アフィリエイト）は案内の有無で変わらない。案内のリンクはアフィリエイトではなく sponsored も付けない
+    const productLinks = (h: string) => hrefs(h).filter((u) => u.startsWith('https://hb.afl.rakuten.co.jp/'));
+    expect(productLinks(html)).toEqual(productLinks(without));
+    expect(productLinks(html).length).toBeGreaterThan(0);
+    const extra = hrefs(html).filter((u) => !hrefs(without).includes(u));
+    expect(extra).toEqual(['https://event.rakuten.co.jp/campaign/point-up/marathon/entry/', 'https://books.rakuten.co.jp/event/dvd/']);
+    expect(html).toMatch(/href="https:\/\/event\.rakuten\.co\.jp\/campaign\/point-up\/marathon\/entry\/" target="_blank" rel="noopener noreferrer"/);
+    // 商品ごとのポイント倍率・対象・値下げ・在庫を断定しない
+    expect(html).not.toMatch(/ポイント\d+倍|対象商品です|値下げ|在庫あり/);
+  });
+
+  it('案内は商品カードの下・「すべて見る」の前（1ページ1回：最初のコーナーだけに渡す）', () => {
+    const html = render([campaign()]);
+    expect(html.indexOf('楽天のイベント情報')).toBeGreaterThan(html.lastIndexOf('楽天で見る'));
+    expect(html.indexOf('楽天のイベント情報')).toBeLessThan(html.indexOf('ライブ映像をすべて見る'));
+    const page = read('src/app/person/[slug]/page.tsx');
+    expect(page).toContain('campaigns={i === 0 ? liveCampaigns : []}');
+    expect(page).toContain('liveArchiveGroups.length ? loadLiveArchiveCampaigns(Date.now())');
+  });
+
+  it('グループページ・一覧ページも同じ案内（特集用の抽出）を使う', () => {
+    for (const f of ['src/app/groups/[groupSlug]/page.tsx', 'src/app/groups/[groupSlug]/live/page.tsx']) {
+      const page = read(f);
+      expect(page).toContain('loadLiveArchiveCampaigns(');
+      expect(page.match(/<RakutenCampaignBox/g)).toHaveLength(1);
+    }
+    expect(read('src/lib/live-archive/data.ts')).toContain('liveArchiveCampaigns(publicCampaigns(');
+    // 一覧ページ・グループページとも商品一覧（LiveArchiveBrowser）の下に置く
+    for (const f of ['src/app/groups/[groupSlug]/page.tsx', 'src/app/groups/[groupSlug]/live/page.tsx']) {
+      const page = read(f);
+      expect(page.indexOf('<RakutenCampaignBox')).toBeGreaterThan(page.indexOf('<LiveArchiveBrowser'));
+    }
   });
 });

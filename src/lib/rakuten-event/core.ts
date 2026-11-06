@@ -18,7 +18,8 @@ export const SITE_ORIGIN = 'https://oshi-search.jp';
 
 // ── 選択肢 ──────────────────────────────────────────────────────────────────────
 
-export const EVENT_TYPES = ['marathon', 'five_zero', 'super_sale', 'black_friday', 'coupon', 'other'] as const;
+// books_media は楽天ブックス独自のキャンペーン（DVD・Blu-ray 関連）。event_type は text 列のため DB の変更は不要
+export const EVENT_TYPES = ['marathon', 'five_zero', 'super_sale', 'black_friday', 'coupon', 'books_media', 'other'] as const;
 export type RakutenEventType = (typeof EVENT_TYPES)[number];
 export const EVENT_TYPE_LABEL: Record<RakutenEventType, string> = {
   marathon: 'お買い物マラソン',
@@ -26,6 +27,7 @@ export const EVENT_TYPE_LABEL: Record<RakutenEventType, string> = {
   super_sale: '楽天スーパーSALE',
   black_friday: 'ブラックフライデー',
   coupon: '期間限定クーポン',
+  books_media: '楽天ブックスのDVD・Blu-ray関連キャンペーン',
   other: '楽天公式の期間限定イベント・その他',
 };
 /** 投稿文のハッシュタグ（種類ごと。その他は付けない） */

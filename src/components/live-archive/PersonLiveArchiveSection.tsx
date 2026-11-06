@@ -3,14 +3,24 @@
 // - 1公演1枠（同じ公演の DVD／Blu-ray で枠を埋めない）。形式ごとに1つのリンク（通常盤を優先）
 // - グループの公演であり、本人の出演を示すものではない（出演メンバー・価格・特典は表示しない）
 // - 楽天リンクのクリックは既存の TrackedRakutenLink（/api/track・GA4 affiliate_click）だけで計測する（新しいイベントは送らない）
+// 楽天のイベント情報（開催中のキャンペーン）があれば、商品カードの下に小さな案内を出す（商品リンクとは別の公式ページへのリンク）。
 // 人物ページのデザインCSS（person-graphic.css）で section#live-archive に番号つきの「LIVE ARCHIVE」ラベルが付く。
 import Link from 'next/link';
 import TrackedRakutenLink from '@/components/site/TrackedRakutenLink';
+import RakutenCampaignBox from '@/components/live-archive/RakutenCampaignBox';
+import type { PublicCampaign } from '@/lib/rakuten-campaign/core';
 import { formatLinksOf, itemLabel, type LiveArchiveEntry } from '@/lib/live-archive/core';
 
 export const PERSON_LIVE_ARCHIVE_PLACEMENT = 'person_live_archive';
 
-export default function PersonLiveArchiveSection({ id, groupName, entries, listHref }: {
+/** GA4 のグループID（一覧ページと同じく公開URLのグループのスラッグ。/groups/<slug>/live から取り出す） */
+function groupIdOf(listHref: string): string {
+  const m = /^\/groups\/([^/]+)\/live$/.exec(listHref);
+  if (!m) return '';
+  try { return decodeURIComponent(m[1]); } catch { return m[1]; }
+}
+
+export default function PersonLiveArchiveSection({ id, groupName, entries, listHref, campaigns = [] }: {
   /** セクションの id（1つ目は "live-archive"） */
   id: string;
   groupName: string;
@@ -18,6 +28,8 @@ export default function PersonLiveArchiveSection({ id, groupName, entries, listH
   entries: LiveArchiveEntry[];
   /** /groups/<slug>/live */
   listHref: string;
+  /** 楽天のイベント情報（loadLiveArchiveCampaigns。空なら案内を出さず通常のコーナーだけ） */
+  campaigns?: PublicCampaign[];
 }) {
   if (entries.length === 0) return null;
   const headingId = `${id}-heading`;
@@ -98,6 +110,15 @@ export default function PersonLiveArchiveSection({ id, groupName, entries, listH
           );
         })}
       </div>
+
+      {campaigns.length > 0 && (
+        <RakutenCampaignBox
+          campaigns={campaigns}
+          placement={PERSON_LIVE_ARCHIVE_PLACEMENT}
+          groupId={groupIdOf(listHref)}
+          className="mt-3"
+        />
+      )}
 
       <p className="text-[11px] mt-3 leading-relaxed" style={{ color: 'var(--ds-muted)' }}>
         {groupName}の公演の映像です（各公演の出演メンバーは公式情報でご確認ください）。価格・在庫・特典は楽天の商品ページでご確認ください。

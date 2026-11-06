@@ -2,7 +2,7 @@
 // 送信は既存の sendGaEvent（src/lib/ga-event.ts。本番ホスト oshi-search.jp で gtag があるときだけ）を使う。
 // パラメータは公開情報（グループ・公演・商品ID・配置・操作内容）だけで、個人情報・入力内容は含めない。
 import type { LiveArchiveEntry, LiveArchiveItem, LiveFormatFilter, LiveSort } from './core';
-import type { CampaignStatus, PublicCampaign } from '@/lib/rakuten-campaign/core';
+import { liveCampaignKindOf, type CampaignStatus, type PublicCampaign } from '@/lib/rakuten-campaign/core';
 
 export const LIVE_ARCHIVE_GA_EVENTS = {
   view: 'live_archive_view',
@@ -46,10 +46,12 @@ export function liveArchiveProductClickEvent(
   }];
 }
 
-export function rakutenCampaignClickEvent(c: Pick<PublicCampaign, 'id' | 'isEntry'>, status: CampaignStatus, placement: string, groupId?: string): GaEvent {
+export function rakutenCampaignClickEvent(c: Pick<PublicCampaign, 'id' | 'isEntry' | 'eventType'>, status: CampaignStatus, placement: string, groupId?: string): GaEvent {
   return [LIVE_ARCHIVE_GA_EVENTS.campaignClick, {
-    campaign_id: c.id,
+    // campaign_id は GA4 の予約パラメータ（流入元キャンペーンの ci に変換される）のため使わない
+    rakuten_event_id: c.id,
     campaign_status: status,
+    campaign_kind: liveCampaignKindOf(c.eventType) ?? 'other',
     link_type: c.isEntry ? 'entry' : 'official',
     placement,
     ...(groupId ? { group_id: groupId } : {}),

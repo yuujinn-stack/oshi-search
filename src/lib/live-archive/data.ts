@@ -7,7 +7,7 @@ import { db } from '@/db/client';
 import { products as productsTable } from '@/db/schema';
 import { withPriceFreshness } from '@/lib/price-freshness';
 import { listPublishedOpenEvents, neonEventDb } from '@/lib/rakuten-event/store';
-import { publicCampaigns, type PublicCampaign } from '@/lib/rakuten-campaign/core';
+import { liveArchiveCampaigns, publicCampaigns, type PublicCampaign } from '@/lib/rakuten-campaign/core';
 import type { StoredCategoryData } from '@/lib/product-store';
 import type { ProductCategory } from '@/types/person';
 import type { RakutenItem } from '@/types/rakuten';
@@ -40,10 +40,13 @@ export async function loadLiveArchive(groupName: string, memberNames: string[], 
   return buildLiveArchive(groupName, indexByBooksNumber(withFreshness(items, nowMs)));
 }
 
-/** 公開してよい楽天のキャンペーン（読めないときは空） */
-export async function loadPublicCampaigns(nowMs: number): Promise<PublicCampaign[]> {
+/**
+ * 特集に出す楽天のキャンペーン（管理画面で公開・公式確認済み・開催中で、楽天市場の買いまわり／楽天ブックスのDVD・Blu-ray関連のもの。
+ * src/lib/rakuten-campaign/core.ts liveArchiveCampaigns）。読めないときは空（通常のライブ映像コーナーだけになる）
+ */
+export async function loadLiveArchiveCampaigns(nowMs: number): Promise<PublicCampaign[]> {
   try {
-    return publicCampaigns(await listPublishedOpenEvents(neonEventDb()), nowMs);
+    return liveArchiveCampaigns(publicCampaigns(await listPublishedOpenEvents(neonEventDb()), nowMs), nowMs);
   } catch (err) {
     const e = err as { name?: string; code?: string } | null;
     console.error('[live-archive] campaigns unavailable:', e?.name ?? 'Error', e?.code ?? '');
