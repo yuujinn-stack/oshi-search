@@ -116,23 +116,27 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--goodsmaking {
   .gm-page .gm-cards { grid-template-columns: 1fr 1fr; }
 }
 
-/* 管理画面で登録したASP広告タグ（OshikatsuAdTag）。タグ自体（リンク先・文言・画像サイズ・計測用画像）は変更しない。
-   タグの外側に広告掲載エリア（白背景・オレンジの枠線・余白）と PR 表記を付け、隣のサービスの公式サイトボタンと同じ位置で見つけやすくする。
-   テキスト広告は文字の大きさ・太さ・色・下線だけを調整する（ボタン化・リンクへの余白追加・擬似要素での文言追加はしない）。
+/* 管理画面で登録したASP広告タグ（OshikatsuAdTag）。タグ自体（リンク先・文言・属性・計測用1×1画像）は変更しない。
+   タグの外側の枠（.gm-ad）を、隣のサービスの公式サイトボタン（.gm-btn）と同じ白背景・黒枠・高さ・横幅にそろえ、PR 表記は枠の上辺に置く。
+   クリックできるのはタグのリンク文字だけ（リンクへの余白追加・ブロック化・透明なクリック領域・擬似要素での文言追加はしない）。
+   テキスト広告は文字の大きさ・太さ・色・下線だけを調整。スマホで入りきらないときは2行に折り返す。
    バナー広告は画像のサイズを変えず中央に置き、枠に収まらない幅は枠内で横スクロール。 */
 .gm-page .gm-card-cta--ad { align-items: stretch; }
-.gm-page .gm-ad {
-  padding: 12px 14px 14px; text-align: center; background: #FFFFFF;
-  border: 2px solid var(--graphic-orange); box-shadow: 3px 3px 0 var(--graphic-ink);
+.gm-page .gm-ad { position: relative; background: #FFFFFF; border: 2px solid var(--graphic-ink); text-align: center; }
+.gm-page .gm-ad--text {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 8px;
+  min-height: 48px; padding: 10px 14px;
 }
-.gm-page .gm-ad-head { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0 0 8px; }
-.gm-page .gm-ad-head .gm-pr { align-self: center; }
-.gm-page .gm-ad-caption { font-size: 12px; font-weight: 700; color: var(--graphic-muted); }
-.gm-page .gm-ad-tag { max-width: 100%; overflow-x: auto; overflow-wrap: anywhere; }
-.gm-page .gm-ad--text .gm-ad-tag { font-size: 18px; line-height: 1.6; }
+/* テキスト広告の PR 表記は枠の上辺に重ねる（リンク文字だけを枠の中央に置くため） */
+.gm-page .gm-ad--text .gm-pr { position: absolute; top: -10px; left: 10px; line-height: 16px; }
+.gm-page .gm-ad--banner .gm-pr { align-self: center; }
+.gm-page .gm-ad-tag { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.gm-page .gm-ad--text .gm-ad-tag { font-size: 15px; line-height: 1.5; }
 .gm-page .gm-ad--text .gm-ad-tag a {
-  color: var(--graphic-orange-text); font-weight: 900;
-  text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px;
+  color: var(--graphic-ink); font-weight: 800;
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
 }
-.gm-page .gm-ad--text .gm-ad-tag a:hover { color: var(--graphic-ink); }
+.gm-page .gm-ad--text .gm-ad-tag a:hover { color: var(--graphic-orange-text); }
 .gm-page .gm-ad--text .gm-ad-tag a:focus-visible { outline: 2px solid var(--graphic-ink); outline-offset: 2px; }
+.gm-page .gm-ad--banner { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 8px; }
+.gm-page .gm-ad--banner .gm-ad-tag { overflow-x: auto; }

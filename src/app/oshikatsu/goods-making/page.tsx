@@ -147,14 +147,11 @@ export default async function GoodsMakingPage() {
 
                   {adTag ? (
                     // 管理画面で登録したASPの広告タグ。タグ自体（リンク・文言・画像・計測用1×1画像）は改変せずに表示し、
-                    // 見つけやすくするための広告掲載エリア（白背景・枠線・余白）と PR 表記はタグの外側にだけ付ける。
+                    // 隣のサービスの公式サイトボタンとそろえた広告枠（白背景・黒枠・同じ高さ）と PR 表記はタグの外側にだけ付ける。
                     // リンク部分を広げる余白・透明なクリック領域・独自のボタン文言は付けない（クリック計測は OshikatsuAdTag の1か所だけ）。
                     <div className="gm-card-cta gm-card-cta--ad">
                       <aside className={`gm-ad gm-ad--${adTag.kind === 'banner' ? 'banner' : 'text'}`} aria-label={`${link.serviceName}の広告`}>
-                        <p className="gm-ad-head">
-                          <PrTag />
-                          <span className="gm-ad-caption">{link.serviceName}の公式サイト</span>
-                        </p>
+                        <PrTag />
                         <OshikatsuAdTag html={adTag.adHtml} serviceId={s.id} category={CATEGORY} placement="card_ad_tag" className="gm-ad-tag" />
                       </aside>
                     </div>

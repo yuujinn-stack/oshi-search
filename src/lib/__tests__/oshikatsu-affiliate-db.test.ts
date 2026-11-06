@@ -181,7 +181,7 @@ describe.skipIf(!hasPglite)('推し活アフィリエイト × 分離DB（pglite
     expect(html).not.toContain(CHERISH_BTN);
     expect(html).toContain(`<div class="gm-ad-tag">${A8_TEXT}</div>`);
     // 広告掲載エリア（PR表記つき）の中にタグが1回だけ。広告リンク・計測用画像が二重に出ない
-    expect(html).toMatch(/<aside class="gm-ad gm-ad--text" aria-label="Cherish Paletteの広告"><p class="gm-ad-head"><span class="gm-pr">PR<\/span>/);
+    expect(html).toContain(`<aside class="gm-ad gm-ad--text" aria-label="Cherish Paletteの広告"><span class="gm-pr">PR</span><div class="gm-ad-tag">${A8_TEXT}</div></aside>`);
     expect(html.split('px.a8.net').length - 1).toBe(1);
     expect(html.split('/0.gif?').length - 1).toBe(1);
     // 目的別の選び方は同じページのカードへの内部リンク
