@@ -39,6 +39,7 @@ import PrNotice from '@/components/site/PrNotice';
 import LiveArchiveBrowser from '@/components/live-archive/LiveArchiveBrowser';
 import RakutenCampaignBox from '@/components/live-archive/RakutenCampaignBox';
 import BuybackEntryCta from '@/components/oshikatsu/BuybackEntryCta';
+import FashionEntryCta from '@/components/oshikatsu/FashionEntryCta';
 import { liveArchiveGroupOf } from '@/lib/live-archive/core';
 import { liveArchiveFromStored, loadLiveArchiveCampaigns } from '@/lib/live-archive/data';
 import type { PublicCampaign } from '@/lib/rakuten-campaign/core';
@@ -1005,6 +1006,9 @@ export default async function GroupsPage({ params }: Props) {
               )}
             </section>
           )}
+
+          {/* ━━━ ライブ参戦服を探す（ライブ映像コーナーの下。ファッションレンタル比較への控えめな案内） ━━━ */}
+          <FashionEntryCta placement="group_page" />
 
           {/* ━━━ 6. 関連商品 ━━━ */}
           <section>

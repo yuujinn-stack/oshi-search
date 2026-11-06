@@ -1,0 +1,30 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   ライブ参戦服・ファッションレンタル比較（/oshikatsu/fashion-rental）専用スタイル（.fr-*）。
+   カード・広告枠は goods-making.css（.gm-*）、絞り込み・比較表は goods-buyback.css（.bb-*）を共通で使う。
+   ───────────────────────────────────────────────────────────────────────────── */
+
+html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--fashionrental { --graphic-page-label: 'COMPARE / FASHION RENTAL'; }
+
+.fr-page .fr-h3 { margin: 14px 0 6px; font-size: 15px; font-weight: 900; color: var(--graphic-ink); }
+.fr-page .fr-fit { margin: 12px 0 0; padding: 8px 10px; font-size: 13px; line-height: 1.6; background: #FFFFFF; border: 1.5px solid var(--graphic-ink); color: var(--graphic-body); }
+.fr-page .fr-fit-label { display: block; font-size: 12px; font-weight: 900; color: var(--graphic-ink); }
+.fr-page .fr-plans { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.fr-page .fr-plans > li { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; padding: 8px 10px; background: var(--graphic-panel); border: 1px solid var(--graphic-border); font-size: 13px; line-height: 1.6; }
+.fr-page .fr-plan-name { font-weight: 800; color: var(--graphic-ink); }
+.fr-page .fr-plan-price { font-weight: 800; color: var(--graphic-orange-text); text-align: right; }
+.fr-page .fr-plan-detail { grid-column: 1 / -1; font-size: 12px; color: var(--graphic-body); }
+.fr-page .fr-price-note { margin-top: 6px; }
+.fr-page .fr-facts { margin-top: 12px; }
+.fr-page .fr-costs { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.fr-page .fr-cost { padding: 12px; background: #FFFFFF; border: 1px solid var(--graphic-border); }
+.fr-page .fr-cost .fr-h3 { margin-top: 0; }
+.fr-page .fr-table td { min-width: 180px; }
+.fr-page .fr-table tbody th { width: 112px; }
+.fr-page .fr-facts > div { grid-template-columns: 8.5em 1fr; }
+.fr-page .fr-availability { margin: 12px 0 0; padding: 8px 10px; font-size: 12px; line-height: 1.7; color: var(--graphic-body); background: var(--graphic-orange-soft); border-left: 3px solid var(--graphic-orange); }
+.fr-page .fr-links a,
+.fr-page .fr-table-links a { color: var(--graphic-orange-text); text-decoration: underline; text-underline-offset: 2px; }
+.fr-page .fr-table-links { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 12px; }
+@media (min-width: 640px) {
+  .fr-page .fr-costs { grid-template-columns: 1fr 1fr; }
+}

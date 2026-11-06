@@ -4,14 +4,15 @@ import path from 'path';
 import { OSHIKATSU_CATEGORIES, OSHIKATSU_PATH, isCategoryLinkable } from '@/lib/oshikatsu-services/categories';
 import { GOODS_MAKING_PATH } from '@/lib/oshikatsu-services/goods-making';
 import { GOODS_BUYBACK_PATH } from '@/lib/oshikatsu-services/goods-buyback';
+import { FASHION_RENTAL_PATH } from '@/lib/oshikatsu-services/fashion-rental';
 
 const root = path.resolve(__dirname, '../../..');
 const read = (p: string) => readFileSync(path.join(root, p), 'utf8');
 
 describe('推し活サービスのジャンル', () => {
-  test('3ジャンル（グッズ制作・グッズ買取・ファッションレンタル）。リンクできるのはグッズ制作とグッズ買取', () => {
+  test('3ジャンル（グッズ制作・グッズ買取・ファッションレンタル）。3つともリンクできる', () => {
     expect(OSHIKATSU_CATEGORIES.map((c) => c.id)).toEqual(['goods_making', 'goods_buyback', 'fashion_rental']);
-    expect(OSHIKATSU_CATEGORIES.filter(isCategoryLinkable).map((c) => c.href)).toEqual([GOODS_MAKING_PATH, GOODS_BUYBACK_PATH]);
+    expect(OSHIKATSU_CATEGORIES.filter(isCategoryLinkable).map((c) => c.href)).toEqual([GOODS_MAKING_PATH, GOODS_BUYBACK_PATH, FASHION_RENTAL_PATH]);
   });
 
   test('準備中のジャンルはリンク先を持たない（存在しないページへのリンクを作らない）', () => {

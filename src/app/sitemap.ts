@@ -79,6 +79,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'monthly' as const,
       priority: 0.5,
     },
+    // ライブ参戦服・ファッションレンタル比較（静的ページ。公式サイトの確認内容を更新したら lastModified も更新する。?purpose= の絞り込みURLは含めない）
+    {
+      url: `${BASE_URL}/oshikatsu/fashion-rental`,
+      lastModified: new Date('2026-11-06'),
+      changeFrequency: 'monthly' as const,
+      priority: 0.5,
+    },
     {
       url: `${BASE_URL}/about`,
       lastModified: new Date('2026-08-12'),

@@ -7,6 +7,7 @@ import { OSHIKATSU_CATEGORIES, type OshikatsuCategoryId } from '@/lib/oshikatsu-
 import { OSHIKATSU_SERVICE_LINKS } from '@/lib/oshikatsu-services/links';
 import { GOODS_MAKING_PATH } from '@/lib/oshikatsu-services/goods-making';
 import { GOODS_BUYBACK_PATH } from '@/lib/oshikatsu-services/goods-buyback';
+import { FASHION_RENTAL_PATH } from '@/lib/oshikatsu-services/fashion-rental';
 
 export type { OshikatsuCategoryId };
 
@@ -62,12 +63,14 @@ export const SERVICE_KEY_RE = /^[a-z][a-z0-9_]{1,49}$/;
 export const OSHIKATSU_CATEGORY_PAGE_PATHS: Partial<Record<OshikatsuCategoryId, string>> = {
   goods_making: GOODS_MAKING_PATH,
   goods_buyback: GOODS_BUYBACK_PATH,
+  fashion_rental: FASHION_RENTAL_PATH,
 };
 
 /** 公開ページに掲載枠があるサービスキー（ここに無いサービスは登録だけでき、まだどのページにも表示されない） */
 export const OSHIKATSU_PAGE_SERVICE_KEYS: Partial<Record<OshikatsuCategoryId, readonly string[]>> = {
   goods_making: ['shimauma_plus', 'cherish_palette'],
   goods_buyback: ['kaitori_ouji', 'justy', 'oshitoku', 'surugaya'],
+  fashion_rental: ['mechakari', 'aircloset'],
 };
 
 /**
@@ -117,4 +120,7 @@ export const OSHIKATSU_AFFILIATE_PRESETS: {
   { serviceKey: 'justy', serviceName: 'JUSTY', category: 'goods_buyback', aspId: 'a8', officialUrl: 'https://justy-consul.com/idols/', partnershipStatus: 'pending' },
   { serviceKey: 'oshitoku', serviceName: '推しトク', category: 'goods_buyback', aspId: 'none', officialUrl: 'https://kaitori-janiyard.jp/idol', partnershipStatus: 'not_applied' },
   { serviceKey: 'surugaya', serviceName: '駿河屋', category: 'goods_buyback', aspId: 'none', officialUrl: 'https://www.suruga-ya.jp/', partnershipStatus: 'not_applied' },
+  // ファッションレンタル（/oshikatsu/fashion-rental）。A8.net の提携承認は未確認のため未申請・広告OFFで登録する。
+  { serviceKey: 'mechakari', serviceName: 'メチャカリ', category: 'fashion_rental', aspId: 'a8', officialUrl: 'https://mechakari.com/', partnershipStatus: 'not_applied' },
+  { serviceKey: 'aircloset', serviceName: 'airCloset', category: 'fashion_rental', aspId: 'a8', officialUrl: 'https://www.air-closet.com/', partnershipStatus: 'not_applied' },
 ];

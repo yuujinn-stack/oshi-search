@@ -8,6 +8,7 @@
 
 import { GOODS_MAKING_PATH } from './goods-making';
 import { GOODS_BUYBACK_PATH } from './goods-buyback';
+import { FASHION_RENTAL_PATH } from './fashion-rental';
 
 export const OSHIKATSU_PATH = '/oshikatsu';
 
@@ -66,9 +67,9 @@ export const OSHIKATSU_CATEGORIES: OshikatsuCategory[] = [
       '推し色を取り入れたコーディネートを探したい',
     ],
     icon: 'hanger',
-    status: 'coming_soon',
-    href: null,
-    serviceNames: [],
+    status: 'available',
+    href: FASHION_RENTAL_PATH,
+    serviceNames: ['メチャカリ', 'airCloset'],
   },
 ];
 

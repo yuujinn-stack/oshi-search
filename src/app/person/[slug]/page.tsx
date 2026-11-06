@@ -70,6 +70,7 @@ import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
 import PrNotice from '@/components/site/PrNotice';
 import PersonLiveArchiveSection from '@/components/live-archive/PersonLiveArchiveSection';
 import BuybackEntryCta from '@/components/oshikatsu/BuybackEntryCta';
+import FashionEntryCta from '@/components/oshikatsu/FashionEntryCta';
 import { liveArchiveGroupsForPerson, pickSpreadPerformances } from '@/lib/live-archive/core';
 import { loadLiveArchive, loadLiveArchiveCampaigns } from '@/lib/live-archive/data';
 import './person-graphic.css';
@@ -953,6 +954,9 @@ export default async function PersonPage({ params }: Props) {
 
           {/* ━━━ グッズの整理・買取サービスを探す（推し活グッズ買取サービス比較への案内。現在の所属グループで絞り込んで開く） ━━━ */}
           <BuybackEntryCta groupNames={currentGroups.map((m) => m.groupName)} placement="person_page" />
+
+          {/* ━━━ ライブ参戦服を探す（ファッションレンタル比較への控えめな案内。服と人物を結びつける情報は出さない） ━━━ */}
+          <FashionEntryCta placement="person_page" />
 
           {/* ━━━ 出演作品 ━━━ */}
           {publishedWorks.length > 0 ? (

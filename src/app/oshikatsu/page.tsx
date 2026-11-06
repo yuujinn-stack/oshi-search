@@ -58,7 +58,9 @@ export default function OshikatsuHubPage() {
         <section aria-labelledby="ok-genres" style={secLabel('GENRES')}>
           <h2 id="ok-genres" className="ok-h2">ジャンルから選ぶ</h2>
           <OshikatsuCategoryCards placement="hub" showPurposes />
-          <p className="ok-note">「準備中」のジャンルは、比較ページの公開までお待ちください。</p>
+          {OSHIKATSU_CATEGORIES.some((c) => !isCategoryLinkable(c)) && (
+            <p className="ok-note">「準備中」のジャンルは、比較ページの公開までお待ちください。</p>
+          )}
         </section>
 
         <section aria-labelledby="ok-policy" style={secLabel('POLICY')}>

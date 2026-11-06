@@ -123,7 +123,7 @@ describe.skipIf(!hasPglite)('推し活アフィリエイト × 分離DB（pglite
 
     // 初期案件の登録（2回押しても重複しない）
     const first = await (await list.POST(req('/api/admin/oshikatsu-affiliates', 'POST', { presets: true }))).json();
-    expect(first.created.map((s: { serviceKey: string }) => s.serviceKey)).toEqual([...KEYS, 'kaitori_ouji', 'justy', 'oshitoku', 'surugaya']);
+    expect(first.created.map((s: { serviceKey: string }) => s.serviceKey)).toEqual([...KEYS, 'kaitori_ouji', 'justy', 'oshitoku', 'surugaya', 'mechakari', 'aircloset']);
     const second = await (await list.POST(req('/api/admin/oshikatsu-affiliates', 'POST', { presets: true }))).json();
     expect(second.created).toEqual([]);
     const services = await (await list.GET()).json();
@@ -263,6 +263,45 @@ describe.skipIf(!hasPglite)('推し活アフィリエイト × 分離DB（pglite
     expect(htmlOff).toContain('href="https://justy-consul.com/idols/" target="_blank" rel="noopener noreferrer" class="gm-btn"');
   });
 
+  test('ファッションレンタル：初期登録は広告OFF。承認前は有効にしても出さず、承認済み・有効・タグ登録後だけ広告タグを表示する', async () => {
+    const one = await import('@/app/api/admin/oshikatsu-affiliates/[id]/route');
+    const creatives = await import('@/app/api/admin/oshikatsu-affiliates/[id]/creatives/route');
+    const { getPublicOshikatsuAds } = await import('@/lib/oshikatsu-affiliate/store');
+    const rows = (await pg.query(`SELECT id, service_key, asp_id, partnership_status, is_ad_enabled FROM oshikatsu_affiliate_services WHERE category='fashion_rental' ORDER BY id`)).rows;
+    expect(rows.map((r) => [r.service_key, r.asp_id, r.partnership_status, r.is_ad_enabled])).toEqual([
+      ['mechakari', 'a8', 'not_applied', false],
+      ['aircloset', 'a8', 'not_applied', false],
+    ]);
+    const FR_KEYS = ['mechakari', 'aircloset'];
+    const mecha = rows[0].id as number;
+    const { default: FashionRentalPage } = await import('@/app/oshikatsu/fashion-rental/page');
+
+    // 初期状態：公式サイトへの通常リンクだけ、PR表記なし
+    let html = renderToString(await FashionRentalPage());
+    expect(html).toContain('href="https://mechakari.com/" target="_blank" rel="noopener noreferrer" class="gm-btn"');
+    expect(html).toContain('href="https://www.air-closet.com/" target="_blank" rel="noopener noreferrer" class="gm-btn"');
+    expect(html).not.toContain('px.a8.net');
+    expect(html).not.toContain('本ページにはアフィリエイト広告が含まれます');
+
+    // 承認前：タグを登録して広告を有効にしても表示しない
+    expect((await creatives.POST(req('/', 'POST', { name: 'メチャカリ テキスト', kind: 'text', adHtml: A8_TEXT }), params(mecha))).status).toBe(201);
+    await one.PUT(req('/', 'PUT', { isAdEnabled: true }), params(mecha));
+    expect(await getPublicOshikatsuAds(FR_KEYS)).toEqual({});
+
+    // 承認済みにすると表示（PR表記つき）。無効に戻すと通常リンク
+    await one.PUT(req('/', 'PUT', { partnershipStatus: 'approved' }), params(mecha));
+    expect(Object.keys(await getPublicOshikatsuAds(FR_KEYS))).toEqual(['mechakari']);
+    html = renderToString(await FashionRentalPage());
+    expect(html).toContain(`<aside class="gm-ad gm-ad--text" aria-label="メチャカリの広告"><span class="gm-pr">PR</span><div class="gm-ad-tag">${A8_TEXT}</div></aside>`);
+    expect(html).toContain('本ページにはアフィリエイト広告が含まれます');
+    await one.PUT(req('/', 'PUT', { isAdEnabled: false, partnershipStatus: 'not_applied' }), params(mecha));
+    expect(await getPublicOshikatsuAds(FR_KEYS)).toEqual({});
+
+    // 既存のグッズ制作・グッズ買取の案件は変わっていない
+    const others = (await pg.query(`SELECT service_key, partnership_status FROM oshikatsu_affiliate_services WHERE category <> 'fashion_rental' ORDER BY id`)).rows;
+    expect(others.map((r) => r.service_key)).toEqual(['cherish_palette', 'shimauma_plus', 'kaitori_ouji', 'justy', 'oshitoku', 'surugaya']);
+  });
+
   test('本番公開から db-init までの間（checked_at 列なし）：公開ページの広告は表示され、管理画面の一覧だけがエラー。db-init でデータを失わずに復旧する', async () => {
     const one = await import('@/app/api/admin/oshikatsu-affiliates/[id]/route');
     const store = await import('@/lib/oshikatsu-affiliate/store');
@@ -289,7 +328,7 @@ describe.skipIf(!hasPglite)('推し活アフィリエイト × 分離DB（pglite
 
     // db-init（ADD COLUMN IF NOT EXISTS）で復旧。2回実行しても同じ。既存の行は変わらない（checked_at は NULL で追加）
     for (let i = 0; i < 2; i++) expect((await (await dbInit()).json()).ok).toBe(true);
-    await expect(store.listOshikatsuAffiliateServicesOrThrow()).resolves.toHaveLength(6);
+    await expect(store.listOshikatsuAffiliateServicesOrThrow()).resolves.toHaveLength(8);
     const after = await snapshot(['oshikatsu_affiliate_services', 'oshikatsu_affiliate_creatives', 'affiliate_programs', 'affiliate_creatives', 'affiliate_placements']);
     const strip = (x: string) => JSON.parse(x, (k, v) => (k === 'checked_at' || k === '__columns' || k === '__indexes' ? undefined : v));
     expect(strip(after)).toEqual(strip(before));

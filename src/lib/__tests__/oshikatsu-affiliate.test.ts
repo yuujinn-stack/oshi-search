@@ -144,6 +144,8 @@ describe('初期案件・掲載先', () => {
       ['justy', 'pending', 'a8'],
       ['oshitoku', 'not_applied', 'none'],
       ['surugaya', 'not_applied', 'none'],
+      ['mechakari', 'not_applied', 'a8'],
+      ['aircloset', 'not_applied', 'a8'],
     ]);
     for (const f of ['src/lib/oshikatsu-affiliate/constants.ts', 'src/app/admin/affiliates/OshikatsuAffiliateManager.tsx']) {
       expect(read(f)).not.toMatch(/s0000000?\d{6,}/);
