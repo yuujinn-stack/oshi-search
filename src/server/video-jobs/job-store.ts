@@ -6,6 +6,7 @@ import { videoGenerationJobs, videoWorkers } from '@/db/schema';
 import { personVideoSlug } from './person-slug';
 import {
   OSHI_VOD_COMPARE_INPUT_KIND,
+  isOshiMediaInput,
   parseTemplateInput,
   TemplateInputError,
   type TemplateInputKind,
@@ -13,6 +14,7 @@ import {
 } from '@/lib/video-template-input';
 import { checkVodCompareSharedCapcut, type SharedCapcutRequirement } from '@/lib/oshi-vod/video-feature';
 import type { FollowScriptReport } from '@/lib/video-follow-reel';
+import type { MediaScriptReport } from '@/lib/video-media-reel';
 import type { SonkamoScriptTemplate } from '@/lib/video-sonkamo-script';
 
 /**
@@ -49,6 +51,8 @@ export interface WorkerTemplateInfo {
   scriptTemplate?: SonkamoScriptTemplate;
   /** フォロー獲得リールだけ: 台本の読みに使う oshi-video-maker の固定辞書など（正本は oshi-video-maker） */
   followScript?: FollowScriptReport;
+  /** 推しサーチ総合紹介動画だけ: 台本（字幕・読み・画面の文字。管理画面の表示・コピー用。正本は oshi-video-maker） */
+  mediaScript?: MediaScriptReport;
 }
 
 export interface WorkerInfo {
@@ -374,6 +378,18 @@ export async function createVideoJobs(input: {
       ? await applySiteAudioSource(template.templateId, input.personNames[0], templateInput)
       : await resolveSiteJobInput(template.templateId, input.personNames[0], templateInput);
   }
+  // 推しサーチ総合紹介動画: テンプレートと対象（グループ版はグループ）を確かめる（再生成でも確かめ直す）。
+  // CapCut 音声付きは、元の音声なし動画のジョブからグループ名と撮影データの場所を付け直す
+  if (isOshiMediaInput(templateInput)) {
+    if (input.narrationMode === 'capcut' && !templateInput.audio) {
+      throw new VideoJobError('音声付きの動画は、完了した音声なし動画に CapCut の WAV・SRT を付けて作ってください。', 400);
+    }
+    if (input.narrationMode !== 'capcut' && templateInput.audio) throw new VideoJobError('CapCut 音声を付けたジョブは CapCut 方式だけで作れます。', 400);
+    const { resolveMediaJobInput, applyMediaAudioSource } = await import('./media-target');
+    templateInput = templateInput.audio
+      ? await applyMediaAudioSource(template.templateId, input.personNames[0], templateInput)
+      : await resolveMediaJobInput(template.templateId, input.personNames[0], templateInput);
+  }
   // CapCut保存済み音声: Workerが報告した状態がreadyの人物だけ受け付ける（フロントだけに任せない）。
   // 実際に生成する直前にもWorker側で再確認する。
   // テンプレート共通のCapCut音声が使えるテンプレートは、人物ごとのready判定をしない（共通音声が無ければ生成しない）
@@ -393,7 +409,7 @@ export async function createVideoJobs(input: {
     await assertOshiCardWorks(input.personNames[0], templateInput.workIds);
   }
   // 生成ジョブごとに CapCut 音声を付けるテンプレート（推し活で損してるかも？・フォロー獲得リール・登録グループ紹介）は、人物ごとの保存済み音声を確かめない
-  const perJobAudio = !!templateInput && ('target' in templateInput || 'targetType' in templateInput || 'selection' in templateInput || 'siteSelection' in templateInput) && !!templateInput.audio;
+  const perJobAudio = !!templateInput && ('target' in templateInput || 'targetType' in templateInput || 'selection' in templateInput || 'siteSelection' in templateInput || isOshiMediaInput(templateInput)) && !!templateInput.audio;
   if (input.narrationMode === 'capcut' && !template.sharedCapcut && !perJobAudio) {
     const notReady = input.personNames
       .map((name) => {

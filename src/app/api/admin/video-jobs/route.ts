@@ -12,7 +12,8 @@ import {
 } from '@/server/video-jobs/job-store';
 import { loadOshiVodVideoDiagnosis } from '@/server/oshi-vod/video-diagnosis';
 import { markVideoAdminActive } from '@/server/video-jobs/worker-poll';
-import { OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_SITE_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND, parseOshiVodCompareInput, TemplateInputError } from '@/lib/video-template-input';
+import { OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_MEDIA_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_SITE_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND, parseOshiMediaInput, parseOshiVodCompareInput, TemplateInputError } from '@/lib/video-template-input';
+import { mediaJobPersonName } from '@/lib/video-media-reel';
 import { REGISTERED_JOB_NAME } from '@/lib/video-registered-groups';
 import { currentAppBuild } from '@/lib/app-build';
 
@@ -97,6 +98,18 @@ export async function POST(req: NextRequest) {
       }
       if (personNames.length !== 1) return NextResponse.json({ error: '対象の人物かグループを1つだけ選んでください。' }, { status: 400 });
       const jobs = await createVideoJobs({ personNames, templateId, narrationMode, templateInput: body.templateInput });
+      return NextResponse.json({ jobs });
+    }
+    // 推しサーチ総合紹介動画: 1本（一般版の person_name は「推しサーチ」、グループ版は選んだグループ名。グループの確認は createVideoJobs で行う）
+    if (workerTemplate?.templateInputKind === OSHI_MEDIA_INPUT_KIND) {
+      if (!body.templateInput || typeof body.templateInput !== 'object') {
+        return NextResponse.json({ error: '推しサーチ総合紹介動画は、テンプレート（グループ版はグループ）を選んで1本ずつ作ります。管理画面を再読み込みしてください。' }, { status: 400 });
+      }
+      const input = parseOshiMediaInput(body.templateInput);
+      // CapCut 音声付き（完了した音声なし動画の「詳細」から）: 対象は元のジョブと同じ名前（グループ名は元のジョブから付け直す）
+      if (input.audio && personNames.length !== 1) return NextResponse.json({ error: '元の動画のジョブの対象を1つだけ指定してください。' }, { status: 400 });
+      const name = input.audio ? personNames[0] : mediaJobPersonName(templateId, input.groupName);
+      const jobs = await createVideoJobs({ personNames: [name], templateId, narrationMode, templateInput: input });
       return NextResponse.json({ jobs });
     }
     // 登録グループ紹介: 推しサーチ全体の動画を1本（person_name は「推しサーチ」。グループの一覧・件数は createVideoJobs でDBから作る）

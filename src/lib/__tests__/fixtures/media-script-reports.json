@@ -1,0 +1,569 @@
+[
+  {
+    "version": 1,
+    "templateId": "OSHI_GENERAL_01",
+    "name": "神サイト作りました！",
+    "goal": "初見の認知・プロフィール訪問",
+    "coverText": "推し活の神サイト\n作りました！",
+    "cta": "プロフィールのリンクからチェック",
+    "targetDurationSec": 23,
+    "selectionMode": "none",
+    "defaultGroup": null,
+    "groupToken": "{{groupName}}",
+    "lines": [
+      {
+        "id": "01-brand",
+        "text": "推し活してる人のために、神サイト作りました！",
+        "kana": "おしかつしてるひとのために、かみサイトつくりました！",
+        "overlay": "推し活の神サイト\n作りました！",
+        "approxSeconds": 3
+      },
+      {
+        "id": "02-works",
+        "text": "出演作品も、どこで観られるかも、まとめて探せる！",
+        "kana": "しゅつえんさくひんも、どこでみられるかも、まとめてさがせる！",
+        "overlay": "出演作品＋配信先",
+        "approxSeconds": 4
+      },
+      {
+        "id": "03-subscription",
+        "text": "推しに合うサブスクやグッズも診断できて、",
+        "kana": "おしにあうサブスクやグッズもしんだんできて、",
+        "overlay": "サブスク診断／グッズ診断",
+        "approxSeconds": 4
+      },
+      {
+        "id": "04-card",
+        "text": "推しを布教するカードまで作れちゃう！",
+        "kana": "おしをふきょうするカードまでつくれちゃう！",
+        "overlay": "布教カードも作れる",
+        "approxSeconds": 4
+      },
+      {
+        "id": "05-services",
+        "text": "グッズ制作や買取、参戦服も比較できる！",
+        "kana": "グッズせいさくやかいとり、さんせんふくもひかくできる！",
+        "overlay": "作る・整理する・参戦服",
+        "approxSeconds": 4
+      },
+      {
+        "id": "06-brand",
+        "text": "推し活するなら、推しサーチ。プロフィールから見てね！",
+        "kana": "おしかつするなら、おしサーチ。プロフィールからみてね！",
+        "overlay": "推し活するなら、推しサーチ",
+        "approxSeconds": 4
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "templateId": "OSHI_GENERAL_02",
+    "name": "推しがいる人、全員に届けたい",
+    "goal": "共感・シェア・フォロー",
+    "coverText": "推しがいる人へ。\n届けたいサイト",
+    "cta": "推し友にも教えてね",
+    "targetDurationSec": 20,
+    "selectionMode": "none",
+    "defaultGroup": null,
+    "groupToken": "{{groupName}}",
+    "lines": [
+      {
+        "id": "01-brand",
+        "text": "推しがいる人、全員に届けたいサイトがあります。",
+        "kana": "おしがいるひと、ぜんいんにとどけたいサイトがあります。",
+        "overlay": "推しがいる人へ。",
+        "approxSeconds": 3
+      },
+      {
+        "id": "02-works",
+        "text": "もっと出演作品を観たい日も、",
+        "kana": "もっとしゅつえんさくひんをみたいひも、",
+        "overlay": "作品をもっと観たい日",
+        "approxSeconds": 3
+      },
+      {
+        "id": "03-products",
+        "text": "写真集やグッズを探したい日も、",
+        "kana": "しゃしんしゅうやグッズをさがしたいひも、",
+        "overlay": "グッズを探したい日",
+        "approxSeconds": 3
+      },
+      {
+        "id": "04-card",
+        "text": "友達に、推しの魅力を伝えたい日も。",
+        "kana": "ともだちに、おしのみりょくをつたえたいひも。",
+        "overlay": "好きな気持ちを伝えたい日",
+        "approxSeconds": 4
+      },
+      {
+        "id": "05-services",
+        "text": "そんな推し活に、ずっと寄り添える場所を作りました。",
+        "kana": "そんなおしかつに、ずっとよりそえるばしょをつくりました。",
+        "overlay": "探す・観る・買う・作る",
+        "approxSeconds": 4
+      },
+      {
+        "id": "06-brand",
+        "text": "推しサーチ。推し友にも教えてね。",
+        "kana": "おしサーチ。おしともにもおしえてね。",
+        "overlay": "推しサーチ\n推し友にも教えてね",
+        "approxSeconds": 3
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "templateId": "OSHI_GENERAL_03",
+    "name": "推し活するなら覚えておいて！",
+    "goal": "サイト名の記憶・保存",
+    "coverText": "推し活するなら\nこれ覚えて！",
+    "cta": "この動画を保存してね",
+    "targetDurationSec": 21,
+    "selectionMode": "none",
+    "defaultGroup": null,
+    "groupToken": "{{groupName}}",
+    "lines": [
+      {
+        "id": "01-brand",
+        "text": "推し活するなら、このサイト覚えておいて！",
+        "kana": "おしかつするなら、このサイトおぼえておいて！",
+        "overlay": "この名前、覚えて！",
+        "approxSeconds": 3
+      },
+      {
+        "id": "02-works",
+        "text": "推しの名前で、出演作品と配信先を検索。",
+        "kana": "おしのなまえで、しゅつえんさくひんとはいしんさきをけんさく。",
+        "overlay": "出演作品・配信先",
+        "approxSeconds": 4
+      },
+      {
+        "id": "03-products",
+        "text": "写真集や関連グッズを探したり、",
+        "kana": "しゃしんしゅうやかんれんグッズをさがしたり、",
+        "overlay": "写真集・グッズ",
+        "approxSeconds": 3
+      },
+      {
+        "id": "04-shopping",
+        "text": "サブスクも、お買い物も診断できる。",
+        "kana": "サブスクも、おかいものもしんだんできる。",
+        "overlay": "診断もできる",
+        "approxSeconds": 4
+      },
+      {
+        "id": "05-services",
+        "text": "推し活の入口は、推しサーチ。",
+        "kana": "おしかつのいりぐちは、おしサーチ。",
+        "overlay": "推し活の入口",
+        "approxSeconds": 4
+      },
+      {
+        "id": "06-brand",
+        "text": "忘れないように、保存してね。",
+        "kana": "わすれないように、ほぞんしてね。",
+        "overlay": "推しサーチ\n保存してね",
+        "approxSeconds": 3
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "templateId": "OSHI_GENERAL_04",
+    "name": "推し活をひとつに",
+    "goal": "総合メディアとしての理解",
+    "coverText": "探す・観る・買う・作る\n推し活をひとつに",
+    "cta": "プロフィールのリンクからチェック",
+    "targetDurationSec": 22,
+    "selectionMode": "none",
+    "defaultGroup": null,
+    "groupToken": "{{groupName}}",
+    "lines": [
+      {
+        "id": "01-brand",
+        "text": "推し活に必要なもの、ひとつにまとめてみた。",
+        "kana": "おしかつにひつようなもの、ひとつにまとめてみた。",
+        "overlay": "推し活を、ひとつに。",
+        "approxSeconds": 3
+      },
+      {
+        "id": "02-works",
+        "text": "探す。推しの出演作品。",
+        "kana": "さがす。おしのしゅつえんさくひん。",
+        "overlay": "探す｜出演作品",
+        "approxSeconds": 3
+      },
+      {
+        "id": "03-subscription",
+        "text": "観る。配信先とサブスク。",
+        "kana": "みる。はいしんさきとサブスク。",
+        "overlay": "観る｜配信先・サブスク",
+        "approxSeconds": 3
+      },
+      {
+        "id": "04-products",
+        "text": "買う。写真集や関連グッズ。",
+        "kana": "かう。しゃしんしゅうやかんれんグッズ。",
+        "overlay": "買う｜写真集・グッズ",
+        "approxSeconds": 3
+      },
+      {
+        "id": "05-making",
+        "text": "作る。推し色のオリジナルグッズ。",
+        "kana": "つくる。おしいろのオリジナルグッズ。",
+        "overlay": "作る｜推し色グッズ",
+        "approxSeconds": 3
+      },
+      {
+        "id": "06-card",
+        "text": "広める。推し布教カード。",
+        "kana": "ひろめる。おしふきょうカード。",
+        "overlay": "広める｜布教カード",
+        "approxSeconds": 3
+      },
+      {
+        "id": "07-brand",
+        "text": "これが推しサーチ。プロフィールからどうぞ！",
+        "kana": "これがおしサーチ。プロフィールからどうぞ！",
+        "overlay": "推し活するなら｜推しサーチ",
+        "approxSeconds": 4
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "templateId": "OSHI_GROUP_05",
+    "name": "{{groupName}}推し向け・総合紹介",
+    "goal": "グループファンからのプロフィール訪問",
+    "coverText": "{{groupName}}推し\nもう使ってる？",
+    "cta": "プロフィールのリンクからチェック",
+    "targetDurationSec": 22,
+    "selectionMode": "group",
+    "defaultGroup": "M!LK",
+    "groupToken": "{{groupName}}",
+    "lines": [
+      {
+        "id": "01-group",
+        "text": "{{groupName}}推しの人、このサイトもう使ってる？",
+        "kana": "{{groupName}}おしのひと、このサイトもうつかってる？",
+        "overlay": "{{groupName}}推し、集合！",
+        "approxSeconds": 3
+      },
+      {
+        "id": "02-group",
+        "text": "メンバーから出演作品を探せて、",
+        "kana": "メンバーからしゅつえんさくひんをさがせて、",
+        "overlay": "メンバー別に作品を探す",
+        "approxSeconds": 4
+      },
+      {
+        "id": "03-vod",
+        "text": "どのサブスクで観られるかもチェック。",
+        "kana": "どのサブスクでみられるかもチェック。",
+        "overlay": "どこで観られる？",
+        "approxSeconds": 4
+      },
+      {
+        "id": "04-products",
+        "text": "写真集やシーディーを探したり、",
+        "kana": "しゃしんしゅうやシーディーをさがしたり、",
+        "overlay": "写真集・CDも",
+        "approxSeconds": 4
+      },
+      {
+        "id": "05-card",
+        "text": "サブスク診断や布教カードまで使える！",
+        "kana": "サブスクしんだんやふきょうカードまでつかえる！",
+        "overlay": "診断も布教カードも",
+        "approxSeconds": 4
+      },
+      {
+        "id": "06-brand",
+        "text": "{{groupName}}推しの推し活に、推しサーチ！",
+        "kana": "{{groupName}}おしのおしかつに、おしサーチ！",
+        "overlay": "{{groupName}}推しはチェック！",
+        "approxSeconds": 3
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "templateId": "OSHI_GENERAL_06",
+    "name": "検索タブだらけ問題",
+    "goal": "課題への共感・サイト利用",
+    "coverText": "推しのことで\n検索しまくってない？",
+    "cta": "プロフィールのリンクからチェック",
+    "targetDurationSec": 20,
+    "selectionMode": "none",
+    "defaultGroup": null,
+    "groupToken": "{{groupName}}",
+    "lines": [
+      {
+        "id": "01-brand",
+        "text": "推しのことで、検索しまくってる人へ。",
+        "kana": "おしのことで、けんさくしまくってるひとへ。",
+        "overlay": "検索ばっかりしてない？",
+        "approxSeconds": 3
+      },
+      {
+        "id": "02-works",
+        "text": "出演作品を探して、",
+        "kana": "しゅつえんさくひんをさがして、",
+        "overlay": "まず出演作品",
+        "approxSeconds": 3
+      },
+      {
+        "id": "03-products",
+        "text": "次は配信先、またグッズ。",
+        "kana": "つぎははいしんさき、またグッズ。",
+        "overlay": "次は配信先…またグッズ…",
+        "approxSeconds": 3
+      },
+      {
+        "id": "04-home",
+        "text": "その行ったり来たり、まとめて探せるようにしました。",
+        "kana": "そのいったりきたり、まとめてさがせるようにしました。",
+        "overlay": "行ったり来たりを減らそう",
+        "approxSeconds": 4
+      },
+      {
+        "id": "05-works",
+        "text": "名前から、作品も配信先も商品も。",
+        "kana": "なまえから、さくひんもはいしんさきもしょうひんも。",
+        "overlay": "名前からまとめて探す",
+        "approxSeconds": 4
+      },
+      {
+        "id": "06-brand",
+        "text": "推し活の検索、推しサーチから始めよう。",
+        "kana": "おしかつのけんさく、おしサーチからはじめよう。",
+        "overlay": "推し活の検索は\n推しサーチ",
+        "approxSeconds": 3
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "templateId": "OSHI_GENERAL_07",
+    "name": "本気で作りました",
+    "goal": "運営への親近感・フォロー",
+    "coverText": "推し活のために\n本気で作りました",
+    "cta": "よかったらフォローしてね",
+    "targetDurationSec": 23,
+    "selectionMode": "none",
+    "defaultGroup": null,
+    "groupToken": "{{groupName}}",
+    "lines": [
+      {
+        "id": "01-brand",
+        "text": "推し活がもっと楽しくなるサイト、本気で作りました。",
+        "kana": "おしかつがもっとたのしくなるサイト、ほんきでつくりました。",
+        "overlay": "推し活のために本気で。",
+        "approxSeconds": 4
+      },
+      {
+        "id": "02-works",
+        "text": "出演作品も、配信先も、グッズも。",
+        "kana": "しゅつえんさくひんも、はいしんさきも、グッズも。",
+        "overlay": "出演作品・配信先・グッズ",
+        "approxSeconds": 4
+      },
+      {
+        "id": "03-shopping",
+        "text": "サブスク診断や、お買い物診断も作りました。",
+        "kana": "サブスクしんだんや、おかいものしんだんもつくりました。",
+        "overlay": "2つの診断",
+        "approxSeconds": 4
+      },
+      {
+        "id": "04-services",
+        "text": "布教カードや、推し活サービスの比較も。",
+        "kana": "ふきょうカードや、おしかつサービスのひかくも。",
+        "overlay": "布教・サービス比較",
+        "approxSeconds": 4
+      },
+      {
+        "id": "05-brand",
+        "text": "これからも、推し活のために育てていきます。",
+        "kana": "これからも、おしかつのためにそだてていきます。",
+        "overlay": "これからも育てていきます",
+        "approxSeconds": 4
+      },
+      {
+        "id": "06-brand",
+        "text": "推しサーチ。よかったらフォローしてね。",
+        "kana": "おしサーチ。よかったらフォローしてね。",
+        "overlay": "推しサーチ｜フォローしてね",
+        "approxSeconds": 3
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "templateId": "OSHI_GENERAL_08",
+    "name": "推しをもっと楽しむ",
+    "goal": "世界観の形成・継続利用",
+    "coverText": "推しをもっと楽しもう。",
+    "cta": "プロフィールのリンクからチェック",
+    "targetDurationSec": 22,
+    "selectionMode": "none",
+    "defaultGroup": null,
+    "groupToken": "{{groupName}}",
+    "lines": [
+      {
+        "id": "01-brand",
+        "text": "推しをもっと楽しむためのサイト、できました。",
+        "kana": "おしをもっとたのしむためのサイト、できました。",
+        "overlay": "推しをもっと楽しもう",
+        "approxSeconds": 3
+      },
+      {
+        "id": "02-works",
+        "text": "知らなかった出演作品を見つけたり、",
+        "kana": "しらなかったしゅつえんさくひんをみつけたり、",
+        "overlay": "新しい作品に出会う",
+        "approxSeconds": 4
+      },
+      {
+        "id": "03-vod",
+        "text": "気になる作品の配信先を探したり、",
+        "kana": "きになるさくひんのはいしんさきをさがしたり、",
+        "overlay": "観たい作品を探す",
+        "approxSeconds": 4
+      },
+      {
+        "id": "04-shopping",
+        "text": "好きな写真集やグッズを選んだり、",
+        "kana": "すきなしゃしんしゅうやグッズをえらんだり、",
+        "overlay": "好きなものを選ぶ",
+        "approxSeconds": 4
+      },
+      {
+        "id": "05-card",
+        "text": "お気に入りの作品で、推しを布教したり。",
+        "kana": "おきにいりのさくひんで、おしをふきょうしたり。",
+        "overlay": "好きな気持ちを広める",
+        "approxSeconds": 4
+      },
+      {
+        "id": "06-brand",
+        "text": "推し活をもっと楽しく。推しサーチ。",
+        "kana": "おしかつをもっとたのしく。おしサーチ。",
+        "overlay": "推し活をもっと楽しく\n推しサーチ",
+        "approxSeconds": 3
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "templateId": "OSHI_GENERAL_09",
+    "name": "これまだ知らないの？",
+    "goal": "新規認知・非フォロワーリーチ",
+    "coverText": "推し活してる人\nこれまだ知らないの？",
+    "cta": "プロフィールのリンクからチェック",
+    "targetDurationSec": 21,
+    "selectionMode": "none",
+    "defaultGroup": null,
+    "groupToken": "{{groupName}}",
+    "lines": [
+      {
+        "id": "01-brand",
+        "text": "推し活してる人、これまだ知らないの？",
+        "kana": "おしかつしてるひと、これまだしらないの？",
+        "overlay": "これ、まだ知らないの？",
+        "approxSeconds": 3
+      },
+      {
+        "id": "02-home",
+        "text": "推しの名前を入力するだけで、",
+        "kana": "おしのなまえをにゅうりょくするだけで、",
+        "overlay": "推しの名前で検索",
+        "approxSeconds": 3
+      },
+      {
+        "id": "03-vod",
+        "text": "出演作品も、配信先も探せて、",
+        "kana": "しゅつえんさくひんも、はいしんさきもさがせて、",
+        "overlay": "出演作品・配信先",
+        "approxSeconds": 4
+      },
+      {
+        "id": "04-subscription",
+        "text": "サブスク診断も、グッズ探しもできる。",
+        "kana": "サブスクしんだんも、グッズさがしもできる。",
+        "overlay": "診断＆グッズ",
+        "approxSeconds": 4
+      },
+      {
+        "id": "05-services",
+        "text": "布教カードや、推し活サービス比較まで。",
+        "kana": "ふきょうカードや、おしかつサービスひかくまで。",
+        "overlay": "布教カード／サービス比較",
+        "approxSeconds": 4
+      },
+      {
+        "id": "06-brand",
+        "text": "名前は、推しサーチ。プロフからチェック！",
+        "kana": "なまえは、おしサーチ。プロフからチェック！",
+        "overlay": "推しサーチ\nプロフからチェック",
+        "approxSeconds": 3
+      }
+    ]
+  },
+  {
+    "version": 1,
+    "templateId": "OSHI_GROUP_10",
+    "name": "{{groupName}}推し・実際に使う手順",
+    "goal": "サイト訪問・実際の検索開始",
+    "coverText": "{{groupName}}推し\nまだ使ってない？",
+    "cta": "プロフィールのリンクからチェック",
+    "targetDurationSec": 22,
+    "selectionMode": "group",
+    "defaultGroup": "M!LK",
+    "groupToken": "{{groupName}}",
+    "lines": [
+      {
+        "id": "01-group",
+        "text": "{{groupName}}推し、このサイトまだ使ってない？",
+        "kana": "{{groupName}}おし、このサイトまだつかってない？",
+        "overlay": "{{groupName}}推し、見て！",
+        "approxSeconds": 3
+      },
+      {
+        "id": "02-home",
+        "text": "まず、グループ名で検索。",
+        "kana": "まず、グループめいでけんさく。",
+        "overlay": "① グループ名を検索",
+        "approxSeconds": 4
+      },
+      {
+        "id": "03-group",
+        "text": "好きなメンバーを選んだら、出演作品をチェック。",
+        "kana": "すきなメンバーをえらんだら、しゅつえんさくひんをチェック。",
+        "overlay": "② メンバーの出演作品",
+        "approxSeconds": 4
+      },
+      {
+        "id": "04-vod",
+        "text": "気になる作品の配信先も見られる。",
+        "kana": "きになるさくひんのはいしんさきもみられる。",
+        "overlay": "③ 観られるサービス",
+        "approxSeconds": 4
+      },
+      {
+        "id": "05-products",
+        "text": "写真集やシーディーも、まとめて探せる。",
+        "kana": "しゃしんしゅうやシーディーも、まとめてさがせる。",
+        "overlay": "④ 写真集・CDも",
+        "approxSeconds": 4
+      },
+      {
+        "id": "06-brand",
+        "text": "{{groupName}}推しなら、推しサーチをチェック！",
+        "kana": "{{groupName}}おしなら、おしサーチをチェック！",
+        "overlay": "{{groupName}}推しは\n推しサーチ",
+        "approxSeconds": 3
+      }
+    ]
+  }
+]

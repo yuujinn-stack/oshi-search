@@ -8,6 +8,7 @@
 import { FOLLOW_TEMPLATE_CATEGORY, type FollowFact, type FollowFactKind, type FollowLine, type FollowScene, type FollowTargetType } from './video-follow-reel';
 import { REGISTERED_TEMPLATE_CATEGORY, type RegisteredCounts, type RegisteredLine, type RegisteredSegment, type RegisteredSelection } from './video-registered-groups';
 import { SITE_TEMPLATE_CATEGORY, isSiteCtaKey, type SiteCtaKey, type SiteLine, type SiteLinks, type SiteSegment, type SiteSelection, type SiteTarget } from './video-site-reel';
+import { MEDIA_TEMPLATE_CATEGORY } from './video-media-reel';
 
 /** 推しでサブスク比較（3人の推しに合うサブスク診断）: 人物3人 */
 export const OSHI_VOD_COMPARE_INPUT_KIND = 'oshi-vod-compare-persons' as const;
@@ -59,8 +60,15 @@ const GROUP_NAME_MAX = 100;
 export const OSHI_SITE_INPUT_KIND = 'oshi-site-reel' as const;
 const SITE_MAX_LINES = 7;
 
-export type TemplateInputKind = typeof OSHI_VOD_COMPARE_INPUT_KIND | typeof OSHI_CARD_SELECTION_INPUT_KIND | typeof OSHI_SONKAMO_INPUT_KIND | typeof OSHI_FOLLOW_INPUT_KIND | typeof OSHI_REGISTERED_INPUT_KIND | typeof OSHI_SITE_INPUT_KIND;
-export const TEMPLATE_INPUT_KINDS: readonly TemplateInputKind[] = [OSHI_VOD_COMPARE_INPUT_KIND, OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_SITE_INPUT_KIND];
+/**
+ * 推しサーチ総合紹介動画（10種類・templateCategory=oshi_media）: 1ジョブ=1本。一般版の person_name は「推しサーチ」、
+ * グループ版は person_name・groupName ともに選んだグループ名（公開中のグループかはジョブ作成時にサーバーが確かめる。
+ * src/server/video-jobs/media-target.ts）。台本は oshi-video-maker のコードが正本で、画面からは受け取らない
+ */
+export const OSHI_MEDIA_INPUT_KIND = 'oshi-media-reel' as const;
+
+export type TemplateInputKind = typeof OSHI_VOD_COMPARE_INPUT_KIND | typeof OSHI_CARD_SELECTION_INPUT_KIND | typeof OSHI_SONKAMO_INPUT_KIND | typeof OSHI_FOLLOW_INPUT_KIND | typeof OSHI_REGISTERED_INPUT_KIND | typeof OSHI_SITE_INPUT_KIND | typeof OSHI_MEDIA_INPUT_KIND;
+export const TEMPLATE_INPUT_KINDS: readonly TemplateInputKind[] = [OSHI_VOD_COMPARE_INPUT_KIND, OSHI_CARD_SELECTION_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_SITE_INPUT_KIND, OSHI_MEDIA_INPUT_KIND];
 
 export interface OshiVodCompareTemplateInput {
   version: 1;
@@ -159,6 +167,18 @@ export interface OshiSiteTemplateInput {
   audio?: OshiSonkamoAudio;
 }
 
+export interface OshiMediaTemplateInput {
+  version: 1;
+  templateCategory: typeof MEDIA_TEMPLATE_CATEGORY;
+  /** グループ版だけ: 選んだグループ名（一般版は null） */
+  groupName: string | null;
+  // ここから下はサーバーがジョブ作成時に付ける（画面からの値は使わない）
+  templateId?: string;
+  resolvedAt?: string;
+  /** CapCut 音声付きのジョブだけ（グループ名は元のジョブから付け直す。sourceOutDir は元のジョブの撮影データ） */
+  audio?: OshiSonkamoAudio;
+}
+
 export interface OshiSonkamoAudio {
   sourceJobId: string;
   wavUrl: string;
@@ -188,7 +208,12 @@ function parseSonkamoAudio(raw: unknown): OshiSonkamoAudio {
   return { sourceJobId: o.sourceJobId, wavUrl: o.wavUrl, srtUrl: o.srtUrl, ...(typeof o.sourceOutDir === 'string' ? { sourceOutDir: o.sourceOutDir } : {}) };
 }
 
-export type VideoTemplateInput = OshiVodCompareTemplateInput | OshiCardSelectionTemplateInput | OshiSonkamoTemplateInput | OshiFollowTemplateInput | OshiRegisteredTemplateInput | OshiSiteTemplateInput;
+export type VideoTemplateInput = OshiVodCompareTemplateInput | OshiCardSelectionTemplateInput | OshiSonkamoTemplateInput | OshiFollowTemplateInput | OshiRegisteredTemplateInput | OshiSiteTemplateInput | OshiMediaTemplateInput;
+
+/** 推しサーチ総合紹介動画の入力か（他の入力と共通のキーを持たないため templateCategory で見分ける） */
+export function isOshiMediaInput(input: VideoTemplateInput | null | undefined): input is OshiMediaTemplateInput {
+  return !!input && 'templateCategory' in input && input.templateCategory === MEDIA_TEMPLATE_CATEGORY;
+}
 
 /** personVideoSlug の形式 */
 const PERSON_SLUG_PATTERN = /^p-[0-9a-f]{12}$/;
@@ -432,6 +457,25 @@ export function parseOshiSiteInput(raw: unknown): OshiSiteTemplateInput {
   return { version: 1, templateCategory: SITE_TEMPLATE_CATEGORY, siteSelection, cta: { key: ctaKey }, lines, ...(audio ? { audio } : {}) };
 }
 
+/**
+ * 推しサーチ総合紹介動画の入力の形を検証して正規化する（グループが公開中か・テンプレートと合うかはサーバーで確認する）。
+ * 台本・ページのパスなどは受け取らない（台本は Worker のコードが正本）
+ */
+export function parseOshiMediaInput(raw: unknown): OshiMediaTemplateInput {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new TemplateInputError('推しサーチ総合紹介動画の指定がありません。');
+  const obj = raw as Record<string, unknown>;
+  if (obj.version !== undefined && obj.version !== 1) throw new TemplateInputError('未対応の入力形式です。');
+  if (obj.templateCategory !== undefined && obj.templateCategory !== MEDIA_TEMPLATE_CATEGORY) throw new TemplateInputError('テンプレートの種類が違います。');
+  const audio = obj.audio !== undefined && obj.audio !== null ? parseSonkamoAudio(obj.audio) : undefined;
+  let groupName: string | null = null;
+  if (obj.groupName !== undefined && obj.groupName !== null && obj.groupName !== '') {
+    const g = obj.groupName;
+    if (typeof g !== 'string' || !g.trim() || g.length > GROUP_NAME_MAX || /[\u0000-\u001f\u007f/\\]/.test(g)) throw new TemplateInputError('グループ名の指定が不正です。');
+    groupName = g.trim();
+  }
+  return { version: 1, templateCategory: MEDIA_TEMPLATE_CATEGORY, groupName, ...(audio ? { audio } : {}) };
+}
+
 /** テンプレートの入力種別に応じて検証する */
 export function parseTemplateInput(kind: TemplateInputKind, raw: unknown): VideoTemplateInput {
   switch (kind) {
@@ -447,5 +491,7 @@ export function parseTemplateInput(kind: TemplateInputKind, raw: unknown): Video
       return parseOshiRegisteredInput(raw);
     case OSHI_SITE_INPUT_KIND:
       return parseOshiSiteInput(raw);
+    case OSHI_MEDIA_INPUT_KIND:
+      return parseOshiMediaInput(raw);
   }
 }

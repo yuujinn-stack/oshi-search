@@ -16,6 +16,7 @@ import { handleWorkerRequest, num, parseJobId, str } from '@/server/video-jobs/w
 import { isTemplateInputKind } from '@/lib/video-template-input';
 import { parseSonkamoScriptTemplate } from '@/lib/video-sonkamo-script';
 import { parseFollowScriptReport } from '@/lib/video-follow-reel';
+import { parseMediaScriptReport } from '@/lib/video-media-reel';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -138,8 +139,9 @@ function sanitizeJobAudioEvents(raw: unknown[]): CapcutJobAudioEvent[] {
 
 export async function POST(req: NextRequest) {
   return handleWorkerRequest(req, async ({ workerId, body }) => {
+    // テンプレートは現在49種類（推しサーチ総合紹介動画の10種類を含む）。上限で一覧の末尾が黙って落ちないよう余裕を持たせる
     const templates: WorkerTemplateInfo[] = (Array.isArray(body.templates) ? body.templates : [])
-      .slice(0, 50)
+      .slice(0, 100)
       .map((t) => t as Record<string, unknown>)
       .filter((t) => typeof t.templateId === 'string')
       .map((t) => ({
@@ -170,6 +172,8 @@ export async function POST(req: NextRequest) {
         ...(parseSonkamoScriptTemplate(t.scriptTemplate) ? { scriptTemplate: parseSonkamoScriptTemplate(t.scriptTemplate)! } : {}),
         // フォロー獲得リールだけ: 固定辞書の読みなど（形が違えば保存しない）
         ...(parseFollowScriptReport(t.followScript) ? { followScript: parseFollowScriptReport(t.followScript)! } : {}),
+        // 推しサーチ総合紹介動画だけ: 台本（形が違う・テンプレートIDが合わなければ保存しない＝管理画面では台本を表示できない）
+        ...(parseMediaScriptReport(t.mediaScript)?.templateId === t.templateId ? { mediaScript: parseMediaScriptReport(t.mediaScript)! } : {}),
       }));
     const persons = (Array.isArray(body.persons) ? body.persons : [])
       .filter((p): p is string => typeof p === 'string')

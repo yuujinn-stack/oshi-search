@@ -7,6 +7,7 @@ import { videoGenerationJobs } from '@/db/schema';
 import { isFollowTemplateId } from '@/lib/video-follow-reel';
 import { isRegisteredReelId, REGISTERED_TEMPLATE_CATEGORY } from '@/lib/video-registered-groups';
 import { isSiteTemplateId, SITE_TEMPLATE_CATEGORY } from '@/lib/video-site-reel';
+import { isMediaTemplateId, MEDIA_TEMPLATE_CATEGORY } from '@/lib/video-media-reel';
 import { createVideoJobs, VideoJobError, type VideoJob } from './job-store';
 
 // フォロー獲得リール（10種類）・登録グループ紹介のリール（5種類）の CapCut 音声の自動取り込み（Worker の CapCut 受信フォルダ _inbox から）。
@@ -67,7 +68,7 @@ type JobRow = typeof videoGenerationJobs.$inferSelect;
 /** 元のジョブ（完了したフォロー獲得リール・登録グループ紹介のリールの音声なし動画）を探す。1件に決まらない・条件に合わないときは理由つきで拒否する */
 export async function findCapcutAutoSource(key: CapcutAutoKey): Promise<JobRow> {
   if (!CAPCUT_JOB_KEY_PATTERN.test(key.jobKey)) throw new VideoJobError('ファイル名のジョブID（先頭8桁の英数字）が不正です。', 400);
-  if (!isFollowTemplateId(key.templateId) && !isRegisteredReelId(key.templateId) && !isSiteTemplateId(key.templateId)) throw new VideoJobError(`自動取り込みに対応していないテンプレートです: ${key.templateId}`, 400);
+  if (!isFollowTemplateId(key.templateId) && !isRegisteredReelId(key.templateId) && !isSiteTemplateId(key.templateId) && !isMediaTemplateId(key.templateId)) throw new VideoJobError(`自動取り込みに対応していないテンプレートです: ${key.templateId}`, 400);
   const rows = await db
     .select()
     .from(videoGenerationJobs)
@@ -131,6 +132,16 @@ export async function attachCapcutAutoImport(input: { sourceJobId: string; wavUr
       templateId: job.templateId,
       narrationMode: 'capcut',
       templateInput: { version: 1, templateCategory: REGISTERED_TEMPLATE_CATEGORY, selection: { order: null, excluded: [] }, lines: [], audio },
+    });
+    return created;
+  }
+  // 推しサーチ総合紹介動画: グループ名・撮影データの場所は元のジョブから付け直す（applyMediaAudioSource）
+  if (isMediaTemplateId(job.templateId)) {
+    const [created] = await createVideoJobs({
+      personNames: [job.personName],
+      templateId: job.templateId,
+      narrationMode: 'capcut',
+      templateInput: { version: 1, templateCategory: MEDIA_TEMPLATE_CATEGORY, groupName: null, audio },
     });
     return created;
   }
