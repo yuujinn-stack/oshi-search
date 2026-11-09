@@ -5,6 +5,8 @@
 // 生成に使う台本は Worker のコードが作り直す（画面で編集した台本は受け取らない＝元のナレーション・デザインを保つ）。
 // 一般版（OSHI_GENERAL_*）は person_name を「推しサーチ」にして1本、グループ版（OSHI_GROUP_*）は person_name をグループ名にして1本作る。
 
+import { checkReadingInput } from './video-first3-script';
+
 export const MEDIA_TEMPLATE_CATEGORY = 'oshi_media' as const;
 export const MEDIA_SECTION_TITLE = '推しサーチ総合紹介動画（10種類）';
 /** 一般版のジョブの person_name（登録グループ紹介と同じ「推しサーチ」） */
@@ -64,6 +66,8 @@ export interface MediaScriptReport {
   selectionMode: 'none' | 'group';
   defaultGroup: string | null;
   lines: MediaScriptLine[];
+  /** グループ版だけ: Worker のグループ名の読み辞書（表記 → 読み。古い Worker は送らないため空） */
+  groupReadings: Record<string, string>;
 }
 
 const TEXT_MAX = 200;
@@ -94,7 +98,49 @@ export function parseMediaScriptReport(raw: unknown): MediaScriptReport | null {
     lines.push({ id, text, kana, overlay, approxSeconds: sec });
   }
   const defaultGroup = selectionMode === 'group' ? str(o.defaultGroup, 100) : null;
-  return { version: 1, templateId: o.templateId, name, goal, coverText, cta, targetDurationSec: target, selectionMode, defaultGroup, lines };
+  return { version: 1, templateId: o.templateId, name, goal, coverText, cta, targetDurationSec: target, selectionMode, defaultGroup, lines, groupReadings: selectionMode === 'group' ? parseGroupReadings(o.groupReadings) : {} };
+}
+
+const GROUP_READINGS_MAX = 500;
+/** Worker のグループ名の読み辞書（読みとして使える形のものだけ。形が違うものは使わない） */
+function parseGroupReadings(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>).slice(0, GROUP_READINGS_MAX)) {
+    if (typeof v !== 'string' || !str(k, 100)) continue;
+    const r = checkReadingInput(k, v);
+    if (r.ok) out[r.sourceText] = r.reading;
+  }
+  return out;
+}
+
+/** グループ名の読みの出どころ（管理画面の表示用） */
+export type MediaGroupReadingSource = 'registered' | 'fixed' | 'dictionary' | 'kana';
+
+export const MEDIA_GROUP_READING_SOURCE_LABELS: Record<MediaGroupReadingSource, string> = {
+  registered: '推しサーチで登録した読み',
+  fixed: '動画メーカーの辞書',
+  dictionary: '動画メーカーのグループ名の辞書',
+  kana: 'ひらがな・カタカナの名前をそのまま',
+};
+
+/**
+ * グループ名の読み。Worker（oshi-video-maker の resolveMediaGroupReading）と同じ順番:
+ * 推しサーチで登録した読み → 人物名などの固定辞書 → グループ名の辞書 → ひらがな・カタカナだけの名前はそのまま。無ければ null
+ */
+export function resolveMediaGroupReading(
+  groupName: string,
+  sources: { registered?: Record<string, string> | null; fixed?: Record<string, string>; groupReadings?: Record<string, string> },
+): { reading: string; source: MediaGroupReadingSource } | null {
+  const g = groupName.trim();
+  if (!g) return null;
+  const registered = sources.registered?.[g];
+  if (registered) return { reading: registered, source: 'registered' };
+  const fixed = sources.fixed?.[g];
+  if (fixed) return { reading: fixed, source: 'fixed' };
+  const dict = sources.groupReadings?.[g];
+  if (dict) return { reading: dict, source: 'dictionary' };
+  return /^[\p{Script=Hiragana}\p{Script=Katakana}ー\s・]+$/u.test(g) ? { reading: g, source: 'kana' } : null;
 }
 
 export interface MediaScriptPreview {
