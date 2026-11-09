@@ -5,22 +5,24 @@ import CopyButton from './CopyButton';
 import { MEDIA_GROUP_TOKEN, MEDIA_TEMPLATE_CATEGORY, parseMediaScriptReport, renderMediaScript, type MediaScriptReport } from '@/lib/video-media-reel';
 import type { OshiMediaTemplateInput } from '@/lib/video-template-input';
 import type { SonkamoGroupOption } from './SonkamoTargetPicker';
+import MediaGroupCombobox, { type MediaGroupsStatus } from './MediaGroupCombobox';
 
 // 推しサーチ総合紹介動画（10種類）: テンプレートの台本（Worker の報告）を表示・コピーし、グループ版はグループを選ぶ。
 // 台本・演出は oshi-video-maker のコードが正本（ここでは編集しない）。音声なしで作り、完成した動画の「詳細」から CapCut の WAV・SRT を付ける
 
 export interface MediaPick {
-  /** グループ版だけ: 入力したグループ名（null=まだ触っていない＝テンプレートの例のグループが登録済みならそれを使う） */
+  /** グループ版だけ: 一覧から選んだグループの正式名称（null=まだ選んでいない。例のグループを自動では選ばない） */
   groupName: string | null;
 }
 
 export const EMPTY_MEDIA_PICK: MediaPick = { groupName: null };
 
-/** グループ版で使うグループ名（入力が無ければテンプレートの例のグループ。登録済みのときだけ） */
-export function effectiveMediaGroup(pick: MediaPick, report: MediaScriptReport | null, groups: SonkamoGroupOption[]): string {
-  if (pick.groupName !== null) return pick.groupName.trim();
-  const d = report?.defaultGroup ?? null;
-  return d && groups.some((g) => g.name === d) ? d : '';
+/**
+ * グループ版で使うグループ名（一覧から選んだグループ。未選択なら空）。
+ * テンプレートの例のグループ（M!LK）を自動では選ばない（選び忘れて別のグループの動画を作らないため）
+ */
+export function effectiveMediaGroup(pick: MediaPick, _report: MediaScriptReport | null, _groups: SonkamoGroupOption[]): string {
+  return (pick.groupName ?? '').trim();
 }
 
 /** 生成できる状態か（一般版は常に可。グループ版は登録済みのグループを選んだとき） */
@@ -41,7 +43,12 @@ export default function MediaReelPicker({
   fixedReadings,
   value,
   onChange,
+  groupsStatus = 'ready',
+  groupsError = null,
 }: {
+  /** 登録済みグループの取得状態（取得できなかったときは error と理由） */
+  groupsStatus?: MediaGroupsStatus;
+  groupsError?: string | null;
   /** Worker が報告した台本（parseMediaScriptReport で読む） */
   mediaScript: unknown;
   groups: SonkamoGroupOption[];
@@ -79,7 +86,7 @@ export default function MediaReelPicker({
         <span className="text-gray-500">長さの目安</span>
         <span>約{report.targetDurationSec}秒（CapCut 音声を付けると読み上げ＋約1秒。最長30秒）</span>
         <span className="text-gray-500">対象</span>
-        <span>{isGroup ? `グループ版（例: ${report.defaultGroup ?? '-'}）` : '一般向け（人物・グループの選択は不要）'}</span>
+        <span>{isGroup ? 'グループ版（推しサーチに登録されたグループから選ぶ）' : '一般向け（人物・グループの選択は不要）'}</span>
       </div>
 
       {isGroup && (
@@ -87,22 +94,10 @@ export default function MediaReelPicker({
           <label className="block text-xs font-bold text-slate-700 mb-1" htmlFor="vm-media-group">
             グループ（推しサーチに登録されたグループ）
           </label>
-          <input
-            id="vm-media-group"
-            list="vm-media-group-list"
-            value={value.groupName ?? groupName}
-            onChange={(e) => onChange({ groupName: e.target.value })}
-            placeholder={report.defaultGroup ?? 'グループ名'}
-            className="w-full max-w-sm rounded border border-gray-300 px-2 py-1.5 text-sm"
-          />
-          <datalist id="vm-media-group-list">
-            {groups.map((g) => (
-              <option key={g.name} value={g.name} />
-            ))}
-          </datalist>
-          {groupMissing && (
+          <MediaGroupCombobox groups={groups} readings={fixedReadings} status={groupsStatus} errorMessage={groupsError} value={groupKnown ? groupName : ''} onChange={(name) => onChange({ groupName: name })} />
+          {groupMissing && groupsStatus === 'ready' && groups.length > 0 && (
             <p className="text-xs text-amber-700 mt-1">
-              {groupName ? `「${groupName}」は登録済みのグループにありません。一覧から選んでください。` : 'グループ名が未設定のため生成できません。一覧から選んでください。'}
+              {groupName ? `「${groupName}」は登録済みのグループにありません。一覧から選び直してください。` : 'グループが未選択のため生成できません。欄をクリックして一覧から選んでください。'}
             </p>
           )}
         </div>

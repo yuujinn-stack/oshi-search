@@ -304,8 +304,11 @@ export default function VideoMakerClient({
   readingCandidates = {},
   personSlugByName = {},
   groups = [],
+  groupsError = null,
   appBuild = null,
 }: {
+  /** 登録済みグループを取得できなかったときの理由（推しサーチ総合紹介動画のグループ選択に表示する） */
+  groupsError?: string | null;
   persons: PersonOption[];
   /** この画面を配信した版（Vercel のコミット）。API が返す版と違えば、開いたあとにデプロイされた（画面のコードが古い） */
   appBuild?: string | null;
@@ -1120,7 +1123,7 @@ export default function VideoMakerClient({
         ) : mediaMode && template ? (
         <section>
           <h2 className="text-sm font-bold text-slate-700 mb-2">3. {mediaSelectionMode === 'group' ? 'グループ・' : ''}台本（表示・コピー）</h2>
-          <MediaReelPicker mediaScript={template.mediaScript} groups={groups} fixedReadings={followFixedReadings} value={mediaPick} onChange={setMediaPick} />
+          <MediaReelPicker mediaScript={template.mediaScript} groups={groups} groupsStatus={groupsError ? 'error' : 'ready'} groupsError={groupsError} fixedReadings={followFixedReadings} value={mediaPick} onChange={setMediaPick} />
         </section>
         ) : siteMode && template ? (
         <section>

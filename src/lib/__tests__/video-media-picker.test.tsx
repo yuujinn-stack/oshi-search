@@ -22,9 +22,13 @@ describe('MediaReelPicker', () => {
     expect(h).not.toContain('vm-media-group');
   });
 
-  it('グループ版: 例のグループ（登録済み）を最初から選び、別のグループに変えると台本も変わる', () => {
-    const h = html(4, null, { 'M!LK': 'みるく' });
-    expect(h).toContain('vm-media-group');
+  it('グループ版: 最初は未選択（例の M!LK を自動で選ばない）。選んだグループで台本が変わる', () => {
+    const n = html(4, null, { 'M!LK': 'みるく' });
+    expect(n).toContain('vm-media-group');
+    expect(n).toContain('クリックしてグループを選ぶ');
+    expect(n).not.toContain('M!LK推しの人');
+    expect(n).toContain('グループが未選択のため生成できません');
+    const h = html(4, 'M!LK', { 'M!LK': 'みるく' });
     expect(h).toContain('M!LK推しの人、このサイトもう使ってる？');
     expect(h).toContain('みるくおしのひと');
     const s = html(4, 'Snow Man', { 'Snow Man': 'すのーまん' });
@@ -40,9 +44,12 @@ describe('MediaReelPicker', () => {
     const r = parseMediaScriptReport(reports[9]);
     expect(mediaPickReady({ groupName: '未登録グループ' }, r, groups)).toBe(false);
     expect(mediaPickReady({ groupName: '' }, r, groups)).toBe(false);
-    expect(mediaPickReady(EMPTY_MEDIA_PICK, r, groups)).toBe(true);
-    expect(effectiveMediaGroup(EMPTY_MEDIA_PICK, r, groups)).toBe('M!LK');
-    expect(effectiveMediaGroup(EMPTY_MEDIA_PICK, r, [{ name: 'Snow Man', members: [] }])).toBe('');
+    // 未選択では生成できない（例のグループを自動で使わない）。一覧から選んだ正式名称だけで生成できる
+    expect(mediaPickReady(EMPTY_MEDIA_PICK, r, groups)).toBe(false);
+    expect(effectiveMediaGroup(EMPTY_MEDIA_PICK, r, groups)).toBe('');
+    expect(mediaPickReady({ groupName: 'Snow Man' }, r, groups)).toBe(true);
+    expect(mediaPickReady({ groupName: 'snow man' }, r, groups)).toBe(false);
+    expect(effectiveMediaGroup({ groupName: 'Snow Man' }, r, groups)).toBe('Snow Man');
     expect(mediaTemplateInput('Snow Man', 'group')).toEqual({ version: 1, templateCategory: 'oshi_media', groupName: 'Snow Man' });
     expect(mediaTemplateInput('Snow Man', 'none').groupName).toBeNull();
   });
