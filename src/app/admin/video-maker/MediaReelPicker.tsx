@@ -10,6 +10,7 @@ import {
   renderMediaScript,
   resolveMediaGroupReading,
   type MediaScriptReport,
+  mediaScriptReadsGroupName,
 } from '@/lib/video-media-reel';
 import { checkReadingInput } from '@/lib/video-first3-script';
 import type { OshiMediaTemplateInput } from '@/lib/video-template-input';
@@ -68,6 +69,8 @@ export default function MediaReelPicker({
 }) {
   const report = useMemo(() => parseMediaScriptReport(mediaScript), [mediaScript]);
   const isGroup = report?.selectionMode === 'group';
+  // ナレーションにグループ名が入るグループ版だけ、グループ名の読みを扱う（OSHI_GROUP_09 は実画面だけがグループで変わる）
+  const readsGroupName = !!report && mediaScriptReadsGroupName(report);
   const groupName = effectiveMediaGroup(value, report, groups);
   const groupKnown = !!groupName && groups.some((g) => g.name === groupName);
 
@@ -178,7 +181,13 @@ export default function MediaReelPicker({
         </div>
       )}
 
-      {isGroup && groupKnown && (
+      {isGroup && groupKnown && !readsGroupName && (
+        <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded px-2 py-1.5" data-testid="vm-media-group-screens-only">
+          この動画のナレーションにグループ名は入りません（台本・CapCut 音声はどのグループでも同じ）。選んだグループは、推しサーチの検索・グループページ・出演作品・配信先・関連商品の実画面の撮影に使います。
+        </p>
+      )}
+
+      {isGroup && groupKnown && readsGroupName && (
         <div className="rounded border border-gray-200 p-2 space-y-1.5" data-testid="vm-media-group-reading">
           <p className="text-xs font-bold text-slate-700">グループ名の読み（ナレーションの読み台本と、CapCut 音声のグループ確認に使う）</p>
           {readingsStatus === 'loading' && !registered ? (

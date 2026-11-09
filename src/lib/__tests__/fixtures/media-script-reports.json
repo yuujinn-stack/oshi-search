@@ -565,5 +565,81 @@
         "approxSeconds": 3
       }
     ]
+  },
+  {
+    "version": 1,
+    "templateId": "OSHI_GROUP_09",
+    "name": "グループ推し・このサイトまだ知らないの？",
+    "goal": "新規認知・非フォロワーリーチ",
+    "coverText": "推し活してる人\nこれまだ知らないの？",
+    "cta": "プロフィールのリンクからチェック",
+    "targetDurationSec": 21,
+    "selectionMode": "group",
+    "defaultGroup": "M!LK",
+    "groupToken": "{{groupName}}",
+    "groupReadings": {
+      "乃木坂46": "のぎざかフォーティーシックス",
+      "櫻坂46": "さくらざかフォーティーシックス",
+      "日向坂46": "ひなたざかフォーティーシックス",
+      "欅坂46": "けやきざかフォーティーシックス",
+      "超特急": "ちょうとっきゅう",
+      "嵐": "あらし",
+      "＝LOVE": "イコールラブ",
+      "Aぇ! group": "ええグループ",
+      "BLUE ENCOUNT": "ブルーエンカウント",
+      "D-BOYS": "ディーボーイズ",
+      "DISH//": "ディッシュ",
+      "FRUITS ZIPPER": "フルーツジッパー",
+      "Number_i": "ナンバーアイ",
+      "SPYAIR": "スパイエアー",
+      "THE ORAL CIGARETTES": "ジ・オーラル・シガレッツ",
+      "Travis Japan": "トラビスジャパン",
+      "UVERworld": "ウーバーワールド",
+      "timelesz": "タイムレス"
+    },
+    "lines": [
+      {
+        "id": "01-brand",
+        "text": "推し活してる人、これまだ知らないの？",
+        "kana": "おしかつしてるひと、これまだしらないの？",
+        "overlay": "このサイトまだ知らないの？",
+        "approxSeconds": 3
+      },
+      {
+        "id": "02-home",
+        "text": "推しの名前を入力するだけで、",
+        "kana": "おしのなまえをにゅうりょくするだけで、",
+        "overlay": "推しの名前で検索",
+        "approxSeconds": 3
+      },
+      {
+        "id": "03-vod",
+        "text": "出演作品も、配信先も探せて、",
+        "kana": "しゅつえんさくひんも、はいしんさきもさがせて、",
+        "overlay": "出演作品・配信先",
+        "approxSeconds": 4
+      },
+      {
+        "id": "04-subscription",
+        "text": "サブスク診断も、グッズ探しもできる。",
+        "kana": "サブスクしんだんも、グッズさがしもできる。",
+        "overlay": "診断＆グッズ",
+        "approxSeconds": 4
+      },
+      {
+        "id": "05-services",
+        "text": "布教カードや、推し活サービス比較まで。",
+        "kana": "ふきょうカードや、おしかつサービスひかくまで。",
+        "overlay": "布教カード／サービス比較",
+        "approxSeconds": 4
+      },
+      {
+        "id": "06-brand",
+        "text": "名前は、推しサーチ。プロフからチェック！",
+        "kana": "なまえは、おしサーチ。プロフからチェック！",
+        "overlay": "推しサーチ\nプロフからチェック",
+        "approxSeconds": 3
+      }
+    ]
   }
 ]

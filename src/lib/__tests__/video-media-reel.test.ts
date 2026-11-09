@@ -11,7 +11,7 @@ import {
 } from '@/lib/video-media-reel';
 import { OSHI_MEDIA_INPUT_KIND, TEMPLATE_INPUT_KINDS, TemplateInputError, isOshiMediaInput, parseOshiMediaInput, parseTemplateInput } from '@/lib/video-template-input';
 
-// fixtures/media-script-reports.json は oshi-video-maker の buildMediaScriptReport が実際に出す報告（10種類）。
+// fixtures/media-script-reports.json は oshi-video-maker の buildMediaScriptReport が実際に出す報告（10種類＋派生の OSHI_GROUP_09）。
 // Worker の報告をこの画面のコードが読めること・グループ名の差し込み・入力の検証を確かめる
 
 describe('推しサーチ総合紹介動画（10種類）', () => {
@@ -19,7 +19,7 @@ describe('推しサーチ総合紹介動画（10種類）', () => {
     const parsed = reports.map((r) => parseMediaScriptReport(r));
     expect(parsed.every((p) => p !== null)).toBe(true);
     expect(parsed.map((p) => p!.templateId)).toEqual([...MEDIA_TEMPLATE_IDS]);
-    expect(parsed.filter((p) => p!.selectionMode === 'group').map((p) => p!.templateId)).toEqual(['OSHI_GROUP_05', 'OSHI_GROUP_10']);
+    expect(parsed.filter((p) => p!.selectionMode === 'group').map((p) => p!.templateId)).toEqual(['OSHI_GROUP_05', 'OSHI_GROUP_10', 'OSHI_GROUP_09']);
     for (const p of parsed) {
       expect(isMediaTemplateId(p!.templateId)).toBe(true);
       expect(isMediaGroupTemplateId(p!.templateId)).toBe(p!.selectionMode === 'group');

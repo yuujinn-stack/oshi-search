@@ -8,7 +8,7 @@
 import { checkReadingInput } from './video-first3-script';
 
 export const MEDIA_TEMPLATE_CATEGORY = 'oshi_media' as const;
-export const MEDIA_SECTION_TITLE = '推しサーチ総合紹介動画（10種類）';
+export const MEDIA_SECTION_TITLE = '推しサーチ総合紹介動画（11種類）';
 /** 一般版のジョブの person_name（登録グループ紹介と同じ「推しサーチ」） */
 export const MEDIA_JOB_NAME = '推しサーチ';
 export const MEDIA_GROUP_TOKEN = '{{groupName}}';
@@ -26,6 +26,9 @@ export const MEDIA_TEMPLATE_IDS = [
   'OSHI_GENERAL_08',
   'OSHI_GENERAL_09',
   'OSHI_GROUP_10',
+  // OSHI_GENERAL_09「これまだ知らないの？」を複製したグループ版（Worker の派生テンプレート）。ナレーションは OSHI_GENERAL_09 と同じで、
+  // 冒頭の表示文字・演出と、実画面を撮影するグループだけが変わる
+  'OSHI_GROUP_09',
 ] as const;
 export type MediaTemplateId = (typeof MEDIA_TEMPLATE_IDS)[number];
 
@@ -161,6 +164,11 @@ export interface MediaScriptPreview {
  * 管理画面の表示用に、グループ版の {{groupName}} を選んだグループ名に置き換える（読みは分かれば読み、無ければグループ名のまま）。
  * 実際の動画の台本・読みは Worker が生成時に作り直す（ここでの表示は確認・コピー用）
  */
+/** グループ版のうち、ナレーション（読み台本）にグループ名が入るか。入らないもの（OSHI_GROUP_09）は読みの登録・グループ名の音声確認が不要 */
+export function mediaScriptReadsGroupName(report: MediaScriptReport): boolean {
+  return report.selectionMode === 'group' && report.lines.some((l) => l.text.includes(MEDIA_GROUP_TOKEN) || l.kana.includes(MEDIA_GROUP_TOKEN));
+}
+
 export function renderMediaScript(report: MediaScriptReport, groupName: string | null, groupReading: string | null): MediaScriptPreview {
   const g = report.selectionMode === 'group' ? (groupName ?? '').trim() : '';
   const reading = g ? (groupReading ?? '').trim() : '';
