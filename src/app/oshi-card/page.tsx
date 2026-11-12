@@ -29,7 +29,7 @@ const SITE_ORIGIN = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp'
 const CANONICAL_URL = `${SITE_ORIGIN}${OSHI_CARD_PATH}`;
 const PAGE_TITLE = '推し布教カード｜推しのおすすめ作品を選んでSNSでシェア';
 const PAGE_DESCRIPTION =
-  '推しと、おすすめしたい出演作品を1〜3つ選ぶだけで、SNSに投稿できる布教カードが作れます。ノーマル・デコと、推しの名前が主役のトレカ風（ベーシック・SSR・レジェンド）の5デザイン。会員登録は不要です。';
+  '推しと、おすすめしたい出演作品を1〜3つ選ぶだけで、SNSに投稿できる布教カードが作れます。ノーマル・デコと、推しの名前が主役のトレカ風（ベーシック・SSR）の4デザイン。会員登録は不要です。';
 
 interface Props {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -169,7 +169,7 @@ async function PickView({ from }: { from: ReturnType<typeof parseOshiCardParams>
         <ol className="oc-howto">
           <li>推しを選ぶ</li>
           <li>推しサーチに登録されている出演作品から、おすすめしたい作品を1〜3つ選ぶ（トレカ風のデザインは作品なしでも作れます）</li>
-          <li>順番・デザイン（ノーマル／デコ／トレカ風のベーシック・SSR・レジェンド）・ひとことを選ぶ。トレカ風は名前・特性・沼ポイント・推し力・推し色も変えられます</li>
+          <li>順番・デザイン（ノーマル／デコ／トレカ風のベーシック・SSR）・ひとことを選ぶ。トレカ風は名前・特性・沼ポイント・推し力・推し色も変えられます</li>
           <li>画像を保存するか、X・LINE でシェアする</li>
         </ol>
         <p className="oc-note">作品の選び方は自由です。カードには「投稿者のおすすめ」として表示され、公式の順位にはなりません。</p>

@@ -121,7 +121,7 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
       {noWorks && (
         <div className="oc-panel">
           <p className="oc-empty-title">{person.name}の出演作品は、まだ推しサーチに登録されていません。</p>
-          <p className="oc-note">ノーマル・デコのカードは、推しサーチに登録されている出演作品から作ります。作品が登録されたら作れるようになります。名前が主役のトレカ風デザイン（ベーシック・SSR・レジェンド）は、作品なしで作れます。</p>
+          <p className="oc-note">ノーマル・デコのカードは、推しサーチに登録されている出演作品から作ります。作品が登録されたら作れるようになります。名前が主役のトレカ風デザイン（ベーシック・SSR）は、作品なしで作れます。</p>
           <div className="oc-row-buttons">
             <Link href={`/person/${encodeURIComponent(person.name)}`} className="oc-btn-sub">{person.name}のページを見る</Link>
             <Link href={OSHI_CARD_PATH} className="oc-btn-sub">ほかの推しで作る</Link>
@@ -133,7 +133,7 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
       <section className="oc-step" style={secLabel('STEP')} aria-labelledby="oc-step-works">
         <h2 id="oc-step-works" className="oc-step-title">{isTcg ? 'おすすめしたい作品を選ぶ（0〜3作品）' : 'おすすめしたい作品を選ぶ（1〜3作品）'}</h2>
         <p className="oc-note">あなたが好きな作品を選んでください。カードには「投稿者のおすすめ」として表示され、公式の順位にはなりません。</p>
-        {isTcg && <p className="oc-note">トレカ風のデザイン（ベーシック・SSR・レジェンド）は、作品を選ばなくても作れます。</p>}
+        {isTcg && <p className="oc-note">トレカ風のデザイン（ベーシック・SSR）は、作品を選ばなくても作れます。</p>}
         {types.length > 1 && (
           <div className="oc-chips" role="radiogroup" aria-label="作品の分類">
             <button type="button" role="radio" aria-checked={typeFilter === 'all'} className={`oc-chip${typeFilter === 'all' ? ' is-on' : ''}`} onClick={() => { setTypeFilter('all'); setLimit(PAGE_SIZE); }}>すべて {candidates.length}</button>
