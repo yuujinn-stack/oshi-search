@@ -1,7 +1,9 @@
 'use client';
 
 // 完成した布教カードのプレビューと共有（画像つきでシェア・X・LINE・リンクコピー・画像保存）。
-// サブスク診断の共有（OshiVodShare）と同じ作り：2デザインの画像を先に読み込んで重ね、切り替えは表示の入れ替えだけで即時。
+// サブスク診断の共有（OshiVodShare）と同じ作り：画像を重ね、切り替えは表示の入れ替えだけで即時。
+// デザインは5種類あるため、最初は選択中のデザインだけを読み込み、一度選んだデザインの画像は残しておく（再選択は即時）。
+// トレカ風（ベーシック／SSR／レジェンド）の画像は 63:88（1260×1760）。カスタマイズ（名前・特性等）はデザインを変えても引き継ぐ。
 // 共有URLには人物・作品・順序・デザイン・ひとことと、共有方法（sm）を付ける。
 // 計測（GA4 oshi_card_share）は「共有ボタンを押した」ことで、SNS への投稿完了ではない（投稿されたかはこちらでは分からない）。
 import { useEffect, useState } from 'react';
@@ -13,11 +15,13 @@ import {
   buildOshiCardImagePath,
   buildOshiCardResultPath,
   buildOshiCardSharedUrl,
+  oshiCardImageDimensions,
   type OshiCardSelection,
   type OshiCardShareMethod,
   type OshiCardVariant,
 } from '@/lib/oshi-card/params';
-import OshiCardVariantToggle from './OshiCardVariantToggle';
+import { isOshiCardTcgVariant } from '@/lib/oshi-card/tcg';
+import OshiCardVariantToggle, { oshiCardVariantLabel } from './OshiCardVariantToggle';
 
 interface Props {
   selection: OshiCardSelection;
@@ -25,7 +29,6 @@ interface Props {
 }
 
 const SITE_ORIGIN_FALLBACK = 'https://oshi-search.jp';
-const VARIANTS: OshiCardVariant[] = ['cool', 'cute'];
 
 export default function OshiCardShare({ selection, titles }: Props) {
   const [origin, setOrigin] = useState(SITE_ORIGIN_FALLBACK);
@@ -33,6 +36,9 @@ export default function OshiCardShare({ selection, titles }: Props) {
   const [copied, setCopied] = useState(false);
   const [canNativeShare, setCanNativeShare] = useState(false);
   const [failed, setFailed] = useState<Partial<Record<OshiCardVariant, boolean>>>({});
+  // 読み込んだ（一度でも選んだ）デザイン。従来の2デザインは最初から両方読み込む（以前と同じ即時切り替え）
+  const [loaded, setLoaded] = useState<OshiCardVariant[]>(() => (isOshiCardTcgVariant(selection.variant) ? [selection.variant] : ['cool', 'cute']));
+  const tcgVariant = isOshiCardTcgVariant(variant);
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -50,6 +56,7 @@ export default function OshiCardShare({ selection, titles }: Props) {
     if (v === variant) return;
     sendGaEvent('oshi_card_variant_select', { variant: v, from_variant: variant, stage: 'card' });
     setVariant(v);
+    setLoaded((cur) => (cur.includes(v) ? cur : [...cur, v]));
     // アドレスバーの URL も選んだデザインにそろえる（そのままコピーされても同じカードになる）
     try { window.history.replaceState(null, '', buildOshiCardResultPath({ ...selection, variant: v })); } catch { /* 表示には影響しない */ }
   };
@@ -78,8 +85,8 @@ export default function OshiCardShare({ selection, titles }: Props) {
   return (
     <div className="oc-share" data-variant={variant}>
       <OshiCardVariantToggle value={variant} onChange={chooseVariant} />
-      <div className="oc-share-preview">
-        {VARIANTS.map((v) => (
+      <div className="oc-share-preview" data-shape={tcgVariant ? 'tcg' : 'feed'}>
+        {loaded.map((v) => (
           failed[v] ? (
             v === variant && <p key={v} className="oc-note">画像を表示できませんでした。時間をおいて再度お試しください。</p>
           ) : (
@@ -87,9 +94,10 @@ export default function OshiCardShare({ selection, titles }: Props) {
             <img
               key={v}
               src={buildOshiCardImagePath({ ...selection, variant: v }, 'feed')}
-              alt={`${selection.person}の布教カード（${v === 'cool' ? 'ノーマル' : 'デコ'}デザイン）`}
-              width={1080}
-              height={1350}
+              alt={`${selection.person}の布教カード（${oshiCardVariantLabel(v)}デザイン）`}
+              width={oshiCardImageDimensions('feed', v).width}
+              height={oshiCardImageDimensions('feed', v).height}
+              data-shape={isOshiCardTcgVariant(v) ? 'tcg' : 'feed'}
               className={`oc-share-image${v === variant ? ' is-active' : ''}`}
               aria-hidden={v !== variant}
               onError={() => setFailed((f) => ({ ...f, [v]: true }))}
@@ -104,7 +112,7 @@ export default function OshiCardShare({ selection, titles }: Props) {
         <button type="button" className="oc-share-btn" onClick={copy}>{copied ? 'コピーしました' : 'リンクをコピー'}</button>
       </div>
       <div className="oc-share-downloads">
-        <a href={feedPath} download={`oshi-card-${variant}.png`} className="theme-text-link" onClick={() => track('image_save_feed')}>画像を保存（投稿用 4:5）</a>
+        <a href={feedPath} download={`oshi-card-${variant}.png`} className="theme-text-link" onClick={() => track('image_save_feed')}>{tcgVariant ? 'カード画像を保存（63:88）' : '画像を保存（投稿用 4:5）'}</a>
         <a href={storyPath} download={`oshi-card-${variant}-story.png`} className="theme-text-link" onClick={() => track('image_save_story')}>画像を保存（ストーリーズ用 9:16）</a>
       </div>
       <p className="oc-note oc-center">X・LINE に貼ったリンクのカードにも、このデザインが表示されます。</p>

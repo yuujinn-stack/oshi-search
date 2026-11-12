@@ -57,7 +57,7 @@ const num = (i: number) => String(i + 1).padStart(2, '0');
  * 文字幅の見積もり（Noto Sans JP Bold・1em あたり）。英大文字・記号は全角の半分より広いため種類ごとに分ける。
  * 英単語は途中で改行されず行末が空くため、1行に使える幅は 0.8 倍で見る。
  */
-function charEm(ch: string): number {
+export function charEm(ch: string): number {
   if (ch === ' ') return 0.26;
   if (/[A-Z]/.test(ch)) return 0.66;
   if (/[a-z]/.test(ch)) return 0.54;
@@ -65,13 +65,13 @@ function charEm(ch: string): number {
   if (ch.charCodeAt(0) < 0x2000) return 0.42; // 半角記号
   return 1;
 }
-const emWidth = (t: string) => [...t].reduce((u, ch) => u + charEm(ch), 0);
+export const emWidth = (t: string) => [...t].reduce((u, ch) => u + charEm(ch), 0);
 
 /**
  * 作品名を lines 行に収める：まず文字を maxFont から minFont まで小さくして全文が入る大きさを探し、
  * minFont でも入らない極端に長い名前だけ「…」で省略する。
  */
-function fitTitle(title: string, width: number, maxFont: number, minFont: number, lines: number): { text: string; font: number } {
+export function fitTitle(title: string, width: number, maxFont: number, minFont: number, lines: number): { text: string; font: number } {
   const room = width * lines * 0.8;
   for (let f = maxFont; f >= minFont; f -= 2) {
     if (emWidth(title) * f <= room) return { text: title, font: f };

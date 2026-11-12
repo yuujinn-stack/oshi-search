@@ -1,26 +1,40 @@
 'use client';
 
-// 推し布教カードのデザイン切り替え（ノーマル＝cool・Editorial Premium／デコ＝cute・Fan Sticker）。作成画面とカードのページで共通。
-// 表示名だけを布教カード向けにしている。内部の値（cool / cute）は共有URL（v）・OG画像・GA4（variant）と共通のため変えない。
+// 推し布教カードのデザイン切り替え。作成画面とカードのページで共通。
+// - ノーマル＝cool・Editorial Premium／デコ＝cute・Fan Sticker（従来の2種類）
+// - ベーシック＝basic／SSR＝ssr／レジェンド＝legend（トレカ風。名前を装飾したカード）
+// 表示名だけを布教カード向けにしている。内部の値は共有URL（v）・OG画像・GA4（variant）と共通のため変えない。
+// スマホでも5つが1行に並ぶよう、小さなカードの形のサムネイル（CSSで描く。画像の読み込みなし）にする。
 import type { OshiCardVariant } from '@/lib/oshi-card/params';
 
-const OPTIONS: { value: OshiCardVariant; label: string; hint: string }[] = [
+export const OSHI_CARD_VARIANT_OPTIONS: { value: OshiCardVariant; label: string; hint: string }[] = [
   { value: 'cool', label: 'ノーマル', hint: 'すっきり・見やすいデザイン' },
   { value: 'cute', label: 'デコ', hint: 'カラフル・シール風デザイン' },
+  { value: 'basic', label: 'ベーシック', hint: 'トレカ風・ピンク×ハート×リボンのかわいいカード' },
+  { value: 'ssr', label: 'SSR', hint: 'トレカ風・虹色ホログラムのキラキラカード' },
+  { value: 'legend', label: 'レジェンド', hint: 'トレカ風・黒×ゴールドの高級感カード' },
 ];
 
-export default function OshiCardVariantToggle({ value, onChange }: { value: OshiCardVariant; onChange: (v: OshiCardVariant) => void }) {
+export function oshiCardVariantLabel(v: OshiCardVariant): string {
+  return OSHI_CARD_VARIANT_OPTIONS.find((o) => o.value === v)?.label ?? v;
+}
+
+export default function OshiCardVariantToggle({ value, onChange, only }: { value: OshiCardVariant; onChange: (v: OshiCardVariant) => void; only?: OshiCardVariant[] }) {
+  const options = only ? OSHI_CARD_VARIANT_OPTIONS.filter((o) => only.includes(o.value)) : OSHI_CARD_VARIANT_OPTIONS;
+  const current = options.find((o) => o.value === value);
   return (
-    <div className="oc-variant" role="radiogroup" aria-label="カードのデザイン">
-      {OPTIONS.map((o) => (
-        <button key={o.value} type="button" role="radio" aria-checked={value === o.value} className={`oc-variant-btn oc-variant-btn--${o.value}`} onClick={() => onChange(o.value)}>
-          <span className="oc-variant-swatch" aria-hidden="true" />
-          <span className="oc-variant-text">
+    <div className="oc-variant-wrap">
+      <div className="oc-variant" role="radiogroup" aria-label="カードのデザイン" style={{ ['--oc-variant-count' as string]: options.length }}>
+        {options.map((o) => (
+          <button key={o.value} type="button" role="radio" aria-checked={value === o.value} aria-label={`${o.label}（${o.hint}）`} className={`oc-variant-btn oc-variant-btn--${o.value}`} onClick={() => onChange(o.value)}>
+            <span className="oc-variant-thumb" aria-hidden="true">
+              <span className="oc-variant-thumb-name">推</span>
+            </span>
             <span className="oc-variant-label">{o.label}</span>
-            <span className="oc-variant-hint">{o.hint}</span>
-          </span>
-        </button>
-      ))}
+          </button>
+        ))}
+      </div>
+      {current && <p className="oc-variant-hint" aria-live="polite">{current.label}：{current.hint}</p>}
     </div>
   );
 }

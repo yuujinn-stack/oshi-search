@@ -9,21 +9,47 @@
 //
 // - p     … 人物（1人）
 // - w     … おすすめ作品の id（1〜3件・この順で表示）
-// - v     … デザイン（cool / cute。既定 cool）
+// - v     … デザイン（cool / cute / basic / ssr / legend。既定 cool）。basic・ssr・legend はトレカ風（src/lib/oshi-card/tcg.ts）
 // - ph    … ひとこと（定型フレーズの id。既定 fukyo）
 // - edit  … 1 のとき、完成カードの内容を引き継いで編集画面を開く
 // - from  … 入口（person / top / share）。計測用
 // - sm    … 共有リンク経由の訪問（x / line / copy / native）。計測用・表示後に URL から除去
-import { OSHI_VOD_DEFAULT_SHARE_VARIANT, parseOshiVodShareVariant, type OshiVodShareVariant } from '@/lib/oshi-vod/share-variant';
+// - nm・tr・np・pw・c … トレカ風デザインだけのカスタマイズ（メインの名前・特性・沼ポイント・推し力・推し色。既定値は省略）
+//   トレカ風デザインは作品0件でもカードを作れる（名前が主役のため）。既存の2デザインは従来どおり1件以上。
+import { OSHI_VOD_DEFAULT_SHARE_VARIANT, isOshiVodShareVariant, type OshiVodShareVariant } from '@/lib/oshi-vod/share-variant';
+import {
+  OSHI_CARD_DEFAULT_TCG,
+  isOshiCardTcgVariant,
+  normalizeOshiCardTcgOptions,
+  oshiCardTcgQueryParts,
+  parseOshiCardTcgOptions,
+  type OshiCardTcgOptions,
+  type OshiCardTcgVariant,
+} from './tcg';
 
 export const OSHI_CARD_PATH = '/oshi-card';
 export const OSHI_CARD_MAX_WORKS = 3;
 const MAX_NAME_LENGTH = 60;
 const MAX_WORK_ID_LENGTH = 200;
 
-/** カードのデザイン（サブスク診断の共有画像と同じ2系統） */
-export type OshiCardVariant = OshiVodShareVariant;
+/** カードのデザイン（サブスク診断の共有画像と同じ2系統 cool / cute ＋ トレカ風3種類 basic / ssr / legend） */
+export type OshiCardVariant = OshiVodShareVariant | OshiCardTcgVariant;
 export const OSHI_CARD_DEFAULT_VARIANT: OshiCardVariant = OSHI_VOD_DEFAULT_SHARE_VARIANT;
+export const OSHI_CARD_VARIANTS: readonly OshiCardVariant[] = ['cool', 'cute', 'basic', 'ssr', 'legend'];
+
+export function isOshiCardVariant(raw: unknown): raw is OshiCardVariant {
+  return isOshiVodShareVariant(raw) || isOshiCardTcgVariant(raw);
+}
+
+export function parseOshiCardVariant(raw: string | string[] | null | undefined): OshiCardVariant {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  return isOshiCardVariant(v) ? v : OSHI_CARD_DEFAULT_VARIANT;
+}
+
+/** 作品0件でもカードを作れるデザイン（トレカ風） */
+export function oshiCardMinWorks(variant: OshiCardVariant): 0 | 1 {
+  return isOshiCardTcgVariant(variant) ? 0 : 1;
+}
 
 /**
  * 見出しの定型フレーズ。自由入力は受け付けない（不適切な文章・個人情報・権利上の問題を避けるため）。
@@ -69,6 +95,8 @@ export interface ParsedOshiCardParams {
   workOverflow: boolean;
   variant: OshiCardVariant;
   phrase: OshiCardPhraseId;
+  /** トレカ風デザインのカスタマイズ（他のデザインでは使わない） */
+  tcg: OshiCardTcgOptions;
   edit: boolean;
   from: OshiCardEntrySource | null;
   shareMethod: OshiCardShareMethod | null;
@@ -92,8 +120,9 @@ export function parseOshiCardParams(params: Record<string, RawParam>): ParsedOsh
     person: personRaw && personRaw.length <= MAX_NAME_LENGTH ? personRaw : null,
     workIds: ids.slice(0, OSHI_CARD_MAX_WORKS),
     workOverflow: dropped || ids.length > OSHI_CARD_MAX_WORKS,
-    variant: parseOshiVodShareVariant(first(params.v)),
+    variant: parseOshiCardVariant(first(params.v)),
     phrase: isOshiCardPhraseId(phraseRaw) ? phraseRaw : OSHI_CARD_DEFAULT_PHRASE,
+    tcg: parseOshiCardTcgOptions(params, personRaw || null),
     edit: first(params.edit) === '1',
     from: ENTRY_SOURCES.find((s) => s === fromRaw) ?? null,
     shareMethod: SHARE_METHODS.find((m) => m === smRaw) ?? null,
@@ -105,13 +134,16 @@ export interface OshiCardSelection {
   workIds: string[];
   variant: OshiCardVariant;
   phrase: OshiCardPhraseId;
+  /** トレカ風デザインのカスタマイズ（省略＝既定値。トレカ風以外では URL に載せない） */
+  tcg?: OshiCardTcgOptions;
 }
 
-/** p・w・v・ph のクエリ（既定値は省略。正規形） */
-function selectionQuery({ person, workIds, variant, phrase }: OshiCardSelection): string {
+/** p・w・v・ph（トレカ風は nm・tr・np・pw・c も）のクエリ（既定値は省略。正規形） */
+function selectionQuery({ person, workIds, variant, phrase, tcg }: OshiCardSelection): string {
   const parts = [`p=${encodeURIComponent(person)}`, ...workIds.slice(0, OSHI_CARD_MAX_WORKS).map((w) => `w=${encodeURIComponent(w)}`)];
   if (variant !== OSHI_CARD_DEFAULT_VARIANT) parts.push(`v=${variant}`);
   if (phrase !== OSHI_CARD_DEFAULT_PHRASE) parts.push(`ph=${phrase}`);
+  if (isOshiCardTcgVariant(variant)) parts.push(...oshiCardTcgQueryParts(normalizeOshiCardTcgOptions(tcg ?? OSHI_CARD_DEFAULT_TCG, variant, person)));
   return parts.join('&');
 }
 
@@ -139,6 +171,14 @@ export const OSHI_CARD_IMAGE_SIZES: Record<OshiCardImageSize, { width: number; h
   story: { width: 1080, height: 1920 },
   og: { width: 1200, height: 630 },
 };
+
+/** トレカ風デザインの画像：feed はトレーディングカードの比率 63:88（1260×1760）。story・og は既存と同じ大きさ */
+export const OSHI_CARD_TCG_CARD_SIZE = { width: 1260, height: 1760 } as const;
+
+export function oshiCardImageDimensions(size: OshiCardImageSize, variant: OshiCardVariant): { width: number; height: number } {
+  if (size === 'feed' && isOshiCardTcgVariant(variant)) return OSHI_CARD_TCG_CARD_SIZE;
+  return OSHI_CARD_IMAGE_SIZES[size];
+}
 
 export function parseOshiCardImageSize(raw: string | null | undefined): OshiCardImageSize {
   return raw === 'story' || raw === 'og' ? raw : 'feed';

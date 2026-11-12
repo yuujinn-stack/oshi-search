@@ -58,6 +58,8 @@ export function resolveOshiCardWorks(workIds: string[], candidates: OshiCardWork
 
 /** X・LINE・端末の共有で使う文（作品名は「」で囲む） */
 export function buildOshiCardShareText(person: string, works: Pick<OshiCardWork, 'title'>[]): string {
+  // 作品なしのカード（トレカ風デザイン）
+  if (works.length === 0) return `${person}の布教カードを作りました！あなたの推しでも作ってみて`;
   const titles = works.map((w) => `「${w.title}」`).join('');
   return `${person}の布教カードを作りました！おすすめは${titles}。あなたの推しでも作ってみて`;
 }

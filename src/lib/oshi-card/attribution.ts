@@ -1,5 +1,5 @@
 // 共有リンク経由で訪れたことを、このタブの間だけ覚えておく（共有ページからの新規作成の計測用。クライアント専用）。
-import type { OshiCardShareMethod, OshiCardVariant } from './params';
+import { isOshiCardVariant, type OshiCardShareMethod, type OshiCardVariant } from './params';
 
 export interface OshiCardShareAttribution {
   variant: OshiCardVariant;
@@ -17,7 +17,7 @@ export function readOshiCardShare(): OshiCardShareAttribution | null {
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;
     const v = JSON.parse(raw) as Partial<OshiCardShareAttribution>;
-    if ((v.variant === 'cool' || v.variant === 'cute') && typeof v.method === 'string') return { variant: v.variant, method: v.method as OshiCardShareMethod };
+    if (isOshiCardVariant(v.variant) && typeof v.method === 'string') return { variant: v.variant, method: v.method as OshiCardShareMethod };
     return null;
   } catch {
     return null;

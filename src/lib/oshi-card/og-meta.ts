@@ -12,7 +12,9 @@ export function buildOshiCardSocialMetadata(opts: {
 }): Pick<Metadata, 'openGraph' | 'twitter'> {
   const { selection, titles, siteOrigin } = opts;
   const title = `${selection.person}の布教カード｜推しサーチ`;
-  const description = `${selection.person}のおすすめ作品：${titles.map((t) => `「${t}」`).join('')}。あなたの推しでも布教カードを作ってみて。`;
+  const description = titles.length > 0
+    ? `${selection.person}のおすすめ作品：${titles.map((t) => `「${t}」`).join('')}。あなたの推しでも布教カードを作ってみて。`
+    : `${selection.person}の布教カード。あなたの推しでも布教カードを作ってみて。`;
   const image = {
     url: buildOshiCardOgImagePath(selection),
     width: OSHI_CARD_IMAGE_SIZES.og.width,

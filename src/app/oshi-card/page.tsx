@@ -15,9 +15,11 @@ import {
   OSHI_CARD_DISCLAIMER,
   OSHI_CARD_PATH,
   buildOshiCardEditPath,
+  oshiCardMinWorks,
   parseOshiCardParams,
   type OshiCardSelection,
 } from '@/lib/oshi-card/params';
+import { isOshiCardTcgVariant, normalizeOshiCardTcgOptions } from '@/lib/oshi-card/tcg';
 import './oshi-card.css';
 
 // 内容は searchParams に依存するため動的レンダリング。
@@ -27,7 +29,7 @@ const SITE_ORIGIN = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp'
 const CANONICAL_URL = `${SITE_ORIGIN}${OSHI_CARD_PATH}`;
 const PAGE_TITLE = '推し布教カード｜推しのおすすめ作品を選んでSNSでシェア';
 const PAGE_DESCRIPTION =
-  '推しと、おすすめしたい出演作品を1〜3つ選ぶだけで、SNSに投稿できる布教カードが作れます。ノーマル・デコの2デザイン。会員登録は不要です。';
+  '推しと、おすすめしたい出演作品を1〜3つ選ぶだけで、SNSに投稿できる布教カードが作れます。ノーマル・デコと、推しの名前が主役のトレカ風（ベーシック・SSR・レジェンド）の5デザイン。会員登録は不要です。';
 
 interface Props {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -55,8 +57,18 @@ async function resolveView(sp: Record<string, string | string[] | undefined>): P
   const notice = invalidIds.length > 0 || parsed.workOverflow
     ? `${person.name}の作品として確認できない作品${parsed.workOverflow ? '・4件目以降' : ''}を除いています。`
     : undefined;
-  if (works.length === 0 || parsed.edit) return { kind: 'edit', person, notice: parsed.workIds.length > 0 && works.length === 0 ? `${person.name}の作品として確認できない作品が指定されていました。作品を選び直してください。` : notice };
-  const selection: OshiCardSelection = { person: person.name, workIds: works.map((w) => w.id), variant: parsed.variant, phrase: parsed.phrase };
+  // トレカ風は作品0件でもカードにできる（名前が主役）。作品が指定されていて全部無効なときは、どのデザインでも編集画面へ
+  const allInvalid = parsed.workIds.length > 0 && works.length === 0;
+  if (works.length < oshiCardMinWorks(parsed.variant) || allInvalid || parsed.edit) {
+    return { kind: 'edit', person, notice: allInvalid ? `${person.name}の作品として確認できない作品が指定されていました。作品を選び直してください。` : notice };
+  }
+  const selection: OshiCardSelection = {
+    person: person.name,
+    workIds: works.map((w) => w.id),
+    variant: parsed.variant,
+    phrase: parsed.phrase,
+    ...(isOshiCardTcgVariant(parsed.variant) ? { tcg: normalizeOshiCardTcgOptions(parsed.tcg, parsed.variant, person.name) } : {}),
+  };
   return { kind: 'card', person, works, selection, notice };
 }
 
@@ -132,7 +144,7 @@ export default async function OshiCardPage({ searchParams }: Props) {
               <OshiCardEditor
                 person={{ name: view.person.name, group: view.person.group }}
                 candidates={view.person.candidates}
-                initial={{ workIds: parsed.workIds, variant: parsed.variant, phrase: parsed.phrase }}
+                initial={{ workIds: parsed.workIds, variant: parsed.variant, phrase: parsed.phrase, tcg: parsed.tcg }}
               />
             </div>
           ) : (
@@ -156,8 +168,8 @@ async function PickView({ from }: { from: ReturnType<typeof parseOshiCardParams>
         <h2 id="oc-about" className="oc-step-title">布教カードの作り方</h2>
         <ol className="oc-howto">
           <li>推しを選ぶ</li>
-          <li>推しサーチに登録されている出演作品から、おすすめしたい作品を1〜3つ選ぶ</li>
-          <li>順番・デザイン（ノーマル／デコ）・ひとことを選ぶ</li>
+          <li>推しサーチに登録されている出演作品から、おすすめしたい作品を1〜3つ選ぶ（トレカ風のデザインは作品なしでも作れます）</li>
+          <li>順番・デザイン（ノーマル／デコ／トレカ風のベーシック・SSR・レジェンド）・ひとことを選ぶ。トレカ風は名前・特性・沼ポイント・推し力・推し色も変えられます</li>
           <li>画像を保存するか、X・LINE でシェアする</li>
         </ol>
         <p className="oc-note">作品の選び方は自由です。カードには「投稿者のおすすめ」として表示され、公式の順位にはなりません。</p>
@@ -183,6 +195,7 @@ function CardView({ view, fromShare }: { view: Extract<View, { kind: 'card' }>; 
 
       <section style={secLabel('WORKS')} aria-labelledby="oc-works-heading">
         <h2 id="oc-works-heading" className="oc-h2">おすすめ作品</h2>
+        {works.length === 0 && <p className="oc-lead">このカードにはおすすめ作品が入っていません。{person.name}の出演作品は人物ページで見られます。</p>}
         <ol className="oc-card-works">
           {works.map((w, i) => (
             <li key={w.id} className="oc-card-work">
@@ -195,7 +208,7 @@ function CardView({ view, fromShare }: { view: Extract<View, { kind: 'card' }>; 
             </li>
           ))}
         </ol>
-        <p className="oc-note">{OSHI_CARD_DISCLAIMER}</p>
+        {works.length > 0 && <p className="oc-note">{OSHI_CARD_DISCLAIMER}</p>}
         <p className="oc-note"><Link href={`/person/${encodeURIComponent(person.name)}`} className="theme-text-link">{person.name}の出演作品・関連商品をもっと見る</Link></p>
       </section>
 
@@ -207,7 +220,7 @@ function CardView({ view, fromShare }: { view: Extract<View, { kind: 'card' }>; 
         <OshiCardShare selection={selection} titles={works.map((w) => w.title)} />
         {!fromShare && (
           <p className="oc-note oc-center">
-            <Link href={buildOshiCardEditPath(person.name, { selection: { workIds: selection.workIds, variant: selection.variant, phrase: selection.phrase } })} className="theme-text-link">作品・順番・ひとことを変える</Link>
+            <Link href={buildOshiCardEditPath(person.name, { selection: { workIds: selection.workIds, variant: selection.variant, phrase: selection.phrase, tcg: selection.tcg } })} className="theme-text-link">{selection.tcg ? '作品・順番・ひとこと・カードの内容を変える' : '作品・順番・ひとことを変える'}</Link>
           </p>
         )}
       </section>

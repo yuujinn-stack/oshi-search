@@ -20,8 +20,10 @@ const nextConfig: NextConfig = {
     // 診断結果URLを X・LINE に貼ったときのカード画像（/api/oshi-vod/image と同じ処理）
     '/oshi-vod/og': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
     // 推し布教カードの画像・OG・静的OG
-    '/api/oshi-card/image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
-    '/oshi-card/og': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
+    // A（ベーシック）の名前用の丸ゴシック（src/server/oshi-card/fonts/rounded-font.ts）も含める
+    // B（SSR）の名前用の明朝体（fonts/shippori-glyphs.ts）とカード素材の PNG（ssr-assets.ts）も含める
+    '/api/oshi-card/image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf', './src/server/oshi-card/fonts/MPLUSRounded1c-ExtraBold.ttf', './src/server/oshi-card/fonts/ShipporiMinchoB1-ExtraBold.ttf', './src/server/oshi-card/assets/*.png'],
+    '/oshi-card/og': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf', './src/server/oshi-card/fonts/MPLUSRounded1c-ExtraBold.ttf', './src/server/oshi-card/fonts/ShipporiMinchoB1-ExtraBold.ttf', './src/server/oshi-card/assets/*.png'],
     '/oshi-card/opengraph-image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
   },
   images: {

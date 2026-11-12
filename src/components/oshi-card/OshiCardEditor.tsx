@@ -1,8 +1,10 @@
 'use client';
 
-// 推し布教カードの作成画面：② おすすめ作品を1〜3件選ぶ → ③ 並べ替え → ④ デザイン → ⑤ ひとこと → プレビュー → 作成。
+// 推し布教カードの作成画面：② おすすめ作品を選ぶ → ③ 並べ替え → ④ デザイン（＋トレカ風のカスタマイズ）・ひとこと・プレビュー → 作成。
 // 作品はその人物の公開作品（サーバーで作った候補）からだけ選べる。「おすすめ」は利用者の主観であることを画面にも明記する。
-// プレビューは本番と同じ画像API（/api/oshi-card/image）で、選択を変えると少し待ってから更新する。
+// 作品数：ノーマル・デコは1〜3件、トレカ風（ベーシック／SSR／レジェンド）は0〜3件（名前が主役のため作品なしでも作れる）。
+// プレビューは本番と同じ画像API（/api/oshi-card/image）の画像そのもの（保存画像と見た目が一致する）。選択を変えると少し待ってから更新する。
+// トレカ風の入力（名前・特性・沼ポイント・推し力・推し色）はデザインを切り替えても保持する。
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -14,18 +16,22 @@ import {
   OSHI_CARD_PHRASES,
   buildOshiCardImagePath,
   buildOshiCardResultPath,
+  oshiCardImageDimensions,
+  oshiCardMinWorks,
   type OshiCardPhraseId,
   type OshiCardSelection,
   type OshiCardVariant,
 } from '@/lib/oshi-card/params';
+import { isOshiCardTcgVariant, oshiCardTcgDraftFrom, oshiCardTcgFromDraft, type OshiCardTcgDraft, type OshiCardTcgOptions } from '@/lib/oshi-card/tcg';
 import { oshiCardShareParams } from '@/lib/oshi-card/attribution';
 import { sendGaEvent } from '@/lib/ga-event';
-import OshiCardVariantToggle from './OshiCardVariantToggle';
+import OshiCardVariantToggle, { oshiCardVariantLabel } from './OshiCardVariantToggle';
+import OshiCardTcgFields from './OshiCardTcgFields';
 
 interface Props {
   person: { name: string; group: string };
   candidates: OshiCardWork[];
-  initial: { workIds: string[]; variant: OshiCardVariant; phrase: OshiCardPhraseId };
+  initial: { workIds: string[]; variant: OshiCardVariant; phrase: OshiCardPhraseId; tcg: OshiCardTcgOptions };
 }
 
 const PAGE_SIZE = 30;
@@ -34,8 +40,13 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
   const router = useRouter();
   const byId = useMemo(() => new Map(candidates.map((c) => [c.id, c])), [candidates]);
   const [selected, setSelected] = useState<string[]>(initial.workIds.filter((id) => byId.has(id)).slice(0, OSHI_CARD_MAX_WORKS));
-  const [variant, setVariant] = useState<OshiCardVariant>(initial.variant);
+  // 出演作品が未登録の人物は、作品なしで作れるトレカ風のデザインだけを選べる
+  const noWorks = candidates.length === 0;
+  const [variant, setVariant] = useState<OshiCardVariant>(noWorks && !isOshiCardTcgVariant(initial.variant) ? 'basic' : initial.variant);
   const [phrase, setPhrase] = useState<OshiCardPhraseId>(initial.phrase);
+  const [tcgDraft, setTcgDraft] = useState<OshiCardTcgDraft>(() => oshiCardTcgDraftFrom(initial.tcg));
+  const isTcg = isOshiCardTcgVariant(variant);
+  const minWorks = oshiCardMinWorks(variant);
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(PAGE_SIZE);
@@ -52,16 +63,25 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
     return candidates.filter((c) => (typeFilter === 'all' || c.typeLabel === typeFilter) && (!q || c.title.normalize('NFKC').toLowerCase().includes(q)));
   }, [candidates, typeFilter, query]);
 
-  const selection: OshiCardSelection | null = selected.length > 0 ? { person: person.name, workIds: selected, variant, phrase } : null;
+  const tcg = useMemo(() => oshiCardTcgFromDraft(tcgDraft, person.name), [tcgDraft, person.name]);
+  const selection: OshiCardSelection | null = selected.length >= minWorks
+    ? { person: person.name, workIds: selected, variant, phrase, ...(isTcg ? { tcg } : {}) }
+    : null;
   const previewPath = selection ? buildOshiCardImagePath(selection) : null;
-  // 選択を変えるたびに画像を作り直さないよう、少し待ってから更新する
+  const previewSize = oshiCardImageDimensions('feed', variant);
+  // 選択・入力を変えるたびに画像を作り直さないよう、少し待ってから更新する（文字入力中は少し長めに待つ）
   const [shownPreview, setShownPreview] = useState<string | null>(previewPath);
+  const [lastTyped, setLastTyped] = useState(0);
   useEffect(() => {
-    const t = setTimeout(() => setShownPreview(previewPath), 450);
+    const t = setTimeout(() => setShownPreview(previewPath), Date.now() - lastTyped < 1000 ? 700 : 250);
     return () => clearTimeout(t);
-  }, [previewPath]);
+  }, [previewPath, lastTyped]);
   const [previewLoading, setPreviewLoading] = useState(false);
-  useEffect(() => { if (shownPreview) setPreviewLoading(true); }, [shownPreview]);
+  const [previewError, setPreviewError] = useState(false);
+  // 表示できた最後の画像（更新に失敗したときは、これを表示したままにする）
+  const [goodPreview, setGoodPreview] = useState<string | null>(null);
+  useEffect(() => { if (shownPreview) { setPreviewLoading(true); setPreviewError(false); } }, [shownPreview]);
+  const changeTcg = (next: OshiCardTcgDraft) => { setLastTyped(Date.now()); setTcgDraft(next); };
 
   const full = selected.length >= OSHI_CARD_MAX_WORKS;
 
@@ -91,30 +111,29 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
 
   const submit = () => {
     if (!selection || submitting) return;
-    sendGaEvent('oshi_card_generate', { variant, phrase, work_count: selected.length, ...oshiCardShareParams() });
+    sendGaEvent('oshi_card_generate', { variant, phrase, work_count: selected.length, ...(isTcg ? { tcg_color: tcg.color ?? 'default', tcg_custom_name: !!tcg.name } : {}), ...oshiCardShareParams() });
     setSubmitting(true);
     router.push(buildOshiCardResultPath(selection));
   };
 
-  if (candidates.length === 0) {
-    return (
-      <div className="oc-panel">
-        <p className="oc-empty-title">{person.name}の出演作品は、まだ推しサーチに登録されていません。</p>
-        <p className="oc-note">布教カードは、推しサーチに登録されている出演作品から作ります。作品が登録されたら作れるようになります。</p>
-        <div className="oc-row-buttons">
-          <Link href={`/person/${encodeURIComponent(person.name)}`} className="oc-btn-sub">{person.name}のページを見る</Link>
-          <Link href={OSHI_CARD_PATH} className="oc-btn-sub">ほかの推しで作る</Link>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="oc-editor">
+      {noWorks && (
+        <div className="oc-panel">
+          <p className="oc-empty-title">{person.name}の出演作品は、まだ推しサーチに登録されていません。</p>
+          <p className="oc-note">ノーマル・デコのカードは、推しサーチに登録されている出演作品から作ります。作品が登録されたら作れるようになります。名前が主役のトレカ風デザイン（ベーシック・SSR・レジェンド）は、作品なしで作れます。</p>
+          <div className="oc-row-buttons">
+            <Link href={`/person/${encodeURIComponent(person.name)}`} className="oc-btn-sub">{person.name}のページを見る</Link>
+            <Link href={OSHI_CARD_PATH} className="oc-btn-sub">ほかの推しで作る</Link>
+          </div>
+        </div>
+      )}
+      {!noWorks && (<>
       {/* ② 作品を選ぶ */}
       <section className="oc-step" style={secLabel('STEP')} aria-labelledby="oc-step-works">
-        <h2 id="oc-step-works" className="oc-step-title">おすすめしたい作品を選ぶ（1〜3作品）</h2>
+        <h2 id="oc-step-works" className="oc-step-title">{isTcg ? 'おすすめしたい作品を選ぶ（0〜3作品）' : 'おすすめしたい作品を選ぶ（1〜3作品）'}</h2>
         <p className="oc-note">あなたが好きな作品を選んでください。カードには「投稿者のおすすめ」として表示され、公式の順位にはなりません。</p>
+        {isTcg && <p className="oc-note">トレカ風のデザイン（ベーシック・SSR・レジェンド）は、作品を選ばなくても作れます。</p>}
         {types.length > 1 && (
           <div className="oc-chips" role="radiogroup" aria-label="作品の分類">
             <button type="button" role="radio" aria-checked={typeFilter === 'all'} className={`oc-chip${typeFilter === 'all' ? ' is-on' : ''}`} onClick={() => { setTypeFilter('all'); setLimit(PAGE_SIZE); }}>すべて {candidates.length}</button>
@@ -183,36 +202,54 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
         )}
       </section>
 
-      {/* ④ デザイン・⑤ ひとこと */}
-      <section className="oc-step" style={secLabel('STEP')} aria-labelledby="oc-step-design">
-        <h2 id="oc-step-design" className="oc-step-title">デザインとひとことを選ぶ</h2>
-        <OshiCardVariantToggle value={variant} onChange={chooseVariant} />
-        <div className="oc-phrases" role="radiogroup" aria-label="カードのひとこと">
-          {OSHI_CARD_PHRASES.map((p) => (
-            <button key={p.id} type="button" role="radio" aria-checked={phrase === p.id} className={`oc-phrase${phrase === p.id ? ' is-on' : ''}`} onClick={() => setPhrase(p.id)}>{p.text}</button>
-          ))}
-        </div>
-      </section>
+      </>)}
 
-      {/* プレビュー・作成 */}
-      <section className="oc-step" style={secLabel('STEP')} aria-labelledby="oc-step-preview">
-        <h2 id="oc-step-preview" className="oc-step-title">プレビュー</h2>
-        <div className="oc-preview">
-          {shownPreview ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={shownPreview} alt={`${person.name}の布教カードのプレビュー`} width={1080} height={1350} className={`oc-preview-image${previewLoading ? ' is-loading' : ''}`} onLoad={() => setPreviewLoading(false)} onError={() => setPreviewLoading(false)} />
-          ) : (
-            <div className="oc-preview-image oc-preview-empty"><span>作品を選ぶとプレビューが表示されます</span></div>
-          )}
+      {/* ④ デザイン・カスタマイズ・ひとこと・プレビュー
+          スマホ：デザイン → プレビュー → カスタマイズ → ひとこと（選んだらすぐ下でプレビューが変わる）。
+          PC（幅720px以上）：左に操作、右にプレビュー（画面に追従） */}
+      <section className="oc-step" style={secLabel('STEP')} aria-labelledby="oc-step-design">
+        <h2 id="oc-step-design" className="oc-step-title">デザインを選んでプレビュー</h2>
+        <div className="oc-design-grid">
+          <div className="oc-design-variants">
+            <OshiCardVariantToggle value={variant} onChange={chooseVariant} only={noWorks ? ['basic', 'ssr', 'legend'] : undefined} />
+          </div>
+          <div className="oc-design-preview">
+            <div className="oc-preview" data-shape={isTcg ? 'tcg' : 'feed'}>
+              {shownPreview ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={previewError && goodPreview ? goodPreview : shownPreview}
+                  alt={`${person.name}の布教カード（${oshiCardVariantLabel(variant)}）のプレビュー`}
+                  width={previewSize.width}
+                  height={previewSize.height}
+                  className={`oc-preview-image${previewLoading ? ' is-loading' : ''}`}
+                  onLoad={(e) => { setPreviewLoading(false); if (!previewError) setGoodPreview(e.currentTarget.currentSrc || shownPreview); }}
+                  onError={() => { setPreviewLoading(false); setPreviewError(true); }}
+                />
+              ) : (
+                <div className="oc-preview-image oc-preview-empty"><span>作品を選ぶとプレビューが表示されます</span></div>
+              )}
+            </div>
+            {previewError && <p className="oc-note oc-center" role="status">プレビューを更新できませんでした。少し待ってから、もう一度変更してみてください。</p>}
+          </div>
+          <div className="oc-design-options">
+            {isTcg && <OshiCardTcgFields variant={variant} person={person} draft={tcgDraft} onChange={changeTcg} />}
+            <p className="oc-label oc-phrase-label">ひとこと</p>
+            <div className="oc-phrases" role="radiogroup" aria-label="カードのひとこと">
+              {OSHI_CARD_PHRASES.map((p) => (
+                <button key={p.id} type="button" role="radio" aria-checked={phrase === p.id} className={`oc-phrase${phrase === p.id ? ' is-on' : ''}`} onClick={() => setPhrase(p.id)}>{p.text}</button>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
 
       {/* 作成ボタンは作成画面全体の末尾に置き、作品を1つ選んだら画面下に固定する（作品を選びながら押せるように） */}
       <div className={`oc-submit${selection ? ' is-sticky' : ''}`}>
         <button type="button" className="oc-btn-main" disabled={!selection || submitting} onClick={submit}>
-          {submitting ? 'カードを作っています…' : selection ? `このカードを作る（${selected.length}作品）` : 'このカードを作る'}
+          {submitting ? 'カードを作っています…' : selection ? (selected.length > 0 ? `このカードを作る（${selected.length}作品）` : 'このカードを作る') : 'このカードを作る'}
         </button>
-        {!selection && <p className="oc-note" role="status">おすすめ作品を1つ以上選んでください</p>}
+        {!selection && <p className="oc-note" role="status">おすすめ作品を1つ以上選んでください（トレカ風のデザインは作品なしでも作れます）</p>}
       </div>
     </div>
   );
