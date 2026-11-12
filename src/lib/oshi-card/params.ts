@@ -9,7 +9,7 @@
 //
 // - p     … 人物（1人）
 // - w     … おすすめ作品の id（1〜3件・この順で表示）
-// - v     … デザイン（cool / cute / basic / ssr / legend。既定 cool）。basic・ssr・legend はトレカ風（src/lib/oshi-card/tcg.ts）
+// - v     … デザイン（cool / cute / basic / ssr。既定 cool）。basic・ssr はトレカ風（src/lib/oshi-card/tcg.ts）。legend は未公開（受け付けない）
 // - ph    … ひとこと（定型フレーズの id。既定 fukyo）
 // - edit  … 1 のとき、完成カードの内容を引き継いで編集画面を開く
 // - from  … 入口（person / top / share）。計測用
@@ -35,10 +35,14 @@ const MAX_WORK_ID_LENGTH = 200;
 /** カードのデザイン（サブスク診断の共有画像と同じ2系統 cool / cute ＋ トレカ風3種類 basic / ssr / legend） */
 export type OshiCardVariant = OshiVodShareVariant | OshiCardTcgVariant;
 export const OSHI_CARD_DEFAULT_VARIANT: OshiCardVariant = OSHI_VOD_DEFAULT_SHARE_VARIANT;
-export const OSHI_CARD_VARIANTS: readonly OshiCardVariant[] = ['cool', 'cute', 'basic', 'ssr', 'legend'];
+/**
+ * 公開中のデザイン（選択肢・共有URL・計測で受け付けるもの）。
+ * レジェンド（legend）は描画のコードはあるが未公開：選択肢に出さず、v=legend は既定のデザインとして扱う。公開するときはここに加える。
+ */
+export const OSHI_CARD_VARIANTS: readonly OshiCardVariant[] = ['cool', 'cute', 'basic', 'ssr'];
 
 export function isOshiCardVariant(raw: unknown): raw is OshiCardVariant {
-  return isOshiVodShareVariant(raw) || isOshiCardTcgVariant(raw);
+  return (isOshiVodShareVariant(raw) || isOshiCardTcgVariant(raw)) && OSHI_CARD_VARIANTS.includes(raw);
 }
 
 export function parseOshiCardVariant(raw: string | string[] | null | undefined): OshiCardVariant {

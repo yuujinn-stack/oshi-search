@@ -213,11 +213,11 @@ describe('トレカ風：画像API', () => {
   const get = (qs: string) => respondOshiCardImage(new NextRequest(`https://oshi-search.jp/api/oshi-card/image?${qs}`), { buildPath: (sel, size) => buildOshiCardImagePath(sel, size) });
 
   it('トレカ風は作品0件でも 200（1260×1760）、ノーマルは 400。指定した作品が全部無効なら 400', async () => {
-    const ok = await get(`p=${P}&v=legend`);
+    const ok = await get(`p=${P}&v=ssr`);
     expect(ok.status).toBe(200);
     expect(ok.headers.get('x-size')).toBe('1260x1760');
     expect((await get(`p=${P}`)).status).toBe(400);
-    expect((await get(`p=${P}&w=nobody&v=legend`)).status).toBe(400);
+    expect((await get(`p=${P}&w=nobody&v=basic`)).status).toBe(400);
     expect((await get(`p=${P}&w=w1&v=ssr&size=story`)).headers.get('x-size')).toBe('1080x1920');
   });
 
@@ -225,5 +225,28 @@ describe('トレカ風：画像API', () => {
     const res = await get(`p=${P}&w=w1&v=basic&nm=${P}&tr=${encodeURIComponent('https://spam.example.com')}&pw=9999&c=pink`);
     expect(res.status).toBe(308);
     expect(new URL(res.headers.get('location')!).search).toBe(`?p=${P}&w=w1&v=basic`);
+  });
+});
+
+describe('公開中のデザイン（レジェンドは未公開）', () => {
+  it('cool・cute・basic・ssr だけを受け付け、legend は既定のデザインとして扱う', async () => {
+    const { OSHI_CARD_VARIANTS, isOshiCardVariant, parseOshiCardVariant, OSHI_CARD_DEFAULT_VARIANT } = await import('@/lib/oshi-card/params');
+    expect([...OSHI_CARD_VARIANTS]).toEqual(['cool', 'cute', 'basic', 'ssr']);
+    for (const v of ['cool', 'cute', 'basic', 'ssr']) expect(parseOshiCardVariant(v)).toBe(v);
+    expect(isOshiCardVariant('legend')).toBe(false);
+    expect(parseOshiCardVariant('legend')).toBe(OSHI_CARD_DEFAULT_VARIANT);
+  });
+
+  it('デザインの選択肢にレジェンドを出さない', async () => {
+    const { OSHI_CARD_VARIANT_OPTIONS } = await import('@/components/oshi-card/OshiCardVariantToggle');
+    expect(OSHI_CARD_VARIANT_OPTIONS.map((o) => o.value)).toEqual(['cool', 'cute', 'basic', 'ssr']);
+    expect(OSHI_CARD_VARIANT_OPTIONS.map((o) => o.label)).toEqual(['ノーマル', 'デコ', 'ベーシック', 'SSR']);
+  });
+
+  it('画像API：v=legend は既定のデザインの正規 URL へ 308（レジェンドの画像は作らない）', async () => {
+    vi.mocked(loadOshiCardPerson).mockResolvedValue({ name: '目黒蓮', group: 'Snow Man', candidates: [{ id: 'w1', title: '作品1', displayType: 'drama', typeLabel: 'ドラマ', year: 2020, url: '/work/w1' }] } as never);
+    const res = await respondOshiCardImage(new NextRequest(`https://oshi-search.jp/api/oshi-card/image?p=${encodeURIComponent('目黒蓮')}&w=w1&v=legend`), { buildPath: (sel, size) => buildOshiCardImagePath(sel, size) });
+    expect(res.status).toBe(308);
+    expect(res.headers.get('location')).not.toContain('v=');
   });
 });

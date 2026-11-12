@@ -5964,3 +5964,14 @@ oshi-search（未commit）
 - **B6：** 診断結果を見出し → サービス名・見放題で見られる作品数 → カバー率・料金まで（結果のカードの下端まで）ゆっくり送る。
 - 実画面の拡大率・配色・装飾・全体構成は変更なし。架空の情報・画面は追加していない。ほかの7種類の配分・撮影は変更なし。
 - **確認：** B1 20.3秒・B2 16.8秒・B6 17.6秒を再生成し QA PASS。oshi-search tsc 0件・vitest 171ファイル/2,712件、oshi-video-maker tsc 0件・テスト226件。
+
+## Task 188：推し布教カードのトレカ風 A（ベーシック）・B（SSR）を公開できる状態に（2026-11-12・本番デプロイなし）
+
+**作業場所：** worktree `~/dev/oshi-search-card-release`、ブランチ `feat/oshi-card-tcg-ab`（origin/main `7a9ca0d` から）。main の未コミット変更は巻き込まない（推し布教カードの30ファイルだけを切り出した commit を適用）。
+
+**公開するデザイン：** ノーマル（cool）・デコ（cute）・A ベーシック（basic）・B SSR（ssr）。C レジェンド（legend）は描画のコードを残したまま未公開。
+- `src/lib/oshi-card/params.ts`：`OSHI_CARD_VARIANTS = ['cool','cute','basic','ssr']`。`isOshiCardVariant` はこの一覧にあるものだけ true（v=legend は既定のデザインとして扱い、画像 API は正規 URL へ 308）。公開するときはここに加える
+- `src/components/oshi-card/OshiCardVariantToggle.tsx`：選択肢を `OSHI_CARD_VARIANTS` で絞る（4つ）。`OshiCardEditor.tsx`：作品0件のときの選択肢を basic・ssr に
+- B の内容（画像素材・明朝体の名前・118%・PNG の可逆再圧縮・Preview だけの Server-Timing）は Task 188 の記録どおり
+
+**確認：** tsc OK、vitest 183ファイル 2856件成功（レジェンド非公開のテスト3件を追加）。API ハンドラー（DB・Redis はモック）で A・B（feed・長い名前・英語名・story・og）・ノーマル・デコが 200・image/png、画像は変更前とバイト一致。ローカルの本番ビルドはコンパイル・型チェックまで成功（静的生成の /sitemap.xml は DB が必要なため、ダミーの DB では止まる。Vercel では本来の DB で生成）

@@ -211,7 +211,7 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
         <h2 id="oc-step-design" className="oc-step-title">デザインを選んでプレビュー</h2>
         <div className="oc-design-grid">
           <div className="oc-design-variants">
-            <OshiCardVariantToggle value={variant} onChange={chooseVariant} only={noWorks ? ['basic', 'ssr', 'legend'] : undefined} />
+            <OshiCardVariantToggle value={variant} onChange={chooseVariant} only={noWorks ? ['basic', 'ssr'] : undefined} />
           </div>
           <div className="oc-design-preview">
             <div className="oc-preview" data-shape={isTcg ? 'tcg' : 'feed'}>

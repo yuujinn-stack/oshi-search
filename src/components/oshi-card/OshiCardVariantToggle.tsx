@@ -2,10 +2,10 @@
 
 // 推し布教カードのデザイン切り替え。作成画面とカードのページで共通。
 // - ノーマル＝cool・Editorial Premium／デコ＝cute・Fan Sticker（従来の2種類）
-// - ベーシック＝basic／SSR＝ssr／レジェンド＝legend（トレカ風。名前を装飾したカード）
+// - ベーシック＝basic／SSR＝ssr（トレカ風。名前を装飾したカード）。レジェンド＝legend は未公開のため出さない（OSHI_CARD_VARIANTS）
 // 表示名だけを布教カード向けにしている。内部の値は共有URL（v）・OG画像・GA4（variant）と共通のため変えない。
-// スマホでも5つが1行に並ぶよう、小さなカードの形のサムネイル（CSSで描く。画像の読み込みなし）にする。
-import type { OshiCardVariant } from '@/lib/oshi-card/params';
+// スマホでも1行に並ぶよう、小さなカードの形のサムネイル（CSSで描く。画像の読み込みなし）にする。
+import { OSHI_CARD_VARIANTS, type OshiCardVariant } from '@/lib/oshi-card/params';
 
 export const OSHI_CARD_VARIANT_OPTIONS: { value: OshiCardVariant; label: string; hint: string }[] = [
   { value: 'cool', label: 'ノーマル', hint: 'すっきり・見やすいデザイン' },
@@ -13,7 +13,7 @@ export const OSHI_CARD_VARIANT_OPTIONS: { value: OshiCardVariant; label: string;
   { value: 'basic', label: 'ベーシック', hint: 'トレカ風・ピンク×ハート×リボンのかわいいカード' },
   { value: 'ssr', label: 'SSR', hint: 'トレカ風・虹色ホログラムのキラキラカード' },
   { value: 'legend', label: 'レジェンド', hint: 'トレカ風・黒×ゴールドの高級感カード' },
-];
+].filter((o) => OSHI_CARD_VARIANTS.includes(o.value as OshiCardVariant)) as { value: OshiCardVariant; label: string; hint: string }[];
 
 export function oshiCardVariantLabel(v: OshiCardVariant): string {
   return OSHI_CARD_VARIANT_OPTIONS.find((o) => o.value === v)?.label ?? v;
