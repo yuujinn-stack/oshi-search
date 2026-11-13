@@ -61,11 +61,13 @@ interface Theme {
   c: OshiCardColor;
   /** 推し色の縁取り（白は見えないため濃い色にする） */
   ring: string;
+  /** 推し色を選んでいる（false＝省略してテンプレートの色）。SSR のアクセントは選んだときだけ付ける */
+  explicitColor: boolean;
 }
 
 function makeTheme(variant: OshiCardTcgVariant, colorId: OshiCardColorId | null): Theme {
   const c = oshiCardColor(colorId ?? OSHI_CARD_TCG_TEMPLATES[variant].defaultColor);
-  return { variant, c, ring: c.id === 'white' ? c.deep : c.base };
+  return { variant, c, ring: c.id === 'white' ? c.deep : c.base, explicitColor: colorId !== null };
 }
 
 const GOLD_METAL = 'linear-gradient(135deg, #7A4E0E 0%, #F7E08A 16%, #B8861F 33%, #FFF4C2 50%, #A8741A 66%, #F3D27A 83%, #6E4510 100%)';
@@ -1189,11 +1191,15 @@ function BasicCard({ d, t, s }: { d: OshiCardTcgImageData; t: Theme; s: number }
   const k = (n: number) => Math.round(n * s);
   const { c } = t;
   const white = c.id === 'white';
-  const main = white ? '#E58BB0' : c.base;
-  const deep = white ? '#B8577F' : c.deep;
-  const light = white ? '#FFD6E6' : c.light;
+  const yellow = c.id === 'yellow';
+  // 白：パールのような白銀（以前は淡いピンクで、ピンクと見分けにくかった）。黄色：名前の縁を濃くし、淡い黄色の地に埋もれないようにする
+  const main = white ? '#AEB7CC' : yellow ? '#FFBE1A' : c.base;
+  const deep = white ? '#6E7894' : yellow ? '#A86A00' : c.deep;
+  const light = white ? '#EEF1F7' : yellow ? '#FFEC9E' : c.light;
   const pale = mixHex(light, '#FFFFFF', 0.45);
   const ink = '#4A2236';
+  // 淡い色（黄色・白）の見出しの白文字は、濃い縁の影を強めて読みやすくする（他の色は従来どおり）
+  const labelShadow = (a: number, dy: number) => (yellow || white ? `0 0 ${k(3)}px ${deep}, 0 ${k(dy)}px ${k(2)}px ${deep}` : `0 ${k(dy)}px ${k(2)}px ${alpha(deep, a)}`);
   const W = k(BASE_W);
   const H = k(BASE_H);
   const frame = k(30);
@@ -1331,7 +1337,7 @@ function BasicCard({ d, t, s }: { d: OshiCardTcgImageData; t: Theme; s: number }
           <div style={{ display: 'flex', alignItems: 'center', height: k(66), marginTop: k(10) }}>
             <div style={{ display: 'flex', position: 'relative', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: k(214), height: k(62), borderRadius: k(31), backgroundImage: `linear-gradient(180deg, ${mixHex(main, '#FFFFFF', 0.45)} 0%, ${mixHex(main, '#FFFFFF', 0.2)} 60%, ${mixHex(main, '#FFFFFF', 0.05)} 100%)`, border: `${k(3)}px solid #FFFFFF`, boxShadow: `0 ${k(2)}px ${k(4)}px ${alpha(deep, 0.25)}` }}>
               <div style={{ position: 'absolute', left: k(16), right: k(16), top: k(4), height: k(16), display: 'flex', borderRadius: k(8), backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0.1) 100%)' }} />
-              <div style={{ display: 'flex', fontSize: k(36), fontWeight: 700, color: '#FFFFFF', letterSpacing: k(4), textShadow: `0 ${k(1)}px ${k(2)}px ${alpha(deep, 0.5)}` }}>特性</div>
+              <div style={{ display: 'flex', fontSize: k(36), fontWeight: 700, color: '#FFFFFF', letterSpacing: k(4), textShadow: labelShadow(0.5, 1) }}>特性</div>
             </div>
             <div style={{ display: 'flex', marginLeft: k(34), fontSize: traitFont, fontWeight: 700, color: mixHex(deep, '#5A0A30', 0.2), whiteSpace: 'nowrap' }}>{d.trait}</div>
           </div>
@@ -1370,7 +1376,7 @@ function BasicCard({ d, t, s }: { d: OshiCardTcgImageData; t: Theme; s: number }
               </Svg>
               <div style={{ display: 'flex', alignItems: 'center', gap: k(12), marginLeft: k(18) }}>
                 <Clapper size={k(42)} color={deep} />
-                <div style={{ display: 'flex', fontSize: k(34), fontWeight: 700, color: '#FFFFFF', letterSpacing: k(2), textShadow: `0 ${k(2)}px ${k(2)}px ${alpha(deep, 0.55)}` }}>おすすめ出演作品</div>
+                <div style={{ display: 'flex', fontSize: k(34), fontWeight: 700, color: '#FFFFFF', letterSpacing: k(2), textShadow: labelShadow(0.55, 2) }}>おすすめ出演作品</div>
               </div>
             </div>
             {n === 0 ? (
@@ -1434,7 +1440,7 @@ const SSR_NAME_BOOST = 1.18;
 /** B（SSR）：フッターの左端（1260 基準の x）。カード素材の左下の金の唐草の右側 */
 const SSR_FOOTER_LEFT = 290;
 
-export function svgSsrName({ name, width, maxFont, minFont, maxHeight, boost = 1 }: { name: string; width: number; maxFont: number; minFont: number; maxHeight: number; boost?: number }): { el: ReactElement; height: number; font: number } | null {
+export function svgSsrName({ name, width, maxFont, minFont, maxHeight, boost = 1, accent = null }: { name: string; width: number; maxFont: number; minFont: number; maxHeight: number; boost?: number; accent?: SsrAccent | null }): { el: ReactElement; height: number; font: number } | null {
   const sp = 0.02;
   const cond = 0.95; // 横幅の比率（縦長の細身に）
   const skew = -11; // 斜体の角度
@@ -1552,9 +1558,12 @@ export function svgSsrName({ name, width, maxFont, minFont, maxHeight, boost = 1
       </defs>
       <g transform={tf}>
         {/* 発光：青紫（中央）・ピンク（左）・水色（右）と、白い光のにじみ */}
-        <g filter="url(#snbl)" opacity="0.8">{paths({ fill: '#B4A8FF', stroke: '#B4A8FF', strokeWidth: r(u * 0.14), strokeLinejoin: 'round' }, 'g')}</g>
+        {/* 推し色があれば、中央の発光をその色にする（既定の紫は従来の青紫） */}
+        <g filter="url(#snbl)" opacity={accent ? 0.9 : 0.8}>{paths({ fill: accent ? accent.glow : '#B4A8FF', stroke: accent ? accent.glow : '#B4A8FF', strokeWidth: r(u * 0.14), strokeLinejoin: 'round' }, 'g')}</g>
         <g filter="url(#snbl)" opacity="0.34" transform={`translate(${r(-u * 0.04)} 0)`}>{paths({ fill: '#FF9BDD', stroke: '#FF9BDD', strokeWidth: r(u * 0.08), strokeLinejoin: 'round' }, 'p')}</g>
         <g filter="url(#snbl)" opacity="0.38" transform={`translate(${r(u * 0.04)} 0)`}>{paths({ fill: '#7FD8FF', stroke: '#7FD8FF', strokeWidth: r(u * 0.08), strokeLinejoin: 'round' }, 'c')}</g>
+        {/* 推し色の細い縁取り（白い縁のすぐ外側に見える） */}
+        {accent && <g filter="url(#snbs)">{paths({ fill: accent.ring, stroke: accent.ring, strokeWidth: r(u * 0.105 + tk * 2), strokeLinejoin: 'round' }, 'ar')}</g>}
         <g filter="url(#snbs)">{paths({ fill: '#FFFFFF', stroke: '#FFFFFF', strokeWidth: r(u * 0.06 + tk * 2), strokeLinejoin: 'round' }, 'w')}</g>
         {/* 立体の影：文字の背後にだけ（右下へずらした1枚の青紫＋やわらかなぼかし）。層を重ねないので横線は出ない */}
         <g filter="url(#snbs)" opacity="0.7" transform={`translate(${r(u * 0.027)} ${r(u * 0.039)})`}>{paths({ fill: '#3E3AA8', stroke: '#3E3AA8', strokeWidth: r(tk * 2), strokeLinejoin: 'round' }, 'sb')}</g>
@@ -1654,7 +1663,7 @@ function CrystalStar({ x, y, size, rotate = 0 }: { x: number; y: number; size: n
 }
 
 /** 名前を囲む楕円の光の軌跡。back＝名前の後ろ側（上半分）、front＝手前側（下半分） */
-function LightOrbit({ w, h, cx, cy, rx, ry, rotate, part }: { w: number; h: number; cx: number; cy: number; rx: number; ry: number; rotate: number; part: 'back' | 'front' }) {
+function LightOrbit({ w, h, cx, cy, rx, ry, rotate, part, accent = null }: { w: number; h: number; cx: number; cy: number; rx: number; ry: number; rotate: number; part: 'back' | 'front'; accent?: SsrAccent | null }) {
   const id = part === 'back' ? 'lob' : 'lof';
   // 楕円の半分（上半分＝左端→右端を上回り、下半分＝右端→左端を下回り）
   const d = part === 'back' ? `M ${cx - rx} ${cy} A ${rx} ${ry} 0 0 1 ${cx + rx} ${cy}` : `M ${cx + rx} ${cy} A ${rx} ${ry} 0 0 1 ${cx - rx} ${cy}`;
@@ -1672,7 +1681,8 @@ function LightOrbit({ w, h, cx, cy, rx, ry, rotate, part }: { w: number; h: numb
         {/* 金・紫・水色の反射（少しずらして重ねた光）と白い芯 */}
         <g filter={`url(#${id}b)`}>
           <path d={d} fill="none" stroke="#FFE3A0" strokeWidth={Math.max(2, ry * 0.06)} opacity="0.75" transform={`translate(0 ${-ry * 0.03})`} />
-          <path d={d} fill="none" stroke="#C6A6FF" strokeWidth={Math.max(2, ry * 0.07)} opacity="0.6" transform={`translate(0 ${ry * 0.04})`} />
+          {/* 紫の反射の1本だけ、推し色があればその色にする（控えめな光のアクセント） */}
+          <path d={d} fill="none" stroke={accent ? accent.glow : '#C6A6FF'} strokeWidth={Math.max(2, ry * 0.07)} opacity={accent ? 0.75 : 0.6} transform={`translate(0 ${ry * 0.04})`} />
           <path d={d} fill="none" stroke="#A6E8FF" strokeWidth={Math.max(2, ry * 0.05)} opacity="0.55" transform={`translate(0 ${ry * 0.07})`} />
           <path d={d} fill="none" stroke="#FFFFFF" strokeWidth={Math.max(2, ry * 0.08)} opacity="0.7" />
         </g>
@@ -1700,15 +1710,40 @@ function SsrBadge({ k, x, y }: { k: (n: number) => number; x: number; y: number 
   );
 }
 
-/** 沼ポイントの宝石の丸（水色のカット） */
-function GemDot({ size }: { size: number }) {
+/**
+ * SSR の推し色のアクセント（限定的な装飾だけに使う：名前の発光・縁取り、特性のきらめき、沼ポイントの宝石、光の軌跡の1本）。
+ * 背景素材・金のフレーム・ホログラム・名前の虹色の表面・レイアウトは推し色で変えない。
+ * 推し色を選んでいないとき（URL に c がない＝既存の共有URL・既定）は null（従来の SSR と同じ見た目のまま）。
+ * 紫を明示的に選んだときは紫のアクセントを付ける。白・黒・黄色は淡いホログラムの上で埋もれないように調整した色を使う。
+ */
+export interface SsrAccent {
+  /** 名前の外側のやわらかな発光 */
+  glow: string;
+  /** 名前の白い縁の外側の細い縁取り */
+  ring: string;
+  /** 宝石・きらめきの色（明るい面・基本・濃い縁） */
+  light: string;
+  base: string;
+  deep: string;
+}
+export function ssrAccentOf(c: OshiCardColor, explicit: boolean): SsrAccent | null {
+  if (!explicit) return null;
+  if (c.id === 'white') return { glow: '#FFFFFF', ring: '#A7B0C8', light: '#FFFFFF', base: '#E9EDF6', deep: '#8D97B2' };
+  if (c.id === 'black') return { glow: '#5B5670', ring: '#25222F', light: '#8C8AA0', base: '#3A3748', deep: '#121018' };
+  if (c.id === 'yellow') return { glow: '#FFC928', ring: '#E0A100', light: '#FFF0B0', base: '#FFC928', deep: '#B07800' };
+  return { glow: c.base, ring: c.base, light: c.light, base: c.base, deep: c.deep };
+}
+
+/** 沼ポイントの宝石の丸（既定は水色のカット。推し色があればその色のカット） */
+function GemDot({ size, accent }: { size: number; accent?: SsrAccent | null }) {
+  const a = accent;
   return (
     <svg width={size} height={size} viewBox="0 0 40 40">
-      <circle cx="20" cy="20" r="18" fill="#EEF2FF" stroke="#9AA6E8" strokeWidth="2.4" />
+      <circle cx="20" cy="20" r="18" fill="#EEF2FF" stroke={a ? a.deep : '#9AA6E8'} strokeWidth="2.4" />
       <circle cx="20" cy="20" r="14" fill="#FFFFFF" />
-      <polygon points="20,8 30,18 20,32 10,18" fill="#9FD0FF" stroke="#6F8FE6" strokeWidth="1.6" strokeLinejoin="round" />
-      <polygon points="20,8 25,18 20,32 15,18" fill="#D6EEFF" opacity="0.9" />
-      <polygon points="10,18 30,18 20,32" fill="#7FB2F5" opacity="0.35" />
+      <polygon points="20,8 30,18 20,32 10,18" fill={a ? a.base : '#9FD0FF'} stroke={a ? a.deep : '#6F8FE6'} strokeWidth="1.6" strokeLinejoin="round" />
+      <polygon points="20,8 25,18 20,32 15,18" fill={a ? a.light : '#D6EEFF'} opacity="0.9" />
+      <polygon points="10,18 30,18 20,32" fill={a ? a.deep : '#7FB2F5'} opacity="0.35" />
     </svg>
   );
 }
@@ -1723,6 +1758,7 @@ function SsrCard({ d, t, s }: { d: OshiCardTcgImageData; t: Theme; s: number }) 
   const innerW = W - band * 2;
   const innerH = H - band * 2;
   const gem = c.id === 'white' ? '#FF9FD8' : c.base;
+  const accent = ssrAccentOf(c, t.explicitColor);
   // 参考デザインBの測定値（カードに対する比率）から：ヘッダー 3〜9%、名前面 〜48%、特性 52%、沼ポイント 64%、作品欄 75〜95%
   const headTop = k(14);
   const headH = k(110);
@@ -1733,7 +1769,7 @@ function SsrCard({ d, t, s }: { d: OshiCardTcgImageData; t: Theme; s: number }) 
   // 名前：字形の高さ ≒ カードの 13%、幅は最大でカードの 76%
   const nameW = Math.round(artW * 0.82);
   const nameMaxH = k(Math.round(385 * SSR_NAME_BOOST));
-  const deco = svgSsrName({ name: d.name, width: nameW, maxFont: k(Math.round(300 * SSR_NAME_BOOST)), minFont: k(70), maxHeight: nameMaxH, boost: SSR_NAME_BOOST });
+  const deco = svgSsrName({ name: d.name, width: nameW, maxFont: k(Math.round(300 * SSR_NAME_BOOST)), minFont: k(70), maxHeight: nameMaxH, boost: SSR_NAME_BOOST, accent });
   const nameLayout = layoutTcgName(d.name, nameW, k(260), k(70), nameMaxH);
   const nameH = deco ? deco.height : Math.round(nameLayout.font * 1.12) * nameLayout.lines.length + Math.round(nameLayout.font * 0.2);
   const nameCY = artH * 0.6;
@@ -1784,12 +1820,12 @@ function SsrCard({ d, t, s }: { d: OshiCardTcgImageData; t: Theme; s: number }) 
 
         {/* ── 名前面 ── */}
         <div style={{ position: 'absolute', left: 0, top: artTop, width: artW, height: artH, display: 'flex' }}>
-          <LightOrbit w={artW} h={artH} cx={orbit.cx} cy={orbit.cy} rx={orbit.rx} ry={orbit.ry} rotate={orbit.rotate} part="back" />
+          <LightOrbit w={artW} h={artH} cx={orbit.cx} cy={orbit.cy} rx={orbit.rx} ry={orbit.ry} rotate={orbit.rotate} part="back" accent={accent} />
           <CrystalCrown x={cx} y={crownY} width={crownW} gem={gem} />
           <div style={{ position: 'absolute', left: (artW - nameW) / 2, top: nameTop, width: nameW, height: nameH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {deco ? <div style={{ display: 'flex', position: 'relative', width: nameW, height: nameH }}>{deco.el}</div> : <FancyName name={d.name} width={nameW} maxFont={k(260)} minFont={k(70)} maxHeight={nameMaxH} t={t} />}
           </div>
-          <LightOrbit w={artW} h={artH} cx={orbit.cx} cy={orbit.cy} rx={orbit.rx} ry={orbit.ry} rotate={orbit.rotate} part="front" />
+          <LightOrbit w={artW} h={artH} cx={orbit.cx} cy={orbit.cy} rx={orbit.rx} ry={orbit.ry} rotate={orbit.rotate} part="front" accent={accent} />
           <Sparkle x={artW * 0.2} y={artH * 0.86} size={k(96)} color="#FFF3C8" glow="rgba(255,214,130,0.85)" />
           <CrystalStar x={artW * 0.8} y={artH * 0.88} size={k(150)} rotate={-8} />
           <Sparkle x={artW * 0.73} y={artH * 0.8} size={k(44)} color="#FFFFFF" glow="rgba(255,255,255,0.9)" />
@@ -1812,13 +1848,13 @@ function SsrCard({ d, t, s }: { d: OshiCardTcgImageData; t: Theme; s: number }) 
               <div style={{ display: 'flex', fontSize: k(36), fontWeight: 700, color: '#FFFFFF', letterSpacing: k(4) }}>特性</div>
             </div>
             <div style={{ display: 'flex', marginLeft: k(34), fontSize: traitFont, fontWeight: 700, color: '#B0145A', whiteSpace: 'nowrap' }}>{d.trait}</div>
-            <svg width={k(40)} height={k(40)} viewBox="0 0 24 24" style={{ marginLeft: k(12) }}><path d={SPARKLE_D} fill="#F2C24E" /></svg>
+            <svg width={k(40)} height={k(40)} viewBox="0 0 24 24" style={{ marginLeft: k(12) }}>{accent ? <path d={SPARKLE_D} fill={accent.base} stroke="#D9A93A" strokeWidth="1.2" strokeLinejoin="round" /> : <path d={SPARKLE_D} fill="#F2C24E" />}</svg>
           </div>
           <div style={{ display: 'flex', marginTop: k(22), paddingLeft: k(20), fontSize: bodyFont(traitBody), fontWeight: 700, color: SSR_INK, whiteSpace: 'nowrap' }}>{traitBody}</div>
           <div style={{ display: 'flex', marginTop: k(30), height: k(2), backgroundImage: goldLine, opacity: 0.8 }} />
           {/* 沼ポイント：宝石の丸3つ＋見出し（右に数値：入力がある場合だけ）、下に本文1行 */}
           <div style={{ display: 'flex', alignItems: 'center', height: k(72), marginTop: k(32) }}>
-            <div style={{ display: 'flex', gap: k(4) }}>{[0, 1, 2].map((i) => <GemDot key={i} size={k(62)} />)}</div>
+            <div style={{ display: 'flex', gap: k(4) }}>{[0, 1, 2].map((i) => <GemDot key={i} size={k(62)} accent={accent} />)}</div>
             <div style={{ display: 'flex', flex: 1, marginLeft: k(46), fontSize: k(46), fontWeight: 700, color: SSR_INK }}>沼ポイント</div>
             {numaScore !== null && <div style={{ display: 'flex', marginRight: k(30), fontSize: k(48), fontWeight: 700, color: SSR_INK }}>{numaScore}</div>}
           </div>

@@ -161,6 +161,21 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshicard { --
   aspect-ratio: 1260 / 1760; border: 0; border-radius: 4.8%/3.5%; background: transparent; box-shadow: 0 6px 18px rgba(0,0,0,0.18);
 }
 .oc-page .oc-preview-image.is-loading { opacity: 0.55; transition: opacity 0.2s; }
+/* 推し色：選んだ瞬間にプレビューの周りを選んだ色で光らせ、「反映中」を出す（画像が届いたら消える。画像そのものには付かない） */
+.oc-page .oc-preview > * { grid-area: 1 / 1; }
+.oc-page .oc-preview[data-oshi-pending] .oc-preview-image {
+  box-shadow: 0 0 0 3px var(--oc-oshi-ring), 0 0 22px 6px color-mix(in srgb, var(--oc-oshi) 75%, transparent), 0 6px 18px rgba(0,0,0,0.18);
+  transition: box-shadow 0.2s ease-out, opacity 0.2s;
+}
+.oc-page .oc-preview-oshi {
+  align-self: end; justify-self: center; z-index: 1; margin: 0 8px 14px; padding: 5px 12px; /* 下側に置く（カード上部の SSR 表示・名前と重ならないように） */ display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 700; color: #1E1F24; background: rgba(255, 255, 255, 0.94); border-radius: 999px;
+  box-shadow: 0 0 0 2px var(--oc-oshi-ring), 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+.oc-page .oc-preview-oshi-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--oc-oshi); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); flex-shrink: 0; }
+.oc-page .oc-preview-oshi-note { margin: 10px auto 0; max-width: 320px; font-size: 12px; line-height: 1.6; text-align: center; color: var(--graphic-body); }
+.oc-page .oc-preview-oshi-note .oc-preview-oshi-dot { margin: 0 4px 0 2px; vertical-align: -1px; }
+@media (prefers-reduced-motion: reduce) { .oc-page .oc-preview[data-oshi-pending] .oc-preview-image { transition: none; } }
 .oc-page .oc-preview-empty { display: flex; align-items: center; justify-content: center; padding: 16px; text-align: center; font-size: 13px; color: var(--graphic-muted); }
 /* 2デザインの画像を重ね、選択中だけを見せる（display:none の画像は読み込みが後回しになるため visibility で切り替える） */
 .oc-page img.oc-share-image:not(.is-active) { visibility: hidden; position: absolute; top: 0; left: 0; }
@@ -224,7 +239,8 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshicard { --
 .oc-page .oc-design-options { grid-area: options; min-width: 0; }
 @media (min-width: 720px) {
   .oc-page .oc-design-grid { grid-template-columns: minmax(0, 1fr) 300px; grid-template-areas: "variants preview" "options preview"; align-items: start; column-gap: 20px; }
-  .oc-page .oc-design-preview { position: sticky; top: 16px; }
+  /* 共通ヘッダー（.site-header：sticky・top:0・高さ約69px・z-index:50）の下に止める（以前の top:16px ではスクロール時に上端がヘッダーに隠れた） */
+  .oc-page .oc-design-preview { position: sticky; top: 86px; }
 }
 
 @media (min-width: 640px) {

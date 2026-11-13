@@ -22,7 +22,7 @@ import {
   type OshiCardSelection,
   type OshiCardVariant,
 } from '@/lib/oshi-card/params';
-import { isOshiCardTcgVariant, oshiCardTcgDraftFrom, oshiCardTcgFromDraft, type OshiCardTcgDraft, type OshiCardTcgOptions } from '@/lib/oshi-card/tcg';
+import { isOshiCardColorId, isOshiCardTcgVariant, oshiCardColor, oshiCardTcgDraftFrom, oshiCardTcgFromDraft, OSHI_CARD_TCG_TEMPLATES, type OshiCardColorId, type OshiCardTcgDraft, type OshiCardTcgOptions, type OshiCardTcgVariant } from '@/lib/oshi-card/tcg';
 import { oshiCardShareParams } from '@/lib/oshi-card/attribution';
 import { sendGaEvent } from '@/lib/ga-event';
 import OshiCardVariantToggle, { oshiCardVariantLabel } from './OshiCardVariantToggle';
@@ -90,6 +90,13 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
   const [goodPreview, setGoodPreview] = useState<string | null>(null);
   useEffect(() => { if (shownPreview) { setPreviewLoading(true); setPreviewError(false); } }, [shownPreview]);
   const changeTcg = (next: OshiCardTcgDraft) => { setLastTyped(Date.now()); setTcgDraft(next); };
+  // 推し色：選んだ瞬間にプレビューの周りを選んだ色で光らせ、「反映中」を出す（画像の作り直しは従来どおり裏で行い、届いたら消える）。
+  // 表示中の画像の推し色（URL の c）と、これから表示する画像の推し色が違う間だけ出す。
+  // 色は画像の URL で比べる（SSR は「紫を明示」と「省略＝既定」が別の画像のため、色名ではなく c の有無まで比べる）
+  const oshiColor: OshiCardColorId | null = isOshiCardTcgVariant(variant) ? tcg.color ?? OSHI_CARD_TCG_TEMPLATES[variant].defaultColor : null;
+  const wantColor = isOshiCardTcgVariant(variant) ? previewColorParamOf(previewPath, variant) : undefined;
+  const shownColor = isOshiCardTcgVariant(variant) ? previewColorParamOf(goodPreview, variant) : undefined;
+  const oshiPending = !!oshiColor && !previewError && wantColor !== undefined && shownColor !== undefined && shownColor !== wantColor;
 
   const full = selected.length >= OSHI_CARD_MAX_WORKS;
 
@@ -279,7 +286,12 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
             <OshiCardVariantToggle value={variant} onChange={chooseVariant} only={noWorks ? ['basic', 'ssr'] : undefined} />
           </div>
           <div className="oc-design-preview">
-            <div className="oc-preview" data-shape={isTcg ? 'tcg' : 'feed'}>
+            <div
+              className="oc-preview"
+              data-shape={isTcg ? 'tcg' : 'feed'}
+              data-oshi-pending={oshiPending ? 'true' : undefined}
+              style={oshiColor ? ({ '--oc-oshi': oshiColor === 'white' ? '#FFFFFF' : oshiCardColor(oshiColor).base, '--oc-oshi-ring': oshiColor === 'white' ? '#A7B0C8' : oshiCardColor(oshiColor).base } as React.CSSProperties) : undefined}
+            >
               {shownPreview ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -288,13 +300,19 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
                   width={previewSize.width}
                   height={previewSize.height}
                   className={`oc-preview-image${previewLoading ? ' is-loading' : ''}`}
+                  // 読み込み済み（キャッシュ）の画像に戻したときは、読み込み中の表示を始める前に load が終わることがあるため、ここでも終わりを拾う
+                  ref={(el) => { if (el && previewLoading && !previewError && el.complete && el.naturalWidth > 0 && el.getAttribute('src') === shownPreview) { setPreviewLoading(false); setGoodPreview(el.currentSrc || shownPreview); } }}
                   onLoad={(e) => { setPreviewLoading(false); if (!previewError) setGoodPreview(e.currentTarget.currentSrc || shownPreview); }}
                   onError={() => { setPreviewLoading(false); setPreviewError(true); }}
                 />
               ) : (
                 <div className="oc-preview-image oc-preview-empty"><span>作品を選ぶとプレビューが表示されます</span></div>
               )}
+              {oshiPending && oshiColor && (
+                <p className="oc-preview-oshi" role="status"><span className="oc-preview-oshi-dot" aria-hidden="true" />推し色「{oshiCardColor(oshiColor).label}」を反映中…</p>
+              )}
             </div>
+            {oshiColor && <p className="oc-preview-oshi-note">推し色：<span className="oc-preview-oshi-dot" aria-hidden="true" style={{ background: oshiColor === 'white' ? '#FFFFFF' : oshiCardColor(oshiColor).base }} />{oshiCardColor(oshiColor).label}（{OSHI_CARD_COLOR_WHERE[variant as OshiCardTcgVariant]}）</p>}
             {previewError && <p className="oc-note oc-center" role="status">プレビューを更新できませんでした。少し待ってから、もう一度変更してみてください。</p>}
           </div>
           <div className="oc-design-options">
@@ -318,4 +336,24 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
       </div>
     </div>
   );
+}
+
+/** 推し色がカードのどこに出るか（プレビューの下の説明） */
+const OSHI_CARD_COLOR_WHERE: Record<OshiCardTcgVariant, string> = {
+  basic: 'カード全体の色に反映',
+  ssr: '名前の光と縁取り・特性のきらめき・沼ポイントの宝石に反映',
+  legend: '装飾の色に反映',
+};
+
+/** プレビュー画像の URL の推し色（c。省略は null）。画像がない・別のデザインの画像なら undefined */
+function previewColorParamOf(src: string | null, variant: OshiCardTcgVariant): OshiCardColorId | null | undefined {
+  if (!src) return undefined;
+  try {
+    const q = new URL(src, 'https://x.invalid').searchParams;
+    if (q.get('v') !== variant) return undefined;
+    const c = q.get('c');
+    return isOshiCardColorId(c) ? c : null;
+  } catch {
+    return undefined;
+  }
 }

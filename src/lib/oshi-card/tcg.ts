@@ -133,14 +133,21 @@ export function parseOshiCardTcgOptions(params: { nm?: RawParam; tr?: RawParam; 
   };
 }
 
-/** テンプレートの既定色と同じ色は省略扱い（null）にそろえる */
+/**
+ * 既定色を明示的に選んだとき、省略（null）と区別して URL に残すデザイン。
+ * SSR は「推し色を選んだときだけ」名前の縁取り・宝石などに色が入るため、明示した紫（c=purple）と省略（従来の見た目）を別のカードとして扱う。
+ * ベーシック・レジェンドは既定色を明示しても見た目が同じなので、従来どおり省略する。
+ */
+const KEEP_EXPLICIT_DEFAULT_COLOR: readonly OshiCardTcgVariant[] = ['ssr'];
+
+/** テンプレートの既定色と同じ色は省略扱い（null）にそろえる（SSR は明示した既定色を残す） */
 export function normalizeOshiCardTcgOptions(opts: OshiCardTcgOptions, variant: OshiCardTcgVariant, person: string): OshiCardTcgOptions {
   return {
     name: opts.name && opts.name !== person ? opts.name : null,
     trait: opts.trait,
     numa: opts.numa,
     power: opts.power,
-    color: opts.color && opts.color !== OSHI_CARD_TCG_TEMPLATES[variant].defaultColor ? opts.color : null,
+    color: opts.color && (opts.color !== OSHI_CARD_TCG_TEMPLATES[variant].defaultColor || KEEP_EXPLICIT_DEFAULT_COLOR.includes(variant)) ? opts.color : null,
   };
 }
 

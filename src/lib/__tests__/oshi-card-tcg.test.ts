@@ -31,7 +31,8 @@ import {
 import { buildOshiCardShareText } from '../oshi-card/core';
 import { buildOshiCardSocialMetadata } from '../oshi-card/og-meta';
 import { loadOshiCardPerson } from '../oshi-card/data';
-import { buildTcgCardImageElement, layoutTcgName, type OshiCardTcgImageData } from '@/server/oshi-card/tcg-card-image';
+import { buildTcgCardImageElement, layoutTcgName, ssrAccentOf, type OshiCardTcgImageData } from '@/server/oshi-card/tcg-card-image';
+import { oshiCardColor } from '@/lib/oshi-card/tcg';
 import { emWidth } from '@/server/oshi-card/card-image';
 import { isCanonicalCardQuery, respondOshiCardImage } from '@/server/oshi-card/image-response';
 
@@ -89,8 +90,10 @@ describe('トレカ風：URL', () => {
 
   it('既定値は省略し、カスタマイズは nm・tr・np・pw・c の順で載せる（往復で同じ内容）', () => {
     expect(buildOshiCardResultPath(SEL)).toBe(`/oshi-card?p=${P}&w=w1&v=ssr`);
-    // テンプレートの既定色（SSR＝紫）は省略
-    expect(buildOshiCardResultPath({ ...SEL, tcg: { ...OSHI_CARD_DEFAULT_TCG, color: 'purple' } })).toBe(`/oshi-card?p=${P}&w=w1&v=ssr`);
+    // SSR は既定色（紫）を明示したときだけ c=purple を残す（省略＝従来の見た目、明示＝紫のアクセント）。ベーシックの既定色（ピンク）は従来どおり省略
+    expect(buildOshiCardResultPath({ ...SEL, tcg: { ...OSHI_CARD_DEFAULT_TCG, color: null } })).toBe(`/oshi-card?p=${P}&w=w1&v=ssr`);
+    expect(buildOshiCardResultPath({ ...SEL, tcg: { ...OSHI_CARD_DEFAULT_TCG, color: 'purple' } })).toBe(`/oshi-card?p=${P}&w=w1&v=ssr&c=purple`);
+    expect(buildOshiCardResultPath({ ...SEL, variant: 'basic', tcg: { ...OSHI_CARD_DEFAULT_TCG, color: 'pink' } })).toBe(`/oshi-card?p=${P}&w=w1&v=basic`);
     const sel: OshiCardSelection = { ...SEL, workIds: [], tcg: { name: 'めめ', trait: '努力の天才', numa: '声が良すぎる', power: 120, color: 'pink' } };
     const path = buildOshiCardResultPath(sel);
     expect(path).toBe(`/oshi-card?p=${P}&v=ssr&nm=${encodeURIComponent('めめ')}&tr=${encodeURIComponent('努力の天才')}&np=${encodeURIComponent('声が良すぎる')}&pw=120&c=pink`);
@@ -128,6 +131,8 @@ describe('トレカ風：URL', () => {
     const sel: OshiCardSelection = { ...SEL, tcg };
     expect(isCanonicalCardQuery(q('p=目黒蓮&w=w1&v=ssr&nm=めめ&pw=5'), sel, 'feed', false)).toBe(true);
     expect(isCanonicalCardQuery(q('p=目黒蓮&w=w1&v=ssr&nm=めめ&pw=5&c=purple'), sel, 'feed', false)).toBe(false);
+    // 紫を明示した SSR は c=purple が正規形（省略した URL とは別のカード）
+    expect(isCanonicalCardQuery(q('p=目黒蓮&w=w1&v=ssr&nm=めめ&pw=5&c=purple'), { ...sel, tcg: { ...tcg, color: 'purple' } }, 'feed', false)).toBe(true);
     expect(isCanonicalCardQuery(q('p=目黒蓮&w=w1&v=ssr&nm=めめ&pw=05'), sel, 'feed', false)).toBe(false);
     expect(isCanonicalCardQuery(q(`p=目黒蓮&w=w1&v=ssr&nm=めめ&pw=5&tr=${OSHI_CARD_DEFAULT_TRAIT}`), sel, 'feed', false)).toBe(false);
     expect(isCanonicalCardQuery(q('p=目黒蓮&w=w1&v=cute&nm=めめ'), { ...SEL, variant: 'cute' }, 'feed', false)).toBe(false);
@@ -204,6 +209,48 @@ describe('トレカ風：画像', () => {
     for (const c of ['pink', 'red', 'sky', 'blue', 'purple', 'yellow', 'green', 'orange', 'white', 'black'] as const) {
       for (const v of ['basic', 'ssr', 'legend'] as const) expect(() => collectText(buildTcgCardImageElement(data(2, { color: c }), 'feed', v))).not.toThrow();
     }
+  });
+
+  // 描画した要素ツリーに出てくる色（fill・stroke・style の文字列）を集める
+  const colorsIn = (node: ReactNode, out = new Set<string>()): Set<string> => {
+    if (node === null || node === undefined || typeof node === 'boolean' || typeof node === 'string' || typeof node === 'number') return out;
+    if (Array.isArray(node)) { node.forEach((n) => colorsIn(n, out)); return out; }
+    if (isValidElement(node)) {
+      const el = node as ReactElement<Record<string, unknown> & { children?: ReactNode }>;
+      if (typeof el.type === 'function') return colorsIn((el.type as (p: unknown) => ReactNode)(el.props), out);
+      for (const [key, val] of Object.entries(el.props)) {
+        if (key === 'children') continue;
+        const text = typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val);
+        for (const m of text.matchAll(/#[0-9A-Fa-f]{6}\b/g)) out.add(m[0].toUpperCase());
+      }
+      return colorsIn(el.props.children, out);
+    }
+    return out;
+  };
+
+  it('SSR の推し色：省略（既存の共有URL）は従来どおり（アクセントなし）、選んだ10色（紫の明示を含む）は名前の縁取り・宝石などに色が入り、すべて見た目が異なる', () => {
+    expect(ssrAccentOf(oshiCardColor('purple'), false)).toBeNull();
+    expect(ssrAccentOf(oshiCardColor('purple'), true)).not.toBeNull();
+    const ids = ['pink', 'red', 'sky', 'blue', 'purple', 'yellow', 'green', 'orange', 'white', 'black'] as const;
+    const signatures = new Set<string>();
+    for (const c of ids) {
+      const used = colorsIn(buildTcgCardImageElement(data(2, { color: c }), 'feed', 'ssr'));
+      const acc = ssrAccentOf(oshiCardColor(c), true);
+      expect(acc).not.toBeNull();
+      if (acc) for (const col of [acc.ring, acc.glow, acc.base, acc.deep]) expect(used.has(col.toUpperCase())).toBe(true);
+      signatures.add([...used].sort().join(','));
+    }
+    // 省略（既定）は10色のどれとも違う（＝紫を明示したカードとも別）
+    signatures.add([...colorsIn(buildTcgCardImageElement(data(2, { color: null }), 'feed', 'ssr'))].sort().join(','));
+    expect(signatures.size).toBe(ids.length + 1);
+  });
+
+  it('ベーシックの白はピンクと見分けられる色（白銀）、黄色は名前の縁を濃い色にする', () => {
+    const basic = (c: 'pink' | 'white' | 'yellow') => colorsIn(buildTcgCardImageElement(data(2, { color: c }), 'feed', 'basic'));
+    const white = basic('white');
+    expect(white.has('#AEB7CC')).toBe(true);
+    expect(white.has('#E58BB0')).toBe(false);
+    expect(basic('yellow').has('#A86A00')).toBe(true);
   });
 });
 
