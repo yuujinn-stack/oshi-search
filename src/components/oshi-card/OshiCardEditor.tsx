@@ -5,7 +5,7 @@
 // 作品数：ノーマル・デコは1〜3件、トレカ風（ベーシック／SSR／レジェンド）は0〜3件（名前が主役のため作品なしでも作れる）。
 // プレビューは本番と同じ画像API（/api/oshi-card/image）の画像そのもの（保存画像と見た目が一致する）。選択を変えると少し待ってから更新する。
 // トレカ風の入力（名前・特性・沼ポイント・推し力・推し色）はデザインを切り替えても保持する。
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { secLabel } from '@/components/oshi-vod/sec-label';
@@ -26,6 +26,7 @@ import { isOshiCardTcgVariant, oshiCardTcgDraftFrom, oshiCardTcgFromDraft, type 
 import { oshiCardShareParams } from '@/lib/oshi-card/attribution';
 import { sendGaEvent } from '@/lib/ga-event';
 import OshiCardVariantToggle, { oshiCardVariantLabel } from './OshiCardVariantToggle';
+import OshiCardWaiting, { OSHI_CARD_WAIT_TIMEOUT_MS, type OshiCardWaitError } from './OshiCardWaiting';
 import OshiCardTcgFields from './OshiCardTcgFields';
 
 interface Props {
@@ -51,6 +52,12 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [submitting, setSubmitting] = useState(false);
+  // 「このカードを作る」を押した後の待機：カード画像（カードの画面が表示するものと同じ URL）を先に取得し、届いたらカードの画面へ移る。
+  // 画像の生成そのもの（API）は変えない。取得した画像はブラウザ・CDN のキャッシュに入るため、カードの画面ではすぐ表示される。
+  // id：生成の回ごとの番号（作り直し・再試行のたびに新しくする）。古い回の取得結果は、画面を書き換えず・移動もしない
+  const [wait, setWait] = useState<{ id: number; imagePath: string; resultPath: string; variant: OshiCardVariant; startedAt: number; error: OshiCardWaitError | null } | null>(null);
+  const waitSeq = useRef(0);
+  const activeWaitId = useRef(0);
 
   const types = useMemo(() => {
     const counts = new Map<string, number>();
@@ -110,14 +117,65 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
   };
 
   const submit = () => {
-    if (!selection || submitting) return;
+    if (!selection || submitting || wait) return;
     sendGaEvent('oshi_card_generate', { variant, phrase, work_count: selected.length, ...(isTcg ? { tcg_color: tcg.color ?? 'default', tcg_custom_name: !!tcg.name } : {}), ...oshiCardShareParams() });
     setSubmitting(true);
-    router.push(buildOshiCardResultPath(selection));
+    setWait({ id: ++waitSeq.current, imagePath: buildOshiCardImagePath(selection), resultPath: buildOshiCardResultPath(selection), variant, startedAt: Date.now(), error: null });
   };
+
+  // 待機中：画像を取得 → 届いたらカードの画面へ。エラー・タイムアウトのときだけ再試行を出す
+  const waitId = wait?.id ?? 0;
+  const waitError = wait?.error ?? null;
+  useEffect(() => {
+    activeWaitId.current = wait && !waitError ? waitId : 0;
+    if (!wait || waitError) return;
+    const id = waitId;
+    const ac = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; ac.abort(); }, OSHI_CARD_WAIT_TIMEOUT_MS);
+    fetch(wait.imagePath, { signal: ac.signal })
+      .then(async (res) => {
+        if (!res.ok) throw Object.assign(new Error(String(res.status)), { status: res.status });
+        await res.blob();
+        clearTimeout(timer);
+        // 「編集に戻る」・作り直しの後に届いた古い結果では移動しない
+        if (ac.signal.aborted || activeWaitId.current !== id) return;
+        router.push(wait.resultPath);
+      })
+      .catch((e: { status?: number }) => {
+        clearTimeout(timer);
+        if (ac.signal.aborted && !timedOut) return; // 「編集に戻る」・画面を離れたときなど
+        if (activeWaitId.current !== id) return;
+        const error: OshiCardWaitError = timedOut ? 'timeout' : e?.status === 429 ? 'busy' : 'failed';
+        setWait((w) => (w && w.id === id ? { ...w, error } : w));
+      });
+    return () => { clearTimeout(timer); ac.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 生成の回（id）ごとにだけ取得し直す
+  }, [waitId, waitError]);
+
+  // 待機中は後ろの画面をスクロールさせない
+  const waiting = !!wait;
+  useEffect(() => {
+    if (!waiting) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [waiting]);
 
   return (
     <div className="oc-editor">
+      {wait && (
+        <OshiCardWaiting
+          mode="overlay"
+          person={person.name}
+          variant={wait.variant}
+          startedAt={wait.startedAt}
+          error={wait.error}
+          onRetry={() => setWait((w) => (w ? { ...w, id: ++waitSeq.current, error: null, startedAt: Date.now() } : w))}
+          // 待機中・エラーのどちらでも押せる。進行中の取得は中止し、後から届いた結果では画面を変えない
+          onBack={() => { activeWaitId.current = 0; setWait(null); setSubmitting(false); }}
+        />
+      )}
       {noWorks && (
         <div className="oc-panel">
           <p className="oc-empty-title">{person.name}の出演作品は、まだ推しサーチに登録されていません。</p>
