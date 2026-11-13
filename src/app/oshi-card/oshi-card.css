@@ -362,7 +362,7 @@ html:not([data-proto]):has(.oshi-graphic-page) .oshi-graphic-page--oshicard { --
 /* 完成したカードの表示：画像が届いた瞬間から短くフェードイン（表示そのものは遅らせない）。切り替え時（読み込み済み）は起きない */
 .oc-page .oc-share-image { transition: opacity 0.35s ease-out; }
 /* 待機中の「編集に戻る」（控えめな文字ボタン。押しやすい高さは確保） */
-.oc-page .oc-wait-back { margin-top: 14px; }
+.oc-page .oc-wait-back { margin-top: 14px; min-height: 44px; } /* ボタンを消しても（完成後）高さを保つ */
 .oc-page .oc-wait-back-btn {
   min-height: 44px; padding: 8px 16px; background: transparent; border: 0; cursor: pointer;
   font-size: 13px; font-weight: 700; color: var(--graphic-body); text-decoration: underline; text-underline-offset: 3px;

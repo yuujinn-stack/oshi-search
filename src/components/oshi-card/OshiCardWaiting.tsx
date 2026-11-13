@@ -6,6 +6,8 @@
 //   （短い案内を順に表示し、15秒を過ぎたら「いつもより少し時間がかかっています」）。
 // - SSR は枠の周りに金・紫・ピンクの控えめな光。動きを減らす設定（prefers-reduced-motion）では動かさない（CSS）。
 // - エラー・タイムアウトのときだけ「もう一度ためす」を出す（それ以外は待機を続ける）。
+// - 画像が届いてカードの画面へ移り始めたら（done）、「完成しました。表示しています…」にし、「編集に戻る」は出さない
+//   （移動は取り消せないため。ボタンの場所の高さは残し、表示がずれないようにする）。
 import { useEffect, useState } from 'react';
 import type { OshiCardVariant } from '@/lib/oshi-card/params';
 import { isOshiCardTcgVariant } from '@/lib/oshi-card/tcg';
@@ -16,6 +18,8 @@ export const OSHI_CARD_WAIT_SLOW_MS = 15_000;
 /** この時間を過ぎても画像が届かなければ、タイムアウトとして再試行を出す（通常は10〜15秒。関数の上限よりは短く） */
 export const OSHI_CARD_WAIT_TIMEOUT_MS = 120_000;
 /** 待っている間に順に出す短い案内（処理の段階を表すものではない） */
+/** 画像が届き、カードの画面へ移っている間の文言 */
+export const OSHI_CARD_WAIT_DONE_MESSAGE = '完成しました。表示しています…';
 export const OSHI_CARD_WAIT_MESSAGES = ['推しの魅力をカードに込めています', '完成したら自動で表示されます', 'このままお待ちください'] as const;
 const MESSAGE_INTERVAL_MS = 4_000;
 
@@ -47,12 +51,14 @@ interface Props {
   /** overlay＝作成画面の全画面表示、inline＝カード画面の画像の場所 */
   mode: 'overlay' | 'inline';
   error?: OshiCardWaitError | null;
+  /** 画像が届き、カードの画面へ移動中（「編集に戻る」は出さない） */
+  done?: boolean;
   onRetry?: () => void;
   onBack?: () => void;
 }
 
-export default function OshiCardWaiting({ person, variant, startedAt, mode, error = null, onRetry, onBack }: Props) {
-  const waiting = !error;
+export default function OshiCardWaiting({ person, variant, startedAt, mode, error = null, done = false, onRetry, onBack }: Props) {
+  const waiting = !error && !done;
   const elapsed = useElapsed(startedAt, waiting);
   const slow = waiting && elapsed >= OSHI_CARD_WAIT_SLOW_MS;
   const message = OSHI_CARD_WAIT_MESSAGES[Math.floor(elapsed / MESSAGE_INTERVAL_MS) % OSHI_CARD_WAIT_MESSAGES.length];
@@ -60,7 +66,7 @@ export default function OshiCardWaiting({ person, variant, startedAt, mode, erro
   const shape = isOshiCardTcgVariant(variant) ? 'tcg' : 'feed';
 
   const body = (
-    <div className={`oc-wait oc-wait--${mode}`} data-variant={variant} data-state={error ? 'error' : slow ? 'slow' : 'waiting'} aria-busy={waiting}>
+    <div className={`oc-wait oc-wait--${mode}`} data-variant={variant} data-state={error ? 'error' : done ? 'done' : slow ? 'slow' : 'waiting'} aria-busy={!error}>
       <div className="oc-wait-card" data-shape={shape} aria-hidden="true">
         <div className="oc-wait-card-face">
           {variant === 'ssr' && (
@@ -94,11 +100,11 @@ export default function OshiCardWaiting({ person, variant, startedAt, mode, erro
           <div role="status" aria-live="polite">
             <p className="oc-wait-title">あなただけの推しカードを制作中！</p>
             <p className="oc-wait-sub">完成まで通常10〜15秒程度</p>
-            <p className="oc-wait-message" key={slow ? 'slow' : message}>
-              {slow ? 'いつもより少し時間がかかっています。このままお待ちください' : message}
+            <p className="oc-wait-message" key={done ? 'done' : slow ? 'slow' : message}>
+              {done ? OSHI_CARD_WAIT_DONE_MESSAGE : slow ? 'いつもより少し時間がかかっています。このままお待ちください' : message}
             </p>
             <span className="oc-wait-dots" aria-hidden="true"><i /><i /><i /></span>
-            {onBack && <div className="oc-wait-back"><button type="button" className="oc-wait-back-btn" onClick={onBack}>編集に戻る</button></div>}
+            {onBack && <div className="oc-wait-back">{!done && <button type="button" className="oc-wait-back-btn" onClick={onBack}>編集に戻る</button>}</div>}
           </div>
         )}
       </div>

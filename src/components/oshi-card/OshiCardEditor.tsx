@@ -55,7 +55,8 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
   // 「このカードを作る」を押した後の待機：カード画像（カードの画面が表示するものと同じ URL）を先に取得し、届いたらカードの画面へ移る。
   // 画像の生成そのもの（API）は変えない。取得した画像はブラウザ・CDN のキャッシュに入るため、カードの画面ではすぐ表示される。
   // id：生成の回ごとの番号（作り直し・再試行のたびに新しくする）。古い回の取得結果は、画面を書き換えず・移動もしない
-  const [wait, setWait] = useState<{ id: number; imagePath: string; resultPath: string; variant: OshiCardVariant; startedAt: number; error: OshiCardWaitError | null } | null>(null);
+  // done：画像が届き、カードの画面への移動を始めた（移動は取り消せないため、「編集に戻る」は出さない）
+  const [wait, setWait] = useState<{ id: number; imagePath: string; resultPath: string; variant: OshiCardVariant; startedAt: number; error: OshiCardWaitError | null; done: boolean } | null>(null);
   const waitSeq = useRef(0);
   const activeWaitId = useRef(0);
 
@@ -120,7 +121,7 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
     if (!selection || submitting || wait) return;
     sendGaEvent('oshi_card_generate', { variant, phrase, work_count: selected.length, ...(isTcg ? { tcg_color: tcg.color ?? 'default', tcg_custom_name: !!tcg.name } : {}), ...oshiCardShareParams() });
     setSubmitting(true);
-    setWait({ id: ++waitSeq.current, imagePath: buildOshiCardImagePath(selection), resultPath: buildOshiCardResultPath(selection), variant, startedAt: Date.now(), error: null });
+    setWait({ id: ++waitSeq.current, imagePath: buildOshiCardImagePath(selection), resultPath: buildOshiCardResultPath(selection), variant, startedAt: Date.now(), error: null, done: false });
   };
 
   // 待機中：画像を取得 → 届いたらカードの画面へ。エラー・タイムアウトのときだけ再試行を出す
@@ -138,8 +139,10 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
         if (!res.ok) throw Object.assign(new Error(String(res.status)), { status: res.status });
         await res.blob();
         clearTimeout(timer);
-        // 「編集に戻る」・作り直しの後に届いた古い結果では移動しない
+        // 「編集に戻る」・作り直しの後に届いた古い結果では移動しない（この判定と移動の開始の間に他の処理は入らない）
         if (ac.signal.aborted || activeWaitId.current !== id) return;
+        // ここから先は移動を取り消せないため、待機表示を「完成しました」にして「編集に戻る」を消してから移動する
+        setWait((w) => (w && w.id === id ? { ...w, done: true } : w));
         router.push(wait.resultPath);
       })
       .catch((e: { status?: number }) => {
@@ -171,9 +174,13 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
           variant={wait.variant}
           startedAt={wait.startedAt}
           error={wait.error}
+          done={wait.done}
           onRetry={() => setWait((w) => (w ? { ...w, id: ++waitSeq.current, error: null, startedAt: Date.now() } : w))}
           // 待機中・エラーのどちらでも押せる。進行中の取得は中止し、後から届いた結果では画面を変えない
-          onBack={() => { activeWaitId.current = 0; setWait(null); setSubmitting(false); }}
+          onBack={() => {
+            if (wait.done) return; // 移動を始めた後は戻さない（ボタンも出していない）
+            activeWaitId.current = 0; setWait(null); setSubmitting(false);
+          }}
         />
       )}
       {noWorks && (
