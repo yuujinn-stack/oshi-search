@@ -39,6 +39,7 @@ import { captionGroupName, getInstagramCaption, type CaptionPerson } from '@/lib
 import { detectWorkerStall } from '@/lib/video-worker-stall';
 import SnsOutputPicker, { resolveSnsSubmission } from './SnsOutputPicker';
 import SnsOutputsSection from './SnsOutputsSection';
+import { hasLinkWording, TIKTOK_CAPTION_CTA, withTiktokPostText } from '@/lib/video-tiktok-caption';
 import {
   DEFAULT_SNS_CTA,
   DEFAULT_SNS_OUTPUT_CHOICE,
@@ -2090,11 +2091,13 @@ function CompletedDetail({
   reelAutopublishEnabled: boolean;
   onReelChanged: () => void;
 }) {
+  // TikTok タブだけ TikTok 用投稿文（プロフィールのリンク前提の文言を使わない）。他のタブは Worker が作った文章のまま
+  const postTexts = useMemo(() => withTiktokPostText(job.postTexts), [job.postTexts]);
   // 最初に表示するタブは、投稿文がある最初のタブ（投稿文 → Instagram → TikTok → Threads → X の順）
-  const [tab, setTab] = useState(() => POST_TEXT_TABS.find((t) => job.postTexts?.[t.key])?.key ?? 'default');
+  const [tab, setTab] = useState(() => POST_TEXT_TABS.find((t) => postTexts[t.key])?.key ?? 'default');
   // 投稿前に手で直せる（この画面の中だけ。保存はしない）。コピーは編集後の文章
   const [edits, setEdits] = useState<Record<string, string>>({});
-  const text = edits[tab] ?? job.postTexts?.[tab] ?? '';
+  const text = edits[tab] ?? postTexts[tab] ?? '';
   const result = job.result ?? {};
   const igReel = result.instagramReelVideo as { url?: unknown; qaStatus?: unknown; durationSec?: unknown } | undefined;
   const igReelUrl = igReel?.qaStatus === 'PASS' && typeof igReel.url === 'string' ? igReel.url : null;
@@ -2141,7 +2144,7 @@ function CompletedDetail({
         )}
         <div>
           <div className="flex gap-2 mb-1">
-            {POST_TEXT_TABS.filter((t) => job.postTexts?.[t.key]).map((t) => (
+            {POST_TEXT_TABS.filter((t) => postTexts[t.key]).map((t) => (
               <button
                 key={t.key}
                 type="button"
@@ -2158,11 +2161,18 @@ function CompletedDetail({
             className="w-full h-32 text-xs border border-gray-200 rounded p-2"
             aria-label="投稿文（編集してからコピーできます）"
           />
+          {tab === 'tiktok' && (
+            <p className={`text-[11px] ${hasLinkWording(text) ? 'text-red-600' : 'text-gray-500'}`}>
+              {hasLinkWording(text)
+                ? '⚠ TikTok はプロフィールにリンクを置けないため、「プロフィールのリンクから」・URL などの文言は使わないでください。'
+                : `TikTok 用: プロフィールのリンク前提の文言を使わず、「${TIKTOK_CAPTION_CTA}」で案内しています。`}
+            </p>
+          )}
           <div className="flex gap-3">
             <button type="button" onClick={() => void navigator.clipboard.writeText(text)} className="text-xs text-violet-600 hover:underline">
               コピー
             </button>
-            {edits[tab] !== undefined && edits[tab] !== (job.postTexts?.[tab] ?? '') && (
+            {edits[tab] !== undefined && edits[tab] !== (postTexts[tab] ?? '') && (
               <button
                 type="button"
                 onClick={() => setEdits((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== tab)))}
