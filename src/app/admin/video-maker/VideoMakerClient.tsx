@@ -36,6 +36,7 @@ import { HOURLY_TIME_OPTIONS } from '@/lib/instagram-post-times';
 import { addDaysJst, formatJst as formatJstDateTime, jstWallClockToUtcDate, nowJstParts } from '@/lib/jst-time';
 import { getStatusLabel, getStatusStyle } from '@/lib/instagram-schedule-status';
 import { captionGroupName, getInstagramCaption, type CaptionPerson } from '@/lib/video-instagram-caption';
+import { detectWorkerStall } from '@/lib/video-worker-stall';
 
 /**
  * /admin/video-maker のクライアント部分。
@@ -423,6 +424,9 @@ export default function VideoMakerClient({
     const timer = setInterval(() => void load(), 5000);
     return () => clearInterval(timer);
   }, [hasActive, load]);
+
+  // 待機中のジョブを Worker が取得していない（停止・ロックの取り残し等）ことを知らせる。5秒ごとの更新で再判定される
+  const workerStall = detectWorkerStall(worker ? worker.online : null, jobs, Date.now());
 
   const templates = useMemo(() => worker?.templates ?? [], [worker]);
   const template = templates.find((t) => t.templateId === templateId) ?? null;
@@ -1031,6 +1035,24 @@ export default function VideoMakerClient({
           ↻ 更新
         </button>
       </div>
+      {workerStall && (
+        <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3 space-y-1">
+          {workerStall.kind === 'offline' ? (
+            <p className="font-bold">
+              ⚠️ Workerが停止しているため、待機中のジョブ{workerStall.queuedCount}件（最古 {formatJst(workerStall.oldestQueuedAt)} 作成）が生成されません。
+            </p>
+          ) : (
+            <p className="font-bold">
+              ⚠️ Workerはオンラインですが、待機中のジョブ{workerStall.queuedCount}件を{Math.floor(workerStall.waitedMs / 60_000)}
+              分以上取得していません（最古 {formatJst(workerStall.oldestQueuedAt)} 作成）。
+            </p>
+          )}
+          <p className="text-xs text-red-600">
+            Macの ~/Library/Logs/oshi-video-maker/worker.log の「待機:」「失敗しました」の行を確認してください。
+            Workerの再起動: launchctl kickstart -k gui/$(id -u)/jp.oshi-search.video-worker（待機中のジョブは消えません）
+          </p>
+        </div>
+      )}
       {loadError && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-3">読み込みに失敗しました: {loadError}</div>}
 
       {/* 作成フォーム */}
