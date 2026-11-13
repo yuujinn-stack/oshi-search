@@ -63,6 +63,8 @@ interface CreateBody {
   narrationMode?: unknown;
   /** テンプレート固有の入力（推しでサブスク比較: { personSlugs: [3人] }）。それ以外のテンプレートでは指定しない */
   templateInput?: unknown;
+  /** 出力先SNSとSNS別のCTA設定（src/lib/video-sns-output.ts の SnsOutputRequest）。省略時は従来どおり Instagram 版だけ */
+  snsOutput?: unknown;
 }
 
 /** ジョブ作成（人物ごとに1ジョブ）。人物は登録済み人物のみ、テンプレート・方式はWorker報告の能力で検証する */
@@ -81,14 +83,14 @@ export async function POST(req: NextRequest) {
     if (workerTemplate?.templateInputKind === OSHI_VOD_COMPARE_INPUT_KIND) {
       const input = parseOshiVodCompareInput(body.templateInput);
       const diagnosis = await loadOshiVodVideoDiagnosis(input);
-      const jobs = await createVideoJobs({ personNames: [diagnosis.persons[0].name], templateId, narrationMode, templateInput: input });
+      const jobs = await createVideoJobs({ personNames: [diagnosis.persons[0].name], templateId, narrationMode, templateInput: input, snsOutput: body.snsOutput });
       return NextResponse.json({ jobs });
     }
     // 推し活で損してるかも？: 人物 または グループ1つで1ジョブ（グループ名は人物の登録には無いため、存在確認は createVideoJobs で行う）
     // フォロー獲得リールも同じ（人物・グループの存在確認と作品・事実の確認は createVideoJobs で行う）
     if (workerTemplate?.templateInputKind === OSHI_SONKAMO_INPUT_KIND || workerTemplate?.templateInputKind === OSHI_FOLLOW_INPUT_KIND) {
       if (personNames.length !== 1) return NextResponse.json({ error: '人物かグループを1つだけ選んでください。' }, { status: 400 });
-      const jobs = await createVideoJobs({ personNames, templateId, narrationMode, templateInput: body.templateInput });
+      const jobs = await createVideoJobs({ personNames, templateId, narrationMode, templateInput: body.templateInput, snsOutput: body.snsOutput });
       return NextResponse.json({ jobs });
     }
     // サイト誘導リール: 主な対象（人物・グループ）1つで1ジョブ（対象・ページのパス・区間は createVideoJobs でDBから確かめて作る）
@@ -97,7 +99,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'サイト誘導リールは、対象を選んで台本を生成してから1本ずつ作ります。管理画面を再読み込みしてください。' }, { status: 400 });
       }
       if (personNames.length !== 1) return NextResponse.json({ error: '対象の人物かグループを1つだけ選んでください。' }, { status: 400 });
-      const jobs = await createVideoJobs({ personNames, templateId, narrationMode, templateInput: body.templateInput });
+      const jobs = await createVideoJobs({ personNames, templateId, narrationMode, templateInput: body.templateInput, snsOutput: body.snsOutput });
       return NextResponse.json({ jobs });
     }
     // 推しサーチ総合紹介動画: 1本（一般版の person_name は「推しサーチ」、グループ版は選んだグループ名。グループの確認は createVideoJobs で行う）
@@ -109,7 +111,7 @@ export async function POST(req: NextRequest) {
       // CapCut 音声付き（完了した音声なし動画の「詳細」から）: 対象は元のジョブと同じ名前（グループ名は元のジョブから付け直す）
       if (input.audio && personNames.length !== 1) return NextResponse.json({ error: '元の動画のジョブの対象を1つだけ指定してください。' }, { status: 400 });
       const name = input.audio ? personNames[0] : mediaJobPersonName(templateId, input.groupName);
-      const jobs = await createVideoJobs({ personNames: [name], templateId, narrationMode, templateInput: input });
+      const jobs = await createVideoJobs({ personNames: [name], templateId, narrationMode, templateInput: input, snsOutput: body.snsOutput });
       return NextResponse.json({ jobs });
     }
     // 登録グループ紹介: 推しサーチ全体の動画を1本（person_name は「推しサーチ」。グループの一覧・件数は createVideoJobs でDBから作る）
@@ -118,7 +120,7 @@ export async function POST(req: NextRequest) {
       if (!body.templateInput || typeof body.templateInput !== 'object') {
         return NextResponse.json({ error: '登録グループ紹介は、表示するグループを選んで1本だけ作ります（人物の選択では作れません）。管理画面を再読み込みしてください。' }, { status: 400 });
       }
-      const jobs = await createVideoJobs({ personNames: [REGISTERED_JOB_NAME], templateId, narrationMode, templateInput: body.templateInput });
+      const jobs = await createVideoJobs({ personNames: [REGISTERED_JOB_NAME], templateId, narrationMode, templateInput: body.templateInput, snsOutput: body.snsOutput });
       return NextResponse.json({ jobs });
     }
     const registered = new Set((await getAllPersonsMerged()).map((p) => p.name));
@@ -126,7 +128,7 @@ export async function POST(req: NextRequest) {
     if (unknown.length > 0) {
       return NextResponse.json({ error: `登録されていない人物です: ${unknown.join(', ')}` }, { status: 400 });
     }
-    const jobs = await createVideoJobs({ personNames, templateId, narrationMode, templateInput: body.templateInput });
+    const jobs = await createVideoJobs({ personNames, templateId, narrationMode, templateInput: body.templateInput, snsOutput: body.snsOutput });
     return NextResponse.json({ jobs });
   } catch (err) {
     if (err instanceof TemplateInputError) return NextResponse.json({ error: err.message }, { status: 400 });

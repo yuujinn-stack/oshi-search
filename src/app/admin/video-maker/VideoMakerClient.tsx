@@ -37,6 +37,17 @@ import { addDaysJst, formatJst as formatJstDateTime, jstWallClockToUtcDate, nowJ
 import { getStatusLabel, getStatusStyle } from '@/lib/instagram-schedule-status';
 import { captionGroupName, getInstagramCaption, type CaptionPerson } from '@/lib/video-instagram-caption';
 import { detectWorkerStall } from '@/lib/video-worker-stall';
+import SnsOutputPicker, { resolveSnsSubmission } from './SnsOutputPicker';
+import SnsOutputsSection from './SnsOutputsSection';
+import {
+  DEFAULT_SNS_CTA,
+  DEFAULT_SNS_OUTPUT_CHOICE,
+  parseSnsCtaSettings,
+  type SnsCtaAudioReport,
+  type SnsCtaCapability,
+  type SnsCtaSettings,
+  type SnsOutputChoice,
+} from '@/lib/video-sns-output';
 
 /**
  * /admin/video-maker のクライアント部分。
@@ -62,6 +73,8 @@ interface WorkerTemplate {
   followScript?: unknown;
   /** 推しサーチ総合紹介動画だけ: 台本（Worker の報告。parseMediaScriptReport で読む） */
   mediaScript?: unknown;
+  /** SNS別CTA（TikTok 版など CTA の差し替え）に対応するナレーション方式（報告の無い古い Worker は Instagram 版だけ） */
+  snsCta?: SnsCtaCapability;
 }
 
 interface WorkerInfo {
@@ -121,6 +134,8 @@ const VIDEO_STATUS_VIEW: Record<'current' | 'outdated' | 'none', { label: string
 interface CapcutStoreReport {
   inboxDir: string;
   reportedAt: string;
+  /** SNS別CTAのナレーション（全テンプレート共通の CapCut 音声）の保存状況 */
+  snsCtaAudio?: SnsCtaAudioReport;
   entries: CapcutEntry[];
   prepareFailures?: Array<{ personName: string; message: string; at: string }>;
   /** まず見る3作: 全人物の台本準備で選定した、entries に含まれない人物（台本だけ） */
@@ -809,6 +824,37 @@ export default function VideoMakerClient({
 
   const templateName = (id: string) => templates.find((t) => t.templateId === id)?.name ?? id;
 
+  // 出力先SNS（初期値は両方）と SNS別CTA設定（保存済みの設定を読み込み、画面で編集した内容で生成する）
+  const [snsChoice, setSnsChoice] = useState<SnsOutputChoice>(DEFAULT_SNS_OUTPUT_CHOICE);
+  const [snsSettings, setSnsSettings] = useState<SnsCtaSettings>(DEFAULT_SNS_CTA);
+  const [snsSavedSettings, setSnsSavedSettings] = useState<SnsCtaSettings>(DEFAULT_SNS_CTA);
+  const [snsStorage, setSnsStorage] = useState(true);
+  const [snsScope, setSnsScope] = useState<'production' | 'preview' | 'local' | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/admin/video-jobs/sns-cta-settings', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { settings?: unknown; storage?: boolean; scope?: 'production' | 'preview' | 'local' } | null) => {
+        if (cancelled || !data) return;
+        try {
+          const loaded = parseSnsCtaSettings(data.settings);
+          setSnsSettings(loaded);
+          setSnsSavedSettings(loaded);
+        } catch {
+          // 読めない設定は使わない（既定値のまま）
+        }
+        setSnsStorage(data.storage !== false);
+        setSnsScope(data.scope ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const snsSubmission = resolveSnsSubmission({ capability: template?.snsCta, narrationMode, choice: snsChoice, settings: snsSettings });
+  // ジョブ作成 API に一緒に送る出力先SNSの指定（古い Worker・未対応の組み合わせでは送らない）
+  const snsBody = snsSubmission.snsOutput ? { snsOutput: snsSubmission.snsOutput } : {};
+
   // CapCut保存済み音声で生成するとき: 対象（選択中の人物。未選択ならこのテンプレートの全人物）のうちreadyだけを生成し、残りは理由付きで除外
   const capcutTargets = selectedNames.length > 0 ? selectedNames : capcutEntries.map((e) => e.personName);
   const capcutReadyTargets = capcutTargets.filter((n) => capcutByName.get(n)?.status === 'ready');
@@ -831,7 +877,7 @@ export default function VideoMakerClient({
       await fetchJson<{ jobs: VideoJob[] }>('/api/admin/video-jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ templateId: template.templateId, narrationMode, templateInput: { version: 1, personSlugs: trio } }),
+        body: JSON.stringify({ templateId: template.templateId, narrationMode, ...snsBody, templateInput: { version: 1, personSlugs: trio } }),
       });
       setMessage({ kind: 'ok', text: '1件のジョブを登録しました（3人で1本）。Workerが順番に生成します。' });
       setTrioSlots(EMPTY_TRIO);
@@ -856,6 +902,7 @@ export default function VideoMakerClient({
           personNames: [cardPick.personName],
           templateId: template.templateId,
           narrationMode,
+          ...snsBody,
           templateInput: { version: 1, workIds: cardPick.workIds, variant: cardPick.variant },
         }),
       });
@@ -884,6 +931,7 @@ export default function VideoMakerClient({
             personNames: [name],
             templateId: template.templateId,
             narrationMode,
+            ...snsBody,
             templateInput: { version: 1, target: sonkamoPick.target, honorific: sonkamoPick.honorific, memberName: null, lines: sonkamoPick.scripts[name] },
           }),
         });
@@ -910,7 +958,7 @@ export default function VideoMakerClient({
       await fetchJson<{ jobs: VideoJob[] }>('/api/admin/video-jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personNames: [followPick.name], templateId: template.templateId, narrationMode, templateInput: followTemplateInput(followPick) }),
+        body: JSON.stringify({ personNames: [followPick.name], templateId: template.templateId, narrationMode, ...snsBody, templateInput: followTemplateInput(followPick) }),
       });
       setMessage({ kind: 'ok', text: `1件のジョブを登録しました（${followPick.targetType === 'group' ? 'グループ' : '人物'}: ${followPick.name}）。Workerが順番に生成します。` });
       setFollowPick((prev) => ({ ...EMPTY_FOLLOW_PICK, targetType: prev.targetType }));
@@ -931,7 +979,7 @@ export default function VideoMakerClient({
       await fetchJson<{ jobs: VideoJob[] }>('/api/admin/video-jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personNames: [], templateId: template.templateId, narrationMode, templateInput: registeredTemplateInput(registeredPick, template.templateId) }),
+        body: JSON.stringify({ personNames: [], templateId: template.templateId, narrationMode, ...snsBody, templateInput: registeredTemplateInput(registeredPick, template.templateId) }),
       });
       setMessage({ kind: 'ok', text: `1件のジョブを登録しました（${template.name}）。Workerが順番に生成します。` });
       setRegisteredPick(EMPTY_REGISTERED_PICK);
@@ -954,7 +1002,7 @@ export default function VideoMakerClient({
       await fetchJson<{ jobs: VideoJob[] }>('/api/admin/video-jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personNames: [target], templateId: template.templateId, narrationMode, templateInput: mediaTemplateInput(target, mediaSelectionMode) }),
+        body: JSON.stringify({ personNames: [target], templateId: template.templateId, narrationMode, ...snsBody, templateInput: mediaTemplateInput(target, mediaSelectionMode) }),
       });
       setMessage({ kind: 'ok', text: `1件のジョブを登録しました（${template.name}・${target}）。Workerが推しサーチの画面を操作・撮影して生成します。` });
       await load();
@@ -973,7 +1021,7 @@ export default function VideoMakerClient({
       await fetchJson<{ jobs: VideoJob[] }>('/api/admin/video-jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personNames: [sitePick.selection.name], templateId: template.templateId, narrationMode, templateInput: siteTemplateInput(sitePick) }),
+        body: JSON.stringify({ personNames: [sitePick.selection.name], templateId: template.templateId, narrationMode, ...snsBody, templateInput: siteTemplateInput(sitePick) }),
       });
       setMessage({ kind: 'ok', text: `1件のジョブを登録しました（${template.name}・${sitePick.selection.name}）。Workerが推しサーチの画面を操作・撮影して生成します。` });
       setSitePick(EMPTY_SITE_PICK);
@@ -993,7 +1041,7 @@ export default function VideoMakerClient({
       const data = await fetchJson<{ jobs: VideoJob[] }>('/api/admin/video-jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personNames: names, templateId: template.templateId, narrationMode }),
+        body: JSON.stringify({ personNames: names, templateId: template.templateId, narrationMode, ...snsBody }),
       });
       setMessage({ kind: 'ok', text: `${data.jobs.length}件のジョブを登録しました。Workerが順番に生成します。` });
       setSelectedNames([]);
@@ -1129,6 +1177,25 @@ export default function VideoMakerClient({
             </p>
           )}
         </section>
+
+        {template && (
+          <section>
+            <h2 className="text-sm font-bold text-slate-700 mb-2">出力先SNS</h2>
+            <SnsOutputPicker
+              capability={template.snsCta}
+              narrationMode={narrationMode}
+              choice={snsChoice}
+              onChoice={setSnsChoice}
+              settings={snsSettings}
+              onSettings={setSnsSettings}
+              savedSettings={snsSavedSettings}
+              onSaved={setSnsSavedSettings}
+              storage={snsStorage}
+              scope={snsScope}
+              audio={worker?.capcutStore?.snsCtaAudio}
+            />
+          </section>
+        )}
 
         {trioMode ? (
         <section>
@@ -2108,6 +2175,7 @@ function CompletedDetail({
         </div>
       </div>
     </div>
+    <SnsOutputsSection job={job} />
     {job.templateInput?.workIds && <OshiCardJobOutputs job={job} />}
     {job.templateInput?.target && <SonkamoJobOutputs job={job} />}
     {job.templateInput?.target && job.narrationMode === 'none' && (

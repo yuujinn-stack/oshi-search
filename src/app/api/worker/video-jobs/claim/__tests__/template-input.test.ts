@@ -41,7 +41,8 @@ describe('POST /api/worker/video-jobs/claim: templateInput', () => {
   it('従来のジョブ（template_input が NULL）は templateInput: null で、既存の項目はそのまま', async () => {
     state.job = { ...base, templateId: 'oshi-first3-v1', templateInput: null };
     const job = await claim();
-    expect(job).toEqual({ ...base, templateId: 'oshi-first3-v1', templateInput: null });
+    // 出力先SNSの指定が無いジョブは snsOutput: null（古い Worker はこの項目を読まない）
+    expect(job).toEqual({ ...base, templateId: 'oshi-first3-v1', templateInput: null, snsOutput: null });
   });
 
   it('migration前の行など templateInput の無いジョブも null として返す', async () => {

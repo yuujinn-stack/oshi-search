@@ -16,6 +16,15 @@ import { checkVodCompareSharedCapcut, type SharedCapcutRequirement } from '@/lib
 import type { FollowScriptReport } from '@/lib/video-follow-reel';
 import type { MediaScriptReport } from '@/lib/video-media-reel';
 import type { SonkamoScriptTemplate } from '@/lib/video-sonkamo-script';
+import {
+  parseSnsOutputRequest,
+  SNS_TARGET_LABELS,
+  SnsOutputError,
+  splitSnsOutput,
+  type SnsCtaAudioReport,
+  type SnsCtaCapability,
+  type SnsOutputRequest,
+} from '@/lib/video-sns-output';
 
 /**
  * 動画生成ジョブ（video_generation_jobs）とWorker情報（video_workers）の読み書き。
@@ -53,6 +62,8 @@ export interface WorkerTemplateInfo {
   followScript?: FollowScriptReport;
   /** 推しサーチ総合紹介動画だけ: 台本（字幕・読み・画面の文字。管理画面の表示・コピー用。正本は oshi-video-maker） */
   mediaScript?: MediaScriptReport;
+  /** SNS別CTA（TikTok 版など CTA の差し替え）に対応するナレーション方式。報告の無い古い Worker は未対応（Instagram 版だけ） */
+  snsCta?: SnsCtaCapability;
 }
 
 export interface WorkerInfo {
@@ -168,6 +179,8 @@ export interface CapcutStoreReport {
   jobAudioEvents?: CapcutJobAudioEvent[];
   /** 受信フォルダの絶対パス（自動取り込みが有効な Worker だけ。管理画面で CapCut の保存先としてコピーする） */
   inboxPath?: string;
+  /** SNS別CTAのナレーション（全テンプレート共通の CapCut 音声）の保存状況と受信フォルダ */
+  snsCtaAudio?: SnsCtaAudioReport;
 }
 
 /**
@@ -316,6 +329,11 @@ export async function createVideoJobs(input: {
   retryOfJobId?: string | null;
   /** テンプレート固有の入力（templateInputKind を持つテンプレートだけ。それ以外は指定不可） */
   templateInput?: unknown;
+  /**
+   * 出力先SNSとSNS別のCTA設定（src/lib/video-sns-output.ts）。省略時は template_input に保存済みの指定（再生成）、
+   * 音声付き動画（template_input.audio）なら元の音声なし動画のジョブの指定を引き継ぐ。どれも無ければ従来どおり Instagram 版だけ
+   */
+  snsOutput?: unknown;
 }): Promise<VideoJob[]> {
   if (input.personNames.length === 0) throw new VideoJobError('人物が選択されていません。', 400);
   if (input.personNames.length > MAX_PERSONS_PER_REQUEST) {
@@ -330,7 +348,10 @@ export async function createVideoJobs(input: {
   if (!template.narrationModes.includes(input.narrationMode)) {
     throw new VideoJobError(`「${template.name}」はこのナレーション方式に対応していません。`, 400);
   }
-  let templateInput = resolveJobTemplateInput(template, input.personNames, input.templateInput);
+  // 出力先SNSの指定は template_input とは別に扱う（テンプレート固有の入力の検証・作り直しには渡さない）
+  const split = splitSnsOutput(input.templateInput);
+  const snsOutput = await resolveSnsOutput(template, input.narrationMode, input.snsOutput !== undefined ? input.snsOutput : split.snsOutput, split.templateInput);
+  let templateInput = resolveJobTemplateInput(template, input.personNames, split.templateInput);
   // 推し活で損してるかも？: 人物・グループが公開中かを確かめ、撮影するページのパスをDBから付ける（再生成でも作り直す）
   if (templateInput && 'target' in templateInput && !('siteSelection' in templateInput)) {
     const { resolveSonkamoTarget, applySonkamoAudioSource } = await import('./sonkamo-target');
@@ -444,8 +465,10 @@ export async function createVideoJobs(input: {
     templateId: template.templateId,
     templateVersion: template.version,
     narrationMode: input.narrationMode,
-    // 従来のテンプレートは列に触れない（NULLのまま）
-    ...(templateInput ? { templateInput: templateInput as unknown as Record<string, unknown> } : {}),
+    // 従来のテンプレートは列に触れない（NULLのまま）。出力先SNSの指定は template_input の snsOutput に保存する
+    ...(templateInput || snsOutput
+      ? { templateInput: { ...(splitSnsOutput(templateInput).templateInput ?? {}), ...(snsOutput ? { snsOutput } : {}) } }
+      : {}),
     status: 'queued' as const,
     createdAt: new Date(now + i),
     updatedAt: new Date(now + i),
@@ -508,6 +531,42 @@ export async function cancelVideoJob(id: string): Promise<VideoJob> {
   const exists = await db.select({ status: videoGenerationJobs.status }).from(videoGenerationJobs).where(eq(videoGenerationJobs.id, id));
   if (!exists[0]) throw new VideoJobError('ジョブが見つかりません。', 404);
   throw new VideoJobError('待機中（queued）のジョブだけキャンセルできます。', 409);
+}
+
+/**
+ * 出力先SNSの指定を検証する。CTA を差し替える SNS（TikTok 版など）は、Worker がそのテンプレート・ナレーション方式で
+ * 対応を報告している場合だけ受け付ける（未対応なら「Instagramのみ」にするよう理由を返す）。
+ * 指定が無く、音声付き動画（template_input.audio.sourceJobId）なら元のジョブの指定を引き継ぐ
+ */
+async function resolveSnsOutput(
+  template: WorkerTemplateInfo,
+  narrationMode: string,
+  raw: unknown,
+  templateInput: Record<string, unknown> | null,
+): Promise<SnsOutputRequest | null> {
+  let value = raw;
+  const sourceJobId = (templateInput?.audio as { sourceJobId?: unknown } | undefined)?.sourceJobId;
+  if (value === undefined && typeof sourceJobId === 'string' && /^[0-9a-f-]{36}$/.test(sourceJobId)) {
+    const [source] = await db.select({ templateInput: videoGenerationJobs.templateInput }).from(videoGenerationJobs).where(eq(videoGenerationJobs.id, sourceJobId));
+    value = splitSnsOutput(source?.templateInput).snsOutput;
+  }
+  let request: SnsOutputRequest | null;
+  try {
+    request = parseSnsOutputRequest(value);
+  } catch (err) {
+    if (err instanceof SnsOutputError) throw new VideoJobError(err.message, 400);
+    throw err;
+  }
+  if (!request) return null;
+  const unsupported = request.targets.filter((t) => request.cta[t].mode === 'search' && !template.snsCta?.modes.includes(narrationMode));
+  if (unsupported.length > 0) {
+    const reason = template.snsCta?.reason ?? (template.snsCta ? 'このナレーション方式は未対応です。' : 'Worker が SNS別CTA に対応していません（Worker の更新・再起動が必要です）。');
+    throw new VideoJobError(
+      `「${template.name}」は${unsupported.map((t) => SNS_TARGET_LABELS[t]).join('・')}版（CTAの差し替え）に未対応です: ${reason} 出力先SNSを変えてください。`,
+      400,
+    );
+  }
+  return request;
 }
 
 /** 再生成: 元ジョブは書き換えず、同じ依頼内容の新しいジョブを作る */

@@ -15,6 +15,7 @@ import { parseSharedCapcutRequirement } from '@/lib/oshi-vod/video-feature';
 import { handleWorkerRequest, num, parseJobId, str } from '@/server/video-jobs/worker-route';
 import { isTemplateInputKind } from '@/lib/video-template-input';
 import { parseSonkamoScriptTemplate } from '@/lib/video-sonkamo-script';
+import { parseSnsCtaAudioReport, parseSnsCtaCapability } from '@/lib/video-sns-output';
 import { parseFollowScriptReport } from '@/lib/video-follow-reel';
 import { parseMediaScriptReport } from '@/lib/video-media-reel';
 
@@ -174,6 +175,8 @@ export async function POST(req: NextRequest) {
         ...(parseFollowScriptReport(t.followScript) ? { followScript: parseFollowScriptReport(t.followScript)! } : {}),
         // 推しサーチ総合紹介動画だけ: 台本（形が違う・テンプレートIDが合わなければ保存しない＝管理画面では台本を表示できない）
         ...(parseMediaScriptReport(t.mediaScript)?.templateId === t.templateId ? { mediaScript: parseMediaScriptReport(t.mediaScript)! } : {}),
+        // SNS別CTA（TikTok 版など CTA の差し替え）に対応するナレーション方式（形が違えば保存しない＝未対応として扱う）
+        ...(parseSnsCtaCapability(t.snsCta) ? { snsCta: parseSnsCtaCapability(t.snsCta)! } : {}),
       }));
     const persons = (Array.isArray(body.persons) ? body.persons : [])
       .filter((p): p is string => typeof p === 'string')
@@ -200,6 +203,8 @@ export async function POST(req: NextRequest) {
         ...(sanitizeQueue(rawCapcut.first3Queue) ? { first3Queue: sanitizeQueue(rawCapcut.first3Queue) } : {}),
         ...(Array.isArray(rawCapcut.jobAudioEvents) ? { jobAudioEvents: sanitizeJobAudioEvents(rawCapcut.jobAudioEvents) } : {}),
         ...(typeof rawCapcut.inboxPath === 'string' && rawCapcut.inboxPath.startsWith('/') ? { inboxPath: str(rawCapcut.inboxPath, 500)! } : {}),
+        // SNS別CTAのナレーション（全テンプレート共通の CapCut 音声）の保存状況
+        ...(parseSnsCtaAudioReport(rawCapcut.snsCtaAudio) ? { snsCtaAudio: parseSnsCtaAudioReport(rawCapcut.snsCtaAudio)! } : {}),
       };
     }
     const capcutPrepareRequests = await upsertWorkerHeartbeat({ workerId, version: str(body.version, 50), templates, persons, capcutStore });

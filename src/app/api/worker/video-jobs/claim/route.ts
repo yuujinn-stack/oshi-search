@@ -3,6 +3,7 @@ import { claimNextVideoJob } from '@/server/video-jobs/job-store';
 import { handleWorkerRequest } from '@/server/video-jobs/worker-route';
 import { isVideoAdminActive, recordWorkerPoll } from '@/server/video-jobs/worker-poll';
 import { decideWorkerPollSeconds } from '@/lib/video-worker-poll';
+import { splitSnsOutput } from '@/lib/video-sns-output';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -32,8 +33,11 @@ export async function POST(req: NextRequest) {
         templateVersion: job.templateVersion,
         narrationMode: job.narrationMode,
         attempts: job.attempts,
-        // テンプレート固有の入力（推しでサブスク比較: 人物3人のslug。従来のテンプレートは null）
-        templateInput: job.templateInput ?? null,
+        // テンプレート固有の入力（推しでサブスク比較: 人物3人のslug。従来のテンプレートは null）。
+        // 出力先SNSの指定は template_input に一緒に保存しているが、Worker へは別の項目で渡す（template_input の中身は従来どおり）
+        templateInput: splitSnsOutput(job.templateInput).templateInput,
+        // 出力先SNSとSNS別のCTA設定（無ければ null = 従来どおり final.mp4 だけ）。古い Worker はこの項目を読まない
+        snsOutput: splitSnsOutput(job.templateInput).snsOutput ?? null,
       },
     };
   });

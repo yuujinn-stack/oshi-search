@@ -164,6 +164,28 @@ describe('POST /api/worker/video-jobs/claim', () => {
       adminActive: false,
     });
     expect(body.pollSeconds).toBe(15);
-    expect(body.job).toEqual({ id: 'j1', personName: '岸優太', personSlug: 'kishi-yuta', templateId: 't', templateVersion: 1, narrationMode: 'none', attempts: 1, templateInput: null });
+    // 出力先SNSの指定（snsOutput）は無ければ null（古い Worker はこの項目を読まない）
+    expect(body.job).toEqual({ id: 'j1', personName: '岸優太', personSlug: 'kishi-yuta', templateId: 't', templateVersion: 1, narrationMode: 'none', attempts: 1, templateInput: null, snsOutput: null });
+  });
+
+  it('出力先SNSの指定は template_input から外して snsOutput で渡す（template_input の中身は従来どおり）', async () => {
+    const snsOutput = { version: 1, targets: ['instagram', 'tiktok'] };
+    const body = await callClaim({
+      job: { id: 'j2', personName: '岸優太', personSlug: 'kishi-yuta', templateId: 't', templateVersion: 1, narrationMode: 'none', attempts: 1, templateInput: { version: 1, personSlugs: ['a'], snsOutput } },
+      hasActiveJobs: true,
+      adminActive: false,
+    });
+    expect(body.job.templateInput).toEqual({ version: 1, personSlugs: ['a'] });
+    expect(body.job.snsOutput).toEqual(snsOutput);
+  });
+
+  it('従来のテンプレートで出力先SNSの指定だけのときは template_input を null で渡す', async () => {
+    const snsOutput = { version: 1, targets: ['tiktok'] };
+    const legacy = await callClaim({
+      job: { id: 'j3', personName: '岸優太', personSlug: 'kishi-yuta', templateId: 't', templateVersion: 1, narrationMode: 'none', attempts: 1, templateInput: { snsOutput } },
+      hasActiveJobs: true,
+      adminActive: false,
+    });
+    expect(legacy.job.templateInput).toBeNull();
   });
 });

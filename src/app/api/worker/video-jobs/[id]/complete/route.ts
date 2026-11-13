@@ -59,6 +59,55 @@ async function buildInstagramReelVideo(jobId: string, raw: unknown): Promise<Rec
 }
 
 /**
+ * SNS別の完成動画（result.snsOutputs）。CTA を差し替えた動画は Blob を実際に確認（head）し、このジョブ専用の
+ * sns-{SNS} のパス・video/mp4 であるものだけ URL を保存する（確認できなければその SNS だけ FAIL）。
+ * final.mp4 と同じ内容（sameAsFinal）の SNS はジョブの動画URLを使う（別にアップロードしない）。
+ */
+async function buildSnsOutputs(jobId: string, raw: unknown, videoUrl: string): Promise<Record<string, unknown> | null> {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const targets = (Array.isArray(o.targets) ? o.targets : []).filter((t): t is 'instagram' | 'tiktok' => t === 'instagram' || t === 'tiktok');
+  if (targets.length === 0) return null;
+  const results: Record<string, unknown> = {};
+  const rawResults = (o.results ?? {}) as Record<string, unknown>;
+  for (const t of targets) {
+    const r = (rawResults[t] ?? null) as Record<string, unknown> | null;
+    if (!r) {
+      results[t] = { status: 'FAIL', error: 'Workerから結果が届きませんでした。', ctaMode: null, sameAsFinal: false, url: null };
+      continue;
+    }
+    const base = {
+      ctaMode: r.ctaMode === 'search' || r.ctaMode === 'template' ? r.ctaMode : null,
+      sameAsFinal: r.sameAsFinal === true,
+      durationSec: num(r.durationSec),
+      ctaStartSec: num(r.ctaStartSec),
+      ctaDurationSec: num(r.ctaDurationSec),
+      ctaAudio: r.ctaAudio === 'capcut' || r.ctaAudio === 'none' || r.ctaAudio === 'template' ? r.ctaAudio : null,
+      ctaAudioKey: typeof r.ctaAudioKey === 'string' && /^[0-9a-f]{8}$/.test(r.ctaAudioKey) ? r.ctaAudioKey : null,
+      narration: str(r.narration, 100),
+      srt: str(r.srt, 20_000),
+    };
+    if (r.status !== 'PASS') {
+      results[t] = { ...base, status: 'FAIL', url: null, error: str(r.error, 1000) ?? '作成できませんでした。' };
+      continue;
+    }
+    if (base.sameAsFinal) {
+      results[t] = { ...base, status: 'PASS', url: videoUrl, error: null };
+      continue;
+    }
+    const url = str(r.url, 1000);
+    const blob = url ? await head(url).catch(() => null) : null;
+    const expected = new RegExp(`^video-jobs/${jobId}/sns-${t}-[0-9a-f]{16}\\.mp4$`);
+    if (!blob || !expected.test(blob.pathname) || blob.contentType !== 'video/mp4') {
+      results[t] = { ...base, status: 'FAIL', url: null, error: 'アップロードされた動画を確認できませんでした。' };
+      continue;
+    }
+    results[t] = { ...base, status: 'PASS', url: blob.url, sizeBytes: blob.size, error: null };
+  }
+  return { version: 1, targets, results, checkedAt: new Date().toISOString() };
+}
+
+/**
  * 完了報告。Workerが申告したURLをそのまま信用せず、BlobのURLを実際に確認（head）し、
  * アップロード許可の発行時にDBへ記録したパスと一致することを確かめてからcompletedにする。
  */
@@ -90,6 +139,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // Instagram Reels向け互換動画（あれば既存のresult JSONへ追加する。DBの列は増やさない）
     const result = boundedJson<Record<string, unknown>>(body.result);
     const instagramReelVideo = await buildInstagramReelVideo(jobId, body.instagramReelVideo);
+    const snsOutputs = await buildSnsOutputs(jobId, body.snsOutputs, blob.url);
 
     await completeVideoJob(jobId, workerId, {
       videoUrl: blob.url,
@@ -100,7 +150,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       qaReport: boundedJson<Record<string, unknown>>(body.qaReport),
       postTexts,
       narrationScript: str(body.narrationScript, 5000),
-      result: instagramReelVideo ? { ...(result ?? {}), instagramReelVideo } : result,
+      result:
+        instagramReelVideo || snsOutputs
+          ? { ...(result ?? {}), ...(instagramReelVideo ? { instagramReelVideo } : {}), ...(snsOutputs ? { snsOutputs } : {}) }
+          : result,
       workerExportDir: str(body.workerExportDir, 500),
       personSlug: str(body.personSlug, 100),
     });

@@ -29,7 +29,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       throw new VideoJobError(`動画サイズが不正です（上限${MAX_VIDEO_BYTES / 1024 / 1024}MB）。`, 400);
     }
     let pathname: string;
-    if (body.kind === 'igReel') {
+    if (body.kind === 'sns') {
+      // SNS別の完成動画（CTA を差し替えた instagram.mp4 / tiktok.mp4）。final.mp4 のパス（video_pathname）は変更しない
+      const sns = body.sns === 'instagram' || body.sns === 'tiktok' ? body.sns : null;
+      if (!sns) throw new VideoJobError('SNSの指定が不正です。', 400);
+      if (!(await getOwnedProcessingJob(jobId, workerId))) throw new VideoJobError('このWorkerが実行中のジョブではありません。', 409);
+      pathname = `video-jobs/${jobId}/sns-${sns}-${randomBytes(8).toString('hex')}.mp4`;
+    } else if (body.kind === 'igReel') {
       if (!(await getOwnedProcessingJob(jobId, workerId))) throw new VideoJobError('このWorkerが実行中のジョブではありません。', 409);
       pathname = `video-jobs/${jobId}/ig-reel-${randomBytes(8).toString('hex')}.mp4`;
     } else {
