@@ -237,12 +237,22 @@ describe('トレカ風：画像', () => {
       const used = colorsIn(buildTcgCardImageElement(data(2, { color: c }), 'feed', 'ssr'));
       const acc = ssrAccentOf(oshiCardColor(c), true);
       expect(acc).not.toBeNull();
-      if (acc) for (const col of [acc.ring, acc.glow, acc.base, acc.deep]) expect(used.has(col.toUpperCase())).toBe(true);
+      if (acc) for (const col of [acc.ring, acc.glow, acc.glow2, acc.orbit, acc.base, acc.deep, acc.gemBg]) expect(used.has(col.toUpperCase())).toBe(true);
       signatures.add([...used].sort().join(','));
     }
     // 省略（既定）は10色のどれとも違う（＝紫を明示したカードとも別）
     signatures.add([...colorsIn(buildTcgCardImageElement(data(2, { color: null }), 'feed', 'ssr'))].sort().join(','));
     expect(signatures.size).toBe(ids.length + 1);
+  });
+
+  it('SSR の赤とオレンジ・ピンクと赤など近い色も、名前の縁取り・発光・光の輪の色がそれぞれ異なる（特性のカプセルも推し色）', () => {
+    const pairs = [['red', 'orange'], ['red', 'pink'], ['sky', 'blue'], ['blue', 'purple'], ['yellow', 'orange'], ['white', 'black']] as const;
+    for (const [a, b] of pairs) {
+      const x = ssrAccentOf(oshiCardColor(a), true)!;
+      const y = ssrAccentOf(oshiCardColor(b), true)!;
+      for (const key of ['ring', 'glow', 'glow2', 'orbit'] as const) expect(x[key]).not.toBe(y[key]);
+      expect(x.capsule).not.toEqual(y.capsule);
+    }
   });
 
   it('ベーシックの白はピンクと見分けられる色（白銀）、黄色は名前の縁を濃い色にする', () => {

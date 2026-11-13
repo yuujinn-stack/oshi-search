@@ -1559,11 +1559,12 @@ export function svgSsrName({ name, width, maxFont, minFont, maxHeight, boost = 1
       <g transform={tf}>
         {/* 発光：青紫（中央）・ピンク（左）・水色（右）と、白い光のにじみ */}
         {/* 推し色があれば、中央の発光をその色にする（既定の紫は従来の青紫） */}
-        <g filter="url(#snbl)" opacity={accent ? 0.9 : 0.8}>{paths({ fill: accent ? accent.glow : '#B4A8FF', stroke: accent ? accent.glow : '#B4A8FF', strokeWidth: r(u * 0.14), strokeLinejoin: 'round' }, 'g')}</g>
-        <g filter="url(#snbl)" opacity="0.34" transform={`translate(${r(-u * 0.04)} 0)`}>{paths({ fill: '#FF9BDD', stroke: '#FF9BDD', strokeWidth: r(u * 0.08), strokeLinejoin: 'round' }, 'p')}</g>
-        <g filter="url(#snbl)" opacity="0.38" transform={`translate(${r(u * 0.04)} 0)`}>{paths({ fill: '#7FD8FF', stroke: '#7FD8FF', strokeWidth: r(u * 0.08), strokeLinejoin: 'round' }, 'c')}</g>
-        {/* 推し色の細い縁取り（白い縁のすぐ外側に見える） */}
-        {accent && <g filter="url(#snbs)">{paths({ fill: accent.ring, stroke: accent.ring, strokeWidth: r(u * 0.105 + tk * 2), strokeLinejoin: 'round' }, 'ar')}</g>}
+        {/* 推し色があれば、発光の3層（中央・左・右）をすべてその色にする（ピンク・水色の発光と混ざって色がぼやけないように）。層の数は同じ */}
+        <g filter="url(#snbl)" opacity={accent ? 1 : 0.8}>{paths({ fill: accent ? accent.glow : '#B4A8FF', stroke: accent ? accent.glow : '#B4A8FF', strokeWidth: r(u * (accent ? 0.2 : 0.14)), strokeLinejoin: 'round' }, 'g')}</g>
+        <g filter="url(#snbl)" opacity={accent ? 0.6 : 0.34} transform={`translate(${r(-u * 0.04)} 0)`}>{paths({ fill: accent ? accent.glow2 : '#FF9BDD', stroke: accent ? accent.glow2 : '#FF9BDD', strokeWidth: r(u * 0.08), strokeLinejoin: 'round' }, 'p')}</g>
+        <g filter="url(#snbl)" opacity={accent ? 0.6 : 0.38} transform={`translate(${r(u * 0.04)} 0)`}>{paths({ fill: accent ? accent.glow2 : '#7FD8FF', stroke: accent ? accent.glow2 : '#7FD8FF', strokeWidth: r(u * 0.08), strokeLinejoin: 'round' }, 'c')}</g>
+        {/* 推し色の縁取り（白い縁の外側に、くっきりした色の帯として見える） */}
+        {accent && <g filter="url(#snbx)">{paths({ fill: accent.ring, stroke: accent.ring, strokeWidth: r(u * 0.15 + tk * 2), strokeLinejoin: 'round' }, 'ar')}</g>}
         <g filter="url(#snbs)">{paths({ fill: '#FFFFFF', stroke: '#FFFFFF', strokeWidth: r(u * 0.06 + tk * 2), strokeLinejoin: 'round' }, 'w')}</g>
         {/* 立体の影：文字の背後にだけ（右下へずらした1枚の青紫＋やわらかなぼかし）。層を重ねないので横線は出ない */}
         <g filter="url(#snbs)" opacity="0.7" transform={`translate(${r(u * 0.027)} ${r(u * 0.039)})`}>{paths({ fill: '#3E3AA8', stroke: '#3E3AA8', strokeWidth: r(tk * 2), strokeLinejoin: 'round' }, 'sb')}</g>
@@ -1681,9 +1682,9 @@ function LightOrbit({ w, h, cx, cy, rx, ry, rotate, part, accent = null }: { w: 
         {/* 金・紫・水色の反射（少しずらして重ねた光）と白い芯 */}
         <g filter={`url(#${id}b)`}>
           <path d={d} fill="none" stroke="#FFE3A0" strokeWidth={Math.max(2, ry * 0.06)} opacity="0.75" transform={`translate(0 ${-ry * 0.03})`} />
-          {/* 紫の反射の1本だけ、推し色があればその色にする（控えめな光のアクセント） */}
-          <path d={d} fill="none" stroke={accent ? accent.glow : '#C6A6FF'} strokeWidth={Math.max(2, ry * 0.07)} opacity={accent ? 0.75 : 0.6} transform={`translate(0 ${ry * 0.04})`} />
-          <path d={d} fill="none" stroke="#A6E8FF" strokeWidth={Math.max(2, ry * 0.05)} opacity="0.55" transform={`translate(0 ${ry * 0.07})`} />
+          {/* 紫・水色の反射の2本は、推し色があればその色にする（金の反射と白い芯はそのまま） */}
+          <path d={d} fill="none" stroke={accent ? accent.orbit : '#C6A6FF'} strokeWidth={Math.max(2, ry * (accent ? 0.1 : 0.07))} opacity={accent ? 0.95 : 0.6} transform={`translate(0 ${ry * 0.04})`} />
+          <path d={d} fill="none" stroke={accent ? accent.glow2 : '#A6E8FF'} strokeWidth={Math.max(2, ry * 0.05)} opacity={accent ? 0.7 : 0.55} transform={`translate(0 ${ry * 0.07})`} />
           <path d={d} fill="none" stroke="#FFFFFF" strokeWidth={Math.max(2, ry * 0.08)} opacity="0.7" />
         </g>
         <path d={d} fill="none" stroke={`url(#${id}g)`} strokeWidth={Math.max(1, ry * 0.024)} strokeLinecap="round" />
@@ -1711,39 +1712,58 @@ function SsrBadge({ k, x, y }: { k: (n: number) => number; x: number; y: number 
 }
 
 /**
- * SSR の推し色のアクセント（限定的な装飾だけに使う：名前の発光・縁取り、特性のきらめき、沼ポイントの宝石、光の軌跡の1本）。
- * 背景素材・金のフレーム・ホログラム・名前の虹色の表面・レイアウトは推し色で変えない。
+ * SSR の推し色のアクセント（装飾だけに使う：名前の外側の発光・縁取り、光の軌跡の2本、
+ * 特性のカプセルときらめき、沼ポイントの宝石）。
+ * 背景素材・金のフレーム・ホログラム・名前の虹色の表面・レイアウト・文字色は推し色で変えない。
  * 推し色を選んでいないとき（URL に c がない＝既存の共有URL・既定）は null（従来の SSR と同じ見た目のまま）。
  * 紫を明示的に選んだときは紫のアクセントを付ける。白・黒・黄色は淡いホログラムの上で埋もれないように調整した色を使う。
  */
 export interface SsrAccent {
-  /** 名前の外側のやわらかな発光 */
+  /** 名前の外側のやわらかな発光（中央） */
   glow: string;
-  /** 名前の白い縁の外側の細い縁取り */
+  /** 名前の外側の発光（左右）と光の軌跡の2本目 */
+  glow2: string;
+  /** 名前の白い縁の外側の縁取り */
   ring: string;
-  /** 宝石・きらめきの色（明るい面・基本・濃い縁） */
+  /** 光の軌跡の色の1本 */
+  orbit: string;
+  /** 特性のカプセルの色（上・中・下）と文字の影 */
+  capsule: readonly [string, string, string];
+  capsuleShadow: string;
+  /** 宝石・きらめきの色（明るい面・基本・濃い縁）と宝石の地 */
   light: string;
   base: string;
   deep: string;
+  gemBg: string;
 }
 export function ssrAccentOf(c: OshiCardColor, explicit: boolean): SsrAccent | null {
   if (!explicit) return null;
-  if (c.id === 'white') return { glow: '#FFFFFF', ring: '#A7B0C8', light: '#FFFFFF', base: '#E9EDF6', deep: '#8D97B2' };
-  if (c.id === 'black') return { glow: '#5B5670', ring: '#25222F', light: '#8C8AA0', base: '#3A3748', deep: '#121018' };
-  if (c.id === 'yellow') return { glow: '#FFC928', ring: '#E0A100', light: '#FFF0B0', base: '#FFC928', deep: '#B07800' };
-  return { glow: c.base, ring: c.base, light: c.light, base: c.base, deep: c.deep };
+  if (c.id === 'white') {
+    return { glow: '#FFFFFF', glow2: '#FFFFFF', ring: '#98A2BC', orbit: '#FFFFFF', capsule: ['#D3D8E4', '#98A2BA', '#66708C'], capsuleShadow: '#4A5370', light: '#FFFFFF', base: '#E9EDF6', deep: '#7E88A4', gemBg: '#FFFFFF' };
+  }
+  if (c.id === 'black') {
+    return { glow: '#7C7792', glow2: '#9C99AE', ring: '#1C1A24', orbit: '#3A3748', capsule: ['#6A6680', '#3A3748', '#14121A'], capsuleShadow: '#000000', light: '#8C8AA0', base: '#3A3748', deep: '#121018', gemBg: '#D6D4E0' };
+  }
+  if (c.id === 'yellow') {
+    return { glow: '#FFC928', glow2: '#FFDA55', ring: '#E8A800', orbit: '#FFC928', capsule: ['#FFE07A', '#EDAE00', '#A86E00'], capsuleShadow: '#8A5A00', light: '#FFF0B0', base: '#FFC928', deep: '#B07800', gemBg: '#FFF6CF' };
+  }
+  return {
+    glow: c.base, glow2: mixHex(c.base, c.light, 0.3), ring: c.base, orbit: c.base,
+    capsule: [mixHex(c.base, '#FFFFFF', 0.2), mixHex(c.base, c.deep, 0.25), c.deep], capsuleShadow: c.deep,
+    light: c.light, base: c.base, deep: c.deep, gemBg: mixHex(c.light, '#FFFFFF', 0.4),
+  };
 }
 
-/** 沼ポイントの宝石の丸（既定は水色のカット。推し色があればその色のカット） */
+/** 沼ポイントの宝石の丸（既定は水色のカット。推し色があればその色の地とカット） */
 function GemDot({ size, accent }: { size: number; accent?: SsrAccent | null }) {
   const a = accent;
   return (
     <svg width={size} height={size} viewBox="0 0 40 40">
-      <circle cx="20" cy="20" r="18" fill="#EEF2FF" stroke={a ? a.deep : '#9AA6E8'} strokeWidth="2.4" />
-      <circle cx="20" cy="20" r="14" fill="#FFFFFF" />
-      <polygon points="20,8 30,18 20,32 10,18" fill={a ? a.base : '#9FD0FF'} stroke={a ? a.deep : '#6F8FE6'} strokeWidth="1.6" strokeLinejoin="round" />
-      <polygon points="20,8 25,18 20,32 15,18" fill={a ? a.light : '#D6EEFF'} opacity="0.9" />
-      <polygon points="10,18 30,18 20,32" fill={a ? a.deep : '#7FB2F5'} opacity="0.35" />
+      <circle cx="20" cy="20" r="18" fill={a ? a.gemBg : '#EEF2FF'} stroke={a ? a.deep : '#9AA6E8'} strokeWidth={a ? 3 : 2.4} />
+      <circle cx="20" cy="20" r={a ? 15 : 14} fill="#FFFFFF" />
+      <polygon points={a ? '20,6 32,18 20,34 8,18' : '20,8 30,18 20,32 10,18'} fill={a ? a.base : '#9FD0FF'} stroke={a ? a.deep : '#6F8FE6'} strokeWidth="1.6" strokeLinejoin="round" />
+      <polygon points={a ? '20,6 26,18 20,34 14,18' : '20,8 25,18 20,32 15,18'} fill={a ? a.light : '#D6EEFF'} opacity={a ? 0.75 : 0.9} />
+      <polygon points={a ? '8,18 32,18 20,34' : '10,18 30,18 20,32'} fill={a ? a.deep : '#7FB2F5'} opacity={a ? 0.45 : 0.35} />
     </svg>
   );
 }
@@ -1843,12 +1863,12 @@ function SsrCard({ d, t, s }: { d: OshiCardTcgImageData; t: Theme; s: number }) 
         <div style={{ position: 'absolute', left: k(30), top: infoTop, width: secW, height: infoH, display: 'flex', flexDirection: 'column', padding: `${k(26)}px ${k(14)}px 0` }}>
           {/* 特性：紫のカプセル（金の縁）＋濃いピンクの太字＋金のきらめき、下に本文1行 */}
           <div style={{ display: 'flex', alignItems: 'center', height: k(70) }}>
-            <div style={{ display: 'flex', position: 'relative', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: k(220), height: k(66), borderRadius: k(33), backgroundImage: 'linear-gradient(180deg, #A68BF2 0%, #7C5BE0 55%, #5B3FC4 100%)', border: `${k(3)}px solid #E2B64A`, boxShadow: `0 0 0 ${k(2)}px rgba(255,255,255,0.9), 0 ${k(3)}px ${k(6)}px rgba(60,40,140,0.35)` }}>
+            <div style={{ display: 'flex', position: 'relative', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: k(220), height: k(66), borderRadius: k(33), backgroundImage: accent ? `linear-gradient(180deg, ${accent.capsule[0]} 0%, ${accent.capsule[1]} 55%, ${accent.capsule[2]} 100%)` : 'linear-gradient(180deg, #A68BF2 0%, #7C5BE0 55%, #5B3FC4 100%)', border: `${k(3)}px solid #E2B64A`, boxShadow: `0 0 0 ${k(2)}px rgba(255,255,255,0.9), 0 ${k(3)}px ${k(6)}px rgba(60,40,140,0.35)` }}>
               <div style={{ position: 'absolute', left: k(16), right: k(16), top: k(4), height: k(18), display: 'flex', borderRadius: k(9), backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0.05) 100%)' }} />
-              <div style={{ display: 'flex', fontSize: k(36), fontWeight: 700, color: '#FFFFFF', letterSpacing: k(4) }}>特性</div>
+              <div style={{ display: 'flex', fontSize: k(36), fontWeight: 700, color: '#FFFFFF', letterSpacing: k(4), ...(accent ? { textShadow: `0 ${k(2)}px ${k(3)}px ${accent.capsuleShadow}, 0 0 ${k(2)}px ${accent.capsuleShadow}` } : {}) }}>特性</div>
             </div>
             <div style={{ display: 'flex', marginLeft: k(34), fontSize: traitFont, fontWeight: 700, color: '#B0145A', whiteSpace: 'nowrap' }}>{d.trait}</div>
-            <svg width={k(40)} height={k(40)} viewBox="0 0 24 24" style={{ marginLeft: k(12) }}>{accent ? <path d={SPARKLE_D} fill={accent.base} stroke="#D9A93A" strokeWidth="1.2" strokeLinejoin="round" /> : <path d={SPARKLE_D} fill="#F2C24E" />}</svg>
+            <svg width={accent ? k(50) : k(40)} height={accent ? k(50) : k(40)} viewBox="0 0 24 24" style={{ marginLeft: k(12) }}>{accent ? <path d={SPARKLE_D} fill={accent.base} stroke={accent.deep} strokeWidth="1.4" strokeLinejoin="round" /> : <path d={SPARKLE_D} fill="#F2C24E" />}</svg>
           </div>
           <div style={{ display: 'flex', marginTop: k(22), paddingLeft: k(20), fontSize: bodyFont(traitBody), fontWeight: 700, color: SSR_INK, whiteSpace: 'nowrap' }}>{traitBody}</div>
           <div style={{ display: 'flex', marginTop: k(30), height: k(2), backgroundImage: goldLine, opacity: 0.8 }} />

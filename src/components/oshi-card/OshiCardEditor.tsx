@@ -341,7 +341,7 @@ export default function OshiCardEditor({ person, candidates, initial }: Props) {
 /** 推し色がカードのどこに出るか（プレビューの下の説明） */
 const OSHI_CARD_COLOR_WHERE: Record<OshiCardTcgVariant, string> = {
   basic: 'カード全体の色に反映',
-  ssr: '名前の光と縁取り・特性のきらめき・沼ポイントの宝石に反映',
+  ssr: '名前の光と縁取り・光の輪・特性・沼ポイントの宝石に反映',
   legend: '装飾の色に反映',
 };
 
