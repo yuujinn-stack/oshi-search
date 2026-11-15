@@ -82,6 +82,13 @@ const CARDS: InstagramHubCard[] = [
     href: '/admin/instagram-stories',
     cta: 'テンプレートを見る',
   },
+  {
+    icon: '🎨',
+    title: 'Instagramストーリーズ作成',
+    description: '5種類のテンプレートから、推しの名前入りのストーリーズ画像（PNG）とUTM付きURLを作成。A/Bテストと投稿効果の記録もできます。',
+    href: '/admin/story-maker',
+    cta: 'ストーリーズを作る',
+  },
 ];
 
 /** published / (published + failed + needs_review)。分母が0件なら「—」を返す */

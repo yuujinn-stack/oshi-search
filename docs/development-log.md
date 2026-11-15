@@ -6041,3 +6041,18 @@ oshi-search（未commit）
 - テスト：`oshi-card-tcg.test.ts` に近い色の組（赤とオレンジ・赤とピンク・水色と青・青と紫・黄色とオレンジ・白と黒）で縁取り・発光・光の輪・カプセルの色が異なることを追加
 - 確認（ローカル）：c なしの SSR 画像は修正前とバイト単位で一致。生成時間は同条件で修正前 1.474〜1.484秒 → 修正後 1.450〜1.479秒（差なし）。ファイルサイズ差 ±0.3% 以内、全色 1260×1760。色の切り替え・競合・紫の明示・既存URL・保存（カード・ストーリーズ）・共有・360/390px の横はみ出し 0 を確認
 - 比較画像：`~/Desktop/oshi-card-color-check/v2-before-ssr-10colors.png`・`v2-after-ssr-10colors.png`・`v2-before-after-ssr.png`
+
+### Task 192：Instagramストーリーズ作成（/admin/story-maker）（2026-11-15・ブランチ feat/story-maker・本番デプロイなし）
+- 目的：推し名入りのストーリーズ画像（1080×1920 PNG）と UTM 付き URL を管理画面で作り、A/Bテストと投稿効果を記録できるようにする（既存の /admin/instagram-stories のテキストテンプレートとは別画面）
+- テンプレート5種類（`src/lib/story-maker/templates.ts`）：A サブスク診断・B 関連商品・C 追加希望リクエスト・D 推し布教カード・E グッズ制作比較。1〜3枚構成、最後の1枚にリンクスタンプ（C は質問スタンプ）を貼る前提
+  - `{name}` / `{name推し}` は人物・グループ名で置換（未選択時は「推し」「推し活中」）
+  - リンク先はサブスク診断のパスを `buildOshiVodWithPath` / `buildOshiVodGroupPath` で作る
+- 画面（`src/app/admin/story-maker/`）：`page.tsx`（人物・グループ一覧をサーバーで読み込み・noindex）、`StoryMakerClient.tsx`（手順1〜7・人物は `PersonCombobox`・グループは datalist）、`StorySlide.tsx`（1080×1920 のスライド描画。セーフエリア上250px・下270px、文字の自動縮小、スタンプ位置のガイドは画面表示だけ）、`png-export.ts`（SVG foreignObject → canvas で PNG、`zip-store` で全枚 ZIP）、`StoryMetricsPanel.tsx`（効果測定）
+  - リンクスタンプの偽物は PNG に焼き込まない（ガイドは画面表示のみ）。実画面が必要なスライドで画像が未設定なら「実際の画面が未設定です」と表示し、PNG 保存を止める
+- UTM（`utm.ts`）：utm_source=instagram / medium=social / campaign=`story_{テンプレート}` / content=`{対象}_{n}p`（A/B は `{対象}_{テスト}_{a|b}`）。対象の識別子は slug → 既知グループ slug → 英数字（M!LK→milk）→ `t`+FNV-1a 6桁
+- A/Bテスト（`ab.ts`）：枚数 1 vs 3・リンク位置 50 vs 60%・CTA「詳しくはこちら」vs「無料で診断する」・背景 黄 vs ピンク
+- 効果測定（`metrics.ts` ＋ `src/server/story-maker/post-store.ts` ＋ `/api/admin/story-maker/posts`）：Instagram インサイトの数値を手入力。Redis ハッシュ `story-maker:posts:v1`（環境ごとにキーを分ける・最大2000件）。DB マイグレーションなし。維持率・リンクタップ率・A/B 集計・CSV 出力
+- 実画面の撮影（`/api/admin/story-maker/screenshot`）：許可した公開パスだけ（`screenshot-path.ts`）を 390×844・2倍で撮影。ローカル専用（Vercel では 501 で「画像をアップロード」を案内）。`playwright` は動的 import（Next.js の既定の serverExternalPackages に含まれるためバンドルされない）。計測・GA へのリクエストは遮断
+- 導線：`AdminLayoutClient.tsx` のナビに「🎨 ストーリーズ作成」、`/admin/instagram` のカードに「Instagramストーリーズ作成」
+- テスト：`src/lib/__tests__/story-maker.test.tsx`（24件：UTM・ファイル名・A/B・指標・撮影パス・スライド描画）
+- 注意：開発用 PC では Turbopack の `next dev` が待機中も CPU 約170%を使い続けたため、画面確認は `next dev --webpack` で行う（Webpack では待機中 CPU 0%）

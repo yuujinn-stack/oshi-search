@@ -1,0 +1,646 @@
+'use client';
+
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import PersonCombobox, { type PersonOption } from '@/components/admin/PersonCombobox';
+import {
+  COLOR_PRESETS,
+  DEFAULT_DESIGN,
+  FONT_STACKS,
+  LINK_POSITIONS,
+  SLIDE_COUNTS,
+  SLIDE_TEXT_FIELDS,
+  STORY_TEMPLATES,
+  fillStoryText,
+  getStoryTemplate,
+  linkTargetOptions,
+  screenshotPathOptions,
+  type ColorPresetId,
+  type FontId,
+  type ImageSlot,
+  type LinkPosition,
+  type SlideCount,
+  type SlideText,
+  type StoryDesign,
+  type StoryTarget,
+  type StoryTemplateId,
+} from '@/lib/story-maker/templates';
+import { AB_CTA_A_DEFAULT, AB_TESTS, applyAbVariant, type AbSettings, type StoryVariantConfig } from '@/lib/story-maker/ab';
+import { appendUtm, buildStoryUtm, isSiteUrl, storyFileName, storyZipName, suggestTargetKey, type AbTestKey, type AbVariant } from '@/lib/story-maker/utm';
+import { StoryScaled, StorySlide, type ImageFit, type SlideImage } from './StorySlide';
+import { downloadBlob, downloadZip, renderStoryElementPng } from './png-export';
+import StoryMetricsPanel, { type MetricsDraftContext } from './StoryMetricsPanel';
+
+export interface GroupChoice {
+  name: string;
+  pagePath: string;
+  slug?: string;
+}
+
+type EditMap = Record<string, Partial<SlideText>>;
+type ImageMap = Record<string, SlideImage>;
+
+const editKey = (t: StoryTemplateId, count: SlideCount, i: number) => `${t}:${count}:${i}`;
+const imageKey = (t: StoryTemplateId, slot: ImageSlot) => `${t}:${slot}`;
+
+/** 1つのパターン（A/B 無しなら1つ）を描くのに必要な値 */
+interface ResolvedSlide {
+  index: number;
+  def: ReturnType<typeof getStoryTemplate>['structures'][SlideCount][number];
+  rawText: SlideText;
+  text: SlideText;
+  image: SlideImage | null;
+  missingImage: boolean;
+}
+
+function resolveSlides(
+  templateId: StoryTemplateId,
+  cfg: StoryVariantConfig,
+  edits: EditMap,
+  images: ImageMap,
+  target: StoryTarget | null,
+): ResolvedSlide[] {
+  const tpl = getStoryTemplate(templateId);
+  const t = tpl.usesTarget ? target : null;
+  return tpl.structures[cfg.slides].map((def, index) => {
+    const rawText: SlideText = { ...def.text, ...edits[editKey(templateId, cfg.slides, index)] };
+    const filled = Object.fromEntries(Object.entries(rawText).map(([k, v]) => [k, fillStoryText(v, t)])) as unknown as SlideText;
+    if (cfg.ctaOverride && def.sticker === 'link') filled.cta = cfg.ctaOverride;
+    const image = def.imageSlot ? images[imageKey(templateId, def.imageSlot)] ?? null : null;
+    return { index, def, rawText, text: filled, image, missingImage: def.image === 'required' && !image };
+  });
+}
+
+function Step({ n, title, children, aside }: { n: number; title: string; children: ReactNode; aside?: ReactNode }) {
+  return (
+    <section className="bg-white rounded-xl border border-gray-200 p-4">
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <h2 className="font-bold text-slate-800 flex items-center gap-2">
+          <span className="inline-flex w-6 h-6 rounded-full bg-amber-400 text-white text-xs items-center justify-center font-black">{n}</span>
+          {title}
+        </h2>
+        {aside}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Pill({ active, onClick, children, disabled }: { active: boolean; onClick: () => void; children: ReactNode; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`px-3 py-1.5 rounded-full text-sm border transition ${active ? 'bg-amber-400 border-amber-400 text-white font-bold' : 'bg-white border-gray-300 text-gray-700 hover:border-amber-400'} disabled:opacity-40 disabled:cursor-not-allowed`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function CopyButton({ text, label = 'コピー' }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setDone(true);
+          setTimeout(() => setDone(false), 1500);
+        } catch { /* クリップボード不可 */ }
+      }}
+      className="shrink-0 px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs font-bold hover:bg-slate-700"
+    >
+      {done ? 'コピーしました' : label}
+    </button>
+  );
+}
+
+/** プレビュー内の [data-fit-area] のはみ出しを調べる */
+function useOverflowCheck(deps: unknown[]): [React.RefObject<HTMLDivElement | null>, number[]] {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [over, setOver] = useState<number[]>([]);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      const root = ref.current;
+      if (!root) return;
+      const bad: number[] = [];
+      root.querySelectorAll<HTMLElement>('[data-slide-index]').forEach((el) => {
+        const i = Number(el.dataset.slideIndex);
+        const areas = el.querySelectorAll<HTMLElement>('[data-fit-area]');
+        if (Array.from(areas).some((a) => a.scrollHeight > a.clientHeight + 2 || a.scrollWidth > a.clientWidth + 2)) bad.push(i);
+      });
+      setOver(bad);
+    });
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return [ref, over];
+}
+
+export default function StoryMakerClient({ persons, groups }: { persons: PersonOption[]; groups: GroupChoice[] }) {
+  const [templateId, setTemplateId] = useState<StoryTemplateId>('vod');
+  const tpl = getStoryTemplate(templateId);
+
+  // ② 対象
+  const [targetType, setTargetType] = useState<'person' | 'group'>('group');
+  const [personName, setPersonName] = useState('');
+  const [groupName, setGroupName] = useState('');
+  const target: StoryTarget | null = useMemo(() => {
+    if (targetType === 'person' && personName) return { type: 'person', name: personName, pagePath: `/person/${encodeURIComponent(personName)}` };
+    if (targetType === 'group' && groupName) {
+      const g = groups.find((x) => x.name === groupName);
+      if (g) return { type: 'group', name: g.name, pagePath: g.pagePath, slug: g.slug };
+    }
+    return null;
+  }, [targetType, personName, groupName, groups]);
+
+  // ③ 枚数・デザイン
+  const [slides, setSlides] = useState<SlideCount>(tpl.defaultSlides);
+  const [design, setDesign] = useState<StoryDesign>(DEFAULT_DESIGN);
+  const [ab, setAb] = useState<AbSettings | null>(null);
+  const [viewVariant, setViewVariant] = useState<AbVariant>('a');
+
+  // ④ テキスト・画像
+  const [edits, setEdits] = useState<EditMap>({});
+  const [images, setImages] = useState<ImageMap>({});
+  const [selected, setSelected] = useState(0);
+  const [questionText, setQuestionText] = useState('追加してほしいのは誰？');
+
+  // ⑤ プレビュー
+  const [showGuide, setShowGuide] = useState(true);
+
+  // ⑦ URL
+  const [linkTargetId, setLinkTargetId] = useState('');
+  const [customUrl, setCustomUrl] = useState('');
+  const [targetKeyInput, setTargetKeyInput] = useState<string | null>(null);
+
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+  function selectTemplate(id: StoryTemplateId) {
+    setTemplateId(id);
+    setSlides(getStoryTemplate(id).defaultSlides);
+    setSelected(0);
+    setLinkTargetId('');
+    setCustomUrl('');
+    if (ab && ab.test === 'cta') setAb({ ...ab, ctaB: '' });
+  }
+
+  const baseCfg: StoryVariantConfig = { slides, design, ctaOverride: null };
+  const variants: AbVariant[] = ab ? ['a', 'b'] : ['a'];
+  const cfgOf = (v: AbVariant) => applyAbVariant(baseCfg, ab, v);
+  const viewCfg = cfgOf(ab ? viewVariant : 'a');
+  const resolved = resolveSlides(templateId, viewCfg, edits, images, target);
+  const sel = Math.min(selected, resolved.length - 1);
+  const current = resolved[sel];
+
+  // リンク先・UTM
+  const linkOpts = linkTargetOptions(templateId, tpl.usesTarget ? target : null);
+  const linkOpt = linkOpts.find((o) => o.id === linkTargetId) ?? linkOpts[0];
+  const baseUrl = linkTargetId === 'custom' ? customUrl.trim() : linkOpt?.path ?? '/';
+  const targetKey = targetKeyInput ?? suggestTargetKey(tpl.usesTarget ? target : null);
+  const abOf = (v: AbVariant) => (ab ? { test: ab.test, variant: v } : null);
+  const urlOf = (v: AbVariant) => {
+    if (!baseUrl) return '';
+    try {
+      return appendUtm(baseUrl, buildStoryUtm(tpl, targetKey, cfgOf(v).slides, abOf(v)));
+    } catch {
+      return '';
+    }
+  };
+
+  // テンプレート・対象が変わったら識別子の手入力をやめて自動に戻す
+  useEffect(() => { setTargetKeyInput(null); }, [templateId, target?.name]);
+
+  const [previewRef, overflowSlides] = useOverflowCheck([resolved.map((r) => JSON.stringify(r.text)).join('|'), viewCfg.slides, JSON.stringify(viewCfg.design), Object.keys(images).join()]);
+
+  function setText(field: keyof SlideText, value: string) {
+    const k = editKey(templateId, viewCfg.slides, sel);
+    setEdits((prev) => ({ ...prev, [k]: { ...prev[k], [field]: value } }));
+  }
+  function resetTexts() {
+    setEdits((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => !k.startsWith(`${templateId}:`))));
+  }
+
+  async function onUpload(slot: ImageSlot, file: File) {
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { setMessage({ kind: 'error', text: 'PNG・JPEG・WebP の画像を選んでください。' }); return; }
+    if (file.size > 12 * 1024 * 1024) { setMessage({ kind: 'error', text: '画像は12MBまでです。' }); return; }
+    const src = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    });
+    setImages((prev) => ({ ...prev, [imageKey(templateId, slot)]: { src, fit: prev[imageKey(templateId, slot)]?.fit ?? 'top' } }));
+    setMessage({ kind: 'ok', text: '画像を差し替えました。' });
+  }
+
+  const [shotPath, setShotPath] = useState('');
+  const [shotScroll, setShotScroll] = useState(0);
+  async function onScreenshot(slot: ImageSlot, path: string) {
+    setBusy('shot');
+    setMessage(null);
+    try {
+      const res = await fetch('/api/admin/story-maker/screenshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, scrollY: shotScroll }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `取得に失敗しました（${res.status}）`);
+      }
+      const blob = await res.blob();
+      const src = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result));
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(blob);
+      });
+      setImages((prev) => ({ ...prev, [imageKey(templateId, slot)]: { src, fit: prev[imageKey(templateId, slot)]?.fit ?? 'top' } }));
+      setMessage({ kind: 'ok', text: `oshi-search.jp${path} の画面を取得しました。` });
+    } catch (err) {
+      setMessage({ kind: 'error', text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function slideElement(r: ResolvedSlide, cfg: StoryVariantConfig, total: number, guide: boolean) {
+    return (
+      <StorySlide
+        decoration={tpl.decoration}
+        def={r.def}
+        text={r.text}
+        design={cfg.design}
+        index={r.index}
+        total={total}
+        image={r.image}
+        showGuide={guide}
+        questionText={questionText}
+      />
+    );
+  }
+
+  async function download(v: AbVariant, only?: number) {
+    const cfg = cfgOf(v);
+    const rs = resolveSlides(templateId, cfg, edits, images, target);
+    const targets = only === undefined ? rs : rs.filter((r) => r.index === only);
+    const missing = targets.filter((r) => r.missingImage);
+    if (missing.length > 0) {
+      setMessage({ kind: 'error', text: `${missing.map((r) => `${r.index + 1}枚目`).join('・')}の実際の画面が未設定です。スクリーンショットを取得するか、画像をアップロードしてください（架空の画面は出力しません）。` });
+      return;
+    }
+    setBusy(`dl-${v}-${only ?? 'all'}`);
+    setMessage(null);
+    try {
+      const files: { name: string; blob: Blob }[] = [];
+      for (const r of targets) {
+        const blob = await renderStoryElementPng(slideElement(r, cfg, rs.length, false));
+        files.push({ name: storyFileName(tpl, targetKey, r.index, abOf(v)), blob });
+      }
+      if (files.length === 1) downloadBlob(files[0].blob, files[0].name);
+      else await downloadZip(files, storyZipName(tpl, targetKey, abOf(v)));
+      setMessage({ kind: 'ok', text: `${files.map((f) => f.name).join('、')} を保存しました。` });
+    } catch (err) {
+      setMessage({ kind: 'error', text: `画像の保存に失敗しました: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const slotsInUse = Array.from(new Set(resolved.map((r) => r.def.imageSlot).filter((s): s is ImageSlot => !!s)));
+  const presetOf = (Object.keys(COLOR_PRESETS) as ColorPresetId[]).find((id) => JSON.stringify(COLOR_PRESETS[id].colors) === JSON.stringify(design.colors));
+  const locked = (k: AbTestKey) => ab?.test === k;
+
+  const metricsCtx: MetricsDraftContext = {
+    templateId,
+    targetName: tpl.usesTarget ? target?.name ?? null : null,
+    targetType: tpl.usesTarget ? target?.type ?? null : null,
+    variants: variants.map((v) => {
+      const cfg = cfgOf(v);
+      const utm = buildStoryUtm(tpl, targetKey, cfg.slides, abOf(v));
+      const linkSlide = getStoryTemplate(templateId).structures[cfg.slides].findIndex((d) => d.sticker === 'link');
+      return { variant: ab ? v : null, slides: cfg.slides, utmCampaign: utm.campaign, utmContent: utm.content, url: urlOf(v), linkSlide: linkSlide >= 0 ? linkSlide + 1 : cfg.slides };
+    }),
+    abTest: ab?.test ?? null,
+  };
+
+  return (
+    <div className="space-y-4">
+      {message && (
+        <div role="status" className={`rounded-lg px-4 py-2 text-sm ${message.kind === 'ok' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+          {message.text}
+        </div>
+      )}
+
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_420px] gap-4 items-start">
+        {/* ── 左：操作 ── */}
+        <div className="space-y-4">
+          <Step n={1} title="テンプレートを選ぶ">
+            <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2">
+              {STORY_TEMPLATES.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => selectTemplate(t.id)}
+                  className={`text-left rounded-lg border p-3 transition ${t.id === templateId ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
+                >
+                  <div className="font-bold text-sm text-slate-800">{t.title}</div>
+                  <div className="text-xs text-gray-500 mt-1 leading-relaxed">{t.purpose}</div>
+                  <div className="text-[11px] text-amber-700 mt-1 font-semibold">基本 {t.defaultSlides}枚</div>
+                </button>
+              ))}
+            </div>
+          </Step>
+
+          <Step n={2} title="人物・グループを選ぶ" aside={!tpl.usesTarget && <span className="text-xs text-gray-400">このテンプレートは名前を使いません（任意）</span>}>
+            <div className="flex gap-2 mb-3">
+              <Pill active={targetType === 'group'} onClick={() => setTargetType('group')}>グループ</Pill>
+              <Pill active={targetType === 'person'} onClick={() => setTargetType('person')}>人物</Pill>
+            </div>
+            {targetType === 'person' ? (
+              <PersonCombobox persons={persons} value={personName} onChange={setPersonName} allowEmpty emptyLabel="（選ばない）" placeholder="人物名で検索" />
+            ) : (
+              <div className="flex gap-2 items-center">
+                <input
+                  list="story-maker-groups"
+                  value={groupName}
+                  onChange={(e) => setGroupName(e.target.value)}
+                  placeholder="グループ名で検索（例：M!LK）"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                />
+                <datalist id="story-maker-groups">
+                  {groups.map((g) => <option key={g.name} value={g.name} />)}
+                </datalist>
+                {groupName && <button type="button" className="text-xs text-gray-500 underline shrink-0" onClick={() => setGroupName('')}>クリア</button>}
+              </div>
+            )}
+            <p className="text-xs mt-2 text-gray-500">
+              {target ? <>選択中：<b className="text-slate-700">{target.name}</b>（ページ：<code>{target.pagePath}</code>）</> :
+                targetType === 'group' && groupName ? <span className="text-red-600">「{groupName}」は登録されているグループではありません。候補から選んでください。</span> :
+                '未選択の場合は「推し」などの一般的な文言になります。'}
+            </p>
+          </Step>
+
+          <Step n={3} title="投稿枚数とデザインを選ぶ">
+            <div className="space-y-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-24 text-gray-600">投稿枚数</span>
+                {SLIDE_COUNTS.map((n) => (
+                  <Pill key={n} active={slides === n} disabled={locked('slides')} onClick={() => { setSlides(n); setSelected(0); }}>
+                    {n}枚{n === tpl.defaultSlides ? '（基本）' : ''}
+                  </Pill>
+                ))}
+                <span className="text-xs text-gray-400">{slides === 1 ? '紹介・実画面・CTAを1枚に' : slides === 2 ? '興味を引く → 実画面・CTA' : '興味を引く → 解決方法 → CTA'}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-24 text-gray-600">背景色</span>
+                {(Object.keys(COLOR_PRESETS) as ColorPresetId[]).map((id) => (
+                  <Pill key={id} active={presetOf === id} disabled={locked('bg')} onClick={() => setDesign({ ...design, colors: { ...COLOR_PRESETS[id].colors } })}>
+                    <span className="inline-block w-3 h-3 rounded-full mr-1 align-[-1px] border border-black/10" style={{ background: COLOR_PRESETS[id].colors.bg }} />
+                    {COLOR_PRESETS[id].label}
+                  </Pill>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="w-24 text-gray-600">色の調整</span>
+                {([['bg', '背景'], ['accent', 'アクセント'], ['sub', 'サブ'], ['text', '文字']] as const).map(([k, label]) => (
+                  <label key={k} className="flex items-center gap-1 text-xs text-gray-600">
+                    <input type="color" value={design.colors[k]} disabled={locked('bg') && k === 'bg'} onChange={(e) => setDesign({ ...design, colors: { ...design.colors, [k]: e.target.value } })} className="w-8 h-8 rounded border border-gray-200" />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-24 text-gray-600">フォント</span>
+                {(Object.keys(FONT_STACKS) as FontId[]).map((f) => (
+                  <Pill key={f} active={design.font === f} onClick={() => setDesign({ ...design, font: f })}>{FONT_STACKS[f].label}</Pill>
+                ))}
+                <label className="flex items-center gap-2 ml-2 text-xs text-gray-600">
+                  文字サイズ
+                  <input type="range" min={0.8} max={1.2} step={0.05} value={design.fontScale} onChange={(e) => setDesign({ ...design, fontScale: Number(e.target.value) })} />
+                  {Math.round(design.fontScale * 100)}%
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-24 text-gray-600">{templateId === 'request' ? 'スタンプ位置' : 'リンク位置'}</span>
+                {LINK_POSITIONS.map((p) => (
+                  <Pill key={p.value} active={design.linkPos === p.value} disabled={locked('link')} onClick={() => setDesign({ ...design, linkPos: p.value as LinkPosition })}>{p.label}</Pill>
+                ))}
+              </div>
+
+              <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50/50 p-3">
+                <label className="flex items-center gap-2 font-semibold text-slate-700">
+                  <input type="checkbox" checked={ab !== null} onChange={(e) => { setAb(e.target.checked ? { test: 'slides', ctaA: AB_CTA_A_DEFAULT, ctaB: '' } : null); setViewVariant('a'); setSelected(0); }} />
+                  A/Bテスト用に2パターン作る
+                </label>
+                {ab && (
+                  <div className="mt-2 space-y-2">
+                    <div className="flex flex-wrap gap-2">
+                      {AB_TESTS.map((t) => (
+                        <Pill key={t.key} active={ab.test === t.key} onClick={() => { setAb({ ...ab, test: t.key }); setSelected(0); }}>
+                          {t.label}：{t.a} vs {t.b}
+                        </Pill>
+                      ))}
+                    </div>
+                    {ab.test === 'cta' && (
+                      <div className="grid sm:grid-cols-2 gap-2">
+                        <label className="text-xs text-gray-600">A の CTA
+                          <input value={ab.ctaA} onChange={(e) => setAb({ ...ab, ctaA: e.target.value })} className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                        </label>
+                        <label className="text-xs text-gray-600">B の CTA（空欄＝テンプレートの文言）
+                          <input value={ab.ctaB} placeholder={tpl.structures[slides].find((d) => d.sticker === 'link')?.text.cta ?? ''} onChange={(e) => setAb({ ...ab, ctaB: e.target.value })} className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                        </label>
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-500">A・Bは別々の画像・別々のUTM（utm_content の末尾 _a / _b）になります。比較したい項目以外は同じ設定です。</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </Step>
+
+          <Step n={4} title="テキストと画像を調整する" aside={<button type="button" onClick={resetTexts} className="text-xs text-gray-500 underline">このテンプレートの文言を初期値に戻す</button>}>
+            <div className="flex gap-2 mb-3 flex-wrap">
+              {resolved.map((r) => (
+                <Pill key={r.index} active={r.index === sel} onClick={() => setSelected(r.index)}>
+                  {r.index + 1}枚目{r.def.sticker === 'link' ? '・リンク' : r.def.sticker === 'question' ? '・質問' : ''}{r.missingImage ? ' ⚠' : ''}
+                </Pill>
+              ))}
+              {ab && <span className="text-xs text-gray-500 self-center">{viewVariant.toUpperCase()}パターン（{viewCfg.slides}枚）の文言を編集中</span>}
+            </div>
+            <p className="text-xs text-gray-500 mb-2"><code>{'{name}'}</code> は選んだ人物・グループ名、<code>{'{name推し}'}</code> は「◯◯推し」に置き換わります。改行はそのまま反映されます。</p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              {SLIDE_TEXT_FIELDS.map((f) => {
+                const irrelevant = (f.key === 'cta' && current.def.sticker !== 'link') || (f.key === 'stickerCaption' && current.def.sticker === 'none');
+                return (
+                  <label key={f.key} className={`text-xs text-gray-600 ${irrelevant ? 'opacity-50' : ''}`}>
+                    {f.label}{irrelevant ? '（このページでは表示されません）' : ''}
+                    {f.multiline ? (
+                      <textarea rows={3} value={current.rawText[f.key]} onChange={(e) => setText(f.key, e.target.value)} className="mt-1 w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-slate-800" />
+                    ) : (
+                      <input value={current.rawText[f.key]} onChange={(e) => setText(f.key, e.target.value)} className="mt-1 w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-slate-800" />
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+            {ab?.test === 'cta' && current.def.sticker === 'link' && <p className="text-xs text-amber-700 mt-2">CTA文言はA/Bテストの設定（{viewVariant.toUpperCase()}：「{current.text.cta}」）が優先されます。</p>}
+            {templateId === 'request' && (
+              <label className="block text-xs text-gray-600 mt-3">質問スタンプに入れる質問文（Instagramアプリで入力。画像には入りません）
+                <div className="flex gap-2 mt-1">
+                  <input value={questionText} onChange={(e) => setQuestionText(e.target.value)} className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
+                  <CopyButton text={questionText} />
+                </div>
+                <span className="block mt-1 text-gray-400">回答は Instagram のストーリーズの閲覧者一覧（質問スタンプの回答）で確認してください。推し投票ではありません。</span>
+              </label>
+            )}
+
+            {slotsInUse.length > 0 && (
+              <div className="mt-4 space-y-3">
+                {slotsInUse.map((slot) => {
+                  const img = images[imageKey(templateId, slot)];
+                  const def = resolved.find((r) => r.def.imageSlot === slot)!.def;
+                  const shotOpts = screenshotPathOptions(templateId, slot, tpl.usesTarget ? target : null);
+                  return (
+                    <div key={slot} className="rounded-lg border border-gray-200 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold text-slate-700">実際の画面：{def.imageHint}{def.image === 'optional' ? '（任意）' : ''}</div>
+                        <span className={`text-xs font-bold ${img ? 'text-emerald-600' : def.image === 'required' ? 'text-red-600' : 'text-gray-400'}`}>{img ? '設定済み' : def.image === 'required' ? '未設定（保存できません）' : '未設定'}</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                        <select value={shotPath} onChange={(e) => setShotPath(e.target.value)} className="border border-gray-300 rounded px-2 py-1.5 max-w-[320px]">
+                          <option value="">撮影するページを選ぶ</option>
+                          {shotOpts.map((o) => <option key={o.path} value={o.path}>{o.label}（{decodeURI(o.path)}）</option>)}
+                        </select>
+                        <label className="flex items-center gap-1 text-gray-600">スクロール
+                          <input type="number" min={0} step={100} value={shotScroll} onChange={(e) => setShotScroll(Number(e.target.value))} className="w-20 border border-gray-300 rounded px-1 py-1" />px
+                        </label>
+                        <button type="button" disabled={busy !== null || !(shotPath || shotOpts[0])} onClick={() => onScreenshot(slot, shotPath || shotOpts[0].path)} className="px-3 py-1.5 rounded-lg bg-amber-500 text-white font-bold disabled:opacity-40">
+                          {busy === 'shot' ? '取得中…' : 'スクリーンショットを取得'}
+                        </button>
+                        <label className="px-3 py-1.5 rounded-lg border border-gray-300 cursor-pointer hover:bg-gray-50">
+                          画像をアップロード
+                          <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void onUpload(slot, f); e.target.value = ''; }} />
+                        </label>
+                        {img && (
+                          <>
+                            <select value={img.fit} onChange={(e) => setImages((p) => ({ ...p, [imageKey(templateId, slot)]: { ...img, fit: e.target.value as ImageFit } }))} className="border border-gray-300 rounded px-2 py-1.5">
+                              <option value="top">上から大きく表示（はみ出しは切り取り）</option>
+                              <option value="contain">全体を表示</option>
+                            </select>
+                            <button type="button" className="text-red-600 underline" onClick={() => setImages((p) => { const n = { ...p }; delete n[imageKey(templateId, slot)]; return n; })}>画像を外す</button>
+                          </>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-1">本番の oshi-search.jp をスマホ幅（390px）で撮影します（閲覧数の計測・GAは読み込みません）。スクリーンショットはローカルの管理画面でだけ動きます。本番の管理画面では画像をアップロードしてください。</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Step>
+
+          <Step n={7} title="誘導URLをコピーする">
+            <div className="space-y-2 text-sm">
+              <div className="flex flex-wrap gap-2 items-center">
+                <span className="w-24 text-gray-600">誘導先</span>
+                <select value={linkTargetId || linkOpt?.id} onChange={(e) => setLinkTargetId(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm max-w-full">
+                  {linkOpts.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  <option value="custom">URLを直接入力</option>
+                </select>
+              </div>
+              {linkTargetId === 'custom' && (
+                <input value={customUrl} onChange={(e) => setCustomUrl(e.target.value)} placeholder="https://oshi-search.jp/..." className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+              )}
+              {linkTargetId !== 'custom' && linkOpt?.warning && <p className="text-xs text-red-600">⚠ {linkOpt.warning}</p>}
+              {linkTargetId === 'custom' && customUrl && !isSiteUrl(customUrl) && <p className="text-xs text-amber-700">推しサーチ以外のURLです。計測（GA4）は推しサーチのページでのみ確認できます。</p>}
+              <div className="flex flex-wrap gap-2 items-center">
+                <span className="w-24 text-gray-600">識別名</span>
+                <input value={targetKey} onChange={(e) => setTargetKeyInput(e.target.value)} className="w-48 border border-gray-300 rounded-lg px-2 py-1 text-sm font-mono" />
+                <span className="text-xs text-gray-400">utm_content の先頭（英数字。日本語名は英字に書き換えると分析しやすくなります）</span>
+              </div>
+              {variants.map((v) => {
+                const url = urlOf(v);
+                return (
+                  <div key={v} className="flex items-center gap-2 bg-slate-50 rounded-lg p-2">
+                    {ab && <span className="shrink-0 w-6 h-6 rounded bg-amber-400 text-white text-xs font-black flex items-center justify-center">{v.toUpperCase()}</span>}
+                    <code className="text-xs break-all flex-1 text-slate-700">{url ? decodeURI(url) : 'URLを入力してください'}</code>
+                    {url && <CopyButton text={url} />}
+                  </div>
+                );
+              })}
+              <p className="text-xs text-gray-400">utm_source=instagram／utm_medium=social／utm_campaign=story_{tpl.key}。既存のクエリ（with・p 等）とページ内の位置（#）は残します。InstagramアプリでリンクスタンプにこのURLを貼ってください。</p>
+            </div>
+          </Step>
+        </div>
+
+        {/* ── 右：プレビュー・保存 ── */}
+        <div className="space-y-4 lg:sticky lg:top-4">
+          <Step n={5} title="プレビューを確認する" aside={
+            <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={showGuide} onChange={(e) => setShowGuide(e.target.checked)} />ガイド表示</label>
+          }>
+            {ab && (
+              <div className="flex gap-2 mb-3">
+                {(['a', 'b'] as AbVariant[]).map((v) => (
+                  <Pill key={v} active={viewVariant === v} onClick={() => { setViewVariant(v); setSelected(0); }}>
+                    {v.toUpperCase()}：{v === 'a' ? AB_TESTS.find((t) => t.key === ab.test)!.a : AB_TESTS.find((t) => t.key === ab.test)!.b}
+                  </Pill>
+                ))}
+              </div>
+            )}
+            <div ref={previewRef} className="flex flex-col items-center gap-3">
+              <div data-slide-index={sel} className="cursor-default">
+                <StoryScaled width={340}>{slideElement(current, viewCfg, resolved.length, showGuide)}</StoryScaled>
+              </div>
+              <div className="flex gap-2">
+                {resolved.map((r) => (
+                  <button key={r.index} type="button" onClick={() => setSelected(r.index)} data-slide-index={r.index} className={`rounded-md ${r.index === sel ? 'ring-2 ring-amber-400' : 'opacity-70 hover:opacity-100'}`}>
+                    <StoryScaled width={90}>{slideElement(r, viewCfg, resolved.length, false)}</StoryScaled>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {overflowSlides.length > 0 && (
+              <p className="mt-2 text-xs text-red-600">⚠ {Array.from(new Set(overflowSlides)).sort().map((i) => `${i + 1}枚目`).join('・')}で文字や画像が枠からはみ出しています。文言を短くするか、文字サイズを下げてください。</p>
+            )}
+            <p className="mt-2 text-[11px] text-gray-400">紫の点線はスタンプを置く場所、灰色は Instagram の画面表示と重なる範囲です（ガイドは保存画像には入りません）。</p>
+          </Step>
+
+          <Step n={6} title="PNGをダウンロードする">
+            <div className="space-y-2">
+              {variants.map((v) => {
+                const cfg = cfgOf(v);
+                const rs = resolveSlides(templateId, cfg, edits, images, target);
+                const missing = rs.some((r) => r.missingImage);
+                return (
+                  <div key={v} className="rounded-lg bg-slate-50 p-2">
+                    {ab && <div className="text-xs font-bold text-slate-700 mb-1">{v.toUpperCase()}パターン（{cfg.slides}枚）</div>}
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" disabled={busy !== null} onClick={() => download(v)} className="px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-40">
+                        {busy === `dl-${v}-all` ? '保存中…' : rs.length > 1 ? `${rs.length}枚まとめて保存（ZIP）` : 'PNGで保存'}
+                      </button>
+                      {rs.length > 1 && rs.map((r) => (
+                        <button key={r.index} type="button" disabled={busy !== null} onClick={() => download(v, r.index)} className="px-2 py-2 rounded-lg border border-gray-300 text-xs hover:bg-white disabled:opacity-40">
+                          {busy === `dl-${v}-${r.index}` ? '保存中…' : `${r.index + 1}枚目`}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="text-[11px] text-gray-500 mt-1 font-mono break-all">{rs.length > 1 ? storyZipName(tpl, targetKey, abOf(v)) : storyFileName(tpl, targetKey, 0, abOf(v))}</div>
+                    {missing && <div className="text-xs text-red-600 mt-1">実際の画面が未設定のページがあるため保存できません（④で設定）。</div>}
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-gray-400">1080×1920 の PNG。ガイド・スタンプの枠は入りません。リンクスタンプは Instagram アプリで、点線の位置に置いてください。</p>
+            </div>
+          </Step>
+        </div>
+      </div>
+
+      <StoryMetricsPanel ctx={metricsCtx} />
+    </div>
+  );
+}
