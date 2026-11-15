@@ -26,6 +26,15 @@ import {
 } from '@/lib/story-maker/templates';
 import { AB_CTA_A_DEFAULT, AB_TESTS, applyAbVariant, type AbSettings, type StoryVariantConfig } from '@/lib/story-maker/ab';
 import { appendUtm, buildStoryUtm, isSiteUrl, storyFileName, storyZipName, suggestTargetKey, type AbTestKey, type AbVariant } from '@/lib/story-maker/utm';
+import {
+  AUTO_CARD_VARIANTS,
+  autoImageOwnerKey,
+  autoImagePlan,
+  describeImageResponseError,
+  isAutoSupported,
+  memberPickMode,
+  type AutoCardVariant,
+} from '@/lib/story-maker/auto';
 import { StoryScaled, StorySlide, type ImageFit, type SlideImage } from './StorySlide';
 import { downloadBlob, downloadZip, renderStoryElementPng } from './png-export';
 import StoryMetricsPanel, { type MetricsDraftContext } from './StoryMetricsPanel';
@@ -34,6 +43,35 @@ export interface GroupChoice {
   name: string;
   pagePath: string;
   slug?: string;
+  /** 所属メンバー（グループページと同じ判定。自動作成でメンバーを選ぶときに使う） */
+  members?: { name: string; current: boolean }[];
+}
+
+/** 自動作成の段階（失敗したらどの段階かを表示する） */
+const AUTO_STAGES = [
+  { id: 'check', label: 'テンプレートと推しを確認' },
+  { id: 'fetch', label: 'サイトの実画像を取得' },
+  { id: 'text', label: '文章を作成' },
+  { id: 'place', label: '画像を配置' },
+  { id: 'render', label: 'ストーリーズ画像を作成' },
+  { id: 'done', label: 'プレビュー・保存の準備' },
+] as const;
+type AutoStageId = (typeof AUTO_STAGES)[number]['id'];
+interface AutoStatus {
+  stage: AutoStageId;
+  state: 'running' | 'done' | 'error';
+  text: string;
+}
+/** 自動取得のタイムアウト（画像APIはサーバーで描画するため、初回は数秒かかることがある） */
+const AUTO_FETCH_TIMEOUT_MS = 25_000;
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
 }
 
 type EditMap = Record<string, Partial<SlideText>>;
@@ -179,6 +217,18 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
+  // 自動作成
+  const [memberPicks, setMemberPicks] = useState<string[]>([]);
+  const [cardVariant, setCardVariant] = useState<AutoCardVariant>('basic');
+  const [autoStatus, setAutoStatus] = useState<AutoStatus | null>(null);
+  const [autoFiles, setAutoFiles] = useState<{ files: { name: string; blob: Blob }[]; sig: string } | null>(null);
+  /** 自動取得した画像の持ち主（imageKey → 対象・設定）。対象を変えたら外す。手動の画像は含めない */
+  const autoOwners = useRef<Record<string, string>>({});
+  /** 二重クリック防止（state の更新を待たずに止める） */
+  const autoLock = useRef(false);
+  const groupChoice = target?.type === 'group' ? groups.find((g) => g.name === target.name) ?? null : null;
+  const pickMode = memberPickMode(templateId, target);
+
   function selectTemplate(id: StoryTemplateId) {
     setTemplateId(id);
     setSlides(getStoryTemplate(id).defaultSlides);
@@ -227,12 +277,8 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
   async function onUpload(slot: ImageSlot, file: File) {
     if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { setMessage({ kind: 'error', text: 'PNG・JPEG・WebP の画像を選んでください。' }); return; }
     if (file.size > 12 * 1024 * 1024) { setMessage({ kind: 'error', text: '画像は12MBまでです。' }); return; }
-    const src = await new Promise<string>((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(String(r.result));
-      r.onerror = () => reject(r.error);
-      r.readAsDataURL(file);
-    });
+    const src = await blobToDataUrl(file);
+    delete autoOwners.current[imageKey(templateId, slot)];
     setImages((prev) => ({ ...prev, [imageKey(templateId, slot)]: { src, fit: prev[imageKey(templateId, slot)]?.fit ?? 'top' } }));
     setMessage({ kind: 'ok', text: '画像を差し替えました。' });
   }
@@ -252,13 +298,8 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error ?? `取得に失敗しました（${res.status}）`);
       }
-      const blob = await res.blob();
-      const src = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(String(r.result));
-        r.onerror = () => reject(r.error);
-        r.readAsDataURL(blob);
-      });
+      const src = await blobToDataUrl(await res.blob());
+      delete autoOwners.current[imageKey(templateId, slot)];
       setImages((prev) => ({ ...prev, [imageKey(templateId, slot)]: { src, fit: prev[imageKey(templateId, slot)]?.fit ?? 'top' } }));
       setMessage({ kind: 'ok', text: `oshi-search.jp${path} の画面を取得しました。` });
     } catch (err) {
@@ -280,6 +321,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
         image={r.image}
         showGuide={guide}
         questionText={questionText}
+        templateId={templateId}
       />
     );
   }
@@ -311,7 +353,122 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
     }
   }
 
-  const slotsInUse = Array.from(new Set(resolved.map((r) => r.def.imageSlot).filter((s): s is ImageSlot => !!s)));
+  /** 自動作成した画像が、いまの文言・画像・設定と同じか（編集後は⑥の保存を使う） */
+  const autoSigOf = (imgs: ImageMap) => JSON.stringify([
+    templateId,
+    target?.name ?? '',
+    targetKey,
+    questionText,
+    variants.map((v) => {
+      const cfg = cfgOf(v);
+      return [cfg, resolveSlides(templateId, cfg, edits, imgs, target).map((r) => [r.text, r.image ? `${r.image.fit}:${r.image.src.length}:${r.image.src.slice(-32)}` : null])];
+    }),
+  ]);
+  const autoFilesFresh = autoFiles !== null && autoFiles.sig === autoSigOf(images);
+
+  /**
+   * ✨ ストーリーズを自動作成：確認 → 既存APIから実画像を1枚取得 → 文章 → 配置 → PNG作成（最大3枚×A/B）→ プレビュー。
+   * 画像はブラウザで作る（サーバー・Mac で Chromium は起動しない）。失敗したら段階と理由を表示して止める。
+   */
+  async function runAuto() {
+    if (autoLock.current || busy !== null) return;
+    autoLock.current = true;
+    setBusy('auto');
+    setMessage(null);
+    setAutoFiles(null);
+    let stage: AutoStageId = 'check';
+    const step = (s: AutoStageId, text: string) => { stage = s; setAutoStatus({ stage: s, state: 'running', text }); };
+    try {
+      step('check', 'テンプレートと推しを確認しています');
+      const plan = autoImagePlan(templateId, target, { members: memberPicks, cardVariant });
+      if (plan.kind === 'blocked' || plan.kind === 'unsupported') throw new Error(plan.reason);
+
+      let fetched: { key: string; image: SlideImage; owner: string } | null = null;
+      if (plan.kind === 'fetch') {
+        step('fetch', `サイト画面を取得しています（${plan.label}：${plan.personNames.join('・')}）`);
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), AUTO_FETCH_TIMEOUT_MS);
+        let res: Response;
+        try {
+          res = await fetch(plan.url, { signal: ctrl.signal, cache: 'no-store' });
+        } catch {
+          throw new Error(ctrl.signal.aborted ? `${AUTO_FETCH_TIMEOUT_MS / 1000}秒以内に画像を取得できませんでした。時間をおいてもう一度お試しください。` : '画像を取得できませんでした（通信エラー）。');
+        } finally {
+          clearTimeout(timer);
+        }
+        const bad = describeImageResponseError(res.status, res.headers.get('content-type'));
+        if (bad) throw new Error(bad);
+        const src = await blobToDataUrl(await res.blob());
+        fetched = { key: imageKey(templateId, plan.slot), image: { src, fit: 'contain' }, owner: autoImageOwnerKey(templateId, target, plan) };
+      }
+
+      step('text', '文章を作成しています');
+      const nextImages: ImageMap = fetched ? { ...images, [fetched.key]: fetched.image } : images;
+
+      step('place', '画像を配置しています');
+      if (fetched) {
+        autoOwners.current[fetched.key] = fetched.owner;
+        setImages(nextImages);
+      }
+
+      step('render', '画像を作成しています');
+      const files: { name: string; blob: Blob }[] = [];
+      for (const v of variants) {
+        const cfg = cfgOf(v);
+        const rs = resolveSlides(templateId, cfg, edits, nextImages, target);
+        const missing = rs.filter((r) => r.missingImage);
+        if (missing.length > 0) throw new Error(`${missing.map((r) => `${r.index + 1}枚目`).join('・')}に必要な画像がありません。`);
+        for (const r of rs) {
+          files.push({ name: storyFileName(tpl, targetKey, r.index, abOf(v)), blob: await renderStoryElementPng(slideElement(r, cfg, rs.length, false)) });
+        }
+      }
+
+      setAutoFiles({ files, sig: autoSigOf(nextImages) });
+      setSelected(0);
+      const basis = plan.kind === 'fetch' && target?.type === 'group' ? `${plan.label}は ${plan.personNames.join('・')} で作成（画像内にも名前が表示されます。9人以上は「ほか◯人」）。` : '';
+      setAutoStatus({ stage: 'done', state: 'done', text: `ストーリーズが完成しました（${files.length}枚）。${basis}プレビューを確認して保存してください。文言・画像は下の③④で調整できます。` });
+    } catch (err) {
+      setAutoStatus({ stage, state: 'error', text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(null);
+      autoLock.current = false;
+    }
+  }
+
+  function saveAutoFiles() {
+    if (!autoFiles || !autoFilesFresh) return;
+    const { files } = autoFiles;
+    if (files.length === 1) { downloadBlob(files[0].blob, files[0].name); return; }
+    const name = ab ? storyZipName(tpl, targetKey, null).replace(/\.zip$/, `_${ab.test}_ab.zip`) : storyZipName(tpl, targetKey, null);
+    void downloadZip(files, name)
+      .then(() => setMessage({ kind: 'ok', text: `${name} を保存しました。` }))
+      .catch((err) => setMessage({ kind: 'error', text: `画像の保存に失敗しました: ${err instanceof Error ? err.message : String(err)}` }));
+  }
+
+  // グループを変えたらメンバーの選択を戻す（別グループのメンバーを使わない）
+  useEffect(() => { setMemberPicks([]); }, [targetType, groupName]);
+
+  // 推し・メンバー・カードのデザインが変わったら、前の推しの自動取得画像を外す（別の推しの画像で保存しない）
+  useEffect(() => {
+    const owners = autoOwners.current;
+    const removed = Object.entries(owners)
+      .filter(([k, owner]) => {
+        const t = k.split(':')[0] as StoryTemplateId;
+        return autoImageOwnerKey(t, target, autoImagePlan(t, target, { members: memberPicks, cardVariant })) !== owner;
+      })
+      .map(([k]) => k);
+    if (removed.length === 0) return;
+    for (const k of removed) delete owners[k];
+    setImages((prev) => {
+      const n = { ...prev };
+      for (const k of removed) delete n[k];
+      return n;
+    });
+    setAutoStatus(null);
+    setMessage({ kind: 'ok', text: '推し・メンバー・カードのデザインが変わったため、前に自動取得した画像を外しました。もう一度「ストーリーズを自動作成」を押してください。' });
+  }, [target, memberPicks, cardVariant]);
+
+  const slotsInUse =Array.from(new Set(resolved.map((r) => r.def.imageSlot).filter((s): s is ImageSlot => !!s)));
   const presetOf = (Object.keys(COLOR_PRESETS) as ColorPresetId[]).find((id) => JSON.stringify(COLOR_PRESETS[id].colors) === JSON.stringify(design.colors));
   const locked = (k: AbTestKey) => ab?.test === k;
 
@@ -383,7 +540,91 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                 targetType === 'group' && groupName ? <span className="text-red-600">「{groupName}」は登録されているグループではありません。候補から選んでください。</span> :
                 '未選択の場合は「推し」などの一般的な文言になります。'}
             </p>
+            {pickMode && groupChoice && (
+              <div className="mt-3 rounded-lg border border-gray-200 p-3">
+                <div className="text-xs font-semibold text-slate-700">
+                  {pickMode === 'multi' ? '診断に使うメンバー（1〜12人。自動では選びません）' : 'カードにするメンバー（1人。自動では選びません）'}
+                  <span className="ml-2 font-normal text-gray-500">{memberPicks.length}人選択中</span>
+                </div>
+                {(groupChoice.members ?? []).length === 0 ? (
+                  <p className="text-xs text-red-600 mt-1">このグループのメンバーが登録されていません。「人物」から選んでください。</p>
+                ) : (
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 max-h-40 overflow-y-auto">
+                    {(groupChoice.members ?? []).map((m) => {
+                      const checked = memberPicks.includes(m.name);
+                      return (
+                        <label key={m.name} className="flex items-center gap-1 text-xs text-gray-700">
+                          <input
+                            type={pickMode === 'multi' ? 'checkbox' : 'radio'}
+                            name="story-maker-member"
+                            checked={checked}
+                            onChange={(e) => setMemberPicks((prev) => pickMode === 'single' ? [m.name] : e.target.checked ? [...prev, m.name] : prev.filter((x) => x !== m.name))}
+                          />
+                          {m.name}{m.current ? '' : <span className="text-gray-400">（元メンバー）</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                {pickMode === 'multi' && (groupChoice.members ?? []).length > 0 && (
+                  <div className="mt-2 flex gap-3 text-xs">
+                    <button type="button" className="text-amber-700 underline" onClick={() => setMemberPicks((groupChoice.members ?? []).filter((m) => m.current).slice(0, 12).map((m) => m.name))}>現メンバーを選ぶ（12人まで）</button>
+                    <button type="button" className="text-gray-500 underline" onClick={() => setMemberPicks([])}>選択を外す</button>
+                  </div>
+                )}
+              </div>
+            )}
           </Step>
+
+          <section className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void runAuto()}
+                disabled={busy !== null || !isAutoSupported(templateId)}
+                className="px-4 py-2.5 rounded-lg bg-amber-500 text-white font-black hover:bg-amber-600 disabled:opacity-40"
+              >
+                {busy === 'auto' ? '作成中…' : '✨ ストーリーズを自動作成'}
+              </button>
+              {templateId === 'card' && (
+                <label className="text-xs text-gray-700 flex items-center gap-1">カードのデザイン
+                  <select value={cardVariant} onChange={(e) => setCardVariant(e.target.value as AutoCardVariant)} className="border border-gray-300 rounded px-2 py-1">
+                    {AUTO_CARD_VARIANTS.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
+            <p className="text-xs text-gray-600 mt-2 leading-relaxed">
+              {templateId === 'vod' ? '推しサーチのサブスク診断で、選んだ推しを実際に診断した結果画像（/api/oshi-vod/image）を取得して配置します。' :
+                templateId === 'card' ? '推し布教カードの作成画面と同じ処理のカード画像（/api/oshi-card/image・作品なし・公開中のトレカ風）を取得して配置します。' :
+                templateId === 'request' ? '画像は使いません。質問スタンプを置く余白を空けたストーリーズを作ります。' :
+                'このテンプレートの自動作成は準備中です。実際の画面は④の「画像をアップロード」で設定してください。'}
+              {isAutoSupported(templateId) && ' 現在の投稿枚数・デザイン・A/B設定で作ります。'}
+            </p>
+            {autoStatus && (
+              <div className="mt-3">
+                <ol className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                  {AUTO_STAGES.map((s, i) => {
+                    const cur = AUTO_STAGES.findIndex((x) => x.id === autoStatus.stage);
+                    const mark = i < cur || autoStatus.state === 'done' ? '✅' : i === cur ? (autoStatus.state === 'error' ? '❌' : '⏳') : '・';
+                    return <li key={s.id} className={i === cur && autoStatus.state === 'error' ? 'text-red-700 font-bold' : 'text-gray-600'}>{mark} {s.label}</li>;
+                  })}
+                </ol>
+                <p role="status" className={`mt-2 text-sm ${autoStatus.state === 'error' ? 'text-red-700' : autoStatus.state === 'done' ? 'text-emerald-700' : 'text-slate-700'}`}>
+                  {autoStatus.state === 'error' ? `「${AUTO_STAGES.find((s) => s.id === autoStatus.stage)?.label}」で止まりました：` : ''}{autoStatus.text}
+                </p>
+              </div>
+            )}
+            {autoFiles && (
+              autoFilesFresh ? (
+                <button type="button" onClick={saveAutoFiles} disabled={busy !== null} className="mt-3 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-bold hover:bg-slate-700 disabled:opacity-40">
+                  完成した画像を保存（{autoFiles.files.length === 1 ? 'PNG' : `${autoFiles.files.length}枚・ZIP`}）
+                </button>
+              ) : (
+                <p className="mt-3 text-xs text-gray-600">自動作成のあとに編集されました。保存は⑥の「PNGをダウンロードする」から行ってください（編集内容で作り直します）。</p>
+              )
+            )}
+          </section>
 
           <Step n={3} title="投稿枚数とデザインを選ぶ">
             <div className="space-y-3 text-sm">
@@ -532,7 +773,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                               <option value="top">上から大きく表示（はみ出しは切り取り）</option>
                               <option value="contain">全体を表示</option>
                             </select>
-                            <button type="button" className="text-red-600 underline" onClick={() => setImages((p) => { const n = { ...p }; delete n[imageKey(templateId, slot)]; return n; })}>画像を外す</button>
+                            <button type="button" className="text-red-600 underline" onClick={() => { delete autoOwners.current[imageKey(templateId, slot)]; setImages((p) => { const n = { ...p }; delete n[imageKey(templateId, slot)]; return n; }); }}>画像を外す</button>
                           </>
                         )}
                       </div>
@@ -615,7 +856,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
               {variants.map((v) => {
                 const cfg = cfgOf(v);
                 const rs = resolveSlides(templateId, cfg, edits, images, target);
-                const missing = rs.some((r) => r.missingImage);
+                const missingPages = rs.filter((r) => r.missingImage).map((r) => `${r.index + 1}枚目`);
                 return (
                   <div key={v} className="rounded-lg bg-slate-50 p-2">
                     {ab && <div className="text-xs font-bold text-slate-700 mb-1">{v.toUpperCase()}パターン（{cfg.slides}枚）</div>}
@@ -630,7 +871,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                       ))}
                     </div>
                     <div className="text-[11px] text-gray-500 mt-1 font-mono break-all">{rs.length > 1 ? storyZipName(tpl, targetKey, abOf(v)) : storyFileName(tpl, targetKey, 0, abOf(v))}</div>
-                    {missing && <div className="text-xs text-red-600 mt-1">実際の画面が未設定のページがあるため保存できません（④で設定）。</div>}
+                    {missingPages.length > 0 && <div className="text-xs text-red-600 mt-1">画像が必要なページ（{missingPages.join('・')}）が未設定のため、まとめて保存できません。必要な画像をアップロードしてください。画像が不要なページは個別にPNG保存できます。</div>}
                   </div>
                 );
               })}

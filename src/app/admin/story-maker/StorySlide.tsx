@@ -17,6 +17,7 @@ import {
   type SlideDef,
   type SlideText,
   type StoryDesign,
+  type StoryTemplateId,
 } from '@/lib/story-maker/templates';
 import { STORY_H, STORY_W } from './png-export';
 
@@ -41,6 +42,8 @@ export interface StorySlideProps {
   showGuide: boolean;
   /** 質問スタンプに入れる質問文（ガイド表示用） */
   questionText?: string;
+  /** テンプレート（A=vod だけ見出しの1行化・実画面の拡大レイアウトを使う。他は従来どおり） */
+  templateId?: StoryTemplateId;
 }
 
 // ── 文字サイズの自動調整 ─────────────────────────────────────────
@@ -64,6 +67,50 @@ export function fitFontSize(text: string, maxWidth: number, base: number, min: n
   return Math.max(min, Math.min(Math.round(base * scale), fit));
 }
 
+/**
+ * 1行の見た目の幅（全角=1。半角は文字ごとに近い値：大文字・小文字・数字・空白・記号）に字間（0.02em×文字数）を足したもの。
+ * visualWidth（半角=一律0.58）より英字の多い名前（Snow Man 等）で実際の幅に近い。テンプレートAの見出しで使う。
+ */
+export function headingLineWidth(line: string): number {
+  let w = 0;
+  let n = 0;
+  for (const ch of line) {
+    n++;
+    if (/[MW@%]/.test(ch)) w += 0.86;
+    else if (/[A-Z]/.test(ch)) w += 0.7;
+    else if (/[mw]/.test(ch)) w += 0.82;
+    else if (/[a-z]/.test(ch)) w += 0.56;
+    else if (/[0-9]/.test(ch)) w += 0.6;
+    else if (ch === ' ') w += 0.32;
+    else if (/[!-/:-?[-`{-~]/.test(ch)) w += 0.4;
+    else if (/[｡-ﾟ]/.test(ch)) w += 0.55;
+    else w += 1;
+  }
+  return w + n * 0.02;
+}
+
+/**
+ * テンプレートAの見出し：できるだけ1行（改行を詰めて）で表示し、1行だと小さすぎるときだけ改行する。
+ * 改行は書かれた改行を優先し、それでも長い行は「推し」の前で分ける（「長いグループ名／推しの人！」）。
+ * 返す lines はそのまま1行ずつ描く（fits=true なら折り返し不要）。
+ */
+export function fitStoryHeading(text: string, maxWidth: number, base: number, minOneLine: number, min: number, scale = 1): { lines: string[]; size: number; fits: boolean } {
+  const cap = Math.round(base * scale);
+  const sizeFor = (lines: string[]) => Math.floor(maxWidth / (Math.max(1, ...lines.map(headingLineWidth)) * 1.06));
+  const authored = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (authored.length === 0) return { lines: [], size: cap, fits: true };
+  const joined = [authored.join('')];
+  const oneLine = sizeFor(joined);
+  if (oneLine >= Math.min(minOneLine, cap)) return { lines: joined, size: Math.min(cap, oneLine), fits: true };
+  const split = authored.flatMap((l) => {
+    if (sizeFor([l]) >= Math.min(minOneLine, cap)) return [l];
+    const at = l.lastIndexOf('推し');
+    return at > 0 ? [l.slice(0, at), l.slice(at)] : [l];
+  });
+  const size = sizeFor(split);
+  return { lines: split, size: Math.max(min, Math.min(cap, size)), fits: size >= min };
+}
+
 // ── 部品 ────────────────────────────────────────────────────────
 
 function Lines({ text }: { text: string }) {
@@ -79,12 +126,12 @@ const textBase: CSSProperties = {
   textAlign: 'center',
 };
 
-function Heading({ text, size, color, marker }: { text: string; size: number; color: string; marker?: string }) {
+function Heading({ text, size, color, marker, noWrap }: { text: string; size: number; color: string; marker?: string; noWrap?: boolean }) {
   if (!text.trim()) return null;
   return (
     <h2 data-fit="heading" style={{ ...textBase, fontSize: size, lineHeight: 1.32, fontWeight: 800, color }}>
       {text.split('\n').map((l, i) => (
-        <span key={i} style={{ display: 'block' }}>
+        <span key={i} style={{ display: 'block', ...(noWrap ? { whiteSpace: 'nowrap' } : {}) }}>
           <span style={marker ? { backgroundImage: `linear-gradient(transparent 62%, ${marker} 62%, ${marker} 92%, transparent 92%)`, padding: '0 0.08em' } : undefined}>{l || ' '}</span>
         </span>
       ))}
@@ -179,6 +226,23 @@ function CtaBlock({ cta, caption, color, accent, scale }: { cta: string; caption
   );
 }
 
+/**
+ * テンプレートAの CTA（スタンプの真上）：「無料で診断する ↓」。文字に線を重ねない（マーカーなし）。
+ * 文字の下に離して短い線を1本だけ置く（ボタン・スタンプに見える枠や図形は描かない）。
+ */
+function VodCta({ cta, size, color, accent }: { cta: string; size: number; color: string; accent: string }) {
+  if (!cta.trim()) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+      <p style={{ ...textBase, fontSize: size, fontWeight: 800, color, lineHeight: 1.25, whiteSpace: 'nowrap' }}>{cta} ↓</p>
+      <span style={{ width: 120, height: 8, borderRadius: 4, background: accent, opacity: 0.9 }} />
+    </div>
+  );
+}
+
+/** テンプレートAの CTA 部分の高さ（文字＋間＋線） */
+const vodCtaHeight = (size: number) => Math.round(size * 1.25) + 12 + 8;
+
 function PointsList({ body, color, accent, card, scale, compact }: { body: string; color: string; accent: string; card: string; scale: number; compact: boolean }) {
   const items = body.split('\n').map((s) => s.trim()).filter(Boolean);
   if (items.length === 0) return null;
@@ -263,7 +327,97 @@ function Guides({ zone, kind, questionText }: { zone: { top: number; bottom: num
 
 // ── 本体 ────────────────────────────────────────────────────────
 
-export function StorySlide({ decoration, def, text, design, index, total, image, showGuide, questionText }: StorySlideProps) {
+/** テンプレートAの実画面の大きさ（診断結果画像 feed は 4:5。縦横比を保ったまま、見出し・CTA・スタンプの間に収める） */
+const VOD_IMAGE_RATIO = 0.8;
+const VOD_IMAGE_MAX_H = 600;
+const VOD_GAP = 28;
+
+/**
+ * テンプレートAの「実画面」ページ：見出し（できるだけ1行）→ 大きな実画面 → 「無料で診断する ↓」→ スタンプの余白 → 説明文。
+ * 画像はスタンプの上と下の広いほうに置く（リンク位置 50% なら下、60・70% なら上）。
+ */
+function VodScreenSlide({ decoration, def, text, design, index, total, image, showGuide, questionText }: StorySlideProps) {
+  const { colors, fontScale } = design;
+  const font = FONT_STACKS[design.font].stack;
+  const contentTop = SAFE_TOP + BRAND_H + (total > 1 ? 40 : 20);
+  const zone = def.sticker === 'none' ? null : stickerZone(def.sticker, design.linkPos);
+  const hasLink = zone !== null && def.sticker === 'link';
+
+  const head = fitStoryHeading(text.heading, INNER_W, 72, 52, 40, fontScale);
+  const headH = head.lines.length > 0 ? Math.ceil(head.lines.length * head.size * 1.32) : 0;
+  const subSize = fitFontSize(text.subheading, INNER_W - 40, 40, 28, fontScale);
+  const subLines = text.subheading.split('\n').filter((l) => l.trim()).length;
+  const subH = subLines > 0 ? Math.ceil(subLines * subSize * 1.5) : 0;
+  const textH = headH + (headH > 0 && subH > 0 ? 16 : 0) + subH;
+  const noteH = text.note.trim() ? 70 : 0;
+
+  const ctaSize = fitFontSize(`${text.cta} ↓`, INNER_W, 60, 40, fontScale);
+  const ctaH = hasLink && text.cta.trim() ? vodCtaHeight(ctaSize) : 0;
+  const capSize = fitFontSize(text.stickerCaption, INNER_W, 34, 24, fontScale);
+  const capH = hasLink && text.stickerCaption.trim() ? Math.ceil(capSize * 1.4) : 0;
+
+  // 上の領域（見出しの下〜CTAの上）と下の領域（スタンプ下の説明文の下〜返信欄の上）
+  const upperLimit = zone ? zone.top - 12 - ctaH - (ctaH > 0 ? VOD_GAP : 0) : SAFE_BOTTOM - noteH - 16;
+  const aboveH = upperLimit - (contentTop + textH + VOD_GAP);
+  const lowerStart = zone ? zone.bottom + 14 + (capH > 0 ? capH : 0) + VOD_GAP : SAFE_BOTTOM;
+  const belowH = SAFE_BOTTOM - noteH - 16 - lowerStart;
+  const below = zone !== null && belowH > aboveH;
+  let imgH = Math.min(Math.max(240, below ? belowH : aboveH), VOD_IMAGE_MAX_H);
+  let imgW = Math.round(imgH * VOD_IMAGE_RATIO);
+  if (imgW > INNER_W) { imgW = INNER_W; imgH = Math.round(imgW / VOD_IMAGE_RATIO); }
+
+  // 画像が上：見出し＋画像をまとめて上の領域の中央へ。画像が下：見出しだけ上の領域の中央へ
+  const groupH = below ? textH : textH + VOD_GAP + imgH;
+  const textTop = contentTop + Math.max(0, Math.floor((upperLimit - contentTop - groupH) / 2));
+  const imgTop = below ? lowerStart + Math.max(0, Math.floor((belowH - imgH) / 2)) : textTop + textH + VOD_GAP;
+
+  return (
+    <div
+      data-story-frame
+      style={{ position: 'relative', width: STORY_W, height: STORY_H, overflow: 'hidden', background: colors.bg, fontFamily: font, color: colors.text, WebkitFontSmoothing: 'antialiased' }}
+    >
+      <Decorations decoration={decoration} accent={colors.accent} sub={colors.sub} />
+      <Brand color={colors.text} bg={colors.sub} />
+      <PageDots index={index} total={total} color={colors.text} />
+
+      <div data-fit-area="upper" style={{ position: 'absolute', left: SIDE, right: SIDE, top: textTop, height: textH + 4, display: 'flex', flexDirection: 'column', gap: 16, overflow: 'hidden' }}>
+        <Heading text={head.lines.join('\n')} size={head.size} color={colors.text} noWrap={head.fits} />
+        <Sub text={text.subheading} size={subSize} color={colors.text} />
+      </div>
+
+      <div style={{ position: 'absolute', left: Math.round((STORY_W - imgW) / 2), top: imgTop, width: imgW, height: imgH }}>
+        <ScreenImage image={image} height={imgH} width={imgW} decoration={decoration} accent={colors.accent} showGuide={showGuide} hint={def.imageHint} />
+      </div>
+
+      {zone && ctaH > 0 && (
+        <div style={{ position: 'absolute', left: SIDE, right: SIDE, top: zone.top - 12 - ctaH, height: ctaH, display: 'flex', justifyContent: 'center' }}>
+          <VodCta cta={text.cta} size={ctaSize} color={colors.text} accent={colors.accent} />
+        </div>
+      )}
+      {zone && capH > 0 && (
+        <div style={{ position: 'absolute', left: SIDE, right: SIDE, top: zone.bottom + 14, height: capH, display: 'flex', justifyContent: 'center' }}>
+          <p style={{ ...textBase, fontSize: capSize, fontWeight: 700, color: colors.text, opacity: 0.85, lineHeight: 1.4 }}>{text.stickerCaption}</p>
+        </div>
+      )}
+
+      {text.note.trim() && (
+        <div style={{ position: 'absolute', left: SIDE, right: SIDE, top: SAFE_BOTTOM - noteH, height: noteH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <p style={{ ...textBase, fontSize: fitFontSize(text.note, INNER_W, 34, 24, fontScale), fontWeight: 700, color: colors.text, opacity: 0.8 }}>{text.note}</p>
+        </div>
+      )}
+
+      {showGuide && <Guides zone={zone} kind={def.sticker} questionText={questionText} />}
+    </div>
+  );
+}
+
+export function StorySlide(props: StorySlideProps) {
+  const vod = props.templateId === 'vod';
+  if (vod && props.def.layout === 'screen') return <VodScreenSlide {...props} />;
+  return <BaseSlide {...props} vod={vod} />;
+}
+
+function BaseSlide({ decoration, def, text, design, index, total, image, showGuide, questionText, vod }: StorySlideProps & { vod: boolean }) {
   const { colors, fontScale } = design;
   const font = FONT_STACKS[design.font].stack;
   const contentTop = SAFE_TOP + BRAND_H + (total > 1 ? 40 : 20);
@@ -272,14 +426,20 @@ export function StorySlide({ decoration, def, text, design, index, total, image,
   const hasCta = def.sticker === 'link' && (text.cta.trim() || text.stickerCaption.trim());
   const marker = decoration === 'polaroid' || decoration === 'steps' ? colors.accent : undefined;
 
+  // テンプレートA：CTA は「無料で診断する ↓」だけをスタンプの上に、説明文はスタンプの下に置く（文字に線を重ねない）
+  const vodCtaSize = fitFontSize(`${text.cta} ↓`, INNER_W, 64, 40, fontScale);
+  const vodCapSize = fitFontSize(text.stickerCaption, INNER_W, 34, 24, fontScale);
+  const vodCapH = vod && def.sticker === 'link' && text.stickerCaption.trim() ? Math.ceil(vodCapSize * 1.4) : 0;
+
   // スタンプの上に置く CTA・説明文の高さ（目安）
-  const ctaH = def.sticker === 'link' ? (text.cta.trim() ? 96 : 0) + (text.stickerCaption.trim() ? 64 : 0) + 24
+  const ctaH = def.sticker === 'link'
+    ? (vod ? (text.cta.trim() ? vodCtaHeight(vodCtaSize) : 0) + 26 : (text.cta.trim() ? 96 : 0) + (text.stickerCaption.trim() ? 64 : 0) + 24)
     : def.sticker === 'question' ? (text.stickerCaption.trim() ? 80 : 20) : 0;
   const noteH = text.note.trim() ? 70 : 0;
 
   // 縦の領域: 上の領域（本文）／スタンプ／下の領域（補足・場合によって画像）
   const upperBottom = zone ? zone.top - ctaH - 20 : SAFE_BOTTOM - noteH - 20;
-  const lowerTop = zone ? zone.bottom + 30 : SAFE_BOTTOM;
+  const lowerTop = zone ? zone.bottom + 30 + (vodCapH > 0 ? vodCapH + 14 : 0) : SAFE_BOTTOM;
   const lowerSpace = SAFE_BOTTOM - lowerTop - noteH;
   // スタンプが上寄り（50%）で下の領域が広いときは、画像をスタンプの下に置く
   const imageBelow = showImage && zone !== null && lowerSpace >= 420;
@@ -290,20 +450,27 @@ export function StorySlide({ decoration, def, text, design, index, total, image,
   const subSize = fitFontSize(text.subheading, INNER_W - 40, def.layout === 'hook' ? 50 : 42, 28, fontScale);
   const bodySize = fitFontSize(text.body, INNER_W, 40, 26, fontScale);
   const labelLike = (def.layout === 'screen' || def.layout === 'combined') && text.subheading.trim().length > 0 && text.subheading.length <= 16 && !text.subheading.includes('\n');
+  // テンプレートA：見出しはできるだけ1行（「Snow Man推しの人！」）。長い名前だけ「推し」の前で改行
+  const bubbleHook = def.layout === 'hook' && decoration === 'bubble';
+  const vodHead = vod ? fitStoryHeading(text.heading, bubbleHook ? INNER_W - 80 : INNER_W, headingBase, def.layout === 'hook' ? 64 : 52, 40, fontScale) : null;
 
   const upperAreaH = upperBottom - contentTop;
   const textBlock = (
     <>
       {labelLike && <Sub text={text.subheading} size={Math.min(subSize, 38)} color={colors.text} background={colors.sub} />}
-      {def.layout === 'hook' && decoration === 'bubble' ? (
+      {bubbleHook ? (
         <div style={{ position: 'relative', background: '#FFFFFF', borderRadius: 60, padding: '64px 40px', boxShadow: '0 14px 0 rgba(59,47,42,0.10)', width: INNER_W, alignSelf: 'center' }}>
-          <Heading text={text.heading} size={Math.min(headingSize, fitFontSize(text.heading, INNER_W - 80, headingBase, 44, fontScale))} color={colors.text} />
+          {vodHead
+            ? <Heading text={vodHead.lines.join('\n')} size={vodHead.size} color={colors.text} noWrap={vodHead.fits} />
+            : <Heading text={text.heading} size={Math.min(headingSize, fitFontSize(text.heading, INNER_W - 80, headingBase, 44, fontScale))} color={colors.text} />}
           <span style={{ position: 'absolute', bottom: -44, left: '50%', marginLeft: -36, width: 0, height: 0, borderLeft: '36px solid transparent', borderRight: '36px solid transparent', borderTop: '48px solid #FFFFFF' }} />
         </div>
       ) : def.layout === 'question' && decoration === 'hearts' ? (
         <div style={{ background: colors.sub, borderRadius: 64, padding: '52px 36px', width: INNER_W, alignSelf: 'center' }}>
           <Heading text={text.heading} size={Math.min(headingSize, fitFontSize(text.heading, INNER_W - 72, headingBase, 44, fontScale))} color={colors.text} />
         </div>
+      ) : vodHead ? (
+        <Heading text={vodHead.lines.join('\n')} size={vodHead.size} color={colors.text} marker={marker} noWrap={vodHead.fits} />
       ) : (
         <Heading text={text.heading} size={headingSize} color={colors.text} marker={marker} />
       )}
@@ -341,7 +508,14 @@ export function StorySlide({ decoration, def, text, design, index, total, image,
       {/* スタンプ直上：CTA・説明文 */}
       {zone && hasCta && (
         <div style={{ position: 'absolute', left: SIDE, right: SIDE, top: zone.top - ctaH, height: ctaH, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', paddingBottom: 14 }}>
-          <CtaBlock cta={text.cta} caption={text.stickerCaption} color={colors.text} accent={colors.accent} scale={fontScale} />
+          {vod
+            ? <VodCta cta={text.cta} size={vodCtaSize} color={colors.text} accent={colors.accent} />
+            : <CtaBlock cta={text.cta} caption={text.stickerCaption} color={colors.text} accent={colors.accent} scale={fontScale} />}
+        </div>
+      )}
+      {zone && vodCapH > 0 && (
+        <div style={{ position: 'absolute', left: SIDE, right: SIDE, top: zone.bottom + 14, height: vodCapH, display: 'flex', justifyContent: 'center' }}>
+          <p style={{ ...textBase, fontSize: vodCapSize, fontWeight: 700, color: colors.text, opacity: 0.85, lineHeight: 1.4 }}>{text.stickerCaption}</p>
         </div>
       )}
       {zone && def.sticker === 'question' && text.stickerCaption.trim() && (

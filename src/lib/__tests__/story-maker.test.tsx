@@ -24,7 +24,9 @@ import {
   type StoryPostRecord,
 } from '@/lib/story-maker/metrics';
 import { isAllowedScreenshotPath } from '@/lib/story-maker/screenshot-path';
-import { SAFE_BOTTOM, SAFE_TOP, StorySlide, fitFontSize, stickerZone, visualWidth } from '@/app/admin/story-maker/StorySlide';
+import { autoImageOwnerKey, autoImagePlan, describeImageResponseError, isAutoSupported, memberPickMode } from '@/lib/story-maker/auto';
+import { buildOshiVodImagePath } from '@/lib/oshi-vod/params';
+import { SAFE_BOTTOM, SAFE_TOP, StorySlide, fitFontSize, fitStoryHeading, headingLineWidth, stickerZone, visualWidth } from '@/app/admin/story-maker/StorySlide';
 
 const milk: StoryTarget = { type: 'group', name: 'M!LK', pagePath: '/groups/M!LK' };
 const person: StoryTarget = { type: 'person', name: '山田花子', pagePath: `/person/${encodeURIComponent('山田花子')}` };
@@ -306,5 +308,147 @@ describe('story-maker slide rendering', () => {
     const html = render('vod', 2, 1, false, null);
     expect(html).toContain('実際の画面が未設定です');
     expect(html).not.toMatch(/<img/);
+  });
+});
+
+describe('story-maker auto (A・C・D)', () => {
+  const opts = { members: [] as string[], cardVariant: 'basic' as const };
+
+  it('supports A・C・D only; B・E stay manual', () => {
+    expect(STORY_TEMPLATES.filter((t) => isAutoSupported(t.id)).map((t) => t.id).sort()).toEqual(['card', 'request', 'vod']);
+    expect(autoImagePlan('goods', person, opts).kind).toBe('unsupported');
+    expect(autoImagePlan('goodsmaking', person, opts).kind).toBe('unsupported');
+  });
+
+  it('C needs no image', () => {
+    expect(autoImagePlan('request', null, opts)).toEqual({ kind: 'none' });
+  });
+
+  it('A uses the existing diagnosis image API with the selected person', () => {
+    const plan = autoImagePlan('vod', person, opts);
+    expect(plan.kind).toBe('fetch');
+    if (plan.kind !== 'fetch') return;
+    expect(plan.slot).toBe('screen');
+    expect(plan.url).toBe(buildOshiVodImagePath(['山田花子'], 'feed'));
+    expect(plan.url.startsWith('/api/oshi-vod/image?')).toBe(true);
+  });
+
+  it('A with a group never picks members automatically', () => {
+    const blocked = autoImagePlan('vod', milk, opts);
+    expect(blocked.kind).toBe('blocked');
+    const plan = autoImagePlan('vod', milk, { ...opts, members: ['佐野勇斗', '塩﨑太智', '佐野勇斗'] });
+    expect(plan.kind === 'fetch' && plan.personNames).toEqual(['佐野勇斗', '塩﨑太智']);
+    expect(autoImagePlan('vod', milk, { ...opts, members: Array.from({ length: 13 }, (_, i) => `m${i}`) }).kind).toBe('blocked');
+  });
+
+  it('D uses the existing card image API (one person; group needs exactly one member)', () => {
+    const plan = autoImagePlan('card', person, opts);
+    expect(plan.kind === 'fetch' && plan.slot).toBe('card');
+    expect(plan.kind === 'fetch' && plan.url.startsWith(`/api/oshi-card/image?p=${encodeURIComponent('山田花子')}`)).toBe(true);
+    expect(plan.kind === 'fetch' && plan.url).toContain('v=basic');
+    expect(autoImagePlan('card', milk, opts).kind).toBe('blocked');
+    expect(autoImagePlan('card', milk, { ...opts, members: ['a', 'b'] }).kind).toBe('blocked');
+    expect(autoImagePlan('card', milk, { ...opts, members: ['a'] }).kind).toBe('fetch');
+    expect(autoImagePlan('card', null, opts).kind).toBe('blocked');
+  });
+
+  it('member picker only for group + A (multi) / D (single)', () => {
+    expect(memberPickMode('vod', milk)).toBe('multi');
+    expect(memberPickMode('card', milk)).toBe('single');
+    expect(memberPickMode('request', milk)).toBeNull();
+    expect(memberPickMode('vod', person)).toBeNull();
+  });
+
+  it('owner key changes when the target or settings change (stale images are removed)', () => {
+    const a = autoImageOwnerKey('card', person, autoImagePlan('card', person, opts));
+    const other: StoryTarget = { type: 'person', name: '別の人', pagePath: '/person/x' };
+    expect(autoImageOwnerKey('card', other, autoImagePlan('card', other, opts))).not.toBe(a);
+    expect(autoImageOwnerKey('card', person, autoImagePlan('card', person, { ...opts, cardVariant: 'ssr' }))).not.toBe(a);
+    expect(autoImageOwnerKey('card', person, autoImagePlan('card', person, opts))).toBe(a);
+  });
+
+  it('rejects non-image or failed responses', () => {
+    expect(describeImageResponseError(200, 'image/png')).toBeNull();
+    expect(describeImageResponseError(200, 'text/html; charset=utf-8')).toMatch(/画像以外/);
+    expect(describeImageResponseError(429, 'application/json')).toMatch(/上限/);
+    expect(describeImageResponseError(400, 'application/json')).toMatch(/作れませんでした/);
+    expect(describeImageResponseError(500, null)).toMatch(/HTTP 500/);
+  });
+
+  it('C renders the question-sticker space without a fake sticker', () => {
+    const def = getStoryTemplate('request').structures[1][0];
+    expect(def.sticker).toBe('question');
+    expect(def.image).toBe('none');
+  });
+});
+
+describe('story-maker template A layout', () => {
+  const snow: StoryTarget = { type: 'group', name: 'Snow Man', pagePath: '/groups/snowman' };
+  const img = { src: 'data:image/png;base64,AAAA', fit: 'contain' as const };
+  const renderA = (n: 1 | 2 | 3, i: number, target: StoryTarget, templateId: 'vod' | undefined, linkPos: 50 | 60 | 70 = 60, guide = false) => {
+    const t = getStoryTemplate('vod');
+    const def = t.structures[n][i];
+    const fill = (s: string) => fillStoryText(s, target);
+    const text: SlideText = {
+      heading: fill(def.text.heading), subheading: fill(def.text.subheading), body: fill(def.text.body),
+      cta: fill(def.text.cta), note: fill(def.text.note), stickerCaption: fill(def.text.stickerCaption),
+    };
+    return renderToStaticMarkup(<StorySlide decoration={t.decoration} def={def} text={text} design={{ ...DEFAULT_DESIGN, linkPos }} index={i} total={n} image={def.image === 'none' ? null : img} showGuide={guide} templateId={templateId} />);
+  };
+  const imageBox = (html: string) => {
+    const m = html.match(/top:\d+px;width:(\d+)px;height:(\d+)px"><div style="width:/);
+    return m ? { w: Number(m[1]), h: Number(m[2]) } : null;
+  };
+
+  it('measures Latin letters wider than the flat 0.58 estimate', () => {
+    expect(headingLineWidth('Snow Man')).toBeGreaterThan(visualWidth('Snow Man'));
+    expect(headingLineWidth('推しの人！')).toBeCloseTo(5.1, 5);
+  });
+
+  it('keeps "Snow Man推しの人！" on one line; long names break before 推し', () => {
+    const one = fitStoryHeading('Snow Man推しの人！', 912 - 80, 104, 64, 40);
+    expect(one.lines).toEqual(['Snow Man推しの人！']);
+    expect(one.size).toBeGreaterThanOrEqual(64);
+    const long = fitStoryHeading('ももいろクローバーZ推しの人！', 912 - 80, 104, 64, 40);
+    expect(long.lines).toEqual(['ももいろクローバーZ', '推しの人！']);
+    expect(long.fits).toBe(true);
+    const html = renderA(2, 0, snow, 'vod');
+    expect(html).toContain('Snow Man推しの人！');
+    expect(html).toContain('white-space:nowrap');
+  });
+
+  it('shows the diagnosis image large (4:5 kept) at every link position, without overlapping the CTA', () => {
+    for (const pos of [50, 60, 70] as const) {
+      const html = renderA(2, 1, snow, 'vod', pos);
+      const box = imageBox(html);
+      expect(box).not.toBeNull();
+      // 従来は約235×294（ほぼ正方形の枠に4:5を全体表示）。1.5倍以上・縦横比 4:5
+      expect(box!.w).toBeGreaterThanOrEqual(Math.round(235 * 1.5));
+      expect(box!.h / box!.w).toBeCloseTo(1.25, 1);
+      const zone = stickerZone('link', pos);
+      const top = Number(html.match(/top:(\d+)px;width:\d+px;height:\d+px"><div style="width:/)![1]);
+      const bottom = top + box!.h;
+      expect(bottom <= zone.top - 60 || top >= zone.bottom).toBe(true);
+      expect(top).toBeGreaterThanOrEqual(SAFE_TOP);
+      expect(bottom).toBeLessThanOrEqual(SAFE_BOTTOM);
+    }
+  });
+
+  it('CTA is "無料で診断する ↓" with no line over the text, and no guide in export', () => {
+    const html = renderA(2, 1, snow, 'vod');
+    expect(html).toContain('無料で診断する ↓');
+    expect(html).not.toContain('↓ 無料で診断する ↓');
+    expect(html).not.toContain('linear-gradient(transparent 58%');
+    expect(html).not.toContain('data-guide');
+    expect(renderA(2, 1, snow, 'vod', 60, true)).toContain('ここにリンクスタンプ');
+  });
+
+  it('other templates render exactly as before', () => {
+    for (const t of STORY_TEMPLATES.filter((x) => x.id !== 'vod')) for (const n of SLIDE_COUNTS) for (let i = 0; i < n; i++) {
+      const def = t.structures[n][i];
+      const text: SlideText = { ...def.text };
+      const props = { decoration: t.decoration, def, text, design: DEFAULT_DESIGN, index: i, total: n, image: img, showGuide: false };
+      expect(renderToStaticMarkup(<StorySlide {...props} templateId={t.id} />)).toBe(renderToStaticMarkup(<StorySlide {...props} />));
+    }
   });
 });

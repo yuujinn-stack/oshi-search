@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllPersonMetasOrThrow } from '@/lib/person-meta';
 import { getAllMembershipRecords } from '@/lib/group-membership-store';
-import { groupMembershipRecords, listGroupNames } from '@/lib/group-membership';
+import { buildGroupRoster, groupMembershipRecords, isCurrentMembership, listGroupNames } from '@/lib/group-membership';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { canonicalGroupSlug, groupHrefByName, isAsciiSlug } from '@/lib/group-slug';
 import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
@@ -33,11 +33,16 @@ export default async function StoryMakerPage() {
   let groups: GroupChoice[] = [];
   try {
     const [records, groupMetas] = await Promise.all([getAllMembershipRecords(), getAllGroupMetas()]);
-    const names = listGroupNames(persons, groupMembershipRecords(records));
+    const recordsByPerson = groupMembershipRecords(records);
+    const names = listGroupNames(persons, recordsByPerson);
     groups = names.map((name) => {
       const meta = groupMetas.find((m) => m.groupName === name);
       const slug = meta ? canonicalGroupSlug(meta) : '';
-      return { name, pagePath: groupHrefByName(name, groupMetas), slug: isAsciiSlug(slug) ? slug : undefined };
+      // 自動作成（診断・カード）でメンバーを選ぶための一覧（グループページと同じ判定。現メンバーを先に）
+      const members = buildGroupRoster(name, persons, metas, recordsByPerson).members
+        .map((e) => ({ name: e.person.name, current: isCurrentMembership(e.membership) }))
+        .sort((a, b) => Number(b.current) - Number(a.current));
+      return { name, pagePath: groupHrefByName(name, groupMetas), slug: isAsciiSlug(slug) ? slug : undefined, members };
     });
   } catch (err) {
     console.warn('[story-maker] groups unavailable:', String(err));
