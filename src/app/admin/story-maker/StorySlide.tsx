@@ -19,7 +19,9 @@ import {
   type StoryDesign,
   type StoryTemplateId,
 } from '@/lib/story-maker/templates';
+import type { StoryPanel } from '@/lib/story-maker/panels';
 import { STORY_H, STORY_W } from './png-export';
+import { StoryPanelView } from './StoryPanelView';
 
 export const SAFE_TOP = 250;
 export const SAFE_BOTTOM = 1650;
@@ -28,7 +30,17 @@ const INNER_W = STORY_W - SIDE * 2;
 const BRAND_H = 60;
 
 export type ImageFit = 'top' | 'contain';
-export interface SlideImage { src: string; fit: ImageFit }
+export interface SlideImage {
+  src: string;
+  fit: ImageFit;
+  /**
+   * 画像の上に出す説明（自動作成で取得した画像だけ。例「目黒蓮の診断結果」）。実際に画像を作った人物名だけを入れる。
+   * 1枚完結版でだけ表示し、アップロード・スクリーンショットの画像には付けない（誰の画面か分からないため）。
+   */
+  caption?: string;
+  /** 画像の代わりに描くカード（自動作成の B・E。src は空） */
+  panel?: StoryPanel;
+}
 
 export interface StorySlideProps {
   decoration: Decoration;
@@ -190,7 +202,9 @@ function ScreenImage({ image, height, width, decoration, accent, showGuide, hint
   return (
     <div style={frame} data-slot="image">
       {polaroid && <Tape color={accent} />}
-      {image ? (
+      {image?.panel ? (
+        <StoryPanelView panel={image.panel} shape={typeof width === 'number' && typeof height === 'number' && height / width > 1.15 ? 'portrait' : 'wide'} accent={accent} radius={innerRadius} />
+      ) : image ? (
         <img
           src={image.src}
           alt=""
@@ -411,7 +425,200 @@ function VodScreenSlide({ decoration, def, text, design, index, total, image, sh
   );
 }
 
+// ── 1枚完結版 ─────────────────────────────────────────────────────
+
+/** 実画面の縦横比（幅÷高さ）。診断結果画像 feed は 4:5、トレカ風カードは 63:88、ページの画面は縦長のスマホ表示を上から見せる */
+export function singleImageRatio(templateId: StoryTemplateId | undefined, def: SlideDef): number {
+  if (def.imageSlot === 'card') return 63 / 88;
+  if (templateId === 'vod') return 0.8;
+  return 0.75;
+}
+
+export interface SingleBox { top: number; height: number }
+export interface SingleLayout {
+  heading: SingleBox & { lines: string[]; size: number; fits: boolean };
+  sub: SingleBox & { size: number };
+  image: (SingleBox & { width: number }) | null;
+  /** 画像の上の説明（「目黒蓮の診断結果」など。無ければ height=0） */
+  imageCaption: SingleBox & { size: number };
+  body: SingleBox & { size: number };
+  cta: SingleBox & { leadSize: number; ctaSize: number; leadH: number };
+  zone: { top: number; bottom: number } | null;
+  note: SingleBox & { size: number };
+}
+
+const SINGLE_TOP = SAFE_TOP + BRAND_H + 18;
+/** 文字・スタンプの余白の下端（返信欄の少し上） */
+const SINGLE_BOTTOM = SAFE_BOTTOM - 44;
+const SINGLE_GAP = 28;
+/** リンクスタンプの余白（高さ）。標準版（160）と同じ */
+const SINGLE_LINK_H = LINK_HALF * 2;
+/** 質問スタンプの余白（高さの上限・下限） */
+const SINGLE_QUESTION_MAX = 640;
+const SINGLE_QUESTION_MIN = 380;
+
+/** 折り返しを含めた行数（全角=1 の幅で概算。長い人物名で折り返したときも高さを確保する） */
+function wrappedLines(text: string, size: number, maxWidth: number, widthOf: (l: string) => number = visualWidth): number {
+  return text.split('\n').filter((l) => l.trim()).reduce((n, l) => n + Math.max(1, Math.ceil((widthOf(l) * size * 1.04) / maxWidth)), 0);
+}
+
+/**
+ * 1枚完結版の縦の配置（1080×1920 基準の px）。上から 見出し → 一言 → 実画面（または質問スタンプの余白）→ 説明 → CTA → リンクスタンプの余白 → 補足。
+ * - リンクスタンプは下部（返信欄の上）に固定し、その上の残りいっぱいに画像を置く（デザインの「リンク位置」は使わない）。
+ * - 文字はすべて Instagram の上部UI（〜250px）と返信欄（1650px〜）の間に収める。
+ */
+export interface SingleLayoutOptions {
+  /** 画像の上の説明（SlideImage.caption） */
+  imageCaption?: string;
+  /** 見出しの下に短い線を引く（B・E。文字に重ねる帯は使わない） */
+  headingBar?: boolean;
+}
+
+/** 見出しの下の線（文字から離して置く）の間隔と太さ */
+const HEADING_BAR_GAP = 16;
+const HEADING_BAR_H = 10;
+/** 画像の上の説明（白いラベル）の上下の余白と、画像までの間隔 */
+const CAPTION_PAD = 6;
+const CAPTION_GAP = 12;
+
+export function singleLayout(def: SlideDef, text: SlideText, fontScale: number, templateId?: StoryTemplateId, opts: SingleLayoutOptions = {}): SingleLayout {
+  const head = fitStoryHeading(text.heading, INNER_W, 92, 56, 48, fontScale);
+  const headTextH = head.lines.length > 0 ? Math.ceil(wrappedLines(head.lines.join('\n'), head.size, INNER_W, headingLineWidth) * head.size * 1.32) : 0;
+  const headH = headTextH + (opts.headingBar && headTextH > 0 ? HEADING_BAR_GAP + HEADING_BAR_H : 0);
+  const caption = def.image !== 'none' ? (opts.imageCaption ?? '').trim() : '';
+  const capSize = fitFontSize(caption, INNER_W - 64, 36, 26, fontScale);
+  const capH = caption ? Math.ceil(wrappedLines(caption, capSize, INNER_W - 64) * capSize * 1.3) + CAPTION_PAD * 2 : 0;
+  const subSize = fitFontSize(text.subheading, INNER_W - 20, 46, 30, fontScale);
+  const subH = text.subheading.trim() ? Math.ceil(wrappedLines(text.subheading, subSize, INNER_W - 20) * subSize * 1.4) : 0;
+  const bodySize = fitFontSize(text.body, INNER_W, 46, 28, fontScale);
+  const bodyH = text.body.trim() ? Math.ceil(wrappedLines(text.body, bodySize, INNER_W) * bodySize * 1.45) : 0;
+  const noteSize = fitFontSize(text.note, INNER_W, 36, 24, fontScale);
+  const noteH = text.note.trim() ? Math.ceil(wrappedLines(text.note, noteSize, INNER_W) * noteSize * 1.45) : 0;
+  const link = def.sticker === 'link';
+  const leadSize = fitFontSize(text.stickerCaption, INNER_W, 46, 30, fontScale);
+  const leadH = link && text.stickerCaption.trim() ? Math.ceil(wrappedLines(text.stickerCaption, leadSize, INNER_W) * leadSize * 1.3) : 0;
+  const ctaSize = fitFontSize(`↓ ${text.cta} ↓`, INNER_W, 66, 42, fontScale);
+  const ctaLineH = link && text.cta.trim() ? Math.ceil(ctaSize * 1.25) : 0;
+  const ctaH = leadH + (leadH > 0 && ctaLineH > 0 ? 10 : 0) + ctaLineH;
+  const headerH = headH + (headH > 0 && subH > 0 ? 18 : 0) + subH;
+
+  const noteTop = SINGLE_BOTTOM - noteH;
+  const box = (top: number, height: number) => ({ top: Math.round(top), height: Math.round(height) });
+
+  if (def.sticker === 'question') {
+    // 見出し → 質問スタンプの余白 → 説明 → 補足 を、上下の余りを均等にして縦中央に
+    const fixed = headerH + SINGLE_GAP + SINGLE_GAP + bodyH + (noteH > 0 ? 24 + noteH : 0);
+    const zoneH = Math.max(SINGLE_QUESTION_MIN, Math.min(SINGLE_QUESTION_MAX, SINGLE_BOTTOM - SINGLE_TOP - fixed));
+    const start = SINGLE_TOP + Math.max(0, Math.floor((SINGLE_BOTTOM - SINGLE_TOP - fixed - zoneH) / 2));
+    const zoneTop = start + headerH + SINGLE_GAP;
+    const bodyTop = zoneTop + zoneH + SINGLE_GAP;
+    return {
+      heading: { ...box(start, headH), ...head },
+      sub: { ...box(start + headH + 18, subH), size: subSize },
+      image: null,
+      imageCaption: { ...box(zoneTop, 0), size: capSize },
+      body: { ...box(bodyTop, bodyH), size: bodySize },
+      cta: { ...box(zoneTop, 0), leadSize, ctaSize, leadH: 0 },
+      zone: { top: zoneTop, bottom: zoneTop + zoneH },
+      note: { ...box(bodyTop + bodyH + 24, noteH), size: noteSize },
+    };
+  }
+
+  const zone = link ? { bottom: noteTop - (noteH > 0 ? 20 : 0), top: 0 } : null;
+  if (zone) zone.top = zone.bottom - SINGLE_LINK_H;
+  const ctaTop = (zone ? zone.top - 14 : noteTop - (noteH > 0 ? 20 : 0)) - ctaH;
+  const bodyTop = ctaTop - (ctaH > 0 && bodyH > 0 ? 24 : 0) - bodyH;
+  const mediaBottom = (bodyH > 0 ? bodyTop : ctaTop) - SINGLE_GAP;
+
+  let image: SingleLayout['image'] = null;
+  let headTop = SINGLE_TOP;
+  const capBlock = capH > 0 ? capH + CAPTION_GAP : 0;
+  if (def.image !== 'none') {
+    const ratio = singleImageRatio(templateId, def);
+    const region = mediaBottom - (SINGLE_TOP + headerH + SINGLE_GAP + capBlock);
+    let h = Math.max(320, Math.min(region, Math.round(INNER_W / ratio)));
+    let w = Math.round(h * ratio);
+    if (w > INNER_W) { w = INNER_W; h = Math.round(w / ratio); }
+    // 余りは見出しの上と画像の上に半分ずつ（画像は CTA に近づけたまま）
+    const spare = Math.max(0, region - h);
+    headTop = SINGLE_TOP + Math.floor(spare / 2);
+    image = { ...box(headTop + headerH + SINGLE_GAP + capBlock, h), width: w };
+  } else {
+    headTop = SINGLE_TOP + Math.max(0, Math.floor((mediaBottom - SINGLE_TOP - headerH) / 2));
+  }
+
+  return {
+    heading: { ...box(headTop, headH), ...head },
+    sub: { ...box(headTop + headH + 18, subH), size: subSize },
+    image,
+    imageCaption: { ...box(image ? image.top - capBlock : headTop + headerH, image ? capH : 0), size: capSize },
+    body: { ...box(bodyTop, bodyH), size: bodySize },
+    cta: { ...box(ctaTop, ctaH), leadSize, ctaSize, leadH },
+    zone: zone ? { top: zone.top, bottom: zone.bottom } : null,
+    note: { ...box(noteTop, noteH), size: noteSize },
+  };
+}
+
+/** 1枚完結版：見出し・実画面・CTA・スタンプの余白を1枚に。画像はできるだけ大きく、リンクスタンプは下部の返信欄の上 */
+function SingleSlide({ decoration, def, text, design, image, showGuide, questionText, templateId }: StorySlideProps) {
+  const { colors, fontScale } = design;
+  const font = FONT_STACKS[design.font].stack;
+  // B（polaroid）・E（steps）の見出しは、文字に重なる蛍光ペン風の帯ではなく、見出しの下に離して短い線を引く
+  const headingBar = decoration === 'polaroid' || decoration === 'steps';
+  const caption = image?.caption?.trim() ?? '';
+  const L = singleLayout(def, text, fontScale, templateId, { imageCaption: caption, headingBar });
+  const area = (b: SingleBox, children: ReactNode, extra?: CSSProperties) => (
+    <div data-fit-area="single-text" style={{ position: 'absolute', left: SIDE, right: SIDE, top: b.top, height: b.height + 4, display: 'flex', flexDirection: 'column', justifyContent: 'center', ...extra }}>{children}</div>
+  );
+  return (
+    <div
+      data-story-frame
+      data-layout="single"
+      style={{ position: 'relative', width: STORY_W, height: STORY_H, overflow: 'hidden', background: colors.bg, fontFamily: font, color: colors.text, WebkitFontSmoothing: 'antialiased' }}
+    >
+      <Decorations decoration={decoration} accent={colors.accent} sub={colors.sub} />
+      <Brand color={colors.text} bg={colors.sub} />
+
+      {L.heading.height > 0 && area(L.heading, (
+        <>
+          <Heading text={L.heading.lines.join('\n')} size={L.heading.size} color={colors.text} noWrap={L.heading.fits} />
+          {headingBar && <span data-heading-bar style={{ alignSelf: 'center', flexShrink: 0, width: 160, height: HEADING_BAR_H, borderRadius: HEADING_BAR_H / 2, background: colors.accent, marginTop: HEADING_BAR_GAP }} />}
+        </>
+      ))}
+      {L.sub.height > 0 && area(L.sub, <p style={{ ...textBase, fontSize: L.sub.size, lineHeight: 1.4, fontWeight: 700, color: colors.text }}><Lines text={text.subheading} /></p>)}
+
+      {L.imageCaption.height > 0 && area(L.imageCaption, (
+        <p data-image-caption style={{ ...textBase, alignSelf: 'center', fontSize: L.imageCaption.size, lineHeight: 1.3, fontWeight: 800, color: colors.text, background: '#FFFFFF', borderRadius: 999, padding: `${CAPTION_PAD}px 32px` }}>{caption}</p>
+      ))}
+
+      {L.image && (
+        <div data-fit-area="image" style={{ position: 'absolute', left: Math.round((STORY_W - L.image.width) / 2), top: L.image.top, width: L.image.width, height: L.image.height }}>
+          <ScreenImage image={image} height={L.image.height} width={L.image.width} decoration={decoration} accent={colors.accent} showGuide={showGuide} hint={def.imageHint} />
+        </div>
+      )}
+
+      {L.body.height > 0 && area(L.body, <p style={{ ...textBase, fontSize: L.body.size, lineHeight: 1.45, fontWeight: 700, color: colors.text }}><Lines text={text.body} /></p>)}
+
+      {L.cta.height > 0 && area(L.cta, (
+        <>
+          {L.cta.leadH > 0 && <p style={{ ...textBase, fontSize: L.cta.leadSize, lineHeight: 1.3, fontWeight: 800, color: colors.text }}>{text.stickerCaption}</p>}
+          {text.cta.trim() && (
+            <p style={{ ...textBase, fontSize: L.cta.ctaSize, lineHeight: 1.25, fontWeight: 900, color: colors.text, whiteSpace: 'nowrap', marginTop: L.cta.leadH > 0 ? 10 : 0 }}>
+              <span style={{ color: colors.accent }}>↓</span> {text.cta} <span style={{ color: colors.accent }}>↓</span>
+            </p>
+          )}
+        </>
+      ), { justifyContent: 'flex-end' })}
+
+      {L.note.height > 0 && area(L.note, <p style={{ ...textBase, fontSize: L.note.size, lineHeight: 1.45, fontWeight: 700, color: colors.text, opacity: 0.85 }}>{text.note}</p>)}
+
+      {showGuide && <Guides zone={L.zone} kind={def.sticker} questionText={questionText} />}
+    </div>
+  );
+}
+
 export function StorySlide(props: StorySlideProps) {
+  if (props.def.layout === 'single') return <SingleSlide {...props} />;
   const vod = props.templateId === 'vod';
   if (vod && props.def.layout === 'screen') return <VodScreenSlide {...props} />;
   return <BaseSlide {...props} vod={vod} />;

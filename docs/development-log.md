@@ -6080,3 +6080,60 @@ oshi-search（未commit）
   - A の CTA（`VodCta`）は文字に線を重ねず、文字の下に離して短い線を1本だけ。ボタン・スタンプに見える図形は描かない。ガイドは showGuide のときだけ
 - `StoryMakerClient.tsx`：`templateId` を渡す。グループの自動作成が完了したとき、診断に使ったメンバー名を表示（診断結果画像にも名前が入る。9人以上は「ほか◯人」）
 - テスト：A のレイアウト5件（見出しの1行化・長い名前の改行・リンク位置 50/60/70% で画像が 1.5倍以上かつ 4:5 で CTA・スタンプ・UI と重ならない・CTA に線が重ならない・B〜E が従来と同じ）を追加（38件）
+
+### Task 193：ストーリーズ作成に「1枚完結版」を追加（A〜E）（2026-11-15・ブランチ feat/story-maker-single・未commit・本番デプロイなし）
+
+**目的：** 1枚だけでもサイトへ誘導できるストーリーズを全テンプレートで作れるようにする。既存の複数枚テンプレート（標準版）は残して選べるようにする。
+
+**変更ファイル：**
+- `src/lib/story-maker/templates.ts`
+  - `StoryStructure = 'single' | 1 | 2 | 3` と `structureSlides`・`structureSlideCount`・`structureLabel` を追加
+  - 各テンプレートに `single`（layout='single'）を追加。標準版の `structures[1]` とは別定義（B・C は標準版も1枚のため、従来の1枚は「標準版」として残す）
+  - 1枚完結版の文言の割り当て：heading＝見出し、subheading＝見出し下の一言、body＝画像・スタンプの下の説明、stickerCaption＝CTAの1行目、cta＝「↓ ◯◯ ↓」、note＝最下部の補足
+  - A・B・D・E は実画面が必須（`image='required'`。架空の画面・商品・価格は描かない）、C は画像なし（質問スタンプの大きな余白）
+- `src/app/admin/story-maker/StorySlide.tsx`
+  - `singleLayout()`（配置計算の純粋関数）と `SingleSlide` を追加。`layout === 'single'` のときだけ使い、標準版の描画（BaseSlide・VodScreenSlide）は変更なし
+  - 上から 見出し → 一言 → 実画面 → 説明 → CTA2行 → リンクスタンプの余白（下部に固定。下端は返信欄の44px上）。画像は残りの高さいっぱいで縦横比を保つ（A 4:5・D 63:88・B/E 3:4）
+  - 見出しは `fitStoryHeading`（1行で56px以上なら1行、だめなら書かれた改行／「推し」の前で改行）。長い名前は行数を数えて高さを確保
+  - C は 見出し → 質問スタンプの余白（380〜640px）→ 説明 → 補足 を縦中央に
+  - ガイド（スタンプ位置・上下UI）はプレビューだけ。テキスト枠に `data-fit-area` を付け、はみ出し警告の対象にした
+- `src/app/admin/story-maker/StoryMakerClient.tsx`
+  - ③に「構成」：1枚完結版（1枚）／標準版（N枚）と「選択中：…」表示。ほかの枚数（従来の1〜3枚）は「ほかの枚数で作る」に格納
+  - プレビュー上部に構成名を表示。1枚完結版ではテキスト項目名を置き場所に合わせて表示
+  - 1枚完結版はリンク位置が固定のため、リンク位置の選択と A/B「リンク位置」を無効化（選択中なら A/B を解除）
+- `src/lib/story-maker/ab.ts`：A/B「投稿枚数」の A を 1枚構成 → 1枚完結版（`'single'`）に
+- `src/lib/story-maker/utm.ts`：utm_content のパターンは 1枚完結版なら `single`（例 `snowman_single`）。標準版は従来どおり `2p` 等
+- 計測の記録（`slideCount`）は従来どおり 1〜3 の数値（1枚完結版は 1）。保存形式・API・DB は変更なし
+- テスト `src/lib/__tests__/story-maker.test.tsx`：1枚完結版9件を追加（文言・自動作成の画像スロット・名前の長さ×文字サイズでの重なり／安全領域・画像サイズ・書き出しにガイドが入らない・未設定表示・人物切り替え・UTM）。A/B のテストを `'single'` に更新
+
+**設計上の判断・注意点：**
+- 自動作成（A・C・D）は画像スロットが標準版と同じ（A=screen、D=card）なので、1枚完結版でもそのまま使える。B・E は従来どおりアップロード
+- 標準版の描画は、変更前のコードと 5テンプレート×全ページ×リンク位置3種×ガイド有無×画像有無の360通りで出力HTMLが一致することを確認済み（一時テストで確認、コミットには含めない）
+- ブラウザでの見た目確認（PNG 1080×1920 の実出力・ZIP）は未確認。新しい開発サーバー・Chromium は起動していない
+
+#### Task 193 追記：1枚完結版の最終調整（2026-11-15・未commit・本番デプロイなし）
+- B・E の見出しの装飾：蛍光ペン風の帯（`linear-gradient(transparent 62%, …)`。画像の一部なので PNG にも入り、文字の下半分に重なっていた）を、1枚完結版ではやめた。見出しの文字の下に16px離して短い線（160×10px・`data-heading-bar`）を置く。`singleLayout` の `headingBar` で高さを確保。標準版の帯は変更なし
+- A・D の画像の上の説明：`SlideImage.caption` を追加。自動作成で取得した画像にだけ `autoImageCaption()`（`src/lib/story-maker/auto.ts`）で付ける。A「目黒蓮の診断結果」（4人以上は「◯・◯・◯ほか◯人の診断結果」）、D「目黒蓮の推しカード」。名前は plan.personNames（実際に画像を作った人物）だけ。アップロード・スクリーンショットの画像には付けない。対象・メンバーを変えると既存の仕組みで画像ごと外れる
+- 1枚完結版でだけ表示（白いラベル・36px）。`singleLayout` の `imageCaption` で見出しと画像の間に高さを確保。見出しの上限を 100→92px に
+- Snow Man・目黒蓮のときの配置：A 画像 453×566（見出し84px 1行）、D カード 457×639、B 486×648、E 428×570、C 質問スタンプの余白 640px。リンクスタンプの余白は 1446〜1606px
+- テスト5件を追加（計52件）。標準版は変更前と 540通りで出力HTMLが一致（一時テスト・コミットなし）
+
+### Task 194：ストーリーズ B・E の自動作成（2026-11-15・ブランチ feat/story-maker-single・未commit・本番デプロイなし）
+
+**目的：** B（関連商品）・E（グッズ制作比較）も画像アップロードなしで作れるようにする。Playwright・Chromium・外部スクリーンショットは使わず、サイトの実データからカードを描く。
+
+**方式：** 画面の撮影ではなく、実データのカード（`StoryPanel`）を画像枠（ScreenImage）の中に DOM で描く。PNG 保存は既存の処理（foreignObject → canvas）のまま。外部画像はサーバーで取得して data: URL にするため、PNG で欠けない。next/og は日本語フォントの読み込みと CSS の制限があり、プレビューと見た目がずれるため使わなかった。新しいライブラリは追加していない。
+
+**変更・追加ファイル：**
+- `src/lib/story-maker/goods-select.ts`（新規・純粋関数）：人物ページの「関連商品ピックアップ」と同じ条件（verdict=related の新品 → dedupe → セクション分け → 「その他」・まとめ買い出品を除く → tier・管理画面の並び順・表示スコア順）と、グループページの「関連商品」と同じ条件（所属メンバー全員・自動判定はスコア70以上・新品・ID重複除去・relevanceScore 順）。`pickStoryGoods` でセクションを1件ずつ最大3件。人物ページの `applyDisplayOrder` はページのローカル関数のため同じ内容を `applyPersonDisplayOrder` として持つ（ページ側を変えたら合わせる）
+- `src/server/story-maker/goods-data.ts`（新規）：DB を読むだけ（`getAllStoredProducts`・`getAllVerdicts`・`getAllDisplayOrders` 等の既存関数）。商品画像は `getBestProductImageUrl`（500×500）を https のみ・6秒タイムアウト・2MB 上限・画像形式の確認つきで取得し data: URL に。サーバーのメモリに成功30分・失敗2分だけ覚える（最大120件）。商品0件は理由つきのエラー（404）
+- `src/app/api/admin/story-maker/goods/route.ts`（新規）：`GET ?type=person|group&name=`。認証は proxy.ts
+- `src/lib/story-maker/panels.ts`（新規）：カードのデータ型。`buildServicesPanel()` は /oshikatsu/goods-making と同じ `GOODS_MAKING_SERVICES`・`OSHIKATSU_SERVICE_LINKS` から、サービス名・アイコン代わりの1文字・紹介文・比較表「主な制作アイテム」・「最小注文個数」の先頭だけ（料金・送料・納期・順位は載せない）
+- `src/app/admin/story-maker/StoryPanelView.tsx`（新規）：商品カード（縦長の枠は大1件＋小2件、正方形に近い枠は横並び）・サービスカード。文字は枠の幅に対する割合（cqw）。画像が取れなかった商品はカテゴリのアイコンと商品名の代替カード。価格は描かない
+- `StorySlide.tsx`：`SlideImage.panel` を追加し、ScreenImage でカードを描く（panel が無いときの描画は従来どおり）
+- `auto.ts`：B・E を自動作成に対応（`kind: 'panel'`）。B は対象が必要（グループはメンバーを選ばない）、E は対象に関係しない（推しを変えても外さない）
+- `StoryMakerClient.tsx`：自動作成で B の商品データを取得（25秒タイムアウト・同じ推しは10分間再取得しない）、E は掲載内容から作成。④の画像欄に、使った商品・サービスの一覧（商品ページへのリンク・画像なしの表示）を出す。アップロードで差し替え可能
+- `templates.ts`：B の1枚完結版の CTA「写真集・CD・グッズをまとめて探せる！」「↓ 関連商品を見る ↓」、E の1枚完結版の CTA「グッズ制作サービスをまとめて比較！」「↓ 詳しく見てみる ↓」（説明文は外してカードを大きく）。標準版の文言は変更なし
+- テスト：`src/lib/__tests__/story-maker-auto-be.test.tsx`（新規・14件。DB はモック）、`story-maker.test.tsx` を新しい文言・対応範囲に更新
+
+**確認：** 実データ（DB 読み取りのみ）で Snow Man（公開中492件から3件・画像3件取得・約2.4秒）、目黒蓮（153件から3件・画像3件取得）。標準版は変更前と540通りで出力HTMLが一致（一時テスト）。ブラウザでの見た目・PNG・ZIP の実出力は未確認

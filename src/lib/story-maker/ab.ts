@@ -1,6 +1,6 @@
 // A/Bテストの定義と、基本の設定に A/B の差分を当てる処理（DB非依存）。
 
-import { COLOR_PRESETS, type LinkPosition, type SlideCount, type StoryDesign } from './templates';
+import { COLOR_PRESETS, type LinkPosition, type StoryDesign, type StoryStructure } from './templates';
 import type { AbTestKey, AbVariant } from './utm';
 
 export interface AbTestDef {
@@ -11,7 +11,7 @@ export interface AbTestDef {
 }
 
 export const AB_TESTS: AbTestDef[] = [
-  { key: 'slides', label: '投稿枚数', a: '1枚構成', b: '3枚構成' },
+  { key: 'slides', label: '投稿枚数', a: '1枚完結版', b: '3枚構成' },
   { key: 'link', label: 'リンク位置', a: '中央（50%）', b: '中央下（60%）' },
   { key: 'cta', label: 'CTA文言', a: '「詳しくはこちら」', b: 'テンプレートのCTA' },
   { key: 'bg', label: '背景色', a: '黄色', b: 'ピンク' },
@@ -21,7 +21,7 @@ export const AB_CTA_A_DEFAULT = '詳しくはこちら';
 
 /** 1つのパターンの設定 */
 export interface StoryVariantConfig {
-  slides: SlideCount;
+  slides: StoryStructure;
   design: StoryDesign;
   /** スタンプのあるページの CTA 文言を差し替える（null＝テンプレート・編集した文言のまま） */
   ctaOverride: string | null;
@@ -34,7 +34,7 @@ export interface AbSettings {
   ctaB: string;
 }
 
-const SLIDES: Record<AbVariant, SlideCount> = { a: 1, b: 3 };
+const SLIDES: Record<AbVariant, StoryStructure> = { a: 'single', b: 3 };
 const LINK: Record<AbVariant, LinkPosition> = { a: 50, b: 60 };
 const BG: Record<AbVariant, 'yellow' | 'pink'> = { a: 'yellow', b: 'pink' };
 

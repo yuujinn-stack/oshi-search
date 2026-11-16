@@ -11,9 +11,30 @@ import { OSHI_VOD_PATH, buildOshiVodGroupPath, buildOshiVodWithPath } from '@/li
 export type StoryTemplateId = 'vod' | 'goods' | 'request' | 'card' | 'goodsmaking';
 export type SlideCount = 1 | 2 | 3;
 export const SLIDE_COUNTS: SlideCount[] = [1, 2, 3];
+/**
+ * 構成。'single'＝1枚完結版（見出し・実画面・CTA・リンク余白を1枚に収めた専用レイアウト）、数字＝標準版などの枚数別構成。
+ * 1枚完結版は標準版の1枚構成（structures[1]）とは別の定義（B・C は標準版も1枚のため、標準版は従来どおり残す）。
+ */
+export type StoryStructure = 'single' | SlideCount;
+
+/** 構成のページ一覧 */
+export function structureSlides(tpl: Pick<StoryTemplateDef, 'single' | 'structures'>, s: StoryStructure): SlideDef[] {
+  return s === 'single' ? [tpl.single] : tpl.structures[s];
+}
+
+/** 構成の枚数（計測の記録・リーチ欄に使う） */
+export function structureSlideCount(s: StoryStructure): SlideCount {
+  return s === 'single' ? 1 : s;
+}
+
+/** 管理画面の表示名 */
+export function structureLabel(tpl: Pick<StoryTemplateDef, 'defaultSlides'>, s: StoryStructure): string {
+  if (s === 'single') return '1枚完結版（1枚）';
+  return s === tpl.defaultSlides ? `標準版（${s}枚）` : `${s}枚構成`;
+}
 
 /** スライドの組み方。テンプレートごとの装飾（decoration）と組み合わせて見た目を変える */
-export type SlideLayout = 'hook' | 'screen' | 'combined' | 'cta' | 'points' | 'question';
+export type SlideLayout = 'hook' | 'screen' | 'combined' | 'cta' | 'points' | 'question' | 'single';
 /** スタンプ用に空けておく場所の種類（本物のスタンプは Instagram アプリで置く。画像には描かない） */
 export type StickerKind = 'link' | 'question' | 'none';
 /** 画像の差し込み口。同じ口の画像は枚数を変えても引き継ぐ */
@@ -62,6 +83,11 @@ export interface StoryTemplateDef {
   /** 人物・グループを選ぶと文言に反映するか（追加リクエスト募集は名前を入れない） */
   usesTarget: boolean;
   structures: Record<SlideCount, SlideDef[]>;
+  /**
+   * 1枚完結版（layout='single'）。文言の割り当て：heading＝見出し、subheading＝見出し下の一言、
+   * body＝画像の下の説明、stickerCaption＝CTAの1行目、cta＝「↓ ◯◯ ↓」、note＝最下部の補足。
+   */
+  single: SlideDef;
 }
 
 const T = (t: Partial<SlideText>): SlideText => ({
@@ -78,6 +104,8 @@ const VOD: StoryTemplateDef = {
   defaultSlides: 2,
   decoration: 'bubble',
   usesTarget: true,
+  single: { layout: 'single', sticker: 'link', image: 'required', imageSlot: 'screen', imageHint: '選んだ推しで実際に診断した結果画像（自動作成で取得）',
+    text: T({ heading: '{name推し}の人！', subheading: '推しの出演作品、\nどこで見られるか知ってる？', stickerCaption: '推しを選ぶだけでサブスクを比較！', cta: '無料で診断する' }) },
   structures: {
     1: [
       { layout: 'combined', sticker: 'link', image: 'required', imageSlot: 'screen', imageHint: VOD_SCREEN_HINT,
@@ -110,6 +138,8 @@ const GOODS: StoryTemplateDef = {
   defaultSlides: 1,
   decoration: 'polaroid',
   usesTarget: true,
+  single: { layout: 'single', sticker: 'link', image: 'required', imageSlot: 'screen', imageHint: '関連商品のカード（自動作成）または人物ページの商品一覧の画面',
+    text: T({ heading: '{name推し}の人、\nチェックして！', stickerCaption: '写真集・CD・グッズをまとめて探せる！', cta: '関連商品を見る' }) },
   structures: {
     1: [
       { layout: 'combined', sticker: 'link', image: 'required', imageSlot: 'screen', imageHint: GOODS_SCREEN_HINT,
@@ -141,6 +171,8 @@ const REQUEST: StoryTemplateDef = {
   defaultSlides: 1,
   decoration: 'hearts',
   usesTarget: false,
+  single: { layout: 'single', sticker: 'question', image: 'none',
+    text: T({ heading: '推しサーチに\n追加してほしいのは？', body: '追加してほしいグループ・人物を\n教えて！', note: 'いただいたリクエストを今後の登録候補にします！' }) },
   structures: {
     1: [
       { layout: 'question', sticker: 'question', image: 'none',
@@ -173,6 +205,8 @@ const CARD: StoryTemplateDef = {
   defaultSlides: 2,
   decoration: 'sparkle',
   usesTarget: true,
+  single: { layout: 'single', sticker: 'link', image: 'required', imageSlot: 'card', imageHint: CARD_HINT,
+    text: T({ heading: '{name}の推しカード、\n作れるの知ってた？', stickerCaption: 'あなたの推しでも作ってみて！', cta: '無料でカードを作る' }) },
   structures: {
     1: [
       { layout: 'combined', sticker: 'link', image: 'required', imageSlot: 'card', imageHint: CARD_HINT,
@@ -207,6 +241,8 @@ const GOODSMAKING: StoryTemplateDef = {
   defaultSlides: 3,
   decoration: 'steps',
   usesTarget: false,
+  single: { layout: 'single', sticker: 'link', image: 'required', imageSlot: 'screen', imageHint: 'グッズ制作サービスの比較カード（自動作成）または比較ページ（/oshikatsu/goods-making）の画面',
+    text: T({ heading: '推しグッズ、\n自分で作ってみない？', stickerCaption: 'グッズ制作サービスをまとめて比較！', cta: '詳しく見てみる' }) },
   structures: {
     1: [
       { layout: 'points', sticker: 'link', image: 'none',

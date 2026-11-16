@@ -1,6 +1,6 @@
 // ストーリーズ用の計測URL（UTM付き）とファイル名（DB非依存・'use client' からも import 可）。
 
-import { STORY_SITE_ORIGIN, type SlideCount, type StoryTarget, type StoryTemplateDef } from './templates';
+import { STORY_SITE_ORIGIN, type StoryStructure, type StoryTarget, type StoryTemplateDef } from './templates';
 import { GROUP_NAME_TO_SLUG, isAsciiSlug } from '@/lib/group-slug';
 
 export type AbTestKey = 'slides' | 'link' | 'cta' | 'bg';
@@ -53,15 +53,15 @@ export function suggestTargetKey(target: StoryTarget | null): string {
   return `t${fnv1a(target.name)}`;
 }
 
-/** utm_content のパターン部分。通常は枚数（2p）、A/Bテストは test_a / test_b */
-export function patternToken(slides: SlideCount, ab: { test: AbTestKey; variant: AbVariant } | null): string {
-  return ab ? `${ab.test}_${ab.variant}` : `${slides}p`;
+/** utm_content のパターン部分。通常は枚数（2p）、1枚完結版は single、A/Bテストは test_a / test_b */
+export function patternToken(slides: StoryStructure, ab: { test: AbTestKey; variant: AbVariant } | null): string {
+  return ab ? `${ab.test}_${ab.variant}` : slides === 'single' ? 'single' : `${slides}p`;
 }
 
 export function buildStoryUtm(
   template: Pick<StoryTemplateDef, 'key'>,
   targetKey: string,
-  slides: SlideCount,
+  slides: StoryStructure,
   ab: { test: AbTestKey; variant: AbVariant } | null,
 ): StoryUtm {
   const target = sanitizeUtmValue(targetKey) || 'all';

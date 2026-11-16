@@ -14,13 +14,17 @@ import {
   getStoryTemplate,
   linkTargetOptions,
   screenshotPathOptions,
+  structureLabel,
+  structureSlideCount,
+  structureSlides,
   type ColorPresetId,
   type FontId,
   type ImageSlot,
   type LinkPosition,
-  type SlideCount,
+  type SlideDef,
   type SlideText,
   type StoryDesign,
+  type StoryStructure,
   type StoryTarget,
   type StoryTemplateId,
 } from '@/lib/story-maker/templates';
@@ -28,6 +32,7 @@ import { AB_CTA_A_DEFAULT, AB_TESTS, applyAbVariant, type AbSettings, type Story
 import { appendUtm, buildStoryUtm, isSiteUrl, storyFileName, storyZipName, suggestTargetKey, type AbTestKey, type AbVariant } from '@/lib/story-maker/utm';
 import {
   AUTO_CARD_VARIANTS,
+  autoImageCaption,
   autoImageOwnerKey,
   autoImagePlan,
   describeImageResponseError,
@@ -35,6 +40,7 @@ import {
   memberPickMode,
   type AutoCardVariant,
 } from '@/lib/story-maker/auto';
+import { buildServicesPanel, panelSignature, type ProductPanelItem, type StoryPanel } from '@/lib/story-maker/panels';
 import { StoryScaled, StorySlide, type ImageFit, type SlideImage } from './StorySlide';
 import { downloadBlob, downloadZip, renderStoryElementPng } from './png-export';
 import StoryMetricsPanel, { type MetricsDraftContext } from './StoryMetricsPanel';
@@ -64,6 +70,8 @@ interface AutoStatus {
 }
 /** 自動取得のタイムアウト（画像APIはサーバーで描画するため、初回は数秒かかることがある） */
 const AUTO_FETCH_TIMEOUT_MS = 25_000;
+/** B の商品データを同じ推しで作り直すときは取得し直さない（10分） */
+const GOODS_CACHE_MS = 10 * 60_000;
 
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise<string>((resolve, reject) => {
@@ -75,15 +83,24 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 }
 
 type EditMap = Record<string, Partial<SlideText>>;
+
+/** 1枚完結版での各文言の置き場所（項目名を置き場所に合わせて表示する） */
+const SINGLE_FIELD_LABELS: Partial<Record<keyof SlideText, string>> = {
+  subheading: '見出しの下の一言',
+  body: '説明文（画像・スタンプの下）',
+  stickerCaption: 'CTAの1行目（矢印の行の上）',
+  cta: 'CTA文言（↓ ◯◯ ↓）',
+  note: '補足文（いちばん下）',
+};
 type ImageMap = Record<string, SlideImage>;
 
-const editKey = (t: StoryTemplateId, count: SlideCount, i: number) => `${t}:${count}:${i}`;
+const editKey = (t: StoryTemplateId, count: StoryStructure, i: number) => `${t}:${count}:${i}`;
 const imageKey = (t: StoryTemplateId, slot: ImageSlot) => `${t}:${slot}`;
 
 /** 1つのパターン（A/B 無しなら1つ）を描くのに必要な値 */
 interface ResolvedSlide {
   index: number;
-  def: ReturnType<typeof getStoryTemplate>['structures'][SlideCount][number];
+  def: SlideDef;
   rawText: SlideText;
   text: SlideText;
   image: SlideImage | null;
@@ -99,7 +116,7 @@ function resolveSlides(
 ): ResolvedSlide[] {
   const tpl = getStoryTemplate(templateId);
   const t = tpl.usesTarget ? target : null;
-  return tpl.structures[cfg.slides].map((def, index) => {
+  return structureSlides(tpl, cfg.slides).map((def, index) => {
     const rawText: SlideText = { ...def.text, ...edits[editKey(templateId, cfg.slides, index)] };
     const filled = Object.fromEntries(Object.entries(rawText).map(([k, v]) => [k, fillStoryText(v, t)])) as unknown as SlideText;
     if (cfg.ctaOverride && def.sticker === 'link') filled.cta = cfg.ctaOverride;
@@ -195,7 +212,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
   }, [targetType, personName, groupName, groups]);
 
   // ③ 枚数・デザイン
-  const [slides, setSlides] = useState<SlideCount>(tpl.defaultSlides);
+  const [slides, setSlides] = useState<StoryStructure>(tpl.defaultSlides);
   const [design, setDesign] = useState<StoryDesign>(DEFAULT_DESIGN);
   const [ab, setAb] = useState<AbSettings | null>(null);
   const [viewVariant, setViewVariant] = useState<AbVariant>('a');
@@ -226,8 +243,17 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
   const autoOwners = useRef<Record<string, string>>({});
   /** 二重クリック防止（state の更新を待たずに止める） */
   const autoLock = useRef(false);
+  /** B の商品データ（取得先URL → 取得結果）。同じ推しで何度押しても再取得しない */
+  const goodsCache = useRef<Map<string, { at: number; panel: StoryPanel; note: string }>>(new Map());
   const groupChoice = target?.type === 'group' ? groups.find((g) => g.name === target.name) ?? null : null;
   const pickMode = memberPickMode(templateId, target);
+
+  function chooseStructure(s: StoryStructure) {
+    setSlides(s);
+    setSelected(0);
+    // 1枚完結版はリンク位置が固定のため、リンク位置の A/B テストは使えない
+    if (s === 'single' && ab?.test === 'link') setAb(null);
+  }
 
   function selectTemplate(id: StoryTemplateId) {
     setTemplateId(id);
@@ -361,7 +387,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
     questionText,
     variants.map((v) => {
       const cfg = cfgOf(v);
-      return [cfg, resolveSlides(templateId, cfg, edits, imgs, target).map((r) => [r.text, r.image ? `${r.image.fit}:${r.image.src.length}:${r.image.src.slice(-32)}` : null])];
+      return [cfg, resolveSlides(templateId, cfg, edits, imgs, target).map((r) => [r.text, r.image ? `${r.image.fit}:${r.image.caption ?? ''}:${r.image.panel ? panelSignature(r.image.panel) : ''}:${r.image.src.length}:${r.image.src.slice(-32)}` : null])];
     }),
   ]);
   const autoFilesFresh = autoFiles !== null && autoFiles.sig === autoSigOf(images);
@@ -384,7 +410,38 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
       if (plan.kind === 'blocked' || plan.kind === 'unsupported') throw new Error(plan.reason);
 
       let fetched: { key: string; image: SlideImage; owner: string } | null = null;
-      if (plan.kind === 'fetch') {
+      let panelNote = '';
+      if (plan.kind === 'panel') {
+        let panel: StoryPanel;
+        if (plan.source === 'services') {
+          step('fetch', 'グッズ制作比較ページの掲載内容を読み込んでいます');
+          panel = buildServicesPanel();
+        } else {
+          step('fetch', `サイトの関連商品を取得しています（${plan.personNames.join('・')}）`);
+          const cached = goodsCache.current.get(plan.url!);
+          if (cached && Date.now() - cached.at < GOODS_CACHE_MS) {
+            panel = cached.panel;
+            panelNote = cached.note;
+          } else {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), AUTO_FETCH_TIMEOUT_MS);
+            let res: Response;
+            try {
+              res = await fetch(plan.url!, { signal: ctrl.signal, cache: 'no-store' });
+            } catch {
+              throw new Error(ctrl.signal.aborted ? `${AUTO_FETCH_TIMEOUT_MS / 1000}秒以内に商品データを取得できませんでした。時間をおいてもう一度お試しください。` : '商品データを取得できませんでした（通信エラー）。');
+            } finally {
+              clearTimeout(timer);
+            }
+            const j = (await res.json().catch(() => ({}))) as { error?: string; targetName?: string; items?: ProductPanelItem[]; totalOnSite?: number; imageFailures?: number };
+            if (!res.ok || !Array.isArray(j.items) || j.items.length === 0) throw new Error(j.error ?? `商品データを取得できませんでした（HTTP ${res.status}）。`);
+            panel = { kind: 'products', title: `${j.targetName ?? plan.personNames[0]}の関連商品`, items: j.items };
+            panelNote = `サイトに公開中の関連商品${j.totalOnSite ?? j.items.length}件から${j.items.length}件を使用。${j.imageFailures ? `${j.imageFailures}件は商品画像を取得できなかったため、商品名とカテゴリのカードで表示しています。` : ''}`;
+            goodsCache.current.set(plan.url!, { at: Date.now(), panel, note: panelNote });
+          }
+        }
+        fetched = { key: imageKey(templateId, plan.slot), image: { src: '', fit: 'contain', panel }, owner: autoImageOwnerKey(templateId, target, plan) };
+      } else if (plan.kind === 'fetch') {
         step('fetch', `サイト画面を取得しています（${plan.label}：${plan.personNames.join('・')}）`);
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), AUTO_FETCH_TIMEOUT_MS);
@@ -399,7 +456,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
         const bad = describeImageResponseError(res.status, res.headers.get('content-type'));
         if (bad) throw new Error(bad);
         const src = await blobToDataUrl(await res.blob());
-        fetched = { key: imageKey(templateId, plan.slot), image: { src, fit: 'contain' }, owner: autoImageOwnerKey(templateId, target, plan) };
+        fetched = { key: imageKey(templateId, plan.slot), image: { src, fit: 'contain', caption: autoImageCaption(templateId, plan) }, owner: autoImageOwnerKey(templateId, target, plan) };
       }
 
       step('text', '文章を作成しています');
@@ -425,7 +482,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
 
       setAutoFiles({ files, sig: autoSigOf(nextImages) });
       setSelected(0);
-      const basis = plan.kind === 'fetch' && target?.type === 'group' ? `${plan.label}は ${plan.personNames.join('・')} で作成（画像内にも名前が表示されます。9人以上は「ほか◯人」）。` : '';
+      const basis = plan.kind === 'panel' ? `${panelNote} ` : plan.kind === 'fetch' && target?.type === 'group' ? `${plan.label}は ${plan.personNames.join('・')} で作成（画像内にも名前が表示されます。9人以上は「ほか◯人」）。` : '';
       setAutoStatus({ stage: 'done', state: 'done', text: `ストーリーズが完成しました（${files.length}枚）。${basis}プレビューを確認して保存してください。文言・画像は下の③④で調整できます。` });
     } catch (err) {
       setAutoStatus({ stage, state: 'error', text: err instanceof Error ? err.message : String(err) });
@@ -479,8 +536,9 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
     variants: variants.map((v) => {
       const cfg = cfgOf(v);
       const utm = buildStoryUtm(tpl, targetKey, cfg.slides, abOf(v));
-      const linkSlide = getStoryTemplate(templateId).structures[cfg.slides].findIndex((d) => d.sticker === 'link');
-      return { variant: ab ? v : null, slides: cfg.slides, utmCampaign: utm.campaign, utmContent: utm.content, url: urlOf(v), linkSlide: linkSlide >= 0 ? linkSlide + 1 : cfg.slides };
+      const count = structureSlideCount(cfg.slides);
+      const linkSlide = structureSlides(tpl, cfg.slides).findIndex((d) => d.sticker === 'link');
+      return { variant: ab ? v : null, slides: count, utmCampaign: utm.campaign, utmContent: utm.content, url: urlOf(v), linkSlide: linkSlide >= 0 ? linkSlide + 1 : count };
     }),
     abTest: ab?.test ?? null,
   };
@@ -598,6 +656,8 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
               {templateId === 'vod' ? '推しサーチのサブスク診断で、選んだ推しを実際に診断した結果画像（/api/oshi-vod/image）を取得して配置します。' :
                 templateId === 'card' ? '推し布教カードの作成画面と同じ処理のカード画像（/api/oshi-card/image・作品なし・公開中のトレカ風）を取得して配置します。' :
                 templateId === 'request' ? '画像は使いません。質問スタンプを置く余白を空けたストーリーズを作ります。' :
+                templateId === 'goods' ? '選んだ人物・グループのページに公開中の関連商品（写真集・CD・Blu-ray・DVD・グッズ）から最大3件を選び、商品画像と商品名のカードを作ります（価格は載せません）。グループはグループページと同じく所属メンバー全員の商品から選びます。' :
+                templateId === 'goodsmaking' ? 'グッズ制作比較ページ（/oshikatsu/goods-making）に掲載中のサービス名・紹介文・作れるもの・最小注文個数でカードを作ります（料金・納期・順位は載せません）。' :
                 'このテンプレートの自動作成は準備中です。実際の画面は④の「画像をアップロード」で設定してください。'}
               {isAutoSupported(templateId) && ' 現在の投稿枚数・デザイン・A/B設定で作ります。'}
             </p>
@@ -629,14 +689,24 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
           <Step n={3} title="投稿枚数とデザインを選ぶ">
             <div className="space-y-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="w-24 text-gray-600">投稿枚数</span>
-                {SLIDE_COUNTS.map((n) => (
-                  <Pill key={n} active={slides === n} disabled={locked('slides')} onClick={() => { setSlides(n); setSelected(0); }}>
-                    {n}枚{n === tpl.defaultSlides ? '（基本）' : ''}
-                  </Pill>
-                ))}
-                <span className="text-xs text-gray-400">{slides === 1 ? '紹介・実画面・CTAを1枚に' : slides === 2 ? '興味を引く → 実画面・CTA' : '興味を引く → 解決方法 → CTA'}</span>
+                <span className="w-24 text-gray-600">構成</span>
+                <Pill active={slides === 'single'} disabled={locked('slides')} onClick={() => chooseStructure('single')}>1枚完結版（1枚）</Pill>
+                <Pill active={slides === tpl.defaultSlides} disabled={locked('slides')} onClick={() => chooseStructure(tpl.defaultSlides)}>標準版（{tpl.defaultSlides}枚）</Pill>
+                <span className="text-xs font-semibold text-amber-700">選択中：{structureLabel(tpl, slides)}</span>
               </div>
+              <p className="text-xs text-gray-500 -mt-1 ml-[6.5rem]">
+                {slides === 'single'
+                  ? '見出し・実際の画面・CTA・リンクの余白を1枚にまとめます（1枚だけでもサイトへ誘導できる構成）。リンクスタンプの余白は画面下部に固定です。'
+                  : slides === 1 ? '紹介・実画面・CTAを1枚に（従来の1枚構成）' : slides === 2 ? '興味を引く → 実画面・CTA' : '興味を引く → 解決方法 → CTA'}
+              </p>
+              <details className="ml-[6.5rem] text-xs text-gray-500">
+                <summary className="cursor-pointer select-none">ほかの枚数で作る</summary>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {SLIDE_COUNTS.filter((n) => n !== tpl.defaultSlides).map((n) => (
+                    <Pill key={n} active={slides === n} disabled={locked('slides')} onClick={() => chooseStructure(n)}>{n}枚構成</Pill>
+                  ))}
+                </div>
+              </details>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="w-24 text-gray-600">背景色</span>
                 {(Object.keys(COLOR_PRESETS) as ColorPresetId[]).map((id) => (
@@ -669,8 +739,9 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
               <div className="flex flex-wrap items-center gap-2">
                 <span className="w-24 text-gray-600">{templateId === 'request' ? 'スタンプ位置' : 'リンク位置'}</span>
                 {LINK_POSITIONS.map((p) => (
-                  <Pill key={p.value} active={design.linkPos === p.value} disabled={locked('link')} onClick={() => setDesign({ ...design, linkPos: p.value as LinkPosition })}>{p.label}</Pill>
+                  <Pill key={p.value} active={design.linkPos === p.value} disabled={locked('link') || slides === 'single'} onClick={() => setDesign({ ...design, linkPos: p.value as LinkPosition })}>{p.label}</Pill>
                 ))}
+                {slides === 'single' && <span className="text-xs text-gray-400">1枚完結版は画面下部に固定（画像を大きく見せるため）</span>}
               </div>
 
               <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50/50 p-3">
@@ -682,7 +753,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                   <div className="mt-2 space-y-2">
                     <div className="flex flex-wrap gap-2">
                       {AB_TESTS.map((t) => (
-                        <Pill key={t.key} active={ab.test === t.key} onClick={() => { setAb({ ...ab, test: t.key }); setSelected(0); }}>
+                        <Pill key={t.key} active={ab.test === t.key} disabled={t.key === 'link' && slides === 'single'} onClick={() => { setAb({ ...ab, test: t.key }); setSelected(0); }}>
                           {t.label}：{t.a} vs {t.b}
                         </Pill>
                       ))}
@@ -693,7 +764,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                           <input value={ab.ctaA} onChange={(e) => setAb({ ...ab, ctaA: e.target.value })} className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm" />
                         </label>
                         <label className="text-xs text-gray-600">B の CTA（空欄＝テンプレートの文言）
-                          <input value={ab.ctaB} placeholder={tpl.structures[slides].find((d) => d.sticker === 'link')?.text.cta ?? ''} onChange={(e) => setAb({ ...ab, ctaB: e.target.value })} className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                          <input value={ab.ctaB} placeholder={structureSlides(tpl, slides).find((d) => d.sticker === 'link')?.text.cta ?? ''} onChange={(e) => setAb({ ...ab, ctaB: e.target.value })} className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm" />
                         </label>
                       </div>
                     )}
@@ -711,15 +782,16 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                   {r.index + 1}枚目{r.def.sticker === 'link' ? '・リンク' : r.def.sticker === 'question' ? '・質問' : ''}{r.missingImage ? ' ⚠' : ''}
                 </Pill>
               ))}
-              {ab && <span className="text-xs text-gray-500 self-center">{viewVariant.toUpperCase()}パターン（{viewCfg.slides}枚）の文言を編集中</span>}
+              {ab && <span className="text-xs text-gray-500 self-center">{viewVariant.toUpperCase()}パターン（{structureLabel(tpl, viewCfg.slides)}）の文言を編集中</span>}
             </div>
             <p className="text-xs text-gray-500 mb-2"><code>{'{name}'}</code> は選んだ人物・グループ名、<code>{'{name推し}'}</code> は「◯◯推し」に置き換わります。改行はそのまま反映されます。</p>
             <div className="grid sm:grid-cols-2 gap-3">
               {SLIDE_TEXT_FIELDS.map((f) => {
-                const irrelevant = (f.key === 'cta' && current.def.sticker !== 'link') || (f.key === 'stickerCaption' && current.def.sticker === 'none');
+                const single = current.def.layout === 'single';
+                const irrelevant = (f.key === 'cta' && current.def.sticker !== 'link') || (f.key === 'stickerCaption' && (current.def.sticker === 'none' || (single && current.def.sticker !== 'link')));
                 return (
                   <label key={f.key} className={`text-xs text-gray-600 ${irrelevant ? 'opacity-50' : ''}`}>
-                    {f.label}{irrelevant ? '（このページでは表示されません）' : ''}
+                    {(single && SINGLE_FIELD_LABELS[f.key]) || f.label}{irrelevant ? '（このページでは表示されません）' : ''}
                     {f.multiline ? (
                       <textarea rows={3} value={current.rawText[f.key]} onChange={(e) => setText(f.key, e.target.value)} className="mt-1 w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-slate-800" />
                     ) : (
@@ -769,14 +841,24 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                         </label>
                         {img && (
                           <>
-                            <select value={img.fit} onChange={(e) => setImages((p) => ({ ...p, [imageKey(templateId, slot)]: { ...img, fit: e.target.value as ImageFit } }))} className="border border-gray-300 rounded px-2 py-1.5">
+                            {!img.panel && <select value={img.fit} onChange={(e) => setImages((p) => ({ ...p, [imageKey(templateId, slot)]: { ...img, fit: e.target.value as ImageFit } }))} className="border border-gray-300 rounded px-2 py-1.5">
                               <option value="top">上から大きく表示（はみ出しは切り取り）</option>
                               <option value="contain">全体を表示</option>
-                            </select>
+                            </select>}
                             <button type="button" className="text-red-600 underline" onClick={() => { delete autoOwners.current[imageKey(templateId, slot)]; setImages((p) => { const n = { ...p }; delete n[imageKey(templateId, slot)]; return n; }); }}>画像を外す</button>
                           </>
                         )}
                       </div>
+                      {img?.panel && (
+                        <div className="mt-2 rounded bg-amber-50 border border-amber-200 p-2 text-xs text-slate-700">
+                          <p className="font-semibold">自動作成のカードを使用中（{img.panel.title}）。別の画像にしたいときは「画像をアップロード」で差し替えられます。</p>
+                          <ul className="mt-1 list-disc pl-4 space-y-0.5">
+                            {img.panel.kind === 'products'
+                              ? img.panel.items.map((it, i) => <li key={i}>[{it.section}] {it.url ? <a href={it.url} target="_blank" rel="noopener noreferrer" className="underline">{it.title}</a> : it.title}{it.imageSrc ? '' : '（商品画像なし・代替カード）'}</li>)
+                              : img.panel.items.map((it, i) => <li key={i}>{it.name}：{it.items}</li>)}
+                          </ul>
+                        </div>
+                      )}
                       <p className="text-[11px] text-gray-400 mt-1">本番の oshi-search.jp をスマホ幅（390px）で撮影します（閲覧数の計測・GAは読み込みません）。スクリーンショットはローカルの管理画面でだけ動きます。本番の管理画面では画像をアップロードしてください。</p>
                     </div>
                   );
@@ -833,6 +915,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                 ))}
               </div>
             )}
+            <p className="text-xs font-bold text-amber-700 mb-2 text-center">構成：{structureLabel(tpl, viewCfg.slides)}</p>
             <div ref={previewRef} className="flex flex-col items-center gap-3">
               <div data-slide-index={sel} className="cursor-default">
                 <StoryScaled width={340}>{slideElement(current, viewCfg, resolved.length, showGuide)}</StoryScaled>
