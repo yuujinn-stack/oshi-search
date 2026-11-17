@@ -220,7 +220,7 @@ export default function RegisteredGroupsPicker({ templateId, value, onChange }: 
           {unclassified.length > 0 && (
             <p className="text-xs text-amber-800 bg-amber-50 rounded p-2">
               ⚠ トップページの分類に無いグループ: {unclassified.map((g) => g.name).join('、')}。推測で振り分けないため、男性・女性・その他の動画には入りません
-              （全グループの一覧では「分類なし」の見出しで表示します）。分類する場合はトップページ「グループで探す」の分類（src/lib/home-group-category.ts）に追加してください。
+              （全グループの一覧では「分類なし」の見出しで表示します）。分類する場合は管理画面「グループ管理」（/admin/groups）の「トップの分類」で保存してください。
             </p>
           )}
         </div>

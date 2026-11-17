@@ -457,6 +457,8 @@ const ALTER_STATEMENTS = [
   sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS official_site TEXT`),
   sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS note TEXT`),
   sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS gender TEXT`),
+  // トップページ「グループで探す」の分類（管理画面で手動設定。既存行は NULL のまま＝従来の一覧で判定）
+  sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS home_category TEXT`),
   sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
   sql.raw(`ALTER TABLE group_meta ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`),
 

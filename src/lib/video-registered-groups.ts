@@ -9,7 +9,7 @@
 // ・1ジョブ=1本（person_name は「推しサーチ」）。管理画面で除外・並べ替えができ、件数は表示するグループの数と必ず一致させる。
 // ・画面は「区間（ナレーション1文）」ごとに1ページ以上。一覧はページに分け、1ページは2列×5段（長い名前は1段を使う）。
 
-import { findHomeGroupCategory } from './home-group-category';
+import { findHomeGroupCategory, type HomeCategoryOverrides } from './home-group-category';
 import { countFollowMora, numberKana } from './video-follow-reel';
 
 export const REGISTERED_TEMPLATE_CATEGORY = 'registered_groups' as const;
@@ -52,8 +52,9 @@ export const REGISTERED_CATEGORY_LABEL: Record<RegisteredCategory, string> = {
   unclassified: '分類なし',
 };
 
-export function registeredCategoryOf(name: string): RegisteredCategory {
-  switch (findHomeGroupCategory(name)) {
+/** overrides: 管理画面で保存した分類（group_meta.home_category）。トップページと同じ優先順位で判定する */
+export function registeredCategoryOf(name: string, overrides?: HomeCategoryOverrides): RegisteredCategory {
+  switch (findHomeGroupCategory(name, overrides)) {
     case 'maleIdol':
       return 'male';
     case 'femaleIdol':

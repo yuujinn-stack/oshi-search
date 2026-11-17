@@ -76,6 +76,10 @@ export const groupMeta = pgTable('group_meta', {
   // 性別（写真集機能用）。'female' | 'male' | null(未設定)。管理画面からの手動設定のみで、
   // AI推測・グループ名からの自動推測は一切行わない（新設カラムのためデフォルトは全件null）。
   gender:         text('gender'),
+  // トップページ「グループで探す」の分類。'femaleIdol' | 'maleIdol' | 'other' | null(未設定)。
+  // 管理画面（/admin/groups）の分類の保存（PATCH /api/admin/groups）だけが書き込む。CSVインポート・自動作成・
+  // グループ編集フォームの保存では変更しない。null のときは src/lib/home-group-category.ts の一覧（初期値）で判定する。
+  homeCategory:   text('home_category'),
   createdAt:      timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt:      timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

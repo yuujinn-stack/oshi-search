@@ -6137,3 +6137,37 @@ oshi-search（未commit）
 - テスト：`src/lib/__tests__/story-maker-auto-be.test.tsx`（新規・14件。DB はモック）、`story-maker.test.tsx` を新しい文言・対応範囲に更新
 
 **確認：** 実データ（DB 読み取りのみ）で Snow Man（公開中492件から3件・画像3件取得・約2.4秒）、目黒蓮（153件から3件・画像3件取得）。標準版は変更前と540通りで出力HTMLが一致（一時テスト）。ブラウザでの見た目・PNG・ZIP の実出力は未確認
+
+## Task 195 — 管理画面からトップページ「グループで探す」の分類を変更できるようにする（2026-11-17・未commit・本番デプロイなし・本番DB変更なし）
+
+**目的：** 超特急・FANTASTICS がトップページ「グループで探す」で「その他」になっていた（Task 42/169 の明示的な一覧 `src/lib/home-group-category.ts` に載っていなかったため）。分類をコード修正なしで管理画面から変更できるようにし、初期設定として2組を男性アイドルにする。
+
+**分類の判定（優先順位）：** ① 管理画面で保存した `group_meta.home_category`（DB）→ ② `home-group-category.ts` の一覧（初期値）→ ③ どちらにも無ければトップページは「その他」、動画（登録グループ紹介）は「分類なし」。分類は女性アイドル（femaleIdol）・男性アイドル（maleIdol）・その他（other）の3つだけ（新しい区分は追加していない）。名前・メンバーからの推測はしない（従来どおり）。
+
+**変更ファイル：**
+- `src/db/schema.ts`・`src/app/api/admin/db-init/route.ts`：`group_meta.home_category TEXT`（NULL可・デフォルトなし）を追加（`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`）。既存行は NULL のまま＝従来の一覧で判定されるため、既存の分類は変わらない
+- `src/lib/home-group-category.ts`：`HOME_GROUP_CATEGORIES`・`HOME_GROUP_CATEGORY_LABEL`・`isHomeGroupCategory`・`buildHomeCategoryOverrides(metas)` を追加。`findHomeGroupCategory` / `getHomeGroupCategory` に任意の `overrides` 引数（DBの値を優先）。初期値の一覧に `超特急`・`FANTASTICS` を maleIdol で追加（DB 変更なしでデプロイだけで反映されるようにするため。本番の group_meta 名と完全一致を読み取りで確認済み）
+- `src/types/group.ts`・`src/lib/group-meta.ts`：`GroupMeta.homeCategory`。`saveGroupHomeCategory()`。読み込みは home_category 列が未作成（db-init 前にデプロイ）の場合、列を除いて読み直す（`isMissingHomeCategoryColumn`。drizzle のエラーは cause に 42703）。グループページ・トップページが壊れないようにするため
+- `src/db/write.ts`：`updateGroupHomeCategoryInDB()`（home_category と updated_at だけ UPDATE。行が無ければ false・新規作成しない。公開キャッシュを無効化）。`upsertGroupMeta` は home_category を書き込まない（INSERT は NULL、UPDATE は既存値のまま）とコメントで明記
+- `src/app/api/admin/groups/route.ts`：`PATCH`（`{ groupName, homeCategory }`。3値以外は400、グループが無ければ404、DBエラーは500で error を返す）。POST（編集フォーム）は従来どおり homeCategory を保存に渡さない
+- `src/app/admin/groups/GroupManager.tsx`・`page.tsx`：各グループの行に「トップの分類」プルダウン＋保存ボタン＋保存成功（緑 ✓）/失敗（赤 ✕）の表示、「管理画面で設定済み／初期設定（未保存）」の表示。使い方に説明を追加。編集フォームの保存後も画面の分類はそのまま
+- `src/app/page.tsx`・`src/components/site/HomeGroupSection.tsx`：分類はサーバー（page.tsx）で group_meta（既存の `getCachedGroupMetas`。公開一覧タグで無効化される）から決め、`HomeGroupItem.category` で渡す。絞り込みUI・リンク・見た目は変更なし
+- `src/lib/video-registered-groups.ts`・`src/server/video-jobs/registered-target.ts`：`registeredCategoryOf(name, overrides?)`。動画の登録グループ紹介もトップページと同じ優先順位（実画面の絞り込み照合 QA と食い違わないようにするため）
+- `src/app/admin/video-maker/RegisteredGroupsPicker.tsx`：分類なしの案内文を管理画面での設定に変更
+- テスト新規：`src/lib/__tests__/home-group-category.test.ts`（10件：初期値・優先順位・他グループへの影響なし・不正値・NFKC・upsert が home_category を書かない・分類だけの更新・列未作成時の読み直し）、`src/app/api/admin/groups/__tests__/route.test.ts`（4件）
+
+**手動設定が戻らない理由：** CSVインポート（people/import・people-membership-import）・所属更新（group-membership-service）・人物メタ保存は `ensureGroupMeta`（行が無い時だけ作成）しか呼ばない。編集フォームの POST も `upsertGroupMeta` 経由で home_category を含まない。home_category を書くのは PATCH だけ。管理者以外は `src/proxy.ts`（/api/admin/* はセッション必須・PATCH は Origin チェック）で拒否。
+
+**確認：** tsc 0件／vitest 2,934件成功／`next build` 成功（ビルド中は本番DBに列が無いため読み直しが働き、正常にページ生成）。本番DBを読み取りのみで使い、列未作成の状態で group_meta 53行を読み込めること、超特急・FANTASTICS が maleIdol（男性アイドル12組・女性アイドル6組・その他35行。group_meta 全行の集計）になることを確認。管理画面のブラウザでの保存操作は本番DBに書き込むため未実施。
+
+**本番反映手順：** 追記1の手順に変更（列の追加 → デプロイの順）。
+
+### Task 195 追記1：本番公開前の最終安全確認（2026-11-17・未commit・本番デプロイなし・本番DB変更なし）
+- **db-init の調査：** POST は CREATE_STATEMENTS（62）と ALTER_STATEMENTS（82）を全部順に実行する（今回の1文だけではない）。中身は CREATE TABLE/INDEX IF NOT EXISTS と ADD COLUMN IF NOT EXISTS のみで、DROP・TRUNCATE・DELETE・UPDATE・INSERT・型変更・制約追加は無い（DROP/TRUNCATE の文字はコメント内のみ）。他の SQL は件数・列一覧の SELECT のみ。公開用 worktree（origin/main＋Task 195）の全文を本番のカタログと照合（読み取りのみ）→ 本番で実際に変わるのは `group_meta.home_category` の追加だけ（他の表・列・インデックスはすべて既存）
+- **再実行：** pglite（実際の Postgres）で 現行の db-init → 新しい db-init を3回実行 → エラー0・既存行（group_meta・persons）不変・home_category は NULL（NULL可・デフォルトなし）・手動で入れた値は再実行後も維持
+- **注意（ロック）：** db-init は既に存在する列・インデックスに対しても全テーブルに ALTER/CREATE INDEX を発行し、一瞬ずつロックを取る（Task 4820 付近の価格確認テーブルと同じ判断）→ 今回は db-init を使わず、`~/dev-backup/2026-11-17-group-category/add-home-category.mjs`（check／apply／verify。ALTER 1文・lock_timeout 5秒・group_meta の指紋を apply 前後で比較）で列だけを追加する
+- **デプロイ前に列が無い場合（重要）：** 読み込みは列を除いて読み直すため公開ページは正常（next start＋本番DB読み取りで /・/groups/fantastics・/groups/超特急・/groups/nogizaka46・/search・/sitemap.xml すべて200、トップは男性アイドル12・女性アイドル6・その他9＝27組。超特急・FANTASTICS は男性アイドル、他のグループは従来どおり）。ただし drizzle の INSERT は全列名（home_category を含む）を出すため、列が無い間は group_meta への書き込み（グループ編集フォームの保存・CSVインポート等で新しいグループの group_meta 自動作成）が失敗する（自動作成は ensureGroupMeta が握りつぶし、次回の取り込み時に作り直される）。→ **列の追加を先に行う**。旧コード（現在の本番）は列名を明示して読み書きするため、列が先にあっても影響なし
+- **Instagram・TikTok・ストーリーズ・動画：** 分類を使うのはトップページと動画「登録グループ紹介」（registered-target）だけ。ストーリーズ（/admin/story-maker）・写真集・ランキング・グループページ等は group-meta.ts 経由の読み込み（名前・slug・性別）で、列が無くても読み直しで動く。TikTok 用投稿文・SNS CTA・Instagram 予約投稿は group_meta の分類を使わない。Worker（oshi-video-maker）は分類をジョブの入力から受け取り、実画面は「男性アイドル」等のボタン名で撮る（名前は変更なし）。実画面の照合は「一覧のグループが実画面に含まれるか」なので、デプロイ前に作ったジョブも通る。本番の待機中・生成中のジョブは0件（読み取り）。Worker のコード変更・再起動は不要
+- **コミットの準備：** ローカル main（e620a95）は origin/main（4db7f14）より27コミット遅れ、作業ツリーには他タスクの未コミット変更があるため、公開用 worktree `~/dev/oshi-search-group-category`（ブランチ feat/group-home-category、origin/main から作成）に Task 195 の変更だけを適用し git add 済み（未commit）。共有ファイル（schema.ts・db-init/route.ts・page.tsx）は Task 195 の行だけを手で適用
+- **worktree での確認（npm ci）：** tsc は既存の pglite 2件のみ（Task 189 と同じ既存の問題）／vitest 2,934件成功・67件スキップ（既存）／`next build` 成功（129ページ。ビルド中は本番DBに列が無いため読み直しが74回働いた）
+- **本番反映手順：** ① 直前に `git fetch` で origin/main=4db7f14 のままか確認 ② 本番の待機中・生成中のジョブが0件か確認 ③ `add-home-category.mjs check` → `apply` → `verify`（OK を確認）④ worktree で commit → push（fast-forward）→ Vercel Ready ⑤ トップの「男性アイドル」に超特急・FANTASTICS、/admin/groups で分類の保存（例: 保存後に戻す）とトップへの反映を確認。/admin/db-init は実行不要（実行しても今回の列以外は変わらない）

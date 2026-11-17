@@ -2,19 +2,19 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { getHomeGroupCategory, type HomeGroupCategory } from '@/lib/home-group-category';
+import type { HomeGroupCategory } from '@/lib/home-group-category';
 
 export interface HomeGroupItem {
   name: string;
   href: string;
+  /**
+   * 絞り込みの分類。サーバー（src/app/page.tsx）で決める:
+   * 管理画面で保存した分類（group_meta.home_category）→ src/lib/home-group-category.ts の一覧 → 「その他」
+   */
+  category: HomeGroupCategory;
 }
 
-type GroupCategory = HomeGroupCategory;
-type Filter = 'all' | GroupCategory;
-
-// トップページ「グループで探す」の絞り込み専用の表示分類（明示的なマッピング。src/lib/home-group-category.ts）。
-// DB・group_meta・人物データとは独立しており、一覧に無いグループ（新規追加など）は「その他」になる。
-const getGroupCategory = getHomeGroupCategory;
+type Filter = 'all' | HomeGroupCategory;
 
 const FILTER_LABEL: Record<Filter, string> = {
   all: 'すべて',
@@ -24,7 +24,7 @@ const FILTER_LABEL: Record<Filter, string> = {
 };
 
 function matches(item: HomeGroupItem, filter: Filter): boolean {
-  return filter === 'all' || getGroupCategory(item.name) === filter;
+  return filter === 'all' || item.category === filter;
 }
 
 // ホームの「グループで探す」。初期表示は「すべて」で全グループのリンクをサーバーHTMLに含める

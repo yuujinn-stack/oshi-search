@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getAllGroupMetas, saveGroupMeta, deleteGroupMeta } from '@/lib/group-meta';
+import { getAllGroupMetas, saveGroupMeta, deleteGroupMeta, saveGroupHomeCategory } from '@/lib/group-meta';
+import { isHomeGroupCategory } from '@/lib/home-group-category';
 import { isAsciiSlug } from '@/lib/group-slug';
 import type { GroupMeta } from '@/types/group';
 
@@ -61,6 +62,34 @@ export async function POST(req: Request) {
     return NextResponse.json(meta);
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+}
+
+// トップページ「グループで探す」の分類だけを保存する（管理画面の分類のプルダウン＋保存ボタン）。
+// /api/admin/* は src/proxy.ts で管理者セッション必須。値は女性アイドル・男性アイドル・その他の3つだけ受け付ける。
+// POST（グループ編集フォーム）は home_category を変更しないため、分類の変更はこの PATCH だけで行われる。
+export async function PATCH(req: Request) {
+  let body: { groupName?: unknown; homeCategory?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'リクエストの形式が正しくありません' }, { status: 400 });
+  }
+  const groupName = typeof body.groupName === 'string' ? body.groupName.trim() : '';
+  if (!groupName) {
+    return NextResponse.json({ error: 'groupName は必須です' }, { status: 400 });
+  }
+  if (!isHomeGroupCategory(body.homeCategory)) {
+    return NextResponse.json({ error: '分類は「女性アイドル」「男性アイドル」「その他」のいずれかを選んでください' }, { status: 400 });
+  }
+  try {
+    const found = await saveGroupHomeCategory(groupName, body.homeCategory);
+    if (!found) {
+      return NextResponse.json({ error: `グループ「${groupName}」が見つかりません` }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true, groupName, homeCategory: body.homeCategory });
+  } catch (err) {
+    return NextResponse.json({ error: `保存に失敗しました: ${String(err)}` }, { status: 500 });
   }
 }
 

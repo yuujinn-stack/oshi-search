@@ -3,6 +3,12 @@
 import { useState } from 'react';
 import type { GroupMeta, GroupActivityStatus, GroupGender } from '@/types/group';
 import { GROUP_NAME_TO_SLUG, isAsciiSlug, generateSlugCandidate } from '@/lib/group-slug';
+import {
+  HOME_GROUP_CATEGORIES,
+  HOME_GROUP_CATEGORY_LABEL,
+  getHomeGroupCategory,
+  type HomeGroupCategory,
+} from '@/lib/home-group-category';
 
 const STATUS_OPTIONS: { value: GroupActivityStatus; label: string }[] = [
   { value: 'active',    label: '活動中' },
@@ -515,6 +521,83 @@ function EditRow({ record, metas, onSaved, onCancel }: EditRowProps) {
   );
 }
 
+// ─── トップページ「グループで探す」の分類（プルダウン＋保存） ───────────────────────
+// 表示する現在値: 管理画面で保存した値（group_meta.home_category）→ 初期値の一覧（src/lib/home-group-category.ts）→ その他。
+// 保存は PATCH /api/admin/groups（home_category だけを更新）。グループ編集フォームの保存・CSVインポートでは変わらない。
+interface HomeCategoryControlProps {
+  record: GroupMeta;
+  onSaved: (groupName: string, category: HomeGroupCategory) => void;
+}
+
+function HomeCategoryControl({ record, onSaved }: HomeCategoryControlProps) {
+  const current = record.homeCategory ?? getHomeGroupCategory(record.groupName);
+  const [value, setValue] = useState<HomeGroupCategory>(current);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ kind: 'ok' | 'error'; message: string } | null>(null);
+  const isManual = record.homeCategory !== undefined;
+  const dirty = value !== current || !isManual;
+
+  async function handleSave() {
+    setSaving(true); setStatus(null);
+    try {
+      const res = await fetch('/api/admin/groups', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupName: record.groupName, homeCategory: value }),
+      });
+      const d = await res.json().catch(() => ({})) as { error?: string };
+      if (!res.ok) {
+        setStatus({ kind: 'error', message: d.error ?? `保存に失敗しました（${res.status}）` });
+        return;
+      }
+      onSaved(record.groupName, value);
+      setStatus({ kind: 'ok', message: `「${HOME_GROUP_CATEGORY_LABEL[value]}」で保存しました` });
+    } catch {
+      setStatus({ kind: 'error', message: '通信エラーのため保存できませんでした' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 mt-2">
+      <label className="text-[11px] font-medium text-gray-500" htmlFor={`home-category-${record.groupName}`}>
+        トップの分類
+      </label>
+      <select
+        id={`home-category-${record.groupName}`}
+        value={value}
+        onChange={(e) => { setValue(e.target.value as HomeGroupCategory); setStatus(null); }}
+        disabled={saving}
+        className="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
+      >
+        {HOME_GROUP_CATEGORIES.map((c) => (
+          <option key={c} value={c}>{HOME_GROUP_CATEGORY_LABEL[c]}</option>
+        ))}
+      </select>
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving || !dirty}
+        className="px-2.5 py-1 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {saving ? '保存中…' : '保存'}
+      </button>
+      <span className="text-[10px] text-gray-400">
+        {isManual ? '管理画面で設定済み' : '初期設定（未保存）'}
+      </span>
+      {status && (
+        <span
+          role="status"
+          className={`text-[11px] font-medium ${status.kind === 'ok' ? 'text-green-600' : 'text-red-600'}`}
+        >
+          {status.kind === 'ok' ? '✓ ' : '✕ '}{status.message}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ─── メインコンポーネント ─────────────────────────────────────────────────────
 interface Props {
   initialMetas: GroupMeta[];
@@ -533,8 +616,13 @@ export default function GroupManager({ initialMetas }: Props) {
   }
 
   function handleSaved(updated: GroupMeta) {
-    setMetas((prev) => prev.map((g) => (g.groupName === updated.groupName ? updated : g)));
+    // 編集フォームの保存は分類（homeCategory）を変更しないため、画面上の値もそのまま残す
+    setMetas((prev) => prev.map((g) => (g.groupName === updated.groupName ? { ...updated, homeCategory: g.homeCategory } : g)));
     setEditingName(null);
+  }
+
+  function handleCategorySaved(groupName: string, category: HomeGroupCategory) {
+    setMetas((prev) => prev.map((g) => (g.groupName === groupName ? { ...g, homeCategory: category } : g)));
   }
 
   async function handleDelete(groupName: string) {
@@ -624,6 +712,7 @@ export default function GroupManager({ initialMetas }: Props) {
                       )}
                       {g.note && <span className="text-gray-500">{g.note}</span>}
                     </div>
+                    <HomeCategoryControl record={g} onSaved={handleCategorySaved} />
                   </div>
                   <div className="flex gap-2 flex-shrink-0">
                     <button

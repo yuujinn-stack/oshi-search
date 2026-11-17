@@ -404,6 +404,9 @@ export interface GroupMetaInput {
   gender?: string;
 }
 
+// home_category（トップページ「グループで探す」の分類）はここでは書き込まない（INSERT 時は NULL、UPDATE 時は既存値のまま）。
+// 管理画面で手動設定した分類が、グループ編集フォームの保存・CSVインポート・自動作成（ensureGroupMeta）で戻らないようにするため。
+// 分類の変更は updateGroupHomeCategoryInDB だけで行う。
 export async function upsertGroupMeta(meta: GroupMetaInput): Promise<void> {
   const now = new Date(meta.updatedAt ?? Date.now());
   const slug = meta.slug ?? encodeURIComponent(meta.groupName);
@@ -441,6 +444,21 @@ export async function upsertGroupMeta(meta: GroupMetaInput): Promise<void> {
       },
     });
   revalidatePublicListings();
+}
+
+/**
+ * group_meta.home_category だけを更新する（他の列は変更しない。行が無ければ何もせず false）。
+ * category の値の検証は呼び出し側（PATCH /api/admin/groups）で行う。
+ */
+export async function updateGroupHomeCategoryInDB(groupName: string, category: string): Promise<boolean> {
+  const updated = await db
+    .update(groupMeta)
+    .set({ homeCategory: category, updatedAt: new Date() })
+    .where(eq(groupMeta.groupName, groupName))
+    .returning({ groupName: groupMeta.groupName });
+  if (updated.length === 0) return false;
+  revalidatePublicListings();
+  return true;
 }
 
 // ── 写真集 表示設定・例外設定（photobook_settings）──────────────────────────

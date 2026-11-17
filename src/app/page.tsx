@@ -20,6 +20,7 @@ import { VOD_PAGE_PROVIDERS, getVodProviderWorkCounts } from '@/lib/vod-page';
 import { getPhotobookHomeItems } from '@/lib/photobook-store';
 import PhotobookHomeSection from '@/components/site/PhotobookHomeSection';
 import HomeGroupSection from '@/components/site/HomeGroupSection';
+import { buildHomeCategoryOverrides, getHomeGroupCategory } from '@/lib/home-group-category';
 import OshiVodEntryCta from '@/components/oshi-vod/OshiVodEntryCta';
 import OshiShoppingEntryCta from '@/components/oshi-shopping/OshiShoppingEntryCta';
 import OshikatsuServicesHomeSection from '@/components/oshikatsu/OshikatsuServicesHomeSection';
@@ -226,10 +227,13 @@ export default async function HomePage() {
     .map((cat) => ({ ...cat, genres: cat.genres.filter((g) => !primaryGenreSet.has(g)) }))
     .filter((cat) => cat.genres.length > 0);
 
-  // 「グループで探す」用。絞り込み分類は HomeGroupSection 内の表示用マッピングで決める（DBの値は使わない）
+  // 「グループで探す」用。絞り込み分類は 管理画面で保存した分類（group_meta.home_category）→
+  // src/lib/home-group-category.ts の一覧 → 「その他」の順で決める（グループ名・メンバーからの推測はしない）
+  const homeCategoryOverrides = buildHomeCategoryOverrides(groupMetaList);
   const homeGroups: HomeGroupItem[] = groups.map((g) => ({
     name: g,
     href: groupHrefByName(g, groupMetaList),
+    category: getHomeGroupCategory(g, homeCategoryOverrides),
   }));
 
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';

@@ -5,6 +5,7 @@ import { videoGenerationJobs } from '@/db/schema';
 import { getAllGroupsMerged, getAllPersonsMerged } from '@/lib/persons';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
+import { buildHomeCategoryOverrides } from '@/lib/home-group-category';
 import {
   REGISTERED_JOB_NAME,
   REGISTERED_TEMPLATE_SPECS,
@@ -22,7 +23,7 @@ import { VideoJobError } from './job-store';
 // 登録グループ紹介（リール5種類・ストーリーズ5種類）の対象データ。
 // ・グループの一覧はトップページ「グループで探す」・サイトマップと同じ getAllGroupsMerged（公開中の人物の所属グループ・所属履歴のグループ。
 //   同じ名前は1件。表示名は公開画面と同じ文字列）。人物数はトップページの「登録タレント」と同じ公開人物（getAllPersonsMerged）。
-// ・ジャンルはトップページの明示的な分類だけ（src/lib/home-group-category.ts）。一覧に無いグループは「分類なし」。
+// ・ジャンルはトップページと同じ分類（管理画面の設定 group_meta.home_category → src/lib/home-group-category.ts の一覧）。どちらにも無いグループは「分類なし」。
 // ・ジョブ作成時に、画面で選んだ除外・並べ替えから区間をここで作り直す（画面から送られた区間・件数は使わない）。
 
 export interface RegisteredTargetData {
@@ -32,13 +33,15 @@ export interface RegisteredTargetData {
 
 export async function loadRegisteredTarget(): Promise<RegisteredTargetData> {
   const [names, persons, metas] = await Promise.all([getAllGroupsMerged(), getAllPersonsMerged(), getAllGroupMetas()]);
+  // トップページと同じく、管理画面で保存した分類（group_meta.home_category）を優先する
+  const overrides = buildHomeCategoryOverrides(metas);
   const seen = new Set<string>();
   const groups: RegisteredGroup[] = [];
   for (const raw of names) {
     const name = raw.trim();
     if (!name || seen.has(name)) continue;
     seen.add(name);
-    groups.push({ name, category: registeredCategoryOf(name), href: groupHrefByName(name, metas) });
+    groups.push({ name, category: registeredCategoryOf(name, overrides), href: groupHrefByName(name, metas) });
   }
   return { groups, personCount: persons.length };
 }
