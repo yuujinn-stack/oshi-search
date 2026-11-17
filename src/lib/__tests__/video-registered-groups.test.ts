@@ -12,6 +12,7 @@ import {
   allocateRegisteredSlots,
   applyRegisteredSelection,
   buildRegisteredPlan,
+  estimateRegisteredSeconds,
   isWideName,
   kumiKana,
   ninKana,
@@ -150,8 +151,12 @@ describe('登録グループ紹介: 10種類の構成', () => {
       ['04-list', 4, ['バンド・アーティスト・お笑いなど']],
       ['05-outro', 3, []],
     ]);
-    expect(all.lines.map((l) => l.text)).toEqual(['登録グループをご紹介！', '男性アイドルは10組が登録中です！', '女性アイドルも6組が登録中！', 'バンドやお笑いなども9組チェックできます！', 'これからも増やしていきます！']);
+    expect(all.lines.map((l) => l.text)).toEqual(['登録グループ紹介！', '男性アイドルは10組が登録中です！', '女性アイドルも6組が登録中！', 'バンドやお笑いなども9組チェックできます！', 'これからも増やしていきます！']);
     expect(all.lines[1].kana).toBe('だんせいあいどるはじゅうくみがとうろくちゅうです！');
+    // 冒頭は短縮した文（字幕と読みは同じ内容）。画面の見出しは変えない。読み上げの見積もりは冒頭2秒の中
+    expect(all.lines[0]).toEqual({ id: '01-hook', text: '登録グループ紹介！', kana: 'とうろくぐるーぷしょうかい！' });
+    expect(all.segments[0].title).toBe('登録グループを\nご紹介！');
+    expect(estimateRegisteredSeconds(all.lines[0].kana) + 0.15 + 0.2).toBeLessThanOrEqual(2.0);
     // 除外すると件数も変わる（画面の件数と同じ）
     const ex = plan('registered_groups_all', { selection: { order: null, excluded: ['嵐'] } });
     if (!ex.ok) throw new Error('ex');

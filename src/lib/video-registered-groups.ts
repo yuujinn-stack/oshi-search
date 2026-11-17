@@ -326,8 +326,12 @@ const ALL_REEL_CATEGORY_LINE: Record<RegisteredCategory, (n: number, kumi: strin
   other: (n, kumi) => ({ text: `バンドやお笑いなども${n}組チェックできます！`, kana: `ばんどやおわらいなども${kumi}ちぇっくできます！` }),
   unclassified: (n, kumi) => ({ text: `ほかにも${n}組が登録されています！`, kana: `ほかにも${kumi}がとうろくされています！` }),
 };
-/** 一挙紹介リール（5区分）の冒頭・締め（画面の見出しと同じ内容。冒頭2秒・締め3秒に収まる長さ） */
-const ALL_REEL_HOOK_LINE: Omit<RegisteredLine, 'id'> = { text: '登録グループをご紹介！', kana: 'とうろくぐるーぷをごしょうかい！' };
+/**
+ * 一挙紹介リール（5区分）の冒頭・締め（画面の見出しと同じ内容。冒頭2秒・締め3秒に収まる長さ）。
+ * 冒頭は「登録グループ紹介！」（12音）。「登録グループをご紹介！」（14音）は CapCut の読み上げが約1.7秒になり、
+ * 前の間0.15秒・次の画面までの間0.2秒を足すと冒頭2秒を超えたため短縮した（2026-11-17）。画面の見出しは変えない
+ */
+const ALL_REEL_HOOK_LINE: Omit<RegisteredLine, 'id'> = { text: '登録グループ紹介！', kana: 'とうろくぐるーぷしょうかい！' };
 const ALL_REEL_OUTRO_LINE: Omit<RegisteredLine, 'id'> = { text: 'これからも増やしていきます！', kana: 'これからもふやしていきます！' };
 
 /** 一覧のジャンルの言い方（台本。表示するグループにあるジャンルだけ） */
