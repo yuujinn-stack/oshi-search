@@ -53,9 +53,10 @@ export const SITE_TEMPLATE_STEPS = {
   site_photobook_search: ['list', 'filter', 'item'],
   site_fan_card_demo: ['pick', 'works', 'card'],
   site_vod_service_search: ['services', 'provider', 'person'],
-  site_bf_goods: ['search', 'goods', 'live'],
-  site_bf_live: ['corner', 'list', 'discs'],
-  site_bf_shopping: ['entry', 'pick', 'answers', 'result'],
+  // セールのリールは 冒頭（大きなセール名）→ intro（テンプレートごとの一言・実画面を小さく）→ 操作の手順 → 締め
+  site_bf_goods: ['intro', 'search', 'goods', 'live'],
+  site_bf_live: ['intro', 'corner', 'list', 'discs'],
+  site_bf_shopping: ['intro', 'entry', 'pick', 'answers', 'result'],
 } as const satisfies Record<SiteTemplateId, readonly string[]>;
 export type SiteStep = (typeof SITE_TEMPLATE_STEPS)[SiteTemplateId][number];
 
@@ -311,6 +312,13 @@ export function buildSitePlan(opts: { templateId: SiteTemplateId; target: SiteTa
   const hook = (text: string, kana: string, sub?: string, title?: string, note?: string) => drafts.push({ key: 'hook', text, kana, title: title ?? text.replace(/、/, '、\n'), sub, ...(note ? { note } : {}) });
   const sale = target.sale ? saleVideoConfigOf(target.sale.id) : null;
   if (isSaleSiteTemplateId(templateId) && (!target.sale || !sale)) return { ok: false, missing: ['開催前・開催中のセールがありません（セールの設定を確認してください）'] };
+  /** セールの冒頭: 0〜1.5秒 大きなセール名（字幕なし）→ 1.5〜3.5秒 テンプレートごとの一言（実画面を小さく・特典の注記） */
+  const saleOpening = (kind: 'goods' | 'live' | 'shopping') => {
+    const t = sale!.title;
+    hook(t.text, t.kana, undefined, t.display);
+    const line = sale!.intro[kind][target.sale!.phase];
+    drafts.push({ key: 'intro', text: line.text, kana: line.kana, title: line.text.replace(/、/, '、\n'), sub: name, note: sale!.entryNote });
+  };
   const step = (key: SiteStep, label: string, text: string, kana: string, note?: string) => drafts.push({ key, label, text, kana, note });
 
   switch (templateId) {
@@ -421,8 +429,7 @@ export function buildSitePlan(opts: { templateId: SiteTemplateId; target: SiteTa
         missing.push('過去のライブ映像のコーナーがある人物・グループを選んでください');
         break;
       }
-      const h = sale!.goodsHook[target.sale!.phase];
-      hook(h.text, h.kana, name, splitSaleTitle(h.text), '写真集・CD・ライブ映像を推しの名前から');
+      saleOpening('goods');
       step('search', '名前で検索', `推しサーチで「${name}」を検索`, `おしさーちで${k(name)}をけんさく`);
       step('goods', '関連商品', '写真集やCDも、まとめて見つかります', 'しゃしんしゅうやしーでぃーも、まとめてみつかります', '価格は楽天から取得した時点の表示／購入は楽天の商品ページ（外部サイト）');
       step('live', '過去のライブ映像', '過去のライブDVD・Blu-rayもチェック', 'かこのらいぶでぃーぶいでぃー、ぶるーれいもちぇっく');
@@ -434,8 +441,7 @@ export function buildSitePlan(opts: { templateId: SiteTemplateId; target: SiteTa
         missing.push('過去のライブ映像のコーナーがある人物・グループを選んでください');
         break;
       }
-      const h = sale!.liveHook[target.sale!.phase];
-      hook(h.text, h.kana, name);
+      saleOpening('live');
       step('corner', `${live.groupName}のライブ映像`, `${live.groupName}の過去のライブ映像は、ここから`, `${k(live.groupName)}のかこのらいぶえいぞうは、ここから`);
       step('list', 'ライブ映像の一覧', '公演ごとに、一覧でチェックできます', 'こうえんごとに、いちらんでちぇっくできます');
       step('discs', 'DVD・Blu-ray', 'DVDもBlu-rayも、ここからチェック', 'でぃーぶいでぃーもぶるーれいも、ここからちぇっく', '価格は楽天から取得した時点の表示／購入は楽天の商品ページ（外部サイト）');
@@ -450,8 +456,7 @@ export function buildSitePlan(opts: { templateId: SiteTemplateId; target: SiteTa
       const useKana = SITE_SHOPPING_USE_KANA[s.useLabel];
       const budgetKana = SITE_SHOPPING_BUDGET_KANA[s.budgetLabel];
       if (!useKana || !budgetKana) missing.push('用途・予算の読みがありません');
-      const h = sale!.shoppingHook[target.sale!.phase];
-      hook(h.text, h.kana, name);
+      saleOpening('shopping');
       step('entry', '推し活お買い物診断', '推し活お買い物診断を開いて', 'おしかつおかいものしんだんをひらいて');
       step('pick', '推しを選ぶ', `推しは「${name}」`, `おしは${k(name)}`);
       step('answers', '用途と予算', `用途を選んで、予算は「${s.budgetLabel}」`, `ようとをえらんで、よさんは${budgetKana ?? s.budgetLabel}`);
@@ -514,18 +519,18 @@ export const SITE_MIN_TOTAL_SECONDS = 15;
 
 /**
  * 期間限定セールのリールの区間の長さ（音声なし・秒。冒頭 → 手順 → 締め）。依頼の構成どおり
- * A 0〜3 冒頭・3〜6 検索・6〜10 関連商品・10〜14 ライブ映像・14〜17 締め（17秒）
- * B 0〜3 冒頭・3〜7 コーナー・7〜11 一覧・11〜15 DVD/BD・15〜19 締め（19秒）
- * C 0〜3 冒頭・3〜6 診断画面・6〜10 推し・10〜14 用途と予算・14〜17 結果・17〜20 締め（20秒）
- * 読みの見積もりが長い区間だけ延ばす（早送り・途中切れはしない）
+ * 冒頭は全テンプレート共通で 0〜1.5 大きなセール名・1.5〜3.5 テンプレートごとの一言（音声なしの動画はこの長さのまま。
+ * CapCut 音声付きは読み上げが収まらなければ Worker が画面を延ばす）。そのあと
+ * A 3.5〜6.5 検索・6.5〜10.5 関連商品・10.5〜14.5 ライブ映像・14.5〜17.5 締め（17.5秒）
+ * B 3.5〜7.5 コーナー・7.5〜11.5 一覧・11.5〜15.5 DVD/BD・15.5〜19.5 締め（19.5秒）
+ * C 3.5〜6.5 診断画面・6.5〜10.5 推し・10.5〜14.5 用途と予算・14.5〜17.5 結果・17.5〜20.5 締め（20.5秒）
+ * 操作の区間・締めは読みの見積もりが長い区間だけ延ばす（早送り・途中切れはしない）
  */
 export const SALE_SITE_TIMING: Record<SaleSiteTemplateId, number[]> = {
-  site_bf_goods: [3, 3, 4, 4, 3],
-  site_bf_live: [3, 4, 4, 4, 4],
-  site_bf_shopping: [3, 3, 4, 4, 3, 3],
+  site_bf_goods: [1.5, 2, 3, 4, 4, 3],
+  site_bf_live: [1.5, 2, 4, 4, 4, 4],
+  site_bf_shopping: [1.5, 2, 3, 4, 4, 3, 3],
 };
-/** セールのリールの冒頭の上限（冒頭3秒前後で強い一言。読みが長くてもここまで） */
-export const SALE_HOOK_MAX_SECONDS = 3.8;
 
 /**
  * 区間の長さ（音声なし）: 読みの見積もり + 余白0.6秒。冒頭は2.6〜3.4秒、操作は2.6秒以上（画面を見せる）、締めは2.8秒以上。
@@ -539,7 +544,8 @@ export function allocateSiteSlots(segments: Pick<SiteSegment, 'kind' | 'step'>[]
     return segments.map((s, i) => {
       const est = estimateSiteSeconds(lines[i]?.kana ?? '');
       const base = fixed[i] ?? SITE_STEP_MIN_SECONDS;
-      if (s.kind === 'hook') return r(Math.min(SALE_HOOK_MAX_SECONDS, Math.max(base, est + 0.4)));
+      // 冒頭の2区間は構成どおりの長さ（音声なしの見積もりでは延ばさない）
+      if (s.kind === 'hook' || s.step === 'intro') return base;
       return r(Math.min(6, Math.max(base, est + 0.6)));
     });
   }

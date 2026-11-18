@@ -30,12 +30,15 @@ export interface SaleVideoConfig {
   name: string;
   /** 冒頭に出す帯（開催前は「11月19日20時スタート」を自動で付ける。開催中はこの文言） */
   activeBadge: string;
-  /** A（推しグッズ紹介）の冒頭: 開催前・開催中 */
-  goodsHook: Record<SaleVideoPhase, SaleVideoLine>;
-  /** B（過去ライブ映像）の冒頭: 開催前・開催中 */
-  liveHook: Record<SaleVideoPhase, SaleVideoLine>;
-  /** C（予算5,000円 × お買い物診断）の冒頭: 開催前・開催中 */
-  shoppingHook: Record<SaleVideoPhase, SaleVideoLine>;
+  /**
+   * 冒頭0〜1.5秒の大きなセール名（赤地・白文字。A・B・C 共通）。開催前・開催中で同じ文
+   * （開催状態は下の小さな行で「11月19日20時スタート」「開催中」と出す）
+   */
+  title: SaleVideoLine & { /** 画面の大きな文字の改行（1行ずつスマホで一瞬で読める大きさにする） */ display: string };
+  /** 冒頭1.5〜3.5秒の一言（A 推しグッズ紹介・B 過去ライブ映像・C 予算×お買い物診断）。開催前・開催中 */
+  intro: Record<'goods' | 'live' | 'shopping', Record<SaleVideoPhase, SaleVideoLine>>;
+  /** 冒頭の一言の画面に小さく出す注記（ポイントアップ等の特典を誤解させないため。公式ページで確認した内容だけ） */
+  entryNote: string;
   /** C で選ぶ予算（お買い物診断の予算の値。src/lib/oshi-shopping/params.ts の BUDGET_OPTIONS） */
   shoppingBudget: '1000' | '3000' | '5000' | '10000';
   /** 締め（ナレーション1文・画面の大きな文字・その下の検索誘導）。A・B・C それぞれ */
@@ -49,18 +52,24 @@ export const SALE_VIDEO_CONFIGS: SaleVideoConfig[] = [
     saleCornerId: 'rakuten-blackfriday-2026',
     name: '楽天ブラックフライデー',
     activeBadge: '楽天ブラックフライデー開催中',
-    goodsHook: {
-      upcoming: { text: '楽天ブラックフライデーセールが始まります！', kana: 'らくてんぶらっくふらいでーせーるがはじまります！' },
-      active: { text: '楽天ブラックフライデーセール開催中！', kana: 'らくてんぶらっくふらいでーせーるかいさいちゅう！' },
+    title: { text: '楽天ブラックフライデーセール！', kana: 'らくてんぶらっくふらいでーせーる！', display: '楽天\nブラック\nフライデー\nセール！' },
+    intro: {
+      goods: {
+        upcoming: { text: '推しグッズ、損しないための探し方！', kana: 'おしぐっず、そんしないためのさがしかた！' },
+        active: { text: '推しグッズ、損しないための探し方！', kana: 'おしぐっず、そんしないためのさがしかた！' },
+      },
+      // 開催中に「前に」は合わないため、開催中は「の間に」
+      live: {
+        upcoming: { text: 'ブラックフライデー前に、過去ライブをチェック！', kana: 'ぶらっくふらいでーまえに、かこらいぶをちぇっく！' },
+        active: { text: 'ブラックフライデーの間に、過去ライブをチェック！', kana: 'ぶらっくふらいでーのあいだに、かこらいぶをちぇっく！' },
+      },
+      shopping: {
+        upcoming: { text: '推しグッズ、予算内で失敗しない探し方！', kana: 'おしぐっず、よさんないでしっぱいしないさがしかた！' },
+        active: { text: '推しグッズ、予算内で失敗しない探し方！', kana: 'おしぐっず、よさんないでしっぱいしないさがしかた！' },
+      },
     },
-    liveHook: {
-      upcoming: { text: '推しを好きになる前のライブ、見たことある？', kana: 'おしをすきになるまえのらいぶ、みたことある？' },
-      active: { text: '推しを好きになる前のライブ、見たことある？', kana: 'おしをすきになるまえのらいぶ、みたことある？' },
-    },
-    shoppingHook: {
-      upcoming: { text: 'ブラックフライデー、予算5,000円なら何を探す？', kana: 'ぶらっくふらいでー、よさんごせんえんならなにをさがす？' },
-      active: { text: 'ブラックフライデー、予算5,000円なら何を探す？', kana: 'ぶらっくふらいでー、よさんごせんえんならなにをさがす？' },
-    },
+    // 公式ページ（2026-11-18 確認）: ポイントアップはエントリーが必要・条件あり。値引き・還元の有無は商品ごとに楽天で確認
+    entryNote: '※ポイントアップ特典は楽天公式ページでのエントリーと条件達成が必要です。価格・特典は楽天でご確認ください',
     shoppingBudget: '5000',
     cta: {
       goods: { text: '推しの名前からまとめて探せる！推しサーチで検索！', kana: 'おしのなまえからまとめてさがせる！おしさーちでけんさく！', title: '推しの名前から\nまとめて探せる！', sub: '推しサーチで検索！' },

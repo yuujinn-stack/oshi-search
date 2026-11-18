@@ -533,7 +533,7 @@ export default function SiteReelPicker({
               {value.segments.map((s, i) => (
                 <tr key={s.id} className="border-t border-gray-100 align-top">
                   <td className="px-2 py-1 text-gray-600">
-                    {s.kind === 'hook' ? '冒頭' : s.kind === 'cta' ? '締め' : s.label}
+                    {s.kind === 'hook' ? '冒頭' : s.kind === 'cta' ? '締め' : s.step === 'intro' ? '冒頭の一言' : s.label}
                     {s.sub && s.kind !== 'step' && <span className="block text-gray-400">{s.sub}</span>}
                   </td>
                   <td className="px-2 py-1">

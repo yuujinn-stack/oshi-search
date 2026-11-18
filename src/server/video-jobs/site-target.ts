@@ -299,8 +299,11 @@ export async function resolveSiteJobInput(templateId: string, personName: string
   if (!cta) throw new VideoJobError('締めの言葉の指定がテンプレートと合いません（台本を作り直してください）。', 400);
   if (lines[lines.length - 1].text !== cta.text) throw new VideoJobError(`締めの台本は「${cta.text}」のままにしてください（締めの言葉は1つ）。`, 400);
   // セールのリール: 冒頭の文はいまの開催状態の文（開催前に作った「始まります」の台本を開催中に使わない）
-  if (isSaleSiteTemplateId(templateId) && lines[0].text !== plan.lines[0].text) {
-    throw new VideoJobError(`冒頭の台本は「${plan.lines[0].text}」にしてください（セールの開催状態に合わせた文。台本を作り直してください）。`, 400);
+  // （冒頭の2文＝大きなセール名・テンプレートごとの一言。開催中の B は「前に」→「の間に」）
+  if (isSaleSiteTemplateId(templateId)) {
+    for (const i of [0, 1]) {
+      if (lines[i].text !== plan.lines[i].text) throw new VideoJobError(`冒頭の台本は「${plan.lines[i].text}」にしてください（セールの設定・開催状態に合わせた文。台本を作り直してください）。`, 400);
+    }
   }
   const slots = allocateSiteSlots(plan.segments, lines, templateId);
   const total = slots.reduce((a, b) => a + b, 0);

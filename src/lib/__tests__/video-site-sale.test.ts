@@ -86,16 +86,16 @@ describe('期間限定セールのリール A・B・C の台本', () => {
     expect(SALE_SITE_TEMPLATE_IDS).toEqual(['site_bf_goods', 'site_bf_live', 'site_bf_shopping']);
     for (const id of SALE_SITE_TEMPLATE_IDS) expect(isSiteTemplateId(id) && isSaleSiteTemplateId(id)).toBe(true);
     expect(isSaleSiteTemplateId('site_shopping_diagnosis')).toBe(false);
-    expect(SITE_TEMPLATE_STEPS.site_bf_goods).toEqual(['search', 'goods', 'live']);
-    expect(SITE_TEMPLATE_STEPS.site_bf_live).toEqual(['corner', 'list', 'discs']);
-    expect(SITE_TEMPLATE_STEPS.site_bf_shopping).toEqual(['entry', 'pick', 'answers', 'result']);
+    expect(SITE_TEMPLATE_STEPS.site_bf_goods).toEqual(['intro', 'search', 'goods', 'live']);
+    expect(SITE_TEMPLATE_STEPS.site_bf_live).toEqual(['intro', 'corner', 'list', 'discs']);
+    expect(SITE_TEMPLATE_STEPS.site_bf_shopping).toEqual(['intro', 'entry', 'pick', 'answers', 'result']);
   });
 
   for (const [label, now] of [['開催前', BEFORE], ['開催中', START + 1000]] as const) {
     it(`${label}: 冒頭 → 手順 → 締め（セールの設定の文）。17〜20秒・冒頭は短く・読みはひらがなだけ`, () => {
       const sale = state(now);
       const ts = targets(sale);
-      const expectSeconds = { site_bf_goods: [17, 19], site_bf_live: [19, 21], site_bf_shopping: [20, 22] } as const;
+      const expectSeconds = { site_bf_goods: [17.5, 19], site_bf_live: [19.5, 21], site_bf_shopping: [20.5, 22] } as const;
       for (const id of SALE_SITE_TEMPLATE_IDS) {
         const plan = buildSitePlan({ templateId: id, target: ts[id], cta: 'sale', readings });
         expect(plan.ok, id).toBe(true);
@@ -106,7 +106,14 @@ describe('期間限定セールのリール A・B・C の台本', () => {
         expect(plan.totalSeconds, id).toBeGreaterThanOrEqual(expectSeconds[id][0]);
         expect(plan.totalSeconds, id).toBeLessThanOrEqual(expectSeconds[id][1]);
         expect(plan.totalSeconds).toBeLessThanOrEqual(SITE_MAX_SECONDS);
-        expect(plan.segments[0].slotSeconds, id).toBeLessThanOrEqual(3.8);
+        // 0〜1.5秒 大きなセール名、1.5〜3.5秒 テンプレートごとの一言（実画面の操作は3.5秒から）
+        expect(plan.segments[0].slotSeconds, id).toBe(1.5);
+        expect(plan.segments[1]).toMatchObject({ step: 'intro', slotSeconds: 2, sub: ts[id].name });
+        expect(plan.segments[1].label).toBeUndefined();
+        expect(plan.segments[2].label?.startsWith('①')).toBe(true);
+        expect(plan.lines[0].text).toBe('楽天ブラックフライデーセール！');
+        expect(plan.segments[0].title).toBe('楽天\nブラック\nフライデー\nセール！');
+        expect(plan.segments[0].title!.replace(/\n/g, '')).toBe(plan.lines[0].text);
         expect(plan.unresolved, id).toEqual([]);
         for (const l of plan.lines) expect(l.kana, `${id} ${l.id}`).not.toMatch(/[\p{Script=Han}A-Za-z0-9]/u);
         expect(plan.title.startsWith(plan.lines[0].text)).toBe(true);
@@ -115,24 +122,28 @@ describe('期間限定セールのリール A・B・C の台本', () => {
     });
   }
 
-  it('A の冒頭は開催状態で変わる（開催前「始まります」・開催中「開催中」）。B・C は同じ文', () => {
-    const hook = (id: SaleSiteTemplateId, now: number) => {
+  it('冒頭の一言は A・B・C ごと。B は開催前「前に」・開催中「の間に」', () => {
+    const intro = (id: SaleSiteTemplateId, now: number) => {
       const plan = buildSitePlan({ templateId: id, target: targets(state(now))[id], cta: 'sale', readings });
-      return plan.ok ? plan.lines[0].text : '';
+      return plan.ok ? plan.lines[1].text : '';
     };
-    expect(hook('site_bf_goods', BEFORE)).toBe('楽天ブラックフライデーセールが始まります！');
-    expect(hook('site_bf_goods', START)).toBe('楽天ブラックフライデーセール開催中！');
-    expect(hook('site_bf_live', BEFORE)).toBe('推しを好きになる前のライブ、見たことある？');
-    expect(hook('site_bf_shopping', START)).toBe('ブラックフライデー、予算5,000円なら何を探す？');
-    expect(splitSaleTitle('楽天ブラックフライデーセールが始まります！')).toBe('楽天ブラックフライデー\nセールが始まります！');
+    expect(intro('site_bf_goods', BEFORE)).toBe('推しグッズ、損しないための探し方！');
+    expect(intro('site_bf_goods', START)).toBe('推しグッズ、損しないための探し方！');
+    expect(intro('site_bf_live', BEFORE)).toBe('ブラックフライデー前に、過去ライブをチェック！');
+    expect(intro('site_bf_live', START)).toBe('ブラックフライデーの間に、過去ライブをチェック！');
+    expect(intro('site_bf_shopping', BEFORE)).toBe('推しグッズ、予算内で失敗しない探し方！');
+    expect(splitSaleTitle('楽天ブラックフライデーセール！')).toBe('楽天ブラックフライデー\nセール！');
   });
 
   it('依頼の構成どおりの区間の長さ（読みが短ければそのまま）', () => {
-    expect(SALE_SITE_TIMING.site_bf_goods.reduce((a, b) => a + b)).toBe(17);
-    expect(SALE_SITE_TIMING.site_bf_live.reduce((a, b) => a + b)).toBe(19);
-    expect(SALE_SITE_TIMING.site_bf_shopping.reduce((a, b) => a + b)).toBe(20);
-    const segs = [{ kind: 'hook' as const }, { kind: 'step' as const }, { kind: 'step' as const }, { kind: 'step' as const }, { kind: 'cta' as const }];
-    expect(allocateSiteSlots(segs, segs.map(() => ({ kana: 'あ' })), 'site_bf_goods')).toEqual([3, 3, 4, 4, 3]);
+    expect(SALE_SITE_TIMING.site_bf_goods.reduce((a, b) => a + b)).toBe(17.5);
+    expect(SALE_SITE_TIMING.site_bf_live.reduce((a, b) => a + b)).toBe(19.5);
+    expect(SALE_SITE_TIMING.site_bf_shopping.reduce((a, b) => a + b)).toBe(20.5);
+    const segs = [{ kind: 'hook' as const }, { kind: 'step' as const, step: 'intro' as const }, { kind: 'step' as const }, { kind: 'step' as const }, { kind: 'step' as const }, { kind: 'cta' as const }];
+    expect(allocateSiteSlots(segs, segs.map(() => ({ kana: 'あ' })), 'site_bf_goods')).toEqual([1.5, 2, 3, 4, 4, 3]);
+    // 冒頭の2区間は読みが長くても構成どおり（音声付きは Worker が読み上げに合わせて延ばす）
+    const long = 'あいうえおかきくけこさしすせそたちつてと';
+    expect(allocateSiteSlots(segs, [{ kana: long }, { kana: long }, ...segs.slice(2).map(() => ({ kana: 'あ' }))], 'site_bf_goods').slice(0, 2)).toEqual([1.5, 2]);
   });
 
   it('対象が足りなければ作らない（A・B はライブ映像のコーナー、C は用途、セールが無い）', () => {
@@ -161,11 +172,12 @@ describe('期間限定セールのリール A・B・C の台本', () => {
 });
 
 describe('期間限定セールのリールの文言の決まり', () => {
-  const NG = [/まだ買ってない/, /半額/, /\d+\s*%/, /％/, /OFF/i, /割引/, /値引/, /最安/, /激安/, /ポイント\d+倍/, /倍/, /今だけ/, /急いで/, /売り切れ/, /エントリー/, /還元/];
+  const NG = [/まだ買ってない/, /半額/, /\d+\s*%/, /％/, /OFF/i, /割引/, /値引/, /最安/, /激安/, /ポイント\d+倍/, /倍/, /今だけ/, /急いで/, /売り切れ/, /エントリー/, /還元/, /お得/, /必ず/, /確実/, /保証/, /もらえる/, /安く/];
   const texts = (v: SaleVideoConfig) => [
     v.name,
     v.activeBadge,
-    ...(['upcoming', 'active'] as const).flatMap((ph) => [v.goodsHook[ph].text, v.liveHook[ph].text, v.shoppingHook[ph].text]),
+    v.title.text,
+    ...(['upcoming', 'active'] as const).flatMap((ph) => [v.intro.goods[ph].text, v.intro.live[ph].text, v.intro.shopping[ph].text]),
     ...Object.values(v.cta).flatMap((c) => [c.text, c.title, c.sub]),
   ];
 
@@ -179,9 +191,17 @@ describe('期間限定セールのリールの文言の決まり', () => {
     }
   });
 
+  it('特典の注記: エントリーと条件が必要なことを伝え、値引き・還元を保証しない', () => {
+    for (const v of SALE_VIDEO_CONFIGS) {
+      expect(v.entryNote).toMatch(/エントリー/);
+      expect(v.entryNote).toMatch(/条件/);
+      expect(v.entryNote).not.toMatch(/必ず|確実|保証|もらえる|\d+倍|半額|%|％/);
+    }
+  });
+
   it('読みはひらがなだけ（音声用）', () => {
     for (const v of SALE_VIDEO_CONFIGS) {
-      const kanas = [...(['upcoming', 'active'] as const).flatMap((ph) => [v.goodsHook[ph].kana, v.liveHook[ph].kana, v.shoppingHook[ph].kana]), ...Object.values(v.cta).map((c) => c.kana)];
+      const kanas = [v.title.kana, ...(['upcoming', 'active'] as const).flatMap((ph) => [v.intro.goods[ph].kana, v.intro.live[ph].kana, v.intro.shopping[ph].kana]), ...Object.values(v.cta).map((c) => c.kana)];
       for (const k of kanas) expect(k, k).toMatch(/^[\p{Script=Hiragana}ー、。！？\s]+$/u);
     }
   });

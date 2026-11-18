@@ -6316,3 +6316,19 @@ oshi-search（未commit）
 - **ジョブ数の確認:** 新規 `scripts/video-jobs/check-active-jobs.ts`（読み取りのみ。queued・processing の件数・一覧と Worker の最終報告）。2026-11-18 18:25 時点で待機0件・生成中0件
 - **型エラー:** oshi-search の tsc エラーは既知の2件のみ（`@electric-sql/pglite` が package.json に無い。ecb6151 から未変更のテスト2ファイル）。今回の変更による型エラーは0件。oshi-video-maker は0件
 - **commit:** 両リポジトリとも worktree のブランチ feat/bf-sale-video に今回の変更だけを commit（node_modules・環境変数ファイル・生成物は含めない）。本体フォルダ（~/dev/oshi-search の main・~/dev/oshi-video-maker）の未コミット変更には触れていない（開発ログの追記のみ本体フォルダにも記録）
+
+## Task 201 — 楽天ブラックフライデー A・B・C の冒頭を強化（大きなセール名 → テンプレートごとの一言）（2026-11-18・commit のみ・本番デプロイなし・Worker 未反映）
+
+### 変更
+- 構成: 0〜1.5秒 大きなセール名（赤地・白文字・黄色のアクセント。「楽天／ブラック／フライデー／セール！」を1行ずつ約180px、最終行は黄色の帯に赤文字、下に開催状態「11月19日20時スタート」／「開催中」。揺れ演出なし）→ 1.5〜3.5秒 一言（A「推しグッズ、損しないための探し方！」B 開催前「ブラックフライデー前に、過去ライブをチェック！」・開催中「ブラックフライデーの間に、…」C「推しグッズ、予算内で失敗しない探し方！」＋対象の名前＋撮影した実画面を小さく＋特典の注記）→ 3.5秒から従来の操作画面。PR 表記は全編の上端に維持
+- 特典の注記（新規 `entryNote`）:「※ポイントアップ特典は楽天公式ページでのエントリーと条件達成が必要です。価格・特典は楽天でご確認ください」。値引き・還元を保証する語（お得・必ず・確実・保証・もらえる・倍・％ 等）はテストで禁止
+- 台本: 冒頭が2文に（セール名・一言）。区間 ID は 01-hook・02-intro・03-…。音声なしの長さ A 17.5秒・B 19.5秒・C 20.5秒（冒頭2区間は 1.5・2.0秒固定）。ジョブ作成時に冒頭2文を開催状態の文と照合
+- oshi-search: `src/lib/sale-video/config.ts`（goodsHook 等 → `title`〈text・kana・display〉・`intro`・`entryNote`）、`video-site-reel.ts`（手順の先頭に intro・`SALE_SITE_TIMING`）、`site-target.ts`、`SiteReelPicker.tsx`（「冒頭の一言」表示）、テスト
+- oshi-video-maker: `siteInput.ts`（手順に intro）、`captureSiteFlow.ts`（intro に冒頭の実画面）、`OshiSiteReel.tsx`（`SaleTitleCard`・`SaleIntroScene`。前回のセール用冒頭は削除し、通常の HookScene は元の内容に戻した）、`siteProduce.ts`（QA `sale-opening`）
+- 既存のサイト誘導リール10種類・CapCut の取り込み方法・TikTok CTA・SNS 処理は変更なし
+
+### 確認
+- 本番DB（読み取り）で入力を作成し、本番サイトを撮影: 音声なし A Snow Man 18.4秒・B M!LK 19.5秒・C 佐野勇斗 20.5秒 QA PASS（セール名 0〜1.50秒・一言 〜3.50秒）
+- macOS の読み上げで作った CapCut 形式の WAV・SRT: A 19.7秒・B 21.0秒・C 22.1秒 QA PASS（台本一致 1.00・各文は画面の0.15秒後）。ただし読み上げが画面に収まらず、セール名 2.13秒・一言の終わり 4.1〜5.0秒に延びる（速度は変えず画面を延ばす既存の方式）。Instagram 版・TikTok 版 PASS
+- oshi-search tsc 既知2件のみ・vitest 3,057件、oshi-video-maker tsc 0件・345件
+- commit: oshi-search `feat/bf-hook-v2`、oshi-video-maker `feat/bf-hook-v2`（push・デプロイ・本体フォルダへの取り込みなし）
