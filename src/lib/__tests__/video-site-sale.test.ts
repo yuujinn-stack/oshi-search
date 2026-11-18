@@ -112,8 +112,8 @@ describe('期間限定セールのリール A・B・C の台本', () => {
         expect(plan.segments[1].label).toBeUndefined();
         expect(plan.segments[2].label?.startsWith('①')).toBe(true);
         expect(plan.lines[0].text).toBe('楽天ブラックフライデー！');
-        expect(plan.segments[0].title).toBe('楽天\nブラック\nフライデー！');
-        expect(plan.segments[0].title!.replace(/\n/g, '')).toBe(plan.lines[0].text);
+        expect(plan.segments[0].title).toBe('楽天\nブラック\nフライデー\nセール！');
+        expect(plan.segments[0].title!.replace(/\n/g, '')).toBe('楽天ブラックフライデーセール！');
         expect(plan.unresolved, id).toEqual([]);
         for (const l of plan.lines) expect(l.kana, `${id} ${l.id}`).not.toMatch(/[\p{Script=Han}A-Za-z0-9]/u);
         expect(plan.title.startsWith(plan.lines[0].text)).toBe(true);

@@ -52,8 +52,8 @@ export const SALE_VIDEO_CONFIGS: SaleVideoConfig[] = [
     saleCornerId: 'rakuten-blackfriday-2026',
     name: '楽天ブラックフライデー',
     activeBadge: '楽天ブラックフライデー開催中',
-    // 読み上げは通常速度で約1.3秒（13音）。0〜1.5秒に収める
-    title: { text: '楽天ブラックフライデー！', kana: 'らくてんぶらっくふらいでー！', display: '楽天\nブラック\nフライデー！' },
+    // 画面は「楽天ブラックフライデーセール！」を特大文字で。読み上げは通常速度で0〜1.5秒に収まる「楽天ブラックフライデー！」（13音・約1.4秒）
+    title: { text: '楽天ブラックフライデー！', kana: 'らくてんぶらっくふらいでー！', display: '楽天\nブラック\nフライデー\nセール！' },
     intro: {
       goods: {
         upcoming: { text: '推しグッズ、損しない探し方！', kana: 'おしぐっず、そんしないさがしかた！' },
