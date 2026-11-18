@@ -6205,3 +6205,10 @@ oshi-search（未commit）
 - origin/main（56a236a）を基準にブランチ `feat/rakuten-click-tracking`（worktree: `../oshi-search-rakuten-track`）を作り、今回の計測改善の差分だけを適用した。手元 main の未コミット変更（Task 196・197 の開発ログ等）は持ち込んでいない。
 - 差分は「作業前に退避したファイル → 変更後」から作ったため、グループ・作品ページにあった既存の未コミット変更は含まない。適用はずれ（行番号の移動）のみで衝突なし。
 - 誤って main へ push しないよう、このブランチの upstream は設定していない。
+
+### Task 198 追記2：Preview から本番の計測データが更新されないようにする（2026-11-18・ブランチ feat/rakuten-click-tracking・本番デプロイなし）
+- 調査: 計測の送信先はすべて相対パス（`/api/track`・`/api/search-track`）で、Preview では Preview 自身の API に届く。ただし Vercel の環境変数 `UPSTASH_REDIS_REST_URL/TOKEN` は「Production, Preview」の共通設定のため、Preview の API は本番 Redis に書き込む（商品クリック数・`product:meta:*`・閲覧数・作品・VOD クリック・検索ランキング）。今回の変更以前からある挙動。設定から確認した（本番に書き込むため Preview で実際にはクリックしていない）。
+- 対応（最小限・サーバー側のみ）: 新規 `src/lib/tracking-env.ts` の `shouldRecordTracking()`（`VERCEL_ENV === 'preview'` のときだけ false）。`/api/track` と `/api/search-track` は Preview では Redis に書かず `{ ok: true, skipped: true }`（Redis 未設定時と同じ応答）を返す。本番（production）とローカル（未設定）は従来どおり記録。クライアントは応答を使わない（fire-and-forget）ため、リンクの遷移・GA4 送信（本番ホストのみ）は無変更。
+- テスト: 新規 `src/lib/__tests__/tracking-env.test.ts`（Preview で4種類の計測と検索が書き込まないこと、本番・未設定では従来どおりのキーに書き込むこと）。
+- Preview（ef6324b）の生成元は Vercel API で確認（gitSource: github / feat/rakuten-click-tracking / ef6324b781f6）。GitHub にテスト用の CI は無い（workflow は手動起動の price-refresh のみ）。コミットの状態は Vercel の2プロジェクト分で、別プロジェクト `shi-search-v2` の失敗は main でも同じ既存の問題（DB 接続文字列が無い）。
+- 本番の戻し先: 公開前の本番 `dpl_BBLvw956kVJsi9mMzXuZ5S5xrumU`（56a236a・oshi-search.jp のエイリアス先）。

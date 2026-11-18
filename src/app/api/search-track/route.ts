@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedis } from '@/lib/redis';
+import { shouldRecordTracking } from '@/lib/tracking-env';
 
 function normalizeKeyword(raw: string): string {
   return raw
@@ -17,6 +18,8 @@ export async function POST(req: NextRequest) {
     const normalized = normalizeKeyword(body.keyword);
     if (!normalized) return NextResponse.json({ ok: false, reason: 'empty_after_normalize' });
 
+    // Preview は本番と同じ Redis を使うため記録しない（本番・ローカルは従来どおり）
+    if (!shouldRecordTracking()) return NextResponse.json({ ok: true, skipped: true });
     const redis = getRedis();
     if (!redis) return NextResponse.json({ ok: true, skipped: true });
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedis } from '@/lib/redis';
 import { isSafeHttpUrl, isStorableRakutenLinkUrl } from '@/lib/track-product-url';
+import { shouldRecordTracking } from '@/lib/tracking-env';
 
 type TrackEvent =
   | { type: 'view'; entity: 'person' | 'group'; slug: string }
@@ -10,6 +11,8 @@ type TrackEvent =
 
 export async function POST(req: NextRequest) {
   try {
+    // Preview は本番と同じ Redis を使うため記録しない（本番・ローカルは従来どおり）
+    if (!shouldRecordTracking()) return NextResponse.json({ ok: true, skipped: true });
     const body = await req.json() as TrackEvent;
     const redis = getRedis();
     if (!redis) return NextResponse.json({ ok: true, skipped: true });
