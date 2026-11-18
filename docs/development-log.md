@@ -6171,3 +6171,37 @@ oshi-search（未commit）
 - **コミットの準備：** ローカル main（e620a95）は origin/main（4db7f14）より27コミット遅れ、作業ツリーには他タスクの未コミット変更があるため、公開用 worktree `~/dev/oshi-search-group-category`（ブランチ feat/group-home-category、origin/main から作成）に Task 195 の変更だけを適用し git add 済み（未commit）。共有ファイル（schema.ts・db-init/route.ts・page.tsx）は Task 195 の行だけを手で適用
 - **worktree での確認（npm ci）：** tsc は既存の pglite 2件のみ（Task 189 と同じ既存の問題）／vitest 2,934件成功・67件スキップ（既存）／`next build` 成功（129ページ。ビルド中は本番DBに列が無いため読み直しが74回働いた）
 - **本番反映手順：** ① 直前に `git fetch` で origin/main=4db7f14 のままか確認 ② 本番の待機中・生成中のジョブが0件か確認 ③ `add-home-category.mjs check` → `apply` → `verify`（OK を確認）④ worktree で commit → push（fast-forward）→ Vercel Ready ⑤ トップの「男性アイドル」に超特急・FANTASTICS、/admin/groups で分類の保存（例: 保存後に戻す）とトップへの反映を確認。/admin/db-init は実行不要（実行しても今回の列以外は変わらない）
+
+---
+
+## Task 198 — 楽天アフィリエイトのクリック計測の補強（GA4 パラメータ・中クリック・/api/track のURL検証）（2026-11-18・未commit・本番デプロイなし）
+
+### 目的
+楽天リンクの動作・成果報酬（href・target・rel・リンク先・affiliateUrl）を変えずに、GA4 の affiliate_click で「どのページ・表示位置・商品がクリックされたか」を分析できるようにする。あわせて /api/track に不正なURLを保存させない。楽天の計測IDは公式に認められた API 発行URLへの付与方法を確認できていないため保留（URLは一切加工しない）。
+
+### 変更ファイル
+- `src/lib/rakuten-click-track.ts` — affiliate_click に `group_name`・`work_id`・`rakuten_shop` を追加（既存の項目名・値は同一。該当しないときは送らない）。`rakuten_shop` はリンク先URLの遷移先（pc=）から既存の `productKeyOfLink` で読み取る（楽天ブックス='books'、楽天市場=店舗コード、判定できなければ送らない）。page_type に `live_archive` を追加。GA4 パラメータ組み立てを `rakutenClickGaParams` に分離。中クリック用 `trackRakutenAuxClick`（auxclick の button===1 だけ計測。右クリック=button 2 は計測しない）を追加。`trackRakutenClick` は計測したら true・重複等で送らなかったら false を返す（従来の呼び出し側は戻り値を使わないため影響なし）。
+- `src/components/site/TrackedRakutenLink.tsx`・`src/components/ProductCard.tsx`・`src/components/site/PhotobookCard.tsx`・`src/components/oshi-shopping/GeneralItemCard.tsx` — 各楽天リンクに onAuxClick を追加（クリック計測情報は onClick と共通化。href・target・rel・DOM は無変更）。
+- `src/app/groups/[groupSlug]/page.tsx` — MiniProductCard に groupName を渡し group_name を送る（表示・リンクには使わない）。
+- `src/app/work/[workId]/page.tsx` — 関連商品のクリックで work_id を送る。
+- `src/components/live-archive/LiveArchiveBrowser.tsx`（未commitの既存作業ファイル）— page_type を 'group' → 'live_archive'、group_name を追加（placement は従来どおり live_archive_*）。中クリック対応。live_archive_product_click は affiliate_click を計測したときだけ送る（ダブルクリックで2回送られていた従来の重複を解消）。
+- `src/lib/track-product-url.ts`（新規）— 保存時判定 `isStorableRakutenLinkUrl`（http/https・ホストが rakuten.co.jp / r10.to とそのサブドメイン・2048文字以内・認証情報なし）と表示時判定 `isSafeHttpUrl`（http/https のみ。ホスト・長さは問わない）を分離。URLのパス形式（/hgc/ 等）では判定しない＝楽天が発行する形式を推測で絞らない。
+- `src/app/api/track/route.ts` — product のメタデータ保存で、affiliateUrl が保存条件を満たさない場合はそのフィールドを保存せず既存値も上書きしない（クリック数の加算は従来どおり）。imageUrl も http/https 以外は保存しない。空・未指定は従来どおり空文字。
+- `src/lib/ranking.ts` — トップ「人気商品」で、保存済み affiliateUrl が http/https 以外のときだけ空扱い（＝人物ページへのリンク）。既存の正当なURLは従来どおり。
+- テスト: `src/lib/__tests__/rakuten-click-track.test.ts`（追加10件）、`src/lib/__tests__/track-product-url.test.ts`（新規。正規の楽天URL11種の保存・不正URL15種の拒否・/api/track の保存内容）。
+
+### 確認結果
+- 変更前（作業前に退避したファイル）と変更後の ProductCard・PhotobookCard・GeneralItemCard・TrackedRakutenLink・LiveArchiveBrowser の HTML 出力（href・target・rel 含む）が完全一致（scratchpad の比較テスト11件）。ページ側の差分は track 情報の追加のみ。
+- `next start` + Playwright（oshi-search.jp をローカルへ向け、GA4・楽天・外部広告への通信と /api/* の POST はブラウザ側で遮断・記録＝本番 Redis/GA4/楽天のクリックに影響なし）で、トップ写真集・人物（ピックアップ／一覧）・グループ・グループ内ライブ映像・ライブ映像一覧・作品・写真集・お買い物診断（人物商品／一般商品）の11箇所すべて：通常クリック1回・中クリック1回・右クリック0回・Ctrl/Cmd+クリック1回・ダブルクリック1回、パラメータ（page_type・placement・person_name・group_name・work_id・rakuten_shop）も期待どおり。トップ「人気商品」はローカルに Redis 設定が無く表示されないため未確認（同じ TrackedRakutenLink を使うグループ・作品で確認）。
+- `npx tsc --noEmit` エラーなし、`npx vitest run` 2,990件成功、`next build` 成功。ESLint はリポジトリに設定ファイルが無いため未実施。
+
+### 注意・残るリスク
+- GA4 で新パラメータを集計するには、管理画面でカスタムディメンション登録が必要（コード外・未実施）。
+- auxclick を発火しないブラウザ（Safari の対応状況は未確認）では中クリックは従来どおり計測されない。スマホの長押し→新しいタブは右クリックと区別できないため計測しない。
+- /api/track は楽天以外のホストの affiliateUrl を保存しない。手動登録で楽天以外のURLを持つ商品があれば、その商品はトップ「人気商品」でリンク先が保存されない（人物ページ等のリンクは無変更）。楽天ドメインで別アカウントのアフィリエイトURLを送られる可能性は残る（DB照合が必要なため今回は対象外）。既存の Redis の値は確認・変更していない。
+- ローカル main は origin/main より遅れている（Task 197 追記参照）。公開時は origin/main 基準で差分だけ適用する必要がある。
+
+### Task 198 追記：本番公開の準備（2026-11-18・push・デプロイなし）
+- origin/main（56a236a）を基準にブランチ `feat/rakuten-click-tracking`（worktree: `../oshi-search-rakuten-track`）を作り、今回の計測改善の差分だけを適用した。手元 main の未コミット変更（Task 196・197 の開発ログ等）は持ち込んでいない。
+- 差分は「作業前に退避したファイル → 変更後」から作ったため、グループ・作品ページにあった既存の未コミット変更は含まない。適用はずれ（行番号の移動）のみで衝突なし。
+- 誤って main へ push しないよう、このブランチの upstream は設定していない。

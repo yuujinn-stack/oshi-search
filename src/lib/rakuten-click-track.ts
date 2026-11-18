@@ -9,15 +9,24 @@
 // どれか1つの onClick しか発火しない）。加えて、同じ商品・同じ表示位置の連続クリック
 // （ダブルクリック等）は短時間に1回だけ送る。
 // リンク自体（href・target・rel）には一切手を加えないため、アフィリエイトリンクの動作に影響しない。
+//
+// 中クリック（ホイールクリック＝新しいタブで開く）は click ではなく auxclick だけが発火するため、
+// 各リンクの onAuxClick から trackRakutenAuxClick を呼んで補完する（button===1 のときだけ。
+// 右クリック＝コンテキストメニューの表示は計測しない）。通常クリック・Ctrl/Cmd+クリックは onClick 側で1回。
 import { sendGaEvent } from '@/lib/ga-event';
+import { productKeyOfLink } from '@/lib/rakuten-affiliate-link';
 
-export type RakutenPageType = 'home' | 'person' | 'group' | 'work' | 'photobooks' | 'oshi_shopping';
+export type RakutenPageType = 'home' | 'person' | 'group' | 'work' | 'photobooks' | 'oshi_shopping' | 'live_archive';
 export type RakutenLinkElement = 'image' | 'title' | 'cta' | 'card';
 
 export interface RakutenClickInfo {
   productId: string;
   /** 人物名（人物ページの slug と同じ値）。不明なら空文字 */
   personSlug: string;
+  /** グループ名（グループページ・ライブ映像コーナー）。GA4 の group_name にだけ使う */
+  groupName?: string;
+  /** 作品ID（作品ページ）。GA4 の work_id にだけ使う */
+  workId?: string;
   title: string;
   /** 表示カテゴリ（写真集・書籍 / CD / Blu-ray・DVD / グッズ / その他 / 中古 等） */
   category: string;
@@ -51,13 +60,52 @@ function clip(s: string, max = 100): string {
   return s.length > max ? s.slice(0, max) : s;
 }
 
-export function trackRakutenClick(info: RakutenClickInfo): void {
-  if (typeof window === 'undefined') return;
+/**
+ * リンク先URLから楽天のショップを取り出す（楽天ブックス＝'books'、楽天市場＝店舗コード）。
+ * 楽天アフィリエイトURLは遷移先（pc=）から判定する。URLは読むだけで加工しない。分からなければ undefined
+ */
+export function rakutenShopOf(url: string | undefined | null): string | undefined {
+  const key = productKeyOfLink(url);
+  if (!key) return undefined;
+  return key.source === 'books' ? 'books' : key.shop;
+}
+
+/** GA4 affiliate_click のパラメータ（既存項目は名前・値とも従来どおり。追加は group_name・work_id・rakuten_shop） */
+export function rakutenClickGaParams(info: RakutenClickInfo): Record<string, string | number | undefined> {
+  const shop = rakutenShopOf(info.affiliateUrl);
+  return {
+    affiliate_name: 'rakuten',
+    page_type: info.pageType,
+    placement: info.placement,
+    position: info.position,
+    link_element: info.linkElement,
+    person_name: info.personSlug || undefined,
+    group_name: info.groupName ? clip(info.groupName) : undefined,
+    work_id: info.workId ? clip(info.workId) : undefined,
+    product_id: clip(info.productId),
+    product_category: info.category || undefined,
+    item_name: clip(info.title),
+    rakuten_shop: shop ? clip(shop) : undefined,
+  };
+}
+
+/** 中クリック（auxclick の button===1）だけを計測する。右クリック等は何もしない。計測したら true */
+export function trackRakutenAuxClick(event: { button: number }, info: RakutenClickInfo): boolean {
+  if (event.button !== 1) return false;
+  return trackRakutenClick(info);
+}
+
+/**
+ * 計測したら true、重複（1秒以内の同じ商品・同じ表示位置）・サーバー側で呼ばれた場合は false。
+ * 同じクリックで別の GA4 イベントも送る呼び出し側（ライブ映像）は、true のときだけ送れば重複しない。
+ */
+export function trackRakutenClick(info: RakutenClickInfo): boolean {
+  if (typeof window === 'undefined') return false;
 
   const dedupeKey = `${info.productId}|${info.placement}|${info.position ?? ''}`;
   const now = Date.now();
   const last = recentClicks.get(dedupeKey);
-  if (last !== undefined && now - last < DEDUPE_WINDOW_MS) return;
+  if (last !== undefined && now - last < DEDUPE_WINDOW_MS) return false;
   recentClicks.set(dedupeKey, now);
 
   const saveMeta = info.saveMeta !== false;
@@ -87,15 +135,6 @@ export function trackRakutenClick(info: RakutenClickInfo): void {
     }
   }
 
-  sendGaEvent('affiliate_click', {
-    affiliate_name: 'rakuten',
-    page_type: info.pageType,
-    placement: info.placement,
-    position: info.position,
-    link_element: info.linkElement,
-    person_name: info.personSlug || undefined,
-    product_id: clip(info.productId),
-    product_category: info.category || undefined,
-    item_name: clip(info.title),
-  });
+  sendGaEvent('affiliate_click', rakutenClickGaParams(info));
+  return true;
 }

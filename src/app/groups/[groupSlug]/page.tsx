@@ -155,11 +155,14 @@ function MiniProductCard({
   used,
   sectionLabel,
   position,
+  groupName,
 }: {
   product: RakutenItem;
   used?: boolean;
   sectionLabel: string;
   position: number;
+  /** GA4 affiliate_click の group_name 用（表示・リンクには使わない） */
+  groupName: string;
 }) {
   const href = product.affiliateUrl || product.itemUrl;
   return (
@@ -168,6 +171,7 @@ function MiniProductCard({
       track={{
         productId: product.id,
         personSlug: '',
+        groupName,
         title: product.title,
         category: used ? '中古' : sectionLabel,
         imageUrl: product.imageUrl,
@@ -1034,10 +1038,10 @@ export default async function GroupsPage({ params }: Props) {
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                         {displayNew.map((p, i) => (
-                          <MiniProductCard key={p.id} product={p} sectionLabel={label} position={i + 1} />
+                          <MiniProductCard key={p.id} product={p} sectionLabel={label} position={i + 1} groupName={groupName} />
                         ))}
                         {displayUsed.map((p, i) => (
-                          <MiniProductCard key={p.id} product={p} used sectionLabel={label} position={displayNew.length + i + 1} />
+                          <MiniProductCard key={p.id} product={p} used sectionLabel={label} position={displayNew.length + i + 1} groupName={groupName} />
                         ))}
                       </div>
                       {totalCount > displayed && (

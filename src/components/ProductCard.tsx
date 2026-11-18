@@ -5,7 +5,7 @@ import type { RakutenItem } from '@/types/rakuten';
 import { getBestProductImageUrl, getRenderableProductTitle } from '@/lib/product-image';
 import { stripPromoTags } from '@/lib/product-curation';
 import { STALE_PRICE_LABEL } from '@/lib/price-freshness';
-import { trackRakutenClick, type RakutenLinkElement, type RakutenPageType } from '@/lib/rakuten-click-track';
+import { trackRakutenAuxClick, trackRakutenClick, type RakutenClickInfo, type RakutenLinkElement, type RakutenPageType } from '@/lib/rakuten-click-track';
 
 // ─── 星レーティング ───────────────────────────────────────────────────────────
 function StarRating({ avg, count }: { avg: number; count: number }) {
@@ -63,19 +63,22 @@ export default function ProductCard({
   // 混入している場合があるため、表示直前でデコードする（DBの値は変更しない）
   // 取得時点のショップの宣伝タグ（【予約】【即納】【最安値】等）は表示時点で確認できないため表示しない
   const displayTitle = stripPromoTags(getRenderableProductTitle(product.title));
-  const handleClick = (linkElement: RakutenLinkElement) => () =>
-    trackRakutenClick({
-      productId: product.id,
-      personSlug,
-      title: displayTitle,
-      category: displayCategory ?? product.category,
-      imageUrl: bestImageUrl,
-      affiliateUrl: href,
-      pageType,
-      placement,
-      position,
-      linkElement,
-    });
+  const clickInfo = (linkElement: RakutenLinkElement): RakutenClickInfo => ({
+    productId: product.id,
+    personSlug,
+    title: displayTitle,
+    category: displayCategory ?? product.category,
+    imageUrl: bestImageUrl,
+    affiliateUrl: href,
+    pageType,
+    placement,
+    position,
+    linkElement,
+  });
+  const handleClick = (linkElement: RakutenLinkElement) => () => trackRakutenClick(clickInfo(linkElement));
+  // 中クリック（新しいタブで開く）だけを補完計測（右クリックは計測しない）
+  const handleAuxClick = (linkElement: RakutenLinkElement) => (e: { button: number }) =>
+    trackRakutenAuxClick(e, clickInfo(linkElement));
 
   return (
     <div
@@ -131,6 +134,7 @@ export default function ProductCard({
           tabIndex={-1}
           aria-hidden="true"
           onClick={handleClick('image')}
+          onAuxClick={handleAuxClick('image')}
         />
       </div>
 
@@ -170,6 +174,7 @@ export default function ProductCard({
           className="text-[11px] font-medium line-clamp-2 leading-snug flex-1 hover:underline"
           style={{ color: 'var(--ds-text)', minHeight: '2.5rem' }}
           onClick={handleClick('title')}
+          onAuxClick={handleAuxClick('title')}
         >
           {displayTitle}
         </a>
@@ -192,6 +197,7 @@ export default function ProductCard({
             textDecoration: 'none',
           }}
           onClick={handleClick('cta')}
+          onAuxClick={handleAuxClick('cta')}
         >
           楽天で見る →
         </a>

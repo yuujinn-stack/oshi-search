@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { getBestProductImageUrl, getRenderableProductTitle } from '@/lib/product-image';
-import { trackRakutenClick, type RakutenLinkElement, type RakutenPageType } from '@/lib/rakuten-click-track';
+import { trackRakutenAuxClick, trackRakutenClick, type RakutenClickInfo, type RakutenLinkElement, type RakutenPageType } from '@/lib/rakuten-click-track';
 
 export interface PhotobookCardData {
   personName: string;
@@ -42,19 +42,22 @@ export default function PhotobookCard({
   const displayTitle = getRenderableProductTitle(data.title);
   const price = Number(data.price) || 0;
   // 既存の商品クリック計測（/api/track type:'product'、category='写真集'）を共通ヘルパー経由で再利用し、GA4 にも送る
-  const handleClick = (linkElement: RakutenLinkElement) => () =>
-    trackRakutenClick({
-      productId: data.productId,
-      personSlug: data.personName,
-      title: displayTitle,
-      category: '写真集',
-      imageUrl: bestImageUrl,
-      affiliateUrl: href,
-      pageType,
-      placement,
-      position,
-      linkElement,
-    });
+  const clickInfo = (linkElement: RakutenLinkElement): RakutenClickInfo => ({
+    productId: data.productId,
+    personSlug: data.personName,
+    title: displayTitle,
+    category: '写真集',
+    imageUrl: bestImageUrl,
+    affiliateUrl: href,
+    pageType,
+    placement,
+    position,
+    linkElement,
+  });
+  const handleClick = (linkElement: RakutenLinkElement) => () => trackRakutenClick(clickInfo(linkElement));
+  // 中クリック（新しいタブで開く）だけを補完計測（右クリックは計測しない）
+  const handleAuxClick = (linkElement: RakutenLinkElement) => (e: { button: number }) =>
+    trackRakutenAuxClick(e, clickInfo(linkElement));
 
   return (
     <div
@@ -94,6 +97,7 @@ export default function PhotobookCard({
           tabIndex={-1}
           aria-hidden="true"
           onClick={handleClick('image')}
+          onAuxClick={handleAuxClick('image')}
         />
       </div>
 
@@ -113,6 +117,7 @@ export default function PhotobookCard({
           className="text-[11px] leading-snug line-clamp-2 hover:underline flex-1"
           style={{ color: 'var(--ds-text)', minHeight: '2.2rem' }}
           onClick={handleClick('title')}
+          onAuxClick={handleAuxClick('title')}
         >
           {displayTitle}
         </a>
@@ -128,6 +133,7 @@ export default function PhotobookCard({
           className="flex items-center justify-center font-bold text-[11px] tracking-wide active:scale-95 transition-transform duration-100 mt-0.5 bg-[#BF0000] hover:bg-[#A60000] active:bg-[#8F0000] text-white"
           style={{ borderRadius: 'var(--ds-radius)', minHeight: '34px', textDecoration: 'none' }}
           onClick={handleClick('cta')}
+          onAuxClick={handleAuxClick('cta')}
         >
           楽天で見る →
         </a>

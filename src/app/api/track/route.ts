@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedis } from '@/lib/redis';
+import { isSafeHttpUrl, isStorableRakutenLinkUrl } from '@/lib/track-product-url';
 
 type TrackEvent =
   | { type: 'view'; entity: 'person' | 'group'; slug: string }
@@ -27,14 +28,20 @@ export async function POST(req: NextRequest) {
         pipe.incr(`product:click:${body.productId}`);
         if (body.slug) pipe.incr(`person:productClicks:${body.slug}`);
         // メタデータ保存（アナリティクス用・初回のみ上書き）
+        // affiliateUrl はトップ「人気商品」のリンク先になるため、楽天のドメインの http/https URL だけ保存する。
+        // それ以外（楽天以外のホスト・javascript: 等）は保存せず、既存の値も上書きしない（クリック数は加算する）。
+        // imageUrl も http/https 以外は保存しない。空・未指定は従来どおり空文字で保存する。
         if (body.title) {
-          pipe.hset(`product:meta:${body.productId}`, {
+          const meta: Record<string, string> = {
             title: body.title,
             personSlug: body.slug ?? '',
             category: body.category ?? '',
-            imageUrl: body.imageUrl ?? '',
-            affiliateUrl: body.affiliateUrl ?? '',
-          });
+          };
+          if (!body.imageUrl) meta.imageUrl = '';
+          else if (isSafeHttpUrl(body.imageUrl)) meta.imageUrl = body.imageUrl;
+          if (!body.affiliateUrl) meta.affiliateUrl = '';
+          else if (isStorableRakutenLinkUrl(body.affiliateUrl)) meta.affiliateUrl = body.affiliateUrl;
+          pipe.hset(`product:meta:${body.productId}`, meta);
         }
         await pipe.exec();
         break;

@@ -7,7 +7,7 @@
 // - リンクは楽天APIが返したアフィリエイトURLをそのまま使う。
 // - クリック計測は GA4 のみ（人物の商品ランキング＝/api/track には入れない）。
 import { useState } from 'react';
-import { trackRakutenClick, type RakutenLinkElement } from '@/lib/rakuten-click-track';
+import { trackRakutenAuxClick, trackRakutenClick, type RakutenClickInfo, type RakutenLinkElement } from '@/lib/rakuten-click-track';
 
 interface Props {
   itemCode: string;
@@ -24,24 +24,27 @@ interface Props {
 
 export default function GeneralItemCard({ itemCode, label, itemName, price, imageUrl, affiliateUrl, shopName, reviewCount, position, use }: Props) {
   const [imgError, setImgError] = useState(false);
-  const onClick = (linkElement: RakutenLinkElement) => () =>
-    trackRakutenClick({
-      productId: `general:${itemCode}`,
-      personSlug: '',
-      title: itemName,
-      category: `一般商品:${use}`,
-      imageUrl,
-      affiliateUrl,
-      pageType: 'oshi_shopping',
-      placement: 'oshi_shopping_general',
-      position,
-      linkElement,
-      countInRanking: false,
-    });
+  const clickInfo = (linkElement: RakutenLinkElement): RakutenClickInfo => ({
+    productId: `general:${itemCode}`,
+    personSlug: '',
+    title: itemName,
+    category: `一般商品:${use}`,
+    imageUrl,
+    affiliateUrl,
+    pageType: 'oshi_shopping',
+    placement: 'oshi_shopping_general',
+    position,
+    linkElement,
+    countInRanking: false,
+  });
+  const onClick = (linkElement: RakutenLinkElement) => () => trackRakutenClick(clickInfo(linkElement));
+  // 中クリック（新しいタブで開く）だけを補完計測（右クリックは計測しない）
+  const onAuxClick = (linkElement: RakutenLinkElement) => (e: { button: number }) =>
+    trackRakutenAuxClick(e, clickInfo(linkElement));
 
   return (
     <div className="os-card">
-      <a href={affiliateUrl} target="_blank" rel="noopener noreferrer sponsored" className="os-card-img" tabIndex={-1} aria-hidden="true" onClick={onClick('image')}>
+      <a href={affiliateUrl} target="_blank" rel="noopener noreferrer sponsored" className="os-card-img" tabIndex={-1} aria-hidden="true" onClick={onClick('image')} onAuxClick={onAuxClick('image')}>
         {!imgError ? (
           // eslint-disable-next-line @next/next/no-img-element -- 楽天の画像サーバーのURLをそのまま表示する（保存・最適化しない）
           <img src={imageUrl} alt="" loading="lazy" onError={() => setImgError(true)} />
@@ -52,14 +55,14 @@ export default function GeneralItemCard({ itemCode, label, itemName, price, imag
       <div className="os-card-body">
         <p className="os-card-tag">{label}</p>
         <p className="os-card-price">¥{price.toLocaleString()}<span className="os-card-tax">税込</span></p>
-        <a href={affiliateUrl} target="_blank" rel="noopener noreferrer sponsored" className="os-card-title" onClick={onClick('title')}>
+        <a href={affiliateUrl} target="_blank" rel="noopener noreferrer sponsored" className="os-card-title" onClick={onClick('title')} onAuxClick={onAuxClick('title')}>
           {itemName}
         </a>
         <p className="os-card-meta">
           {shopName && <span>販売：{shopName}</span>}
           <span>レビュー {reviewCount.toLocaleString()}件</span>
         </p>
-        <a href={affiliateUrl} target="_blank" rel="noopener noreferrer sponsored" className="os-card-cta" onClick={onClick('cta')}>
+        <a href={affiliateUrl} target="_blank" rel="noopener noreferrer sponsored" className="os-card-cta" onClick={onClick('cta')} onAuxClick={onAuxClick('cta')}>
           楽天で見る →
         </a>
       </div>

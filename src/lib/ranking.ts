@@ -4,6 +4,7 @@ import { getAllGroupMetas } from '@/lib/group-meta';
 import { getPublishedWorks, getAllPublishedWorkPersonMap, getPublicWorkById, getWorkAliasCanonicalMap } from '@/lib/work-store';
 import { getAllStoredProducts, getStoredProductImageUrl } from '@/lib/product-store';
 import { isConfirmedVodAvailability } from '@/lib/vod-dedup';
+import { isSafeHttpUrl } from '@/lib/track-product-url';
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getWorkPublicUrl } from '@/lib/work-url';
 import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
@@ -165,7 +166,9 @@ async function computePopularProducts(redis: Redis, productKeys: string[]): Prom
           personSlug: meta.personSlug ?? '',
           category: meta.category ?? '',
           imageUrl: meta.imageUrl ?? '',
-          affiliateUrl: meta.affiliateUrl ?? '',
+          // 保存済みの値のうち http/https 以外（javascript: 等）はリンクに使わない（空ならトップは人物ページへリンク）。
+          // ホストでは絞らないため、既存の正当なリンクの表示・リンク先は従来どおり
+          affiliateUrl: isSafeHttpUrl(meta.affiliateUrl) ? meta.affiliateUrl : '',
           clickCount: parseInt(String(counts[i] ?? '0'), 10) || 0,
         };
       })

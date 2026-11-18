@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { sendGaEvent } from '@/lib/ga-event';
-import { trackRakutenClick } from '@/lib/rakuten-click-track';
+import { trackRakutenAuxClick, trackRakutenClick, type RakutenClickInfo } from '@/lib/rakuten-click-track';
 import { STALE_PRICE_LABEL } from '@/lib/price-freshness';
 import {
   filterEntries, formatReleaseDate, itemLabel, sortEntries,
@@ -94,21 +94,30 @@ export default function LiveArchiveBrowser({ groupName, groupId, entries, placem
     sendGaEvent(...liveArchiveFilterEvent(groupId, placement, { format: v }));
   };
 
+  // 既存の楽天クリック計測（グループページと同じく人物が特定できないため商品メタデータは上書きしない）。
+  // page_type はグループページの商品と混ざらないよう 'live_archive'（placement は従来どおり live_archive_*）
+  const clickInfo = (entry: LiveArchiveEntry, item: LiveArchiveItem, position: number): RakutenClickInfo => ({
+    productId: item.productId,
+    personSlug: '',
+    groupName,
+    title: `${entry.title} ${itemLabel(item)}`,
+    category: 'Blu-ray・DVD',
+    imageUrl: item.imageUrl,
+    affiliateUrl: item.href,
+    pageType: 'live_archive',
+    placement: `live_archive_${placement}`,
+    position,
+    linkElement: 'cta',
+    saveMeta: false,
+  });
+  // live_archive_product_click は affiliate_click を計測したときだけ送る（ダブルクリック等の重複を防ぐ）
   const onProductClick = (entry: LiveArchiveEntry, item: LiveArchiveItem, position: number) => {
-    // 既存の楽天クリック計測（グループページと同じく人物が特定できないため商品メタデータは上書きしない）
-    trackRakutenClick({
-      productId: item.productId,
-      personSlug: '',
-      title: `${entry.title} ${itemLabel(item)}`,
-      category: 'Blu-ray・DVD',
-      imageUrl: item.imageUrl,
-      affiliateUrl: item.href,
-      pageType: 'group',
-      placement: `live_archive_${placement}`,
-      position,
-      linkElement: 'cta',
-      saveMeta: false,
-    });
+    if (!trackRakutenClick(clickInfo(entry, item, position))) return;
+    sendGaEvent(...liveArchiveProductClickEvent(groupId, placement, entry, item, position, { sort, format }));
+  };
+  // 中クリック（新しいタブで開く）だけを補完計測。右クリック（メニュー表示）は計測しない
+  const onProductAuxClick = (e: { button: number }, entry: LiveArchiveEntry, item: LiveArchiveItem, position: number) => {
+    if (!trackRakutenAuxClick(e, clickInfo(entry, item, position))) return;
     sendGaEvent(...liveArchiveProductClickEvent(groupId, placement, entry, item, position, { sort, format }));
   };
 
@@ -171,6 +180,7 @@ export default function LiveArchiveBrowser({ groupName, groupId, entries, placem
                     target="_blank"
                     rel="noopener noreferrer sponsored"
                     onClick={() => onProductClick(entry, item, idx * 10 + i + 1)}
+                    onAuxClick={(e) => onProductAuxClick(e, entry, item, idx * 10 + i + 1)}
                     className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs hover:opacity-80 transition-opacity"
                     style={{ minHeight: 44, border: '1px solid var(--ds-border)', background: 'var(--ds-bg)', color: 'var(--ds-text)', textDecoration: 'none' }}
                   >

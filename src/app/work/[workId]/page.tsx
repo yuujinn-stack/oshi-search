@@ -592,6 +592,7 @@ export default async function WorkDetailPage({ params }: Props) {
                     track={{
                       productId: product.id,
                       personSlug: '',
+                      workId,
                       title: product.title,
                       category: product.category,
                       imageUrl: product.imageUrl,
