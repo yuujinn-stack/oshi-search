@@ -28,6 +28,10 @@ import OshiCardEntryCta from '@/components/oshi-card/OshiCardEntryCta';
 import type { HomeGroupItem } from '@/components/site/HomeGroupSection';
 import { Space_Grotesk, Space_Mono, Noto_Sans_JP } from 'next/font/google';
 import PrNotice from '@/components/site/PrNotice';
+import SaleCorner from '@/components/site/SaleCorner';
+import { SALE_CORNERS } from '@/lib/sale-corner/config';
+import { pickSaleCorner, saleCornerLinks, salePhaseAt } from '@/lib/sale-corner/core';
+import { isLiveArchiveGroup } from '@/lib/live-archive/core';
 import './home-graphic.css';
 
 // トップページのデザイン「C. Graphic Pop」用フォント（home-graphic.css の --pc-* を上書き）。
@@ -236,6 +240,19 @@ export default async function HomePage() {
     category: getHomeGroupCategory(g, homeCategoryOverrides),
   }));
 
+  // 期間限定の楽天セール特設コーナー（設定: src/lib/sale-corner/config.ts）。終了したものは選ばれない。
+  // このページはキャッシュされるため、開始・終了の切り替えはクライアント（SaleCorner）でも端末の時刻で確認し直す。
+  // グループのURLは「グループで探す」と同じ groupHrefByName で作り、トップに出ているグループだけを載せる。
+  const renderedAt = Date.now();
+  const saleCorner = pickSaleCorner(SALE_CORNERS, renderedAt);
+  const saleCornerConfig = saleCorner ? SALE_CORNERS.find((c) => c.id === saleCorner.id) : undefined;
+  const saleLinks = saleCornerConfig
+    ? saleCornerLinks(saleCornerConfig.groups.filter((name) => groups.includes(name)).map((name) => {
+        const href = groupHrefByName(name, groupMetaList);
+        return { groupName: name, groupHref: href, liveHref: isLiveArchiveGroup(name) ? `${href}/live` : null };
+      }))
+    : [];
+
   const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oshi-search.jp';
   // サイト全体のWebSite/Organization JSON-LD。個別ページ（Person/Movie等）とは異なり
   // 特定コンテンツの主張ではなくサイト自体の識別情報のため、既存の検索機能（/search?q=）
@@ -298,6 +315,17 @@ export default async function HomePage() {
 
       {/* ━━━ グループ・ジャンルから探す ━━━ */}
       <div style={{ maxWidth: '1152px', margin: '0 auto', padding: 'clamp(24px, 5vw, 48px) 16px' }}>
+
+        {/* 期間限定の楽天セール特設コーナー（開始前は告知・開催中・終了後は非表示）。<aside> で描画。
+            スマホでも見えるよう「グループで探す」の直前に置く（セクション番号CSS〔section:nth-of-type〕には影響しない） */}
+        {saleCorner && (
+          <SaleCorner
+            corner={saleCorner}
+            links={saleLinks}
+            initialPhase={salePhaseAt(saleCorner, renderedAt)}
+            style={{ marginBottom: '32px' }}
+          />
+        )}
 
         {/* グループで探す */}
         <HomeGroupSection groups={homeGroups} />

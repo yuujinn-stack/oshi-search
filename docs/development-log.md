@@ -6212,3 +6212,52 @@ oshi-search（未commit）
 - テスト: 新規 `src/lib/__tests__/tracking-env.test.ts`（Preview で4種類の計測と検索が書き込まないこと、本番・未設定では従来どおりのキーに書き込むこと）。
 - Preview（ef6324b）の生成元は Vercel API で確認（gitSource: github / feat/rakuten-click-tracking / ef6324b781f6）。GitHub にテスト用の CI は無い（workflow は手動起動の price-refresh のみ）。コミットの状態は Vercel の2プロジェクト分で、別プロジェクト `shi-search-v2` の失敗は main でも同じ既存の問題（DB 接続文字列が無い）。
 - 本番の戻し先: 公開前の本番 `dpl_BBLvw956kVJsi9mMzXuZ5S5xrumU`（56a236a・oshi-search.jp のエイリアス先）。
+
+---
+
+## Task 199 — トップページに期間限定の楽天セール特設コーナー（楽天ブラックフライデー2026）（2026-11-18・未commit・本番デプロイなし）
+
+### 目的
+楽天ブラックフライデー（2026-11-19 20:00〜11-25 01:59 JST）期間の集客と、既存の推し活商品ページ（お買い物診断・グループ・ライブ映像）経由の楽天アフィリエイト送客を増やす。開始前は告知、開催中は「開催中」、終了後は自動で非表示。次回の楽天スーパーSALE 等は設定を1件足すだけで流用する（管理画面・DB は作らない）。
+
+### 作業場所
+本番（origin/main = 872ef46）から作った worktree `~/dev/oshi-search-blackfriday`（ブランチ feat/rakuten-blackfriday-2026）。ローカル main（31コミット遅れ・未コミット変更多数）では作業していない。
+
+### 変更ファイル
+- 新規 `src/lib/sale-corner/config.ts` — `SALE_CORNERS`（id・見出し・開催中ラベル・一文・開始/終了〔+09:00 付き ISO〕・任意の告知開始・楽天公式URL・確認日・参加条件の注記・グループ名）。URL はグループ名から表示時に作るため設定に書かない。
+- 新規 `src/lib/sale-corner/core.ts` — `toSaleCorner`（日時・公式URL〔rakuten-event/core の isOfficialRakutenUrl。https・rakuten.co.jp・アフィリエイト計測リンク不可〕の検証）、`salePhaseAt`（終了日時ちょうど以降は null）、`nextSaleBoundary`、`pickSaleCorner`（開催中 → 開始の早い順で1件）、`upcomingLabel`／`salePeriodLabel`（+9時間固定で計算＝実行環境のTZに依存しない）、`saleCornerLinks`、GA4 イベント組み立て。
+- 新規 `src/components/site/SaleCorner.tsx`（client）— 最初の描画はサーバーで決めた状態（initialPhase）＝ハイドレーション不一致なし。マウント後に端末の時刻で再判定し、開始・終了の時刻ちょうど・1分ごと・タブ復帰時にも切り替え。終了後は null。<aside> で描画（home-graphic.css の section:nth-of-type に影響しない）。黒地＋オレンジの影（Graphic Pop の CTA と同系）、アニメーション・ポップアップなし。楽天の画像・ロゴ・商品リンクは置かない。
+- `src/app/page.tsx` — 「グループで探す」の直後（サブスク診断CTAの前）に描画。グループURLは「グループで探す」と同じ `groupHrefByName`、トップに出ているグループだけ、ライブ映像は `isLiveArchiveGroup` のグループだけ `${groupHref}/live`（sitemap と同じ作り方）。
+- 新規テスト `src/lib/__tests__/sale-corner.test.ts`（19件）。
+
+### 表示とリンク先（本番で 200 を確認）
+- 開始前バッジ「11月19日20時スタート」、開催中「楽天ブラックフライデー開催中」。見出し「楽天ブラックフライデー2026」、「推しの写真集・CD・ライブ映像を探そう」、「11/19 20:00〜11/25 1:59（日本時間）」
+- /oshi-shopping、/groups/snow-man・/groups/snow-man/live、/groups/M!LK・/groups/M!LK/live、/groups/sixtones・/groups/sixtones/live、楽天公式 https://event.rakuten.co.jp/campaign/point-up/blackfriday/（新しいタブ・noopener noreferrer・「楽天のページ（event.rakuten.co.jp）が新しいタブで開きます」と明記）
+- 注記: エントリー必要・1ショップ1,000円（税込）以上などの条件・一部対象外ショップあり（公式ページで 2026-11-18 に確認）、掲載商品がセール対象か・価格・在庫・特典は未確認である旨。値引き・半額等の表現なし（テストで禁止語を確認）
+
+### 計測（GA4。既存の sendGaEvent / sendGaEventWhenReady 経由＝本番ホストのみ）
+- `sale_corner_view`（sale_id・sale_phase・placement=home_sale_corner）: コーナーの半分以上が画面に入ったときページ表示ごと1回
+- `sale_corner_click`（sale_id・sale_phase・cta=oshi_shopping|group_page|live_archive・link_url・position・group_name・placement）: 推しサーチ内の導線（通常・中クリック）
+- `rakuten_campaign_click`（既存イベント名。sale_id・campaign_status・campaign_kind=market_kaimawari・link_type=official・placement=home_sale_corner）: 楽天公式セール会場へのクリック
+- 1回のクリックで1イベントだけ。コーナー内に楽天商品リンクは無いため affiliate_click とは重ならない。遷移先ページでの商品クリックは従来どおり affiliate_click（page_type・placement で区別）
+
+### 確認
+- 公式ページ（2026-11-18 取得）: 期間 11/19(木)20:00〜11/25(水)01:59、エントリー必要、1ショップ1,000円(税込)以上、一部対象外ショップ
+- tsc は既知の pglite 2件のみ、vitest 3,041件成功（新規19件は TZ=Asia/Tokyo・UTC・America/Los_Angeles でも成功）、next build 成功（/ は従来どおり ISR 1h）
+- next start + Playwright（oshi-search.jp をローカルへ。外部通信・/api POST は遮断）でブラウザ時刻を操作: 現在＝告知、11/19 19:59:50＝告知、19:59:57→5秒進めて開催中に切り替わる、開催中（PC）、11/25 01:58:50＝開催中、01:58:57→5秒進めて非表示、11/26＝非表示（サーバーHTMLは告知のままでもマウント後に消える）。ハイドレーションエラー・横スクロールなし（iPhone 13 / 1280px）
+- クリック: 公式会場は新しいタブで公式URL＋rakuten_campaign_click 1件、M!LK ライブ映像の中クリックで sale_corner_click 1件、お買い物診断は同じタブで /oshi-shopping へ遷移＋sale_corner_click 1件
+- 既存の楽天商品リンク: /groups/snow-man・/groups/snow-man/live・/oshi-shopping・/photobooks は本番と href 完全一致。トップはローカルの24件すべてが本番と一致（本番だけの7件は Redis が必要な「人気商品」）。トップの商品リンクのクリックで href どおりの hb.afl.rakuten.co.jp を開き affiliate_click 1件（sale_corner_* は送られない）
+
+### 注意・運用
+- トップは ISR（1時間）。キャッシュ中に開始・終了を迎えても JS で切り替わるが、JS 無効の閲覧・クローラーには最大1時間ほど前の状態が出る（終了後もキャッシュ更新までは HTML に残り、マウント直後に消える）
+- 撤去: 終了後は自動で非表示のためコード撤去は任意。撤去する場合は page.tsx の追加部分と sale-corner/・SaleCorner.tsx・テストを削除（既存ページは参照していない）
+- 次回: SALE_CORNERS に1件追加（公式ページで日時・条件を確認し officialCheckedAt を更新）。告知開始を遅らせたい場合は announceFrom
+- GA4 で sale_id・sale_phase・cta 等を集計するにはカスタムディメンション登録が必要（コード外）
+- GA4 の拡張計測（離脱クリック）が有効なら、公式会場クリックで GA4 自動の click イベントも別途記録される（既存の外部リンクと同じ挙動。コード側の重複送信ではない）
+
+### Task 199 追記：配置とボタンの高さの修正・公開前の最終確認（2026-11-18・push・本番デプロイなし）
+- `src/app/page.tsx`: 特設コーナーを「グループで探す」の直後 → 直前に移動（スマホ・PC共通。<aside> のためセクション番号「01 — GROUP」等は不変を確認）。スマホでの開始位置はファーストビューの下端付近（iPhone 13 で 0.71 画面・iPhone SE で 0.86 画面。移動前は 2.1／2.7 画面）
+- `src/components/site/SaleCorner.tsx`: グループ・ライブ映像ボタンの minHeight 40 → 44（お買い物診断 48・公式会場 44 以上は従来どおり）。文言・その他のデザインは変更なし
+- 楽天アフィリエイト: セール会場リンクは通常URL（アフィリエイトID なし＝このリンク自体の成果は見込まない）。発行済みのセール会場用アフィリエイトURLは無く、作成していない。差し替えるときは config.ts の officialUrl だが、isOfficialRakutenUrl が hb.afl 等を拒否するため貼り替えるとコーナーごと非表示になる → 別項目（例 officialAffiliateUrl）と検証の追加が必要
+- 既存の型エラー2件（pglite が未インストールのテスト2ファイル。origin/main に ecb6151 から存在）は `next build` の型チェック（Running TypeScript）を通過する。現在の本番デプロイ（2026-11-18 11:34・oshi-search.jp）の Vercel ビルドログでも Running/Finished TypeScript で成功
+- 確認: tsc は既知2件のみ、vitest 3,041件成功、next build 成功。時刻操作8場面・クリック計測・商品リンク（href どおり・affiliate_click 1件）・iPhone SE/13・Pixel 7・PC 1280/1920 で横スクロールなし、ボタンは全て 44px 以上
