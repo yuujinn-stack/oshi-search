@@ -6261,3 +6261,58 @@ oshi-search（未commit）
 - 楽天アフィリエイト: セール会場リンクは通常URL（アフィリエイトID なし＝このリンク自体の成果は見込まない）。発行済みのセール会場用アフィリエイトURLは無く、作成していない。差し替えるときは config.ts の officialUrl だが、isOfficialRakutenUrl が hb.afl 等を拒否するため貼り替えるとコーナーごと非表示になる → 別項目（例 officialAffiliateUrl）と検証の追加が必要
 - 既存の型エラー2件（pglite が未インストールのテスト2ファイル。origin/main に ecb6151 から存在）は `next build` の型チェック（Running TypeScript）を通過する。現在の本番デプロイ（2026-11-18 11:34・oshi-search.jp）の Vercel ビルドログでも Running/Finished TypeScript で成功
 - 確認: tsc は既知2件のみ、vitest 3,041件成功、next build 成功。時刻操作8場面・クリック計測・商品リンク（href どおり・affiliate_click 1件）・iPhone SE/13・Pixel 7・PC 1280/1920 で横スクロールなし、ボタンは全て 44px 以上
+
+---
+
+## Task 200 — 動画生成に「楽天ブラックフライデー」リール3種類（A 推しグッズ紹介・B 過去ライブ映像・C 予算5,000円×お買い物診断）（2026-11-18・未commit・本番デプロイなし・Worker 未再起動）
+
+### 目的
+楽天ブラックフライデー期間の集客と楽天アフィリエイト収益のため、Instagram リール（9:16・1080×1920）を /admin/video-maker から人物・グループを選んで作れるようにする。既存テンプレート・TikTok 版 CTA・Worker の既存ジョブ処理は変えない。
+
+### 方針
+- 既存の「サイト誘導リール」（pipeline "site"・入力の種類 oshi-site-reel。推しサーチ本番を Playwright で実際に操作して撮影）にテンプレートID `site_bf_goods`（A）・`site_bf_live`（B）・`site_bf_shopping`（C）を追加。台本・ひらがな台本・SRT・CapCut 取り込み・Instagram 版／TikTok 版（最後の CTA だけ差し替え。pipeline 単位で対応済み）はそのまま使う。管理画面ではテンプレート一覧の下に「楽天ブラックフライデー」として別に並べる
+- 手順: A 冒頭 → 名前で検索 → 関連商品 → 過去のライブ映像のコーナー → 締め（約17〜18秒）／B 冒頭 → 人物・グループのページのライブ映像コーナー → 一覧ページ（スクロール）→ 先頭の公演の DVD・Blu-ray → 締め（約19秒）／C 冒頭 → お買い物診断の画面 → 推し → 用途・予算「5,000円まで」→ 診断結果 → 締め（約20秒）
+- お買い物診断は実在（/oshi-shopping・予算「5,000円まで」あり）。診断は人物1人を選ぶ方式のため C は人物のみ（グループ名を入れるとメンバー選択になる。新規開発はしていない）
+- A・B は過去のライブ映像のコーナー（#live-archive）がある対象だけ: 特集の対象グループ（M!LK・Snow Man・SixTONES）と、その現在のメンバー（人物ページと同じ判定）で掲載中の公演があるもの。それ以外は理由つきで拒否（例: 北川景子）
+- セール情報: 日時はトップの特設コーナーと同じ `SALE_CORNERS`（Task 199）を参照し、コードに固定しない。動画の文言（開催前・開催中の冒頭、A・B・C の締め、C の予算、PR 表記）は新規 `src/lib/sale-video/config.ts`。次回は両方に同じ id で1件追加
+- 終了後・状態変化の防止: 台本の生成・ジョブ作成（サーバー）・CapCut 音声付きジョブ・Worker の生成（撮影前とレンダリング前）で開催状態を確認。終了後は拒否、開催前に作った「始まります」の台本は開催開始後に拒否（作り直し）
+- 文言: セール価格・割引率・ポイント・エントリー条件は台本・画面に入れない（投稿文は公式の日時だけ＋「参加条件等は楽天の公式ページで確認」）。「まだ買ってない？」等の禁止語はテストで確認。PR 表記「PR（楽天アフィリエイト広告を含みます）」を動画の上端（全編）と投稿文の先頭（#PR）に入れる。楽天のロゴ・画像は使わない
+- デザイン: 既存の黄色基調（背景・字幕・実画面の枠）を継承し、冒頭の帯（黒地・白文字・赤縁。幅に合わせて自動縮小）、手順の見出し（赤系）、締めのパネル（黒地・白文字・赤縁）＋「推しサーチで検索！」＋ロゴ・サイト名
+- UTM: utm_campaign はセールの id（rakuten-blackfriday-2026）
+
+### 変更ファイル（oshi-search。worktree `~/dev/oshi-search-bf-video`・ブランチ feat/bf-sale-video・origin/main=cce7df2 から）
+- 新規 `src/lib/sale-video/config.ts`（文言の設定）・`src/lib/sale-video/core.ts`（`pickSaleVideo`・`checkSaleVideoState`。開催判定は sale-corner の `salePhaseAt` を使用）
+- `src/lib/video-site-reel.ts`: 3種類のID・手順・説明、`SALE_SITE_TEMPLATE_IDS`/`isSaleSiteTemplateId`、締めの言葉 `sale`（`siteCtaOf`）、`SiteTarget.sale`/`live`、台本（A・B・C）、区間の長さ `SALE_SITE_TIMING`（依頼の構成どおり。読みが長い区間だけ延ばす。冒頭は3.8秒まで）、投稿文 `buildSaleCaption`、`formatJstRange`、`splitSaleTitle`。既存10種類の台本・配分・投稿文は不変
+- `src/server/video-jobs/site-target.ts`: `resolveSaleSiteTarget`（セール・対象・ライブ映像のコーナー・C の予算はセール設定の値）、`loadSaleLiveTarget`・`loadSaleLiveCandidates`・`loadSaleVideoStatus`、ジョブ作成時の冒頭文の照合、CapCut 音声ジョブの開催状態確認
+- `src/app/api/admin/video-jobs/site-candidates/route.ts`: `kind=saleStatus`・`kind=saleLive`
+- `src/app/admin/video-maker/SiteReelPicker.tsx`: セールの状態表示、A・B の人物／グループ選択（対象だけ）、C の人物・用途・予算（固定表示）、締めはセール設定の文（選択なし）
+- `src/app/admin/video-maker/VideoMakerClient.tsx`: 「楽天ブラックフライデー」の区分、音声付きジョブの締めの種類
+- テスト: 新規 `src/lib/__tests__/video-site-sale.test.ts`（15件）、`video-site-reel.test.ts` は既存10種類だけを対象にするよう調整
+
+### 変更ファイル（oshi-video-maker。worktree `~/dev/oshi-video-maker-bf-video`・ブランチ feat/bf-sale-video・HEAD 27df733 から。本体フォルダ・稼働中の Worker は未変更）
+- `src/compositions/site/siteInput.ts`（3種類・`SiteSale`・`checkSiteSale`・締め `sale`・投稿文の PR 表記）、`OshiSiteReel.tsx`（セールのデザイン・PR 表記）、`OshiSiteRoot.tsx`（SiteSaleGoods・SiteSaleLiveArchive・SiteSaleShopping）
+- `scripts/site/captureSiteFlow.ts`（`flowSaleGoods`・`flowSaleLive`・`flowSaleShopping`。関連商品・ライブ映像のコーナー・一覧・商品リンクが無ければ中止。楽天へは移動しない）
+- `scripts/siteProduce.ts`（撮影前・レンダリング前の開催状態確認、QA `sale-period`）
+- `src/config/videoTemplateRegistry.ts`（`SALE_SITE_TEMPLATE_REGISTRY`）、`capcutNarrationConfig.ts`、`scripts/worker/videoWorker.ts`（`VIDEO_WORKER_SALE_TEMPLATES=1` のときだけ報告）
+- テスト: 新規 `siteSale.test.ts`（4件）、`site.test.ts`・`aruaruNarration.test.ts` の一覧を更新
+
+### 確認
+- 本番DB（読み取りのみ）でサーバーと同じ処理で入力を作成し、Worker と同じ生成処理（siteProduce）で本番サイトを撮影（計測・GA は遮断）: A Snow Man（グループ）・佐野勇斗、B M!LK（グループ）・目黒蓮、C 佐野勇斗・目黒蓮 の6本すべて QA PASS（18.2／18.2／19.0／19.0／20.5／20.5秒）。読み未登録0件
+- 開催中の日時で作った台本を現在生成 →「開催状態が変わりました」で中止。終了後（11/25 02:00）の日時では台本の生成を全件拒否。対象外の人物は拒否
+- oshi-search: tsc は既知の pglite 2件のみ、vitest 3,056件成功、next build 成功（129ページ）
+- oshi-video-maker: tsc 0件、テスト344件成功（worktree では Worker が同期する `assets/pronunciation/registered-readings.json`（git 管理外）を本体から複製して実行。無いと既存の media グループの読みのテスト3件が失敗する＝今回と無関係）
+- 未確認: 管理画面のブラウザ操作（Worker が3種類を報告するまで表示されない）、CapCut 音声付きの生成、本番 Worker での生成
+
+### 本番反映の手順（未実施）
+1. oshi-search: feat/bf-sale-video を origin/main に fast-forward で push → Vercel 本番
+2. oshi-video-maker: worktree の変更を commit し、本体フォルダ（main）へ取り込む（待機・生成中ジョブ0件を確認してから）
+3. Worker の `.env.local` に `VIDEO_WORKER_SALE_TEMPLATES=1` を追加 → `launchctl kickstart -k gui/$(id -u)/jp.oshi-search.video-worker`
+- 逆順（Worker 先）でも、推しサーチ側が古いと台本を作れないだけで既存ジョブには影響しない
+- セールが始まる 11/19 20:00 以降は冒頭が「開催中」の文になる。開催前に作った台本は作り直しが必要
+
+### Task 200 追記：本番反映前の最終確認と commit（2026-11-18・push/デプロイ/Worker 再起動なし）
+- **CapCut 音声付きの尺の修正（oshi-video-maker）:** 確認で、音声付きは従来のサイト誘導リールの配分（読み上げに合わせて画面を詰める）により 15.5〜16.0秒に縮み、C では入力の途中の画面が省略されていた。セールの3種類だけ、登録グループ紹介（`buildRegisteredPacedTimeline`）と同じ方式に変更: 文の間の無音の中間で WAV を切り分け、各文を画面の始まりの0.15秒後から流す（速度は変えない）。画面は構成どおり（A 17・B 19・C 20秒）で、読み上げが収まらない文だけ延ばし、24秒超は作らない。新規 `buildSitePacedTimeline`（`src/compositions/site/siteScript.ts`）、`scripts/siteProduce.ts`（`narration-paced.wav`・QA `paced-extend`）、テスト1件。既存10種類は従来の配分のまま
+- **確認:** macOS の読み上げで CapCut と同じ形の WAV・SRT を作り、本物の取り込み処理で A（Snow Man）18.3秒・B（M!LK）19.0秒・C（佐野勇斗）20.6秒、すべて QA PASS（台本一致 1.00、各文の開始は画面の0.15秒後、音量 -16 LUFS）。ひらがな台本・SRT（narration.srt＝台本の文・実際の読み上げ時刻）を確認。既存の SNS 後処理（snsVariants）で Instagram 版・TikTok 版を作成し4件とも PASS。TikTok 版の最後は既存の確定済み CTA「気になったら、推しサーチで検索！」（SNS の処理・CTA 音声は変更なし）。TikTok 版の最後の CTA 部分（約2.8秒）には動画内の PR 表記が出ない（確定済みの CTA の画面を変えないため。投稿文の PR 表記で補う）
+- **ジョブ数の確認:** 新規 `scripts/video-jobs/check-active-jobs.ts`（読み取りのみ。queued・processing の件数・一覧と Worker の最終報告）。2026-11-18 18:25 時点で待機0件・生成中0件
+- **型エラー:** oshi-search の tsc エラーは既知の2件のみ（`@electric-sql/pglite` が package.json に無い。ecb6151 から未変更のテスト2ファイル）。今回の変更による型エラーは0件。oshi-video-maker は0件
+- **commit:** 両リポジトリとも worktree のブランチ feat/bf-sale-video に今回の変更だけを commit（node_modules・環境変数ファイル・生成物は含めない）。本体フォルダ（~/dev/oshi-search の main・~/dev/oshi-video-maker）の未コミット変更には触れていない（開発ログの追記のみ本体フォルダにも記録）

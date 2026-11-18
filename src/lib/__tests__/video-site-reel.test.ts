@@ -8,17 +8,23 @@ import {
   buildSiteCaption,
   buildSiteLinks,
   buildSitePlan,
+  isSaleSiteTemplateId,
   siteReadingOf,
   siteStepsFor,
+  type SaleSiteTemplateId,
   type SiteTarget,
   type SiteTemplateId,
 } from '@/lib/video-site-reel';
+
+// サイト誘導リール10種類（期間限定セールの3種類は src/lib/__tests__/video-site-sale.test.ts）
+type BaseSiteTemplateId = Exclude<SiteTemplateId, SaleSiteTemplateId>;
+const BASE_SITE_TEMPLATE_IDS = SITE_TEMPLATE_IDS.filter((id): id is BaseSiteTemplateId => !isSaleSiteTemplateId(id));
 import { OSHI_SITE_INPUT_KIND, TEMPLATE_INPUT_KINDS, parseOshiSiteInput, parseTemplateInput, TemplateInputError } from '@/lib/video-template-input';
 
 const readings = { fixed: { 目黒蓮: 'めぐろれん', 'M!LK': 'みるく', 佐野勇斗: 'さのはやと', 北村匠海: 'きたむらたくみ', 'U-NEXT': 'ゆーねくすと', 北川景子: 'きたがわけいこ' }, registered: {} };
 const p = (name: string) => ({ name, pagePath: `/person/${encodeURIComponent(name)}` });
 
-const TARGETS: Record<SiteTemplateId, SiteTarget> = {
+const TARGETS: Record<BaseSiteTemplateId, SiteTarget> = {
   site_person_search: { kind: 'person', ...p('目黒蓮') },
   site_group_member_search: { kind: 'group', name: 'M!LK', pagePath: '/groups/milk', member: p('佐野勇斗'), memberCount: 5 },
   site_work_cast_search: { kind: 'person', ...p('目黒蓮'), work: { id: 'tmdb-movie-1', title: 'SAKAMOTO DAYS', pagePath: '/work/tmdb-movie-1', from: p('目黒蓮'), to: p('北村匠海') } },
@@ -33,8 +39,8 @@ const TARGETS: Record<SiteTemplateId, SiteTarget> = {
 
 describe('サイト誘導リール10種類の台本', () => {
   it('10種類すべて、冒頭 → テンプレートの手順 → 締め（1つ）の区間と台本を作り、24秒以内に収まる', () => {
-    expect(SITE_TEMPLATE_IDS).toHaveLength(10);
-    for (const id of SITE_TEMPLATE_IDS) {
+    expect(BASE_SITE_TEMPLATE_IDS).toHaveLength(10);
+    for (const id of BASE_SITE_TEMPLATE_IDS) {
       const plan = buildSitePlan({ templateId: id, target: TARGETS[id], cta: 'profile', readings });
       expect(plan.ok, id).toBe(true);
       if (!plan.ok) continue;
@@ -53,7 +59,7 @@ describe('サイト誘導リール10種類の台本', () => {
   });
 
   it('冒頭の文はユーザー指定の文（グループは画面の人数、続けて検索は人数）', () => {
-    const hook = (id: SiteTemplateId) => {
+    const hook = (id: BaseSiteTemplateId) => {
       const plan = buildSitePlan({ templateId: id, target: TARGETS[id], cta: 'profile', readings });
       return plan.ok ? plan.lines[0].text : '';
     };

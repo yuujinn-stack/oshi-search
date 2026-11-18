@@ -10,6 +10,8 @@ import {
   loadSitePhotobookPersons,
   loadSiteProviderPersons,
   loadSiteProviders,
+  loadSaleLiveCandidates,
+  loadSaleVideoStatus,
   resolveSiteTarget,
 } from '@/server/video-jobs/site-target';
 
@@ -23,6 +25,8 @@ export const dynamic = 'force-dynamic';
  *   kind=providers / kind=providerPersons&provider=  トップページの配信サービス・サービスのページの人物
  *   kind=shoppingOptions     お買い物診断の用途・予算（サイトの選択肢）
  *   kind=cardWorks&name=     推し布教カードで選べる作品
+ *   kind=saleStatus          期間限定セールのリール: いま使うセール（開催前・開催中。無ければ sale=null）
+ *   kind=saleLive            期間限定セールのリール A・B: 過去のライブ映像のコーナーがあるグループと、その現在のメンバー
  */
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams;
@@ -48,6 +52,10 @@ export async function GET(req: NextRequest) {
         const p = await loadOshiCardPerson(name);
         return NextResponse.json({ works: p ? p.candidates.map((w) => ({ id: w.id, title: w.title, year: w.year ?? null })) : [] });
       }
+      case 'saleStatus':
+        return NextResponse.json({ sale: loadSaleVideoStatus() });
+      case 'saleLive':
+        return NextResponse.json(await loadSaleLiveCandidates());
       default:
         return NextResponse.json({ error: '不正な指定です' }, { status: 400 });
     }

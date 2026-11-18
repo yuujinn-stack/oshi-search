@@ -10,6 +10,7 @@
 
 import { countFollowMora } from './video-follow-reel';
 import { ninKana } from './video-registered-groups';
+import { saleVideoConfigOf, type SaleVideoState } from './sale-video/core';
 
 export const SITE_TEMPLATE_CATEGORY = 'site_referral' as const;
 export const SITE_CATEGORY_LABEL = 'サイト誘導';
@@ -26,9 +27,19 @@ export const SITE_TEMPLATE_IDS = [
   'site_photobook_search',
   'site_fan_card_demo',
   'site_vod_service_search',
+  // 期間限定セール（楽天ブラックフライデー）の3種類。管理画面では「楽天ブラックフライデー」として別に並べる
+  'site_bf_goods',
+  'site_bf_live',
+  'site_bf_shopping',
 ] as const;
 export type SiteTemplateId = (typeof SITE_TEMPLATE_IDS)[number];
 export const isSiteTemplateId = (id: unknown): id is SiteTemplateId => typeof id === 'string' && (SITE_TEMPLATE_IDS as readonly string[]).includes(id);
+
+/** 期間限定セールのリール（A 推しグッズ紹介・B 過去ライブ映像・C 予算5,000円×お買い物診断）。セールの開催前・開催中だけ作れる */
+export const SALE_SITE_TEMPLATE_IDS = ['site_bf_goods', 'site_bf_live', 'site_bf_shopping'] as const;
+export type SaleSiteTemplateId = (typeof SALE_SITE_TEMPLATE_IDS)[number];
+export const isSaleSiteTemplateId = (id: unknown): id is SaleSiteTemplateId => typeof id === 'string' && (SALE_SITE_TEMPLATE_IDS as readonly string[]).includes(id);
+export const SALE_SITE_SECTION_TITLE = '楽天ブラックフライデー';
 
 /** テンプレートごとの操作の手順（oshi-video-maker の SITE_TEMPLATE_STEPS と同じ。この順に撮影し、この順に見せる） */
 export const SITE_TEMPLATE_STEPS = {
@@ -42,6 +53,9 @@ export const SITE_TEMPLATE_STEPS = {
   site_photobook_search: ['list', 'filter', 'item'],
   site_fan_card_demo: ['pick', 'works', 'card'],
   site_vod_service_search: ['services', 'provider', 'person'],
+  site_bf_goods: ['search', 'goods', 'live'],
+  site_bf_live: ['corner', 'list', 'discs'],
+  site_bf_shopping: ['entry', 'pick', 'answers', 'result'],
 } as const satisfies Record<SiteTemplateId, readonly string[]>;
 export type SiteStep = (typeof SITE_TEMPLATE_STEPS)[SiteTemplateId][number];
 
@@ -79,14 +93,39 @@ export const SITE_TEMPLATE_SPECS: Record<SiteTemplateId, SiteTemplateSpec> = {
   site_photobook_search: { name: 'B8 写真集・フォトブックを探す', hook: '推しの写真集、ここからチェックできます', target: 'person', feature: '写真集を探す', guide: '写真集の一覧 → 人物で絞り込み → 掲載中の写真集。写真集の一覧に掲載中の写真集がある人物だけ選べます。商品の購入ページ（楽天）へは移動しません。' },
   site_fan_card_demo: { name: 'B9 推し布教カードを作ってみる', hook: '推しを紹介するカード、作ってみた！', target: 'person', feature: '推し布教カード', guide: '既存の推し布教カードで、推しを選ぶ → おすすめ作品（1〜3件）を選ぶ → カードの完成。カードに載る作品は推し布教カードで選べる公開作品だけです。' },
   site_vod_service_search: { name: 'B10 配信サービスから出演作品を探す', hook: '使っているサブスクから作品を探してみた', target: 'person', feature: null, guide: 'トップページの「配信サービスから探す」→ サービスのページ →「配信作品から人物を探す」の人物 → 人物ページの配信中の出演作品。配信の種類（見放題・レンタル・追加チャンネル）は画面の表示どおりで、台本では区別を言いません。' },
+  // 冒頭・締めの文はセールの設定（src/lib/sale-video/config.ts）から作る（ここの hook は管理画面の説明用）
+  site_bf_goods: { name: 'A ブラックフライデー × 推しグッズ紹介', hook: '楽天ブラックフライデーセールが始まります！', target: 'personOrGroup', feature: null, guide: 'トップページで名前を検索 → 人物・グループのページ → 関連商品 → 過去のライブ映像（DVD・Blu-ray）。過去のライブ映像のコーナーがある人物・グループ（過去のライブ映像特集の対象グループと、その現在のメンバー）だけ選べます。セール価格・割引率・ポイント還元率は台本に入れません。' },
+  site_bf_live: { name: 'B 過去ライブ映像 × ブラックフライデー', hook: '推しを好きになる前のライブ、見たことある？', target: 'personOrGroup', feature: null, guide: '人物・グループのページの過去のライブ映像のコーナー → ライブ映像の一覧（スクロール）→ 公演のDVD・Blu-ray。推しサーチに掲載中のライブ映像・商品だけを撮影します（過去のライブ映像特集の対象グループと、その現在のメンバー）。' },
+  site_bf_shopping: { name: 'C 予算5,000円 × 推し活お買い物診断', hook: 'ブラックフライデー、予算5,000円なら何を探す？', target: 'person', feature: '推し活お買い物診断', guide: '実際の推し活お買い物診断で、推し（人物1人）→ 用途 → 予算「5,000円まで」→ 診断結果。診断は人物を1人選ぶ方式のため、グループは選べません（グループ名を入れるとメンバーを選ぶ画面になります）。価格は楽天から取得した時点の表示で、購入は楽天の商品ページ（外部サイト）です。' },
 };
 
 export const SITE_CTA_OPTIONS = {
   profile: { text: 'あなたの推しも、プロフィールのリンクから検索してみてね！', kana: 'あなたのおしも、ぷろふぃーるのりんくからけんさくしてみてね！', title: 'あなたの推しも、\nプロフィールのリンクから\n検索してみてね！' },
   try: { text: '自分の推しでも試してみてね。推しサーチはプロフィールから！', kana: 'じぶんのおしでもためしてみてね。おしさーちはぷろふぃーるから！', title: '自分の推しでも\n試してみてね。\n推しサーチはプロフィールから！' },
 } as const;
-export type SiteCtaKey = keyof typeof SITE_CTA_OPTIONS;
-export const isSiteCtaKey = (v: unknown): v is SiteCtaKey => v === 'profile' || v === 'try';
+/** profile / try = サイト誘導リールの締め（選べる）。sale = 期間限定セールのリールの締め（セールの設定の文。選べない） */
+export type SiteCtaKey = keyof typeof SITE_CTA_OPTIONS | 'sale';
+export const isSiteCtaKey = (v: unknown): v is SiteCtaKey => v === 'profile' || v === 'try' || v === 'sale';
+
+export interface SiteCtaText {
+  text: string;
+  kana: string;
+  title: string;
+  /** 締めの画面の、大きな文字の下の案内（セールのリールだけ。ほかのテンプレートは検索ワード等を出す） */
+  sub?: string;
+}
+
+const SALE_CTA_KIND: Record<SaleSiteTemplateId, 'goods' | 'live' | 'shopping'> = { site_bf_goods: 'goods', site_bf_live: 'live', site_bf_shopping: 'shopping' };
+
+/** テンプレートの締めの言葉。セールのリールはセールの設定の文だけ（profile/try は使わない）。合わないときは null */
+export function siteCtaOf(templateId: SiteTemplateId, key: SiteCtaKey, sale?: Pick<SaleVideoState, 'id'> | null): SiteCtaText | null {
+  if (isSaleSiteTemplateId(templateId)) {
+    if (key !== 'sale' || !sale) return null;
+    const c = saleVideoConfigOf(sale.id);
+    return c ? c.cta[SALE_CTA_KIND[templateId]] : null;
+  }
+  return key === 'sale' ? null : SITE_CTA_OPTIONS[key];
+}
 
 /** 推し活お買い物診断の選択肢（サイトの表示文言。src/lib/oshi-shopping/params.ts と同じ値。読みはここで決める） */
 export const SITE_SHOPPING_USE_KANA: Record<string, string> = {
@@ -119,6 +158,10 @@ export interface SiteTarget {
   shopping?: { use: string; useLabel: string; budget: string; budgetLabel: string } | null;
   card?: { workIds: string[]; variant: 'cool' | 'cute' } | null;
   provider?: { slug: string; name: string; pagePath: string } | null;
+  /** 期間限定セールのリール: セール名・開催状態・日時（サーバーがジョブ作成時の日時で決める） */
+  sale?: SaleVideoState | null;
+  /** 期間限定セールのリール A・B: 過去のライブ映像のコーナー（対象のページの #live-archive）と一覧ページ */
+  live?: { groupName: string; listPath: string; performances: number } | null;
 }
 
 /** 管理画面で選んだもの（名前・ID・選択肢の値だけ。パス・人数はサーバーが付ける） */
@@ -186,11 +229,12 @@ export const estimateSiteSeconds = (kana: string) => Math.round((countFollowMora
 
 export const SITE_UTM = { source: 'instagram', medium: 'social', campaign: 'site_referral' } as const;
 
-export function withSiteUtm(pathOrUrl: string, templateId: SiteTemplateId): string {
+/** campaign: 期間限定セールのリールはセールの id（例 rakuten-blackfriday-2026）。それ以外は site_referral */
+export function withSiteUtm(pathOrUrl: string, templateId: SiteTemplateId, campaign: string = SITE_UTM.campaign): string {
   const u = new URL(pathOrUrl, SITE_ORIGIN);
   u.searchParams.set('utm_source', SITE_UTM.source);
   u.searchParams.set('utm_medium', SITE_UTM.medium);
-  u.searchParams.set('utm_campaign', SITE_UTM.campaign);
+  u.searchParams.set('utm_campaign', campaign);
   u.searchParams.set('utm_content', templateId);
   return u.toString();
 }
@@ -212,6 +256,10 @@ export function siteLinkPath(templateId: SiteTemplateId, target: SiteTarget): st
       return '/oshi-card';
     case 'site_vod_service_search':
       return target.provider?.pagePath ?? '/';
+    case 'site_bf_live':
+      return target.live?.listPath ?? target.pagePath;
+    case 'site_bf_shopping':
+      return '/oshi-shopping';
     default:
       return target.pagePath;
   }
@@ -219,7 +267,8 @@ export function siteLinkPath(templateId: SiteTemplateId, target: SiteTarget): st
 
 export function buildSiteLinks(templateId: SiteTemplateId, target: SiteTarget): SiteLinks {
   const p = siteLinkPath(templateId, target);
-  return { pageUrl: new URL(p, SITE_ORIGIN).toString(), utmUrl: withSiteUtm(p, templateId), profileUrl: withSiteUtm('/', templateId) };
+  const campaign = isSaleSiteTemplateId(templateId) && target.sale ? target.sale.id : SITE_UTM.campaign;
+  return { pageUrl: new URL(p, SITE_ORIGIN).toString(), utmUrl: withSiteUtm(p, templateId, campaign), profileUrl: withSiteUtm('/', templateId, campaign) };
 }
 
 // ─── 台本 ───────────────────────────────
@@ -231,6 +280,13 @@ export type SitePlan =
 type Draft = { key: 'hook' | 'cta' | SiteStep; text: string; kana: string; label?: string; title?: string; sub?: string; note?: string };
 
 const circled = ['①', '②', '③', '④', '⑤'];
+
+/** セールの冒頭の大きな文字の改行（「、」の後、無ければ「…フライデー」の後） */
+export function splitSaleTitle(text: string): string {
+  if (text.includes('、')) return text.replace(/、/, '、\n');
+  const m = /^(.*?フライデー)(.+)$/.exec(text);
+  return m ? `${m[1]}\n${m[2]}` : text;
+}
 
 /**
  * 台本と区間を作る（対象はサーバーがDBで確かめたもの）。読みが無い名前は unresolved に出し、読みの欄には名前をそのまま入れる
@@ -252,7 +308,9 @@ export function buildSitePlan(opts: { templateId: SiteTemplateId; target: SiteTa
   const steps = siteStepsFor(templateId, target.persons?.length ?? 3);
   const name = target.name;
   const drafts: Draft[] = [];
-  const hook = (text: string, kana: string, sub?: string) => drafts.push({ key: 'hook', text, kana, title: text.replace(/、/, '、\n'), sub });
+  const hook = (text: string, kana: string, sub?: string, title?: string, note?: string) => drafts.push({ key: 'hook', text, kana, title: title ?? text.replace(/、/, '、\n'), sub, ...(note ? { note } : {}) });
+  const sale = target.sale ? saleVideoConfigOf(target.sale.id) : null;
+  if (isSaleSiteTemplateId(templateId) && (!target.sale || !sale)) return { ok: false, missing: ['開催前・開催中のセールがありません（セールの設定を確認してください）'] };
   const step = (key: SiteStep, label: string, text: string, kana: string, note?: string) => drafts.push({ key, label, text, kana, note });
 
   switch (templateId) {
@@ -356,11 +414,58 @@ export function buildSitePlan(opts: { templateId: SiteTemplateId; target: SiteTa
       step('person', `${name}の配信中の作品`, `人物を選べば、出演作品の配信先もわかります`, 'じんぶつをえらべば、しゅつえんさくひんのはいしんさきもわかります');
       break;
     }
+    // ─ 期間限定セール（冒頭・締めはセールの設定の文。セール価格・割引率・ポイント・条件は言わない） ─
+    case 'site_bf_goods': {
+      const live = target.live;
+      if (!live) {
+        missing.push('過去のライブ映像のコーナーがある人物・グループを選んでください');
+        break;
+      }
+      const h = sale!.goodsHook[target.sale!.phase];
+      hook(h.text, h.kana, name, splitSaleTitle(h.text), '写真集・CD・ライブ映像を推しの名前から');
+      step('search', '名前で検索', `推しサーチで「${name}」を検索`, `おしさーちで${k(name)}をけんさく`);
+      step('goods', '関連商品', '写真集やCDも、まとめて見つかります', 'しゃしんしゅうやしーでぃーも、まとめてみつかります', '価格は楽天から取得した時点の表示／購入は楽天の商品ページ（外部サイト）');
+      step('live', '過去のライブ映像', '過去のライブDVD・Blu-rayもチェック', 'かこのらいぶでぃーぶいでぃー、ぶるーれいもちぇっく');
+      break;
+    }
+    case 'site_bf_live': {
+      const live = target.live;
+      if (!live) {
+        missing.push('過去のライブ映像のコーナーがある人物・グループを選んでください');
+        break;
+      }
+      const h = sale!.liveHook[target.sale!.phase];
+      hook(h.text, h.kana, name);
+      step('corner', `${live.groupName}のライブ映像`, `${live.groupName}の過去のライブ映像は、ここから`, `${k(live.groupName)}のかこのらいぶえいぞうは、ここから`);
+      step('list', 'ライブ映像の一覧', '公演ごとに、一覧でチェックできます', 'こうえんごとに、いちらんでちぇっくできます');
+      step('discs', 'DVD・Blu-ray', 'DVDもBlu-rayも、ここからチェック', 'でぃーぶいでぃーもぶるーれいも、ここからちぇっく', '価格は楽天から取得した時点の表示／購入は楽天の商品ページ（外部サイト）');
+      break;
+    }
+    case 'site_bf_shopping': {
+      const s = target.shopping;
+      if (!s) {
+        missing.push('用途を選んでください');
+        break;
+      }
+      const useKana = SITE_SHOPPING_USE_KANA[s.useLabel];
+      const budgetKana = SITE_SHOPPING_BUDGET_KANA[s.budgetLabel];
+      if (!useKana || !budgetKana) missing.push('用途・予算の読みがありません');
+      const h = sale!.shoppingHook[target.sale!.phase];
+      hook(h.text, h.kana, name);
+      step('entry', '推し活お買い物診断', '推し活お買い物診断を開いて', 'おしかつおかいものしんだんをひらいて');
+      step('pick', '推しを選ぶ', `推しは「${name}」`, `おしは${k(name)}`);
+      step('answers', '用途と予算', `用途を選んで、予算は「${s.budgetLabel}」`, `ようとをえらんで、よさんは${budgetKana ?? s.budgetLabel}`);
+      step('result', '実際の診断結果', '条件に合う商品が見つかります', 'じょうけんにあうしょうひんがみつかります', '価格は楽天から取得した時点の表示／購入は楽天の商品ページ（外部サイト）');
+      break;
+    }
   }
   if (missing.length > 0) return { ok: false, missing };
 
-  const cta = SITE_CTA_OPTIONS[opts.cta];
-  const keyword = spec.feature
+  const cta = siteCtaOf(templateId, opts.cta, target.sale);
+  if (!cta) return { ok: false, missing: [isSaleSiteTemplateId(templateId) ? '締めの言葉はセールの設定の文です（台本を作り直してください）' : '締めの言葉を選んでください'] };
+  const keyword = cta.sub
+    ? cta.sub
+    : spec.feature
     ? `サイトで\n「${spec.feature}」`
     : templateId === 'site_work_cast_search'
       ? `検索ワード：${target.work!.from.name}`
@@ -387,7 +492,9 @@ export function buildSitePlan(opts: { templateId: SiteTemplateId; target: SiteTa
   const slots = allocateSiteSlots(segments, lines, templateId);
   segments.forEach((s, i) => (s.slotSeconds = slots[i]));
   const totalSeconds = Math.round(slots.reduce((a, b) => a + b, 0) * 10) / 10;
-  const titleName = templateId === 'site_vod_service_search' ? `${target.provider!.name}・${name}` : templateId === 'site_work_cast_search' ? target.work!.title : templateId === 'site_three_person_search' ? (target.persons ?? []).map((p) => p.name).join('・') : name;
+  const titleName = isSaleSiteTemplateId(templateId)
+    ? name
+    : templateId === 'site_vod_service_search' ? `${target.provider!.name}・${name}` : templateId === 'site_work_cast_search' ? target.work!.title : templateId === 'site_three_person_search' ? (target.persons ?? []).map((p) => p.name).join('・') : name;
   const title = `${drafts[0].text}｜${titleName}`.slice(0, 80);
   return { ok: true, segments, lines, title, unresolved: [...unresolved], links: buildSiteLinks(templateId, target), totalSeconds };
 }
@@ -406,12 +513,36 @@ export const SITE_STEP_MIN_BY_TEMPLATE: Partial<Record<SiteTemplateId, Partial<R
 export const SITE_MIN_TOTAL_SECONDS = 15;
 
 /**
+ * 期間限定セールのリールの区間の長さ（音声なし・秒。冒頭 → 手順 → 締め）。依頼の構成どおり
+ * A 0〜3 冒頭・3〜6 検索・6〜10 関連商品・10〜14 ライブ映像・14〜17 締め（17秒）
+ * B 0〜3 冒頭・3〜7 コーナー・7〜11 一覧・11〜15 DVD/BD・15〜19 締め（19秒）
+ * C 0〜3 冒頭・3〜6 診断画面・6〜10 推し・10〜14 用途と予算・14〜17 結果・17〜20 締め（20秒）
+ * 読みの見積もりが長い区間だけ延ばす（早送り・途中切れはしない）
+ */
+export const SALE_SITE_TIMING: Record<SaleSiteTemplateId, number[]> = {
+  site_bf_goods: [3, 3, 4, 4, 3],
+  site_bf_live: [3, 4, 4, 4, 4],
+  site_bf_shopping: [3, 3, 4, 4, 3, 3],
+};
+/** セールのリールの冒頭の上限（冒頭3秒前後で強い一言。読みが長くてもここまで） */
+export const SALE_HOOK_MAX_SECONDS = 3.8;
+
+/**
  * 区間の長さ（音声なし）: 読みの見積もり + 余白0.6秒。冒頭は2.6〜3.4秒、操作は2.6秒以上（画面を見せる）、締めは2.8秒以上。
  * 合計が15秒に満たないときだけ、操作の区間を順に3秒まで延ばす（読み終わったあとの無駄な待ち時間を作らない）
  */
 export function allocateSiteSlots(segments: Pick<SiteSegment, 'kind' | 'step'>[], lines: Pick<SiteLine, 'kana'>[], templateId?: SiteTemplateId): number[] {
   const mins = templateId ? SITE_STEP_MIN_BY_TEMPLATE[templateId] ?? {} : {};
   const r = (v: number) => Math.round(v * 10) / 10;
+  if (templateId && isSaleSiteTemplateId(templateId)) {
+    const fixed = SALE_SITE_TIMING[templateId];
+    return segments.map((s, i) => {
+      const est = estimateSiteSeconds(lines[i]?.kana ?? '');
+      const base = fixed[i] ?? SITE_STEP_MIN_SECONDS;
+      if (s.kind === 'hook') return r(Math.min(SALE_HOOK_MAX_SECONDS, Math.max(base, est + 0.4)));
+      return r(Math.min(6, Math.max(base, est + 0.6)));
+    });
+  }
   const slots = segments.map((s, i) => {
     const est = estimateSiteSeconds(lines[i]?.kana ?? '');
     if (s.kind === 'hook') return r(Math.min(3.4, Math.max(2.6, est + 0.4)));
@@ -439,7 +570,51 @@ export function checkSiteLines(segments: SiteSegment[], lines: SiteLine[], templ
 /** Instagram 投稿文の案（URLは本文に入れない。リンクはプロフィールから） */
 export function buildSiteCaption(opts: { templateId: SiteTemplateId; title: string; target: SiteTarget; cta: SiteCtaKey }): string {
   const spec = SITE_TEMPLATE_SPECS[opts.templateId];
+  if (isSaleSiteTemplateId(opts.templateId)) return buildSaleCaption(opts.templateId, opts.title, opts.target);
   const what = spec.feature ? `推しサーチの「${spec.feature}」を実際に使ってみました。` : '推しサーチで実際に検索してみました。';
   const tags = ['#推しサーチ', '#推し活', ...(opts.target.kind === 'group' || opts.templateId === 'site_group_member_search' ? [`#${opts.target.name.replace(/[\s!！&＆・/]/g, '')}`] : [])].join(' ');
-  return `${opts.title}\n\n${what}\n${SITE_CTA_OPTIONS[opts.cta].text}\n\n${tags}`;
+  return `${opts.title}\n\n${what}\n${siteCtaOf(opts.templateId, opts.cta)?.text ?? ''}\n\n${tags}`;
+}
+
+/**
+ * 期間限定セールのリールの Instagram 投稿文案（先頭に PR 表記。URLは本文に入れない）。
+ * 日時はセールの設定（公式ページで確認した日時）だけ。参加条件・ポイント・割引は書かず、楽天の公式ページで確認するよう案内する
+ */
+export function buildSaleCaption(templateId: SaleSiteTemplateId, title: string, target: SiteTarget): string {
+  const sale = target.sale;
+  const cta = sale ? siteCtaOf(templateId, 'sale', sale) : null;
+  const period = sale ? `${sale.name}：${formatJstRange(sale.startsAt, sale.endsAt)}（日本時間）` : '';
+  const what =
+    templateId === 'site_bf_shopping'
+      ? '推しサーチの「推し活お買い物診断」で、予算5,000円までの推し活アイテムを探してみました。'
+      : templateId === 'site_bf_live'
+        ? `推しサーチで、${target.live?.groupName ?? target.name}の過去のライブ映像（DVD・Blu-ray）を探してみました。`
+        : `推しサーチで「${target.name}」の写真集・CD・ライブ映像を探してみました。`;
+  const tagName = target.kind === 'group' ? target.name : target.live?.groupName ?? null;
+  const tags = ['#PR', '#推しサーチ', '#推し活', '#ブラックフライデー', ...(tagName ? [`#${tagName.replace(/[\s!！&＆・/]/g, '')}`] : [])].join(' ');
+  return [
+    sale?.prLabel ?? 'PR',
+    '',
+    title,
+    '',
+    what,
+    cta ? cta.text : '',
+    '',
+    period,
+    '価格・在庫・特典・参加条件は楽天の商品ページ・公式ページでご確認ください。',
+    '推しサーチはプロフィールのリンクから。',
+    '',
+    tags,
+  ]
+    .filter((l, i, a) => !(l === '' && a[i - 1] === ''))
+    .join('\n');
+}
+
+/** 「11/19 20:00〜11/25 1:59」（+9時間固定で計算＝実行環境のTZに依存しない） */
+export function formatJstRange(startsAt: string, endsAt: string): string {
+  const f = (iso: string) => {
+    const d = new Date(Date.parse(iso) + 9 * 3600 * 1000);
+    return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+  };
+  return `${f(startsAt)}〜${f(endsAt)}`;
 }

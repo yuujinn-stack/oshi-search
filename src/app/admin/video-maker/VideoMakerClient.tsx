@@ -19,7 +19,7 @@ import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_MEDIA_INPU
 import SiteReelPicker, { EMPTY_SITE_PICK, sitePickReady, siteTemplateInput, type SitePick } from './SiteReelPicker';
 import MediaReelPicker, { EMPTY_MEDIA_PICK, effectiveMediaGroup, mediaPickReady, mediaTemplateInput, type MediaPick } from './MediaReelPicker';
 import { MEDIA_JOB_NAME, MEDIA_SECTION_TITLE, MEDIA_TEMPLATE_CATEGORY, isMediaTemplateId, parseMediaScriptReport } from '@/lib/video-media-reel';
-import { SITE_CTA_OPTIONS, SITE_TEMPLATE_CATEGORY, isSiteTemplateId, type SiteLinks, type SiteTarget } from '@/lib/video-site-reel';
+import { SALE_SITE_SECTION_TITLE, SITE_CTA_OPTIONS, SITE_TEMPLATE_CATEGORY, isSaleSiteTemplateId, isSiteTemplateId, type SiteLinks, type SiteTarget } from '@/lib/video-site-reel';
 import RegisteredGroupsPicker, { EMPTY_REGISTERED_PICK, registeredPickReady, registeredTemplateInput, type RegisteredPick } from './RegisteredGroupsPicker';
 import { REGISTERED_TEMPLATE_CATEGORY, REGISTERED_TEMPLATE_SPECS, isRegisteredTemplateId, type RegisteredCounts, type RegisteredSegment } from '@/lib/video-registered-groups';
 import FollowReelPicker, { EMPTY_FOLLOW_PICK, followPickReady, followTemplateInput, type FollowPick } from './FollowReelPicker';
@@ -1113,7 +1113,7 @@ export default function VideoMakerClient({
           ) : (
             <>
             <div className="grid gap-2 sm:grid-cols-2">
-              {templates.filter((t) => !isMediaListTemplate(t)).map((t) => (
+              {templates.filter((t) => !isMediaListTemplate(t) && !isSaleListTemplate(t)).map((t) => (
                 <label
                   key={t.templateId}
                   className={`cursor-pointer rounded-lg border p-3 text-sm ${
@@ -1126,6 +1126,27 @@ export default function VideoMakerClient({
                 </label>
               ))}
             </div>
+            {/* 期間限定セール（楽天ブラックフライデー）のリール3種類: 既存のテンプレートの下に分けて並べる（選び方は同じ） */}
+            {templates.some(isSaleListTemplate) && (
+              <div className="mt-4">
+                <h3 className="text-sm font-bold text-slate-700 mb-1">{SALE_SITE_SECTION_TITLE}</h3>
+                <p className="text-xs text-gray-500 mb-2">セールの開催前・開催中だけ作れます（終了後は作成できません）。A・B は過去のライブ映像のコーナーがある人物・グループ、C は人物を選びます。音声なしで作り、完成した動画の「詳細」から CapCut の WAV・SRT を取り込めます。</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {templates.filter(isSaleListTemplate).map((t) => (
+                    <label
+                      key={t.templateId}
+                      className={`cursor-pointer rounded-lg border p-3 text-sm ${
+                        templateId === t.templateId ? 'border-red-500 bg-red-50' : 'border-gray-200 hover:border-red-300'
+                      }`}
+                    >
+                      <input type="radio" name="vm-template" className="mr-2" checked={templateId === t.templateId} onChange={() => setTemplateId(t.templateId)} />
+                      <span className="font-bold text-slate-800">{t.name}</span>
+                      <span className="block text-xs text-gray-500 mt-1">{t.description}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             {/* 推しサーチ総合紹介動画（10種類）: 既存のテンプレートの下に分けて並べる（選び方は同じ） */}
             {templates.some(isMediaListTemplate) && (
               <div className="mt-4">
@@ -2237,7 +2258,7 @@ function CompletedDetail({
             voicedJobs={allJobs.filter((j) => j.templateInput?.audio?.sourceJobId === job.id)}
             onCreated={onReelChanged}
             endingNote="最後の読み上げの約1秒後に終わります。24秒まで"
-            buildTemplateInput={(audio) => ({ version: 1, templateCategory: SITE_TEMPLATE_CATEGORY, siteSelection: { kind: 'person', name: job.personName }, cta: { key: 'profile' }, lines: [], audio })}
+            buildTemplateInput={(audio) => ({ version: 1, templateCategory: SITE_TEMPLATE_CATEGORY, siteSelection: { kind: 'person', name: job.personName }, cta: { key: isSaleSiteTemplateId(job.templateId) ? 'sale' : 'profile' }, lines: [], audio })}
           />
         </details>
       </>
@@ -2364,6 +2385,10 @@ function OshiCardJobOutputs({ job }: { job: VideoJob }) {
 }
 
 /** 推しサーチ総合紹介動画（10種類）として一覧の別セクションに並べるテンプレート（このコードが知っている入力の種類・ID のときだけ） */
+function isSaleListTemplate(t: WorkerTemplate): boolean {
+  return t.templateInputKind === OSHI_SITE_INPUT_KIND && isSaleSiteTemplateId(t.templateId);
+}
+
 function isMediaListTemplate(t: WorkerTemplate): boolean {
   return t.templateInputKind === OSHI_MEDIA_INPUT_KIND && isMediaTemplateId(t.templateId);
 }

@@ -14,6 +14,9 @@ import {
   buildSitePlan,
   checkSiteLines,
   estimateSiteSeconds,
+  formatJstRange,
+  isSaleSiteTemplateId,
+  siteCtaOf,
   type SiteCtaKey,
   type SiteLine,
   type SiteLinks,
@@ -61,6 +64,8 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 type CastWork = { workId: string; title: string; year: number | null; cast: string[] };
+type SaleStatus = { id: string; name: string; phase: 'upcoming' | 'active'; startsAt: string; endsAt: string; badge: string; prLabel: string; shoppingBudget: string; shoppingBudgetLabel: string | null };
+type SaleLive = { groups: Array<{ name: string; performances: number }>; persons: Array<{ name: string; groupName: string }> };
 
 export default function SiteReelPicker({
   templateId,
@@ -92,6 +97,10 @@ export default function SiteReelPicker({
   const [providerPersons, setProviderPersons] = useState<Array<{ name: string; workCount: number }> | null>(null);
   const [shopping, setShopping] = useState<{ uses: Array<{ value: string; label: string }>; budgets: Array<{ value: string; label: string }> } | null>(null);
   const [cardWorks, setCardWorks] = useState<Array<{ id: string; title: string; year: number | null }> | null>(null);
+  // 期間限定セールのリール: いまのセール（開催前・開催中。null=無い）と、過去のライブ映像のコーナーがある人物・グループ
+  const isSale = isSaleSiteTemplateId(templateId);
+  const [sale, setSale] = useState<SaleStatus | null | undefined>(undefined);
+  const [saleLive, setSaleLive] = useState<SaleLive | null>(null);
 
   const loadReadings = useCallback(async () => {
     try {
@@ -110,7 +119,10 @@ export default function SiteReelPicker({
     const fail = (err: unknown) => setNote({ kind: 'error', text: `選択肢を読み込めませんでした: ${String(err instanceof Error ? err.message : err)}` });
     if (templateId === 'site_photobook_search') void getJson<{ persons: Array<{ name: string; count: number }> }>('/api/admin/video-jobs/site-candidates?kind=photobookPersons').then((d) => setPhotobookPersons(d.persons), fail);
     if (templateId === 'site_vod_service_search') void getJson<{ providers: Array<{ slug: string; name: string; workCount: number }> }>('/api/admin/video-jobs/site-candidates?kind=providers').then((d) => setProviders(d.providers), fail);
-    if (templateId === 'site_shopping_diagnosis') void getJson<NonNullable<typeof shopping>>('/api/admin/video-jobs/site-candidates?kind=shoppingOptions').then(setShopping, fail);
+    if (templateId === 'site_shopping_diagnosis' || templateId === 'site_bf_shopping') void getJson<NonNullable<typeof shopping>>('/api/admin/video-jobs/site-candidates?kind=shoppingOptions').then(setShopping, fail);
+    setSale(undefined);
+    if (isSaleSiteTemplateId(templateId)) void getJson<{ sale: SaleStatus | null }>('/api/admin/video-jobs/site-candidates?kind=saleStatus').then((d) => setSale(d.sale), fail);
+    if (templateId === 'site_bf_goods' || templateId === 'site_bf_live') void getJson<SaleLive>('/api/admin/video-jobs/site-candidates?kind=saleLive').then(setSaleLive, fail);
   }, [templateId]);
   useEffect(() => {
     setGroupMembers(null);
@@ -139,8 +151,10 @@ export default function SiteReelPicker({
   };
 
   const generate = useCallback(
-    async (base: SitePick) => {
+    async (picked: SitePick) => {
       if (!readings) return;
+      // セールのリールの締めはセールの設定の文だけ（選べない）
+      const base: SitePick = isSaleSiteTemplateId(templateId) ? { ...picked, cta: 'sale' } : picked;
       setNote(null);
       setBusy('generate');
       try {
@@ -196,6 +210,7 @@ export default function SiteReelPicker({
   const speechScript = lines ? lines.map((l) => l.kana).join('\n') : '';
   const editLine = (id: string, key: 'text' | 'kana', v: string) => onChange({ ...value, lines: (value.lines ?? []).map((l) => (l.id === id ? { ...l, [key]: v } : l)) });
   const caption = value.title && value.target ? buildSiteCaption({ templateId, title: value.title, target: value.target, cta: value.cta }) : null;
+  const ctaText = siteCtaOf(templateId, isSale ? 'sale' : value.cta, value.target?.sale ?? null)?.text ?? (isSale ? '（台本を生成すると表示されます）' : '');
   const personList = (names: string[] | null) => (names ? persons.filter((p) => names.includes(p.name)) : persons);
   const selectedWork = castWorks?.find((w) => w.workId === sel.workId) ?? null;
 
@@ -209,10 +224,81 @@ export default function SiteReelPicker({
   return (
     <div className="space-y-4 text-sm">
       <p className="text-xs text-gray-600 bg-gray-50 rounded p-2">{spec.guide}</p>
+      {isSale && (
+        <div className={`text-xs rounded p-2 border ${sale ? 'bg-red-50 border-red-200 text-red-900' : 'bg-gray-50 border-gray-200 text-gray-700'}`}>
+          {sale === undefined ? (
+            'セールの設定を確認しています…'
+          ) : sale === null ? (
+            <span className="font-bold">開催前・開催中のセールがありません。終了したセールの動画は作成できません（次回は src/lib/sale-corner/config.ts と src/lib/sale-video/config.ts に1件追加）。</span>
+          ) : (
+            <>
+              <span className="font-bold">{sale.name}（{sale.phase === 'active' ? '開催中' : '開催前'}）</span>
+              <span className="ml-2">{formatJstRange(sale.startsAt, sale.endsAt)}（日本時間）・冒頭の帯「{sale.badge}」</span>
+              <span className="block mt-1 text-red-800">
+                台本の冒頭は開催状態で変わります（開催前に作った台本は、開催が始まると生成できません）。セール終了後は生成できません。動画と投稿文には「{sale.prLabel}」を入れます。
+              </span>
+            </>
+          )}
+        </div>
+      )}
 
       {/* 1. 対象 */}
       <div className="space-y-2">
-        {templateId === 'site_subscription_diagnosis' && (
+        {(templateId === 'site_bf_goods' || templateId === 'site_bf_live') && (
+          <div className="space-y-2">
+            <div className="flex gap-4 text-xs">
+              {(['group', 'person'] as const).map((k) => (
+                <label key={k} className="cursor-pointer">
+                  <input type="radio" className="mr-1" checked={sel.kind === k} onChange={() => setSelection({ kind: k, name: '' })} />
+                  {k === 'person' ? '人物' : 'グループ'}
+                </label>
+              ))}
+            </div>
+            {sel.kind === 'group' ? (
+              <label className="text-xs text-gray-600 block">
+                グループ（過去のライブ映像のコーナーがあるグループ）
+                <select value={sel.name} onChange={(e) => setSelection({ kind: 'group', name: e.target.value })} className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm">
+                  <option value="">選択してください</option>
+                  {(saleLive?.groups ?? []).map((g) => (
+                    <option key={g.name} value={g.name}>
+                      {g.name}（{g.performances}公演）
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="text-xs text-gray-600 block">
+                人物（過去のライブ映像のコーナーがあるグループの現在のメンバー {saleLive?.persons.length ?? '…'}人）
+                <PersonCombobox
+                  persons={persons.filter((p) => (saleLive?.persons ?? []).some((x) => x.name === p.name))}
+                  value={sel.name}
+                  onChange={(n) => setSelection({ kind: 'person', name: n })}
+                  placeholder="人物を選択"
+                />
+              </label>
+            )}
+          </div>
+        )}
+        {templateId === 'site_bf_shopping' && (
+          <div className="space-y-2">
+            {personField('人物（お買い物診断は人物を1人選ぶ方式のため、グループは選べません）')}
+            <div className="flex flex-wrap gap-4 text-xs text-gray-600 items-center">
+              <label>
+                用途
+                <select value={sel.use ?? ''} onChange={(e) => setSelection({ use: e.target.value || null })} className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm">
+                  <option value="">選択してください</option>
+                  {(shopping?.uses ?? []).map((u) => (
+                    <option key={u.value} value={u.value}>
+                      {u.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span>予算：<span className="font-bold">{sale?.shoppingBudgetLabel ?? '…'}</span>（セールの設定で固定）</span>
+            </div>
+          </div>
+        )}
+        {isSale ? null : templateId === 'site_subscription_diagnosis' && (
           <div className="flex gap-4 text-xs">
             {(['person', 'group'] as const).map((k) => (
               <label key={k} className="cursor-pointer">
@@ -222,7 +308,7 @@ export default function SiteReelPicker({
             ))}
           </div>
         )}
-        {(templateId === 'site_group_member_search' || (templateId === 'site_subscription_diagnosis' && sel.kind === 'group')) ? (
+        {isSale ? null : (templateId === 'site_group_member_search' || (templateId === 'site_subscription_diagnosis' && sel.kind === 'group')) ? (
           <label className="text-xs text-gray-600 block">
             グループ
             <select value={sel.name} onChange={(e) => setSelection({ kind: 'group', name: e.target.value, member: null })} className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm">
@@ -396,10 +482,11 @@ export default function SiteReelPicker({
         )}
       </div>
 
-      {/* 2. 締めの言葉（1本に1つ） */}
+      {/* 2. 締めの言葉（1本に1つ。セールのリールはセールの設定の文） */}
       <div className="space-y-1 text-xs">
         <p className="font-bold text-slate-700">締めの言葉（動画ごとに1つ）</p>
-        {(Object.keys(SITE_CTA_OPTIONS) as SiteCtaKey[]).map((k) => (
+        {isSale && <p>{ctaText}（セールの設定の文。TikTok 版は従来どおり最後の CTA だけを差し替えます）</p>}
+        {!isSale && (Object.keys(SITE_CTA_OPTIONS) as Array<keyof typeof SITE_CTA_OPTIONS>).map((k) => (
           <label key={k} className="block cursor-pointer">
             <input type="radio" className="mr-1" checked={value.cta === k} onChange={() => onChange({ ...value, cta: k })} />
             {SITE_CTA_OPTIONS[k].text}
@@ -409,7 +496,7 @@ export default function SiteReelPicker({
       </div>
 
       <div className="flex items-center gap-3">
-        <button type="button" disabled={!sel.name || !readings || busy === 'generate'} onClick={() => void generate(value)} className="px-4 py-1.5 rounded bg-violet-600 text-white text-xs font-bold disabled:bg-gray-300">
+        <button type="button" disabled={!sel.name || !readings || busy === 'generate' || (isSale && !sale)} onClick={() => void generate(value)} className="px-4 py-1.5 rounded bg-violet-600 text-white text-xs font-bold disabled:bg-gray-300">
           {busy === 'generate' ? '確認中…' : value.lines ? '台本を作り直す' : '台本を生成'}
         </button>
         {stale && <span className="text-xs text-amber-700">対象・締めの言葉が変わりました。台本を作り直してください。</span>}
@@ -483,7 +570,7 @@ export default function SiteReelPicker({
               {caption && <CopyButton text={caption} label="投稿文をコピー" />}
             </span>
             <span className="text-gray-500">締めの言葉（CTA）</span>
-            <span>{SITE_CTA_OPTIONS[value.cta].text}</span>
+            <span>{ctaText}</span>
             {value.links && (
               <>
                 <span className="text-gray-500">推奨リンク先URL</span>

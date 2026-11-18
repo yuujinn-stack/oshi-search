@@ -5,7 +5,11 @@ import { videoGenerationJobs, works as worksTable } from '@/db/schema';
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getAllPersonMetas } from '@/lib/person-meta';
 import { getAllMembershipRecords } from '@/lib/group-membership-store';
-import { buildGroupRoster, groupMembershipRecords, listGroupNames, personsInGroup } from '@/lib/group-membership';
+import { buildGroupRoster, currentMemberships, groupMembershipRecords, listGroupNames, personsInGroup, resolvePersonMemberships } from '@/lib/group-membership';
+import { LIVE_ARCHIVE_GROUPS } from '@/lib/live-archive/catalog';
+import { liveArchiveGroupOf, liveArchiveGroupsForPerson } from '@/lib/live-archive/core';
+import { loadLiveArchive } from '@/lib/live-archive/data';
+import { checkSaleVideoState, pickSaleVideo } from '@/lib/sale-video/core';
 import { getAllGroupMetas } from '@/lib/group-meta';
 import { groupHrefByName } from '@/lib/group-slug';
 import { getPublicWorkById, getPublishedWorks } from '@/lib/work-store';
@@ -15,12 +19,13 @@ import { BUDGET_OPTIONS, USE_OPTIONS } from '@/lib/oshi-shopping/params';
 import { OSHI_VOD_MAX_PERSONS } from '@/lib/oshi-vod/params';
 import { VOD_PAGE_PROVIDERS, getTopPersonsForVodProvider, getVodProviderWorkCounts } from '@/lib/vod-page';
 import {
-  SITE_CTA_OPTIONS,
   SITE_MAX_SECONDS,
   SITE_TEMPLATE_SPECS,
   allocateSiteSlots,
   buildSitePlan,
+  isSaleSiteTemplateId,
   isSiteTemplateId,
+  siteCtaOf,
   type SiteSelection,
   type SiteTarget,
   type SiteTemplateId,
@@ -103,14 +108,66 @@ export async function loadSiteProviderPersons(slug: string): Promise<Array<{ nam
   return (await getTopPersonsForVodProvider(p.normalizedSlug, 12)).map((x) => ({ name: x.name, workCount: x.workCount }));
 }
 
+// ─── 期間限定セールのリール（A・B: 過去のライブ映像のコーナー / C: お買い物診断の予算はセールの設定の値） ───
+
+/** グループの過去のライブ映像（グループページ・一覧ページと同じメンバーの商品データ）。対象外・掲載0件は null */
+async function loadGroupLiveArchive(groupName: string, nowMs: number): Promise<{ groupName: string; listPath: string; performances: number } | null> {
+  if (!liveArchiveGroupOf(groupName)) return null;
+  const [persons, records, metas] = await Promise.all([getAllPersonsMerged(), getAllMembershipRecords(), getAllGroupMetas()]);
+  const memberNames = personsInGroup(groupName, persons, groupMembershipRecords(records)).map((p) => p.name);
+  const entries = await loadLiveArchive(groupName, memberNames, nowMs);
+  if (entries.length === 0) return null;
+  return { groupName, listPath: `${groupHrefByName(groupName, metas)}/live`, performances: entries.length };
+}
+
+/**
+ * 人物・グループのページに出る過去のライブ映像のコーナー（#live-archive）。
+ * 人物は人物ページと同じ判定（現在の所属グループのうち特集の対象で、掲載がある最初のグループ）。無ければ null
+ */
+export async function loadSaleLiveTarget(kind: 'person' | 'group', name: string, nowMs = Date.now()): Promise<{ groupName: string; listPath: string; performances: number } | null> {
+  if (kind === 'group') return loadGroupLiveArchive(name, nowMs);
+  const [persons, records, personMetas] = await Promise.all([getAllPersonsMerged(), getAllMembershipRecords(), getAllPersonMetas()]);
+  const person = persons.find((p) => p.name === name);
+  if (!person) return null;
+  const recordsByPerson = groupMembershipRecords(records);
+  const current = currentMemberships(resolvePersonMemberships(person, personMetas[name] ?? undefined, recordsByPerson.get(name) ?? []));
+  for (const g of liveArchiveGroupsForPerson(current.map((m) => m.groupName))) {
+    const live = await loadGroupLiveArchive(g, nowMs);
+    if (live) return live;
+  }
+  return null;
+}
+
+/** 管理画面の選択肢: 過去のライブ映像のコーナーがあるグループと、その現在のメンバー（実際に使えるかは台本の生成時に確かめる） */
+export async function loadSaleLiveCandidates(nowMs = Date.now()): Promise<{ groups: Array<{ name: string; performances: number }>; persons: Array<{ name: string; groupName: string }> }> {
+  const groups: Array<{ name: string; performances: number }> = [];
+  const persons: Array<{ name: string; groupName: string }> = [];
+  for (const g of LIVE_ARCHIVE_GROUPS) {
+    const live = await loadGroupLiveArchive(g.groupName, nowMs);
+    if (!live) continue;
+    groups.push({ name: g.groupName, performances: live.performances });
+    const shown = await loadGroupShownMembers(g.groupName);
+    for (const m of shown?.members ?? []) if (!persons.some((p) => p.name === m)) persons.push({ name: m, groupName: g.groupName });
+  }
+  return { groups, persons };
+}
+
+/** 管理画面の表示: いま使うセール（開催前・開催中）。無ければ null（台本を作れない） */
+export function loadSaleVideoStatus(nowMs = Date.now()) {
+  const v = pickSaleVideo(nowMs);
+  if (!v) return null;
+  return { ...v.state, shoppingBudget: v.config.shoppingBudget, shoppingBudgetLabel: BUDGET_OPTIONS.find((b) => b.value === v.config.shoppingBudget)?.label ?? null };
+}
+
 export const SITE_SHOPPING_OPTIONS = { uses: USE_OPTIONS.map((u) => ({ value: u.value, label: u.label })), budgets: BUDGET_OPTIONS.map((b) => ({ value: b.value, label: b.label })) };
 
 /** 管理画面で選んだ対象をDBで確かめ、撮影するページの正式なパスを付ける。足りない・合わないときは理由つきで拒否する */
-export async function resolveSiteTarget(templateId: SiteTemplateId, sel: SiteSelection): Promise<SiteTarget> {
+export async function resolveSiteTarget(templateId: SiteTemplateId, sel: SiteSelection, nowMs = Date.now()): Promise<SiteTarget> {
   const spec = SITE_TEMPLATE_SPECS[templateId];
   const name = sel.name;
   if (!name || !isVideoTargetName(name)) throw new VideoJobError(`動画生成で扱えない名前です（/ や \\ を含む名前は未対応）: ${name}`, 400);
   if (spec.target === 'person' && sel.kind !== 'person') throw new VideoJobError('このテンプレートは人物を選んでください。', 400);
+  if (isSaleSiteTemplateId(templateId)) return resolveSaleSiteTarget(templateId, sel, nowMs);
   if (spec.target === 'group' && sel.kind !== 'group') throw new VideoJobError('このテンプレートはグループを選んでください。', 400);
   const names = await publicPersonNames();
   const needPerson = (n: string) => {
@@ -191,11 +248,46 @@ export async function resolveSiteTarget(templateId: SiteTemplateId, sel: SiteSel
   return target;
 }
 
+/** 期間限定セールのリール: セール（開催前・開催中）・対象のページ・過去のライブ映像のコーナー・お買い物診断の選択肢を確かめる */
+async function resolveSaleSiteTarget(templateId: SiteTemplateId, sel: SiteSelection, nowMs: number): Promise<SiteTarget> {
+  const sale = pickSaleVideo(nowMs);
+  if (!sale) throw new VideoJobError('開催前・開催中のセールがありません（終了したセールの動画は作成できません）。', 400);
+  const name = sel.name;
+  let target: SiteTarget;
+  if (sel.kind === 'group') {
+    const g = await loadGroupShownMembers(name);
+    if (!g) throw new VideoJobError(`公開中のグループではありません: ${name}`, 400);
+    target = { kind: 'group', name, pagePath: g.pagePath };
+  } else {
+    if (!(await publicPersonNames()).has(name)) throw new VideoJobError(`登録されていない人物です: ${name}`, 400);
+    target = { kind: 'person', name, pagePath: personPath(name) };
+  }
+  target.sale = sale.state;
+  if (templateId === 'site_bf_shopping') {
+    const use = USE_OPTIONS.find((u) => u.value === sel.use);
+    const budget = BUDGET_OPTIONS.find((b) => b.value === sale.config.shoppingBudget);
+    if (!use) throw new VideoJobError('お買い物診断の用途を選んでください。', 400);
+    if (!budget) throw new VideoJobError('セールの設定の予算がお買い物診断の選択肢にありません。', 500);
+    if (sel.budget && sel.budget !== budget.value) throw new VideoJobError(`予算は「${budget.label}」です（セールの設定）。`, 400);
+    target.shopping = { use: use.value, useLabel: use.label, budget: budget.value, budgetLabel: budget.label };
+    return target;
+  }
+  const live = await loadSaleLiveTarget(target.kind, name, nowMs);
+  if (!live) {
+    throw new VideoJobError(
+      `${name}のページには過去のライブ映像のコーナーがありません（対象は過去のライブ映像特集のグループ ${LIVE_ARCHIVE_GROUPS.map((g) => g.groupName).join('・')} と、その現在のメンバーで、掲載中のライブ映像があるもの）。`,
+      400,
+    );
+  }
+  target.live = live;
+  return target;
+}
+
 /** ジョブ作成: 対象をDBで確かめて区間・リンクを作り直し、画面で確認した台本が区間と合うかを確かめる */
 export async function resolveSiteJobInput(templateId: string, personName: string, input: OshiSiteTemplateInput, nowMs = Date.now()): Promise<OshiSiteTemplateInput> {
   if (!isSiteTemplateId(templateId)) throw new VideoJobError(`サイト誘導リールのテンプレートではありません: ${templateId}`, 400);
   if (input.siteSelection.name !== personName) throw new VideoJobError('ジョブの名前と選んだ対象が違います（管理画面を再読み込みしてください）。', 400);
-  const target = await resolveSiteTarget(templateId, input.siteSelection);
+  const target = await resolveSiteTarget(templateId, input.siteSelection, nowMs);
   // 区間（見出し・手順）は読みに関係なく決まる。台本（字幕・読み）は画面で確認したもの
   const plan = buildSitePlan({ templateId, target, cta: input.cta.key, readings: { fixed: {}, registered: {} } });
   if (!plan.ok) throw new VideoJobError(`生成できません: ${plan.missing.join(' / ')}`, 400);
@@ -203,8 +295,13 @@ export async function resolveSiteJobInput(templateId: string, personName: string
   if (lines.length !== plan.segments.length || lines.some((l, i) => l.id !== plan.segments[i].id)) {
     throw new VideoJobError('台本が区間の構成と合いません（対象を変えたあとは「台本を生成」で作り直してください）。', 400);
   }
-  const cta = SITE_CTA_OPTIONS[input.cta.key];
+  const cta = siteCtaOf(templateId, input.cta.key, target.sale);
+  if (!cta) throw new VideoJobError('締めの言葉の指定がテンプレートと合いません（台本を作り直してください）。', 400);
   if (lines[lines.length - 1].text !== cta.text) throw new VideoJobError(`締めの台本は「${cta.text}」のままにしてください（締めの言葉は1つ）。`, 400);
+  // セールのリール: 冒頭の文はいまの開催状態の文（開催前に作った「始まります」の台本を開催中に使わない）
+  if (isSaleSiteTemplateId(templateId) && lines[0].text !== plan.lines[0].text) {
+    throw new VideoJobError(`冒頭の台本は「${plan.lines[0].text}」にしてください（セールの開催状態に合わせた文。台本を作り直してください）。`, 400);
+  }
   const slots = allocateSiteSlots(plan.segments, lines, templateId);
   const total = slots.reduce((a, b) => a + b, 0);
   if (total > SITE_MAX_SECONDS + 1e-9) throw new VideoJobError(`台本が長すぎます（見積もり ${total.toFixed(1)}秒。${SITE_MAX_SECONDS}秒までです）。文を短くしてください。`, 400);
@@ -234,6 +331,13 @@ export async function applySiteAudioSource(templateId: string, personName: strin
     throw new VideoJobError('CapCut 音声は、同じテンプレートの完了した音声なし動画にだけ付けられます。', 400);
   }
   if (source.personName !== personName) throw new VideoJobError(`元の動画（${source.personName}）と違う対象の音声は付けられません。`, 400);
+  // セールのリール: 終了後・開催状態が変わった後は、音声付きの動画も作らない（元の動画の告知文が今の状態と合わない）
+  const sourceSale = (source.templateInput as { siteTarget?: SiteTarget } | null)?.siteTarget?.sale;
+  if (isSaleSiteTemplateId(templateId)) {
+    if (!sourceSale) throw new VideoJobError('元の動画のジョブにセールの情報がありません（作り直してください）。', 400);
+    const c = checkSaleVideoState(sourceSale, Date.now());
+    if (!c.ok) throw new VideoJobError(c.reason, 400);
+  }
   let sourceInput: OshiSiteTemplateInput;
   try {
     sourceInput = parseOshiSiteInput(source.templateInput);
