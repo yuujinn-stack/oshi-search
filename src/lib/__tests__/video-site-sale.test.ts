@@ -111,8 +111,8 @@ describe('期間限定セールのリール A・B・C の台本', () => {
         expect(plan.segments[1]).toMatchObject({ step: 'intro', slotSeconds: 2, sub: ts[id].name });
         expect(plan.segments[1].label).toBeUndefined();
         expect(plan.segments[2].label?.startsWith('①')).toBe(true);
-        expect(plan.lines[0].text).toBe('楽天ブラックフライデーセール！');
-        expect(plan.segments[0].title).toBe('楽天\nブラック\nフライデー\nセール！');
+        expect(plan.lines[0].text).toBe('楽天ブラックフライデー！');
+        expect(plan.segments[0].title).toBe('楽天\nブラック\nフライデー！');
         expect(plan.segments[0].title!.replace(/\n/g, '')).toBe(plan.lines[0].text);
         expect(plan.unresolved, id).toEqual([]);
         for (const l of plan.lines) expect(l.kana, `${id} ${l.id}`).not.toMatch(/[\p{Script=Han}A-Za-z0-9]/u);
@@ -122,16 +122,16 @@ describe('期間限定セールのリール A・B・C の台本', () => {
     });
   }
 
-  it('冒頭の一言は A・B・C ごと。B は開催前「前に」・開催中「の間に」', () => {
+  it('冒頭の一言は A・B・C ごと。B は開催前「前に」・開催中「中に」', () => {
     const intro = (id: SaleSiteTemplateId, now: number) => {
       const plan = buildSitePlan({ templateId: id, target: targets(state(now))[id], cta: 'sale', readings });
       return plan.ok ? plan.lines[1].text : '';
     };
-    expect(intro('site_bf_goods', BEFORE)).toBe('推しグッズ、損しないための探し方！');
-    expect(intro('site_bf_goods', START)).toBe('推しグッズ、損しないための探し方！');
-    expect(intro('site_bf_live', BEFORE)).toBe('ブラックフライデー前に、過去ライブをチェック！');
-    expect(intro('site_bf_live', START)).toBe('ブラックフライデーの間に、過去ライブをチェック！');
-    expect(intro('site_bf_shopping', BEFORE)).toBe('推しグッズ、予算内で失敗しない探し方！');
+    expect(intro('site_bf_goods', BEFORE)).toBe('推しグッズ、損しない探し方！');
+    expect(intro('site_bf_goods', START)).toBe('推しグッズ、損しない探し方！');
+    expect(intro('site_bf_live', BEFORE)).toBe('セール前に、過去ライブチェック！');
+    expect(intro('site_bf_live', START)).toBe('セール中に、過去ライブチェック！');
+    expect(intro('site_bf_shopping', BEFORE)).toBe('推しグッズ、予算内で探そう！');
     expect(splitSaleTitle('楽天ブラックフライデーセール！')).toBe('楽天ブラックフライデー\nセール！');
   });
 
@@ -196,6 +196,14 @@ describe('期間限定セールのリールの文言の決まり', () => {
       expect(v.entryNote).toMatch(/エントリー/);
       expect(v.entryNote).toMatch(/条件/);
       expect(v.entryNote).not.toMatch(/必ず|確実|保証|もらえる|\d+倍|半額|%|％/);
+    }
+  });
+
+  it('冒頭の読みは通常速度で収まる長さ（セール名13音まで・一言16音まで）', () => {
+    const mora = (k: string) => Array.from(k.replace(/[、。！？\s]/g, '')).filter((c) => !/[ゃゅょぁぃぅぇぉ]/.test(c)).length;
+    for (const v of SALE_VIDEO_CONFIGS) {
+      expect(mora(v.title.kana)).toBeLessThanOrEqual(13);
+      for (const ph of ['upcoming', 'active'] as const) for (const k of ['goods', 'live', 'shopping'] as const) expect(mora(v.intro[k][ph].kana), v.intro[k][ph].kana).toBeLessThanOrEqual(16);
     }
   });
 
