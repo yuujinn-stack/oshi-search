@@ -18,7 +18,7 @@ import VodCompareTrioPicker, { EMPTY_TRIO, completeTrio, type TrioCapcutCheck, t
 import { OSHI_CARD_SELECTION_INPUT_KIND, OSHI_FOLLOW_INPUT_KIND, OSHI_MEDIA_INPUT_KIND, OSHI_REGISTERED_INPUT_KIND, OSHI_SITE_INPUT_KIND, OSHI_SONKAMO_INPUT_KIND, OSHI_VOD_COMPARE_INPUT_KIND, TEMPLATE_INPUT_KINDS } from '@/lib/video-template-input';
 import SiteReelPicker, { EMPTY_SITE_PICK, sitePickReady, siteTemplateInput, type SitePick } from './SiteReelPicker';
 import MediaReelPicker, { EMPTY_MEDIA_PICK, effectiveMediaGroup, mediaPickReady, mediaTemplateInput, type MediaPick } from './MediaReelPicker';
-import { MEDIA_JOB_NAME, MEDIA_SECTION_TITLE, MEDIA_TEMPLATE_CATEGORY, isMediaTemplateId, parseMediaScriptReport } from '@/lib/video-media-reel';
+import { MEDIA_JOB_NAME, MEDIA_SECTION_TITLE, MEDIA_TEMPLATE_CATEGORY, isMediaGroupTemplateId, isMediaTemplateId, parseMediaScriptReport } from '@/lib/video-media-reel';
 import { SALE_SITE_SECTION_TITLE, SITE_CTA_OPTIONS, SITE_TEMPLATE_CATEGORY, isSaleSiteTemplateId, isSiteTemplateId, type SiteLinks, type SiteTarget } from '@/lib/video-site-reel';
 import RegisteredGroupsPicker, { EMPTY_REGISTERED_PICK, registeredPickReady, registeredTemplateInput, type RegisteredPick } from './RegisteredGroupsPicker';
 import { REGISTERED_TEMPLATE_CATEGORY, REGISTERED_TEMPLATE_SPECS, isRegisteredTemplateId, type RegisteredCounts, type RegisteredSegment } from '@/lib/video-registered-groups';
@@ -1920,7 +1920,7 @@ export default function VideoMakerClient({
                   {open && job.status === 'completed' && (
                     <CompletedDetail
                       job={job}
-                      captionPerson={{ name: job.personName, groupName: captionGroupName(personByName.get(job.personName)) }}
+                      captionPerson={{ name: job.personName, groupName: captionGroupName(personByName.get(job.personName)), kind: isMediaGroupTemplateId(job.templateId) ? 'group' : 'person' }}
                       onRetry={() => void jobAction(job.id, 'retry')}
                       reelSchedule={reelSchedules[job.id] ?? null}
                       reelAutopublishEnabled={reelAutopublishEnabled}
@@ -2827,7 +2827,7 @@ function SonkamoJobOutputs({ job }: { job: VideoJob }) {
  * 画面の中だけで編集してコピーできる（保存はしない。再読み込みで初期の投稿文に戻る）。投稿文が未設定のテンプレートは出さない
  */
 function InstagramCaptionSection({ templateId, person }: { templateId: string; person: CaptionPerson }) {
-  const initial = useMemo(() => getInstagramCaption(templateId, person), [templateId, person.name, person.groupName]); // eslint-disable-line react-hooks/exhaustive-deps
+  const initial = useMemo(() => getInstagramCaption(templateId, person), [templateId, person.name, person.groupName, person.kind]); // eslint-disable-line react-hooks/exhaustive-deps
   const [text, setText] = useState(initial ?? '');
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);

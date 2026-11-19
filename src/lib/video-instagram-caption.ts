@@ -7,6 +7,8 @@ export interface CaptionPerson {
   name: string;
   /** 人物データに登録されているグループ名（卒業・脱退済みでも登録があれば使う。無ければ null） */
   groupName: string | null;
+  /** 投稿の対象が人物かグループか（省略時は人物）。グループ版の動画（OSHI_GROUP_*）では name がグループ名になる */
+  kind?: 'person' | 'group';
 }
 
 /** 管理画面の人物選択データ（PersonOption）からグループ名を決める */
@@ -90,10 +92,48 @@ const sonkamoCaption: CaptionBuilder = (person) => {
   ].join('\n');
 };
 
+/**
+ * 推しサーチ紹介「グループ推し・このサイトまだ知らないの？」（OSHI_GROUP_09）。冒頭は動画の冒頭（台本の1文目）と同じ文。
+ * 箇条書きは動画で見せる機能（検索・出演作品・配信先・関連グッズ・サブスク診断）に合わせる。料金の注記は入れない（サイト内の料金説明は別）。
+ * グループのときはグループ名、人物のときは人物名を入れる（人物版は「メンバー」「CD」など人物に合わない語を使わない。ライブ映像は動画で見せないため両方とも入れない）。
+ */
+const oshiSearchUnknownCaption: CaptionBuilder = (person) => {
+  const isGroup = person.kind === 'group';
+  const tags = ['#推し活', '#推しサーチ', toHashtag(person.name), !isGroup && person.groupName ? toHashtag(person.groupName) : null]
+    .filter((t, i, a): t is string => !!t && a.indexOf(t) === i)
+    .join(' ');
+  const features = isGroup
+    ? [
+        '✅ メンバーの情報・出演作品をまとめて検索',
+        '✅ ドラマ・映画などの配信先をチェック',
+        '✅ 写真集・CD・関連グッズを探せる',
+        '✅ 推しに合うサブスクを診断できる',
+      ]
+    : [
+        '✅ 出演作品をまとめて検索',
+        '✅ ドラマ・映画などの配信先をチェック',
+        '✅ 写真集・関連グッズを探せる',
+        '✅ 推しに合うサブスクを診断できる',
+      ];
+  return [
+    `${person.name}を推してる人、このサイトまだ知らないの？`,
+    '',
+    `推しサーチなら、${person.name}の`,
+    ...features,
+    '',
+    '推し活に役立つ情報をまとめてチェックできます🔍',
+    '',
+    'プロフィールのリンクからチェック🔗',
+    '',
+    tags,
+  ].join('\n');
+};
+
 /** テンプレートIDごとの投稿文テンプレート。新しいテンプレートはここに1件追加する */
 const INSTAGRAM_CAPTIONS: Record<string, CaptionBuilder> = {
   'oshi-shopping-intro-v1': shoppingIntroCaption,
   'oshi-sonkamo-v1': sonkamoCaption,
+  OSHI_GROUP_09: oshiSearchUnknownCaption,
 };
 
 export function getInstagramCaption(templateId: string, person: CaptionPerson): string | null {

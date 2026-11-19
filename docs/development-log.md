@@ -6339,3 +6339,22 @@ oshi-search（未commit）
 - 表示: セール名の赤いカードは次の画面へフェードせずに切り替え（`Layer` に任意の `cut`。省略時は従来どおり）
 - 確認（macOS の読み上げ Kyoko で CapCut の通常速度相当＝約9.5音/秒。セール名の発話 1.37秒・一言 1.78〜1.90秒）: A 18.6秒・B 19.6秒・C 20.6秒 QA PASS、セール名 0〜1.53秒・一言 〜3.57／3.60／3.57秒（目安との差 0.03〜0.10秒＝1〜3フレーム）。1.05倍相当では A・B とも 1.50秒・3.50秒ちょうど。遅い読み上げ（約8.6音/秒）でも 1.67秒・3.9秒で操作の画面へ。台本一致 1.00・字幕（SRT）と各画面の切り替えのずれなし。Instagram 版・TikTok 版（確定済み CTA）PASS
 - oshi-search vitest 3,058件、oshi-video-maker 346件。commit は feat/bf-hook-v2（未反映）
+
+## Task 203 — 推しサーチ紹介「グループ推し・このサイトまだ知らないの？」（OSHI_GROUP_09）の Instagram 投稿文（2026-11-19・ブランチ feat/ig-caption-group09・本番デプロイなし）
+
+### 目的
+OSHI_GROUP_09 の Instagram 投稿文を、冒頭フック（動画の冒頭と同じ文）＋機能の箇条書き＋「プロフィールのリンクからチェック🔗」＋選択対象に合わせたハッシュタグにする。料金の注記は Instagram 投稿文に入れない。
+
+### 変更
+- `src/lib/video-instagram-caption.ts`: `CaptionPerson.kind`（'person' | 'group'。省略時は人物）を追加。`OSHI_GROUP_09` の投稿文（`oshiSearchUnknownCaption`）を `INSTAGRAM_CAPTIONS` に1件追加
+  - グループ: 「{グループ名}を推してる人、このサイトまだ知らないの？」→ メンバー・出演作品／配信先／写真集・CD・関連グッズ／サブスク診断（ライブ映像の行は動画で見せないため削除） → `#推し活 #推しサーチ #{グループ}`
+  - 人物: 同じ冒頭で人物名 → 出演作品／配信先／写真集・関連グッズ／サブスク診断（メンバー・CD・ライブ映像は言わない）→ `#推し活 #推しサーチ #{人物} #{所属グループ}`
+  - 記号を含む名前（M!LK 等）は既存の `toHashtag` の規則どおりタグにしない
+- `src/app/admin/video-maker/VideoMakerClient.tsx`: 完了ジョブの `captionPerson` に `kind`（グループ版の動画 `isMediaGroupTemplateId` なら group）を渡す。`InstagramCaptionSection` の useMemo の依存に `person.kind`
+- `src/lib/__tests__/video-instagram-caption.test.ts`: Number_i（指定の文面と完全一致）・Snow Man・M!LK・目黒蓮（人物）・料金の注記なし・ほかのテンプレート（OSHI_GENERAL_09・OSHI_GROUP_05/10・ブラックフライデー A/B/C・サイト誘導）に適用しないこと
+
+### 設計上の判断・注意点
+- Worker（oshi-video-maker の `buildMediaPosts`）が作る「投稿文」タブ・X・Threads の文面と、そこから管理画面で作る TikTok の投稿文は変えていない。新しい文面は管理画面の「Instagram投稿文」欄（画面で組み立てる・保存しない）に出る。生成済みジョブのデータは変更しない
+- 動画・ナレーション・SRT・CTA・冒頭デザイン・Worker は変更なし
+- OSHI_GROUP_09 は現在グループだけを選べるテンプレートのため、人物版の文面は関数としてだけ用意している（画面から人物を選ぶ導線はない）
+- 指定の文面のうち「✅ ライブ映像も探せる」は、OSHI_GROUP_09 の動画（検索 → 出演作品・配信先 → 関連グッズ → サブスク診断・推し活サービス）で見せていないため削除した（ユーザー確認済み）

@@ -55,3 +55,78 @@ describe('captionGroupName', () => {
     expect(captionGroupName(undefined)).toBeNull();
   });
 });
+
+describe('getInstagramCaption（推しサーチ紹介 グループ推し・このサイトまだ知らないの？ OSHI_GROUP_09）', () => {
+  const group = (name: string) => getInstagramCaption('OSHI_GROUP_09', { name, groupName: null, kind: 'group' })!;
+
+  it('Number_i: 冒頭フック → 紹介文 → CTA → ハッシュタグ（指定の文面どおり）', () => {
+    expect(group('Number_i')).toBe(
+      [
+        'Number_iを推してる人、このサイトまだ知らないの？',
+        '',
+        '推しサーチなら、Number_iの',
+        '✅ メンバーの情報・出演作品をまとめて検索',
+        '✅ ドラマ・映画などの配信先をチェック',
+        '✅ 写真集・CD・関連グッズを探せる',
+        '✅ 推しに合うサブスクを診断できる',
+        '',
+        '推し活に役立つ情報をまとめてチェックできます🔍',
+        '',
+        'プロフィールのリンクからチェック🔗',
+        '',
+        '#推し活 #推しサーチ #Number_i',
+      ].join('\n'),
+    );
+  });
+
+  it('Snow Man: グループ名とタグだけが変わる（空白はタグで詰める）', () => {
+    const t = group('Snow Man');
+    expect(t.startsWith('Snow Manを推してる人、このサイトまだ知らないの？\n\n推しサーチなら、Snow Manの\n')).toBe(true);
+    expect(t.split('\n').at(-1)).toBe('#推し活 #推しサーチ #SnowMan');
+    expect(t.replace(/Snow Man/g, 'G').replace('#SnowMan', '#G')).toBe(group('Number_i').replace(/Number_i/g, 'G'));
+  });
+
+  it('料金の注記・URLを入れない', () => {
+    for (const t of [group('Number_i'), getInstagramCaption('OSHI_GROUP_09', { name: '目黒蓮', groupName: 'Snow Man', kind: 'person' })!]) {
+      expect(t).not.toMatch(/料金|無料|※|https?:|oshi-search\.jp/);
+    }
+  });
+
+  it('記号を含むグループ名はタグにしない（M!LK）', () => {
+    const t = group('M!LK');
+    expect(t.startsWith('M!LKを推してる人、このサイトまだ知らないの？')).toBe(true);
+    expect(t.split('\n').at(-1)).toBe('#推し活 #推しサーチ');
+  });
+
+  it('人物（目黒蓮）: 人物向けの文（メンバー・CD・ライブ映像を言わない）と人物・所属グループのタグ', () => {
+    const t = getInstagramCaption('OSHI_GROUP_09', { name: '目黒蓮', groupName: 'Snow Man', kind: 'person' })!;
+    expect(t).toBe(
+      [
+        '目黒蓮を推してる人、このサイトまだ知らないの？',
+        '',
+        '推しサーチなら、目黒蓮の',
+        '✅ 出演作品をまとめて検索',
+        '✅ ドラマ・映画などの配信先をチェック',
+        '✅ 写真集・関連グッズを探せる',
+        '✅ 推しに合うサブスクを診断できる',
+        '',
+        '推し活に役立つ情報をまとめてチェックできます🔍',
+        '',
+        'プロフィールのリンクからチェック🔗',
+        '',
+        '#推し活 #推しサーチ #目黒蓮 #SnowMan',
+      ].join('\n'),
+    );
+    expect(t).not.toMatch(/メンバー|CD|ライブ映像/);
+  });
+
+  it('ほかのテンプレート（一般版・別のグループ版・ブラックフライデー・サイト誘導）には適用しない', () => {
+    for (const id of ['OSHI_GENERAL_09', 'OSHI_GROUP_05', 'OSHI_GROUP_10', 'site_bf_goods', 'site_bf_live', 'site_bf_shopping', 'site_person_search', 'oshi-first3-v1']) {
+      expect(getInstagramCaption(id, { name: 'Number_i', groupName: null, kind: 'group' })).toBeNull();
+    }
+    // 既存の投稿文は kind を渡しても変わらない
+    expect(getInstagramCaption('oshi-sonkamo-v1', { name: '目黒蓮', groupName: 'Snow Man', kind: 'person' })).toBe(
+      getInstagramCaption('oshi-sonkamo-v1', { name: '目黒蓮', groupName: 'Snow Man' }),
+    );
+  });
+});
