@@ -35,11 +35,11 @@ import { countHashtags, validateCaption, INSTAGRAM_CAPTION_MAX_LENGTH, INSTAGRAM
 import { HOURLY_TIME_OPTIONS } from '@/lib/instagram-post-times';
 import { addDaysJst, formatJst as formatJstDateTime, jstWallClockToUtcDate, nowJstParts } from '@/lib/jst-time';
 import { getStatusLabel, getStatusStyle } from '@/lib/instagram-schedule-status';
-import { captionGroupName, getInstagramCaption, type CaptionPerson } from '@/lib/video-instagram-caption';
+import { captionGroupName, getInstagramCaption, resolveJobPostTexts, type CaptionPerson } from '@/lib/video-instagram-caption';
 import { detectWorkerStall } from '@/lib/video-worker-stall';
 import SnsOutputPicker, { resolveSnsSubmission } from './SnsOutputPicker';
 import SnsOutputsSection from './SnsOutputsSection';
-import { hasLinkWording, TIKTOK_CAPTION_CTA, withTiktokPostText } from '@/lib/video-tiktok-caption';
+import { hasLinkWording, TIKTOK_CAPTION_CTA } from '@/lib/video-tiktok-caption';
 import {
   DEFAULT_SNS_CTA,
   DEFAULT_SNS_OUTPUT_CHOICE,
@@ -2090,7 +2090,7 @@ function CapcutCard({
   );
 }
 
-function CompletedDetail({
+export function CompletedDetail({
   job,
   captionPerson,
   onRetry,
@@ -2112,8 +2112,12 @@ function CompletedDetail({
   reelAutopublishEnabled: boolean;
   onReelChanged: () => void;
 }) {
-  // TikTok タブだけ TikTok 用投稿文（プロフィールのリンク前提の文言を使わない）。他のタブは Worker が作った文章のまま
-  const postTexts = useMemo(() => withTiktokPostText(job.postTexts), [job.postTexts]);
+  // TikTok タブだけ TikTok 用投稿文（プロフィールのリンク前提の文言を使わない）。他のタブは Worker が作った文章のまま。
+  // ただし管理画面の Instagram 投稿文を優先するテンプレート（OSHI_GROUP_09）は、投稿文・Instagram タブを新しい文面にする（resolveJobPostTexts）
+  const postTexts = useMemo(
+    () => resolveJobPostTexts(job.templateId, job.postTexts, captionPerson),
+    [job.templateId, job.postTexts, captionPerson.name, captionPerson.groupName, captionPerson.kind], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   // 最初に表示するタブは、投稿文がある最初のタブ（投稿文 → Instagram → TikTok → Threads → X の順）
   const [tab, setTab] = useState(() => POST_TEXT_TABS.find((t) => postTexts[t.key])?.key ?? 'default');
   // 投稿前に手で直せる（この画面の中だけ。保存はしない）。コピーは編集後の文章
@@ -2313,6 +2317,7 @@ function CompletedDetail({
       <InstagramReelSection
         job={job}
         videoUrl={igReelUrl}
+        initialCaption={postTexts.instagram ?? ''}
         schedule={reelSchedule}
         autopublishEnabled={reelAutopublishEnabled}
         onChanged={onReelChanged}
@@ -2909,18 +2914,21 @@ const REEL_CANCELLABLE = new Set(['draft', 'scheduled', 'failed', 'needs_review'
 function InstagramReelSection({
   job,
   videoUrl,
+  initialCaption,
   schedule,
   autopublishEnabled,
   onChanged,
 }: {
   job: VideoJob;
   videoUrl: string;
+  /** 投稿文の初期値（投稿文タブの Instagram と同じ。ほとんどのテンプレートは post_texts.instagram そのもの） */
+  initialCaption: string;
   schedule: ReelSchedule | null;
   autopublishEnabled: boolean;
   onChanged: () => void;
 }) {
   const active = schedule && schedule.status !== 'cancelled' ? schedule : null;
-  const [caption, setCaption] = useState(job.postTexts?.instagram ?? '');
+  const [caption, setCaption] = useState(initialCaption);
   const [date, setDate] = useState(() => addDaysJst(nowJstParts().date, 1));
   const [time, setTime] = useState('20:00');
   const [confirmed, setConfirmed] = useState(false);

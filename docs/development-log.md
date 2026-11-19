@@ -6358,3 +6358,11 @@ OSHI_GROUP_09 の Instagram 投稿文を、冒頭フック（動画の冒頭と�
 - 動画・ナレーション・SRT・CTA・冒頭デザイン・Worker は変更なし
 - OSHI_GROUP_09 は現在グループだけを選べるテンプレートのため、人物版の文面は関数としてだけ用意している（画面から人物を選ぶ導線はない）
 - 指定の文面のうち「✅ ライブ映像も探せる」は、OSHI_GROUP_09 の動画（検索 → 出演作品・配信先 → 関連グッズ → サブスク診断・推し活サービス）で見せていないため削除した（ユーザー確認済み）
+
+### Task 203 追記：完了ジョブの「投稿文」タブに旧投稿文が出ていた問題（2026-11-19）
+- **原因:** ① 0f449d1 は push しておらず、本番（`dpl_3fEUnULDmAiueWMTKuRJB5ybpTdA`・c89f51c）に入っていなかった。② 仮に反映しても、完了ジョブの最初の「投稿文」タブは Worker が返した `post_texts.default`（`buildMediaPosts` の旧文面・料金の注記つき）をそのまま表示し、新しい文面は下の「Instagram投稿文」欄に別に出るだけだった
+- **修正:**
+  - `src/lib/video-instagram-caption.ts` `resolveJobPostTexts`: 投稿文タブの文面を決める関数。TikTok は Worker の元の投稿文から先に作り（`withTiktokPostText`。文面は従来どおり）、`INSTAGRAM_CAPTION_OVERRIDES_WORKER`（OSHI_GROUP_09 だけ）のテンプレートは `default`・`instagram` を `getInstagramCaption` の文面にする。X・Threads・保存データは変えない
+  - `src/app/admin/video-maker/VideoMakerClient.tsx`: `CompletedDetail` の投稿文タブを `resolveJobPostTexts` に。リール予約（`InstagramReelSection`）の投稿文の初期値を投稿文タブの Instagram と同じに（`initialCaption`。ほかのテンプレートは従来どおり `post_texts.instagram`）。テストのため `CompletedDetail` を named export
+  - `src/app/admin/video-maker/__tests__/completed-detail-caption.test.tsx`: 完了ジョブのデータ（Worker の旧投稿文つき）→ `CompletedDetail` の描画で、最初のタブ・Instagram投稿文の欄・リール予約の初期値が新しい文面、TikTok・Threads・X は従来どおり、ほかのテンプレートは Worker の投稿文のまま。優先リストを空にすると失敗することを確認済み
+- Worker・動画・音声・SRT・CTA は変更なし

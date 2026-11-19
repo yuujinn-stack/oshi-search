@@ -3,6 +3,8 @@
 // 管理画面のフロントで生成するだけで、動画生成・Worker・ジョブのデータには影響しない（'use client' からも import 可）。
 // 投稿文が未設定のテンプレートは null（管理画面では欄を出さない）。
 
+import { withTiktokPostText } from './video-tiktok-caption';
+
 export interface CaptionPerson {
   name: string;
   /** 人物データに登録されているグループ名（卒業・脱退済みでも登録があれば使う。無ければ null） */
@@ -139,4 +141,29 @@ const INSTAGRAM_CAPTIONS: Record<string, CaptionBuilder> = {
 export function getInstagramCaption(templateId: string, person: CaptionPerson): string | null {
   const build = INSTAGRAM_CAPTIONS[templateId];
   return build ? build(person) : null;
+}
+
+/**
+ * 管理画面の Instagram 投稿文を、完了ジョブの投稿文タブ（Worker が作った post_texts）よりも優先するテンプレート。
+ * ここにあるテンプレートだけ、「投稿文」「Instagram」タブとリール予約の初期の投稿文を getInstagramCaption の文面に置き換える
+ * （Worker の古い投稿文＝料金の注記つき を出さない）。ほかのテンプレートは従来どおり Worker の投稿文を出す。
+ */
+const INSTAGRAM_CAPTION_OVERRIDES_WORKER: ReadonlySet<string> = new Set(['OSHI_GROUP_09']);
+
+/**
+ * 完了ジョブの投稿文タブに出す投稿文。
+ * ・TikTok は Worker が作った元の投稿文から作る（withTiktokPostText。置き換えの前に作るので TikTok の文面は変わらない）
+ * ・INSTAGRAM_CAPTION_OVERRIDES_WORKER のテンプレートは、Instagram 用（default・instagram）を管理画面の Instagram 投稿文にする
+ * ・X・Threads は Worker の投稿文のまま。保存データ（job.postTexts）は変更しない
+ */
+export function resolveJobPostTexts(
+  templateId: string,
+  postTexts: Record<string, string | null> | null | undefined,
+  person: CaptionPerson,
+): Record<string, string | null> {
+  const base = withTiktokPostText(postTexts);
+  if (!INSTAGRAM_CAPTION_OVERRIDES_WORKER.has(templateId)) return base;
+  const caption = getInstagramCaption(templateId, person);
+  if (!caption || !person.name.trim()) return base;
+  return { ...base, default: caption, instagram: caption };
 }
