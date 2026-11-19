@@ -8,6 +8,7 @@ export const NAV_ITEMS = [
   { href: '/admin/people-progress',            label: '進捗管理' },
   { href: '/admin/work-check',                 label: '作品管理' },
   { href: '/admin/work-dedup',                 label: '作品重複' },
+  { href: '/admin/work-image-display',         label: '🖼️ 作品画像表示' },
   { href: '/admin/product-check',              label: '商品管理' },
   { href: '/admin/photobooks',                 label: '📷 写真集管理' },
   { href: '/admin/instagram',                  label: '📸 Instagram管理' },

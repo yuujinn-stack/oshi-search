@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import type { VodPageWork } from '@/lib/vod-page';
 import { VOD_TYPE_LABEL } from '@/types/vod';
+import { resolveWorkVisualFromUrl, type WorkImageDisplayMode } from '@/lib/work-image-display';
+import WorkD1Visual from '@/components/work-visual/WorkD1Visual';
 
 // /vod/[provider] 専用の作品カード。
 // 既存の WorkCard.tsx（人物ページの出演作品カード）と同じ theme-card 系CSS
@@ -8,7 +10,10 @@ import { VOD_TYPE_LABEL } from '@/types/vod';
 // デザインの一貫性を保つ。ただしこのページでは対象サービスが1つに固定されている
 // ため、複数プロバイダーのバッジ表示は行わず、availabilityType・確認日・
 // 主な出演人物という本ページ固有の情報を表示する。
-export default function VodWorkCard({ work }: { work: VodPageWork }) {
+// imageMode: 作品画像の表示方式（省略時は従来画像表示）。D-1 表示中は作品名・公開年を画像内に描き、
+// カード下には重ねて出さない（配信の種類・出演者・確認日は従来どおり）。
+export default function VodWorkCard({ work, imageMode = 'legacy' }: { work: VodPageWork; imageMode?: WorkImageDisplayMode }) {
+  const isD1 = resolveWorkVisualFromUrl(work.posterUrl, imageMode).kind === 'd1';
   const checkedDate = work.checkedAt
     ? new Date(work.checkedAt).toLocaleDateString('ja-JP', { year: 'numeric', month: 'short', day: 'numeric' })
     : null;
@@ -16,6 +21,12 @@ export default function VodWorkCard({ work }: { work: VodPageWork }) {
   return (
     <div className="work-card-root">
       <Link href={work.detailUrl} className="block">
+        {isD1 ? (
+          /* D-1共通デザイン（従来画像の <img> は描画しない＝読み込まない） */
+          <div className="p-2 pb-0">
+            <WorkD1Visual title={work.title} typeLabel={work.displayTypeLabel} releaseYear={work.releaseYear} />
+          </div>
+        ) : (
         <div className="relative aspect-[2/3] bg-gray-100 overflow-hidden flex-shrink-0">
           {work.posterUrl ? (
             /* eslint-disable-next-line @next/next/no-img-element */
@@ -44,9 +55,19 @@ export default function VodWorkCard({ work }: { work: VodPageWork }) {
             </div>
           )}
         </div>
+        )}
       </Link>
 
       <div className="flex flex-col flex-1 p-3 gap-1.5">
+        {isD1 ? (
+          work.availabilityType !== 'unknown' && (
+            <div>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-green-500 text-white">
+                {VOD_TYPE_LABEL[work.availabilityType]}
+              </span>
+            </div>
+          )
+        ) : (
         <div>
           <Link href={work.detailUrl} className="work-card-title">
             {work.title}
@@ -55,6 +76,7 @@ export default function VodWorkCard({ work }: { work: VodPageWork }) {
             <p className="text-xs mt-1" style={{ color: 'var(--ds-muted)' }}>{work.releaseYear}年</p>
           )}
         </div>
+        )}
 
         {work.mainCastNames.length > 0 && (
           <p className="text-[11px] leading-snug line-clamp-2" style={{ color: 'var(--ds-muted)' }}>

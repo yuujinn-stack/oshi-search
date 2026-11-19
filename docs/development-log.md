@@ -6366,3 +6366,59 @@ OSHI_GROUP_09 の Instagram 投稿文を、冒頭フック（動画の冒頭と�
   - `src/app/admin/video-maker/VideoMakerClient.tsx`: `CompletedDetail` の投稿文タブを `resolveJobPostTexts` に。リール予約（`InstagramReelSection`）の投稿文の初期値を投稿文タブの Instagram と同じに（`initialCaption`。ほかのテンプレートは従来どおり `post_texts.instagram`）。テストのため `CompletedDetail` を named export
   - `src/app/admin/video-maker/__tests__/completed-detail-caption.test.tsx`: 完了ジョブのデータ（Worker の旧投稿文つき）→ `CompletedDetail` の描画で、最初のタブ・Instagram投稿文の欄・リール予約の初期値が新しい文面、TikTok・Threads・X は従来どおり、ほかのテンプレートは Worker の投稿文のまま。優先リストを空にすると失敗することを確認済み
 - Worker・動画・音声・SRT・CTA は変更なし
+
+## Task 203 — 作品画像の「D-1共通デザイン」と、管理画面「作品画像表示設定」での切り替え（2026-11-19・未commit・本番デプロイなし・本番DB変更なし）
+
+**目的：** 公開ページの作品画像を、白地に作品タイトルを描く D-1共通デザインへ切り替えられるようにする。切り替えは管理画面から行い、再デプロイ不要でサイト全体に反映。従来画像への切り戻しも可能にする。
+
+**作業場所：** 元の作業フォルダには他タスクの未コミット変更が多いため、worktree `~/dev/oshi-search-work-image-d1`（ブランチ feat/work-image-d1、origin/main=97497ed から作成）で作業。
+
+**設定の保存方式（調査結果と判断）：** 既存に汎用の設定テーブルは無く、管理画面の設定は Neon の専用列・専用テーブル（group_meta.home_category・photobook_settings 等）に保存する方式。Redis は計測・補助用途のみ（CLAUDE.md）のため使わない。→ Neon に `site_settings`（key PK・value・updated_by・updated_at）を新設し、key=`work_image_display`、value=`d1|legacy`。
+- テーブル未作成・行なし・想定外の値・DB エラーのときは **従来画像表示**（既定値 legacy）。デプロイしただけでは見た目は変わらない
+- 公開ページは `unstable_cache`（タグ `site-settings`・300秒）で読む。保存時に `revalidateTag('site-settings', { expire: 0 })`・`/vod/[provider]`・`revalidatePublicListings()` で即時に無効化
+
+**表示方式の判定：** `src/lib/work-image-display.ts`（純粋関数）。`resolveWorkVisual(work, mode)`：d1 は従来の画像URLを返さない（＝`<img>` を描かない＝読み込まない）、legacy は従来の `getWorkDisplayImage` の結果そのまま。`resolveWorkVisualFromUrl` は既に画像URLだけを持つ呼び出し側用。
+- **将来の拡張：** `licensedImageUrl`（使用許諾済みの公式画像）を渡すと D-1 中でもその作品だけ画像を表示する。現在はどこからも渡していない（DB列も未作成）。追加時は works に列を作り、表示側で渡すだけ
+
+**D-1 の見た目（`src/components/work-visual/WorkD1Visual.tsx`・`work-d1.css`）：** 背景 #FFFFFF・作品名 #161616 Noto Sans JP 700（next/font でセルフホスト・preload なし）・中央配置・下に 29×2px のオレンジ線（#f97316）・上部に「種類 · 公開年」（不明な項目は出さない。幅が足りなければ2行に折り返し、省略しない）・下部に OSHI SEARCH（薄いグレー・aria-hidden）・枠 #e6e6e6・角丸6px・2:3。作品名は全文を HTML テキストで描く（SEO・読み上げ維持）。文字の大きさは重み付き文字数（全角1・半角0.55）で7段階、カード幅に対する cqi 単位。長い英単語は overflow-wrap:anywhere、日本語は line-break:strict（Chrome 系は word-break:auto-phrase で文節改行）。極端に長い場合は箱が縦に伸びる（はみ出さない・切らない）。テーマに関係なく色は固定。
+- `variant="compact"`：横に作品名がある小さなサムネイル用（作品名を描かず、種類＋オレンジ線だけ）
+
+**適用箇所（各カードに `imageMode` 引数。省略時は legacy＝従来と同じ）：**
+- `src/components/WorkCard.tsx`（人物ページ出演作品・グループページ配信中作品）：D-1 中はカード下の作品名・公開年を出さず、配信中バッジ＋役名を表示。配信バッジ・ロゴ・確認日・作品詳細ボタンは従来どおり。クリック計測の posterUrl 送信は従来どおり（画像は読み込まない）
+- `src/components/VodWorkCard.tsx`（/vod/[provider]・推しのサブスク診断）：D-1 中は作品名・公開年を出さず、見放題等のバッジ・出演者・確認日を表示
+- `src/components/site/StreamingNowSection.tsx`（人物ページ「今すぐ見られる作品」）・人物ページの配信サービス別一覧・グループページ `CompactWorkLink`・作品詳細ページのメイン画像：compact（横の作品名・h1 と重複させない）
+- 作品詳細ページの関連作品グリッド：D-1（下の作品名・年は出さない）
+- `WorksSection.tsx`・`OshiVodWorkLists.tsx`：引数を渡すだけ。各ページ（person・groups・work・vod・oshi-vod）で `getWorkImageDisplayMode()` を既存の Promise.all に追加
+- **対象外：** 検索結果ページ（/search は人物の結果のみで作品画像なし）・トップ（作品画像なし。`HomeDiscoverySections.PopularWorksSection` は現在どこからも表示されていない）・楽天商品画像・配信サービスのロゴ・人物画像・Instagram/動画生成（`src/server/*`・tools/）
+- **作品詳細の OGP 画像・JSON-LD の image は設定に関係なく従来どおり**（画面上の画像ではないため。D-1 を画像の権利対策として使う場合は別途判断が必要）
+- グリッドの列数（スマホ2列・中間3列・PC4列等）はどのページも変更していない
+
+**管理画面：** `/admin/work-image-display`（ナビ「🖼️ 作品画像表示」）。D-1／従来のラジオ、保存ボタン、反映中の表示・最終保存日時、未保存（●）・保存成功（✓）・保存失敗（✕ と理由）、「従来画像表示に戻す」、テーブル未作成時の警告。プレビューは実際の WorkCard をスマホ2列／中間3列／PC4列で表示（登録済みの公開作品3件＋確認用の作品名5件：短い・長い・英語・記号混じり・公開年不明。`inert` でリンク無効）。API `GET/PUT /api/admin/work-image-display`（不正値・不正JSONは400、DBエラーは500）。認証・CSRF は既存の `src/proxy.ts`（/api/admin/* はセッション必須・書き込みは Origin チェック）。
+
+**DB：** `src/db/schema.ts`（siteSettings）・`drizzle/0025_site_settings.sql`・`db-init/route.ts`（CREATE TABLE IF NOT EXISTS・TABLE_NAMES）。既存の表・列・画像URL・作品データは変更しない。
+
+**テスト（新規34件）：** `work-image-display.test.tsx`（18件：判定・既定値 legacy・許諾画像・文字サイズ段階・メタ表示・エスケープ・各カードで D-1 時に `<img>` なし／作品名1回／ロゴは従来と同一・従来時は画像あり）、`site-settings.test.ts`（11件：読み込み・未作成時の既定値・保存とキャッシュ無効化・API 400/500）、`work-image-display-auth.test.ts`（6件：未ログイン401・偽セッション401・別Origin 403・未ログイン画面はログインへ）。
+
+**確認：** tsc 0件（既存の pglite 2件のみ）／vitest 3,107件成功・67件スキップ／`next build` 成功。本番DBは読み取りのみ（site_settings 未作成のため既定値で動くことも確認）。ローカル（next dev）で確認用に一時的に既定値を d1 にして（確認後に legacy へ戻した）、人物・グループ・作品詳細・/vod/netflix を 390/768/1280px で Playwright 計測：作品ポスター画像のリクエスト 0件・タイトルのはみ出し 0件・横スクロールなし・列数は従来どおり。従来表示ではポスター画像を従来どおり読み込むことも確認。管理画面は保存APIの応答をブラウザ側で差し替えて（本番DBへは書き込まない）未保存→失敗→成功→切り戻しの表示を確認、未ログインはログイン画面・PUT は 401。
+- 確認中に直した不具合：余白リセットの詳細度でオレンジ線が文字に重なる／細いカードで年が「…」で切れる／極端に細いカードで長いタイトルが枠の下にはみ出す
+
+**本番反映手順（未実施・承認待ち）：** ① 本番DBに site_settings を作成（db-init は全テーブルに ALTER を発行するため、Task 195 と同様に CREATE TABLE 1文だけの専用スクリプトが安全）② commit → push → Vercel Ready ③ 公開ページが従来表示のままか確認 ④ 管理画面で D-1 を保存して反映を確認、必要なら従来へ戻す。テーブル作成前にデプロイしても公開ページは従来表示で動く（保存だけが失敗表示になる）。
+
+### Task 203 追記：OGP・構造化データの D-1 対応、公開準備（2026-11-19・未commit・本番デプロイなし・本番DB変更なし）
+
+**OGP／SNS 共有画像・JSON-LD：** D-1 のとき、作品ページの og:image・twitter:image・JSON-LD（Movie/TVSeries）の image を D-1 の OG 画像 `/work/[workId]/og`（1200×630 PNG）に切り替え、従来の作品画像URLは出さない。従来画像表示に戻すと従来どおり（手動 > TMDb > OG）。判定は `resolveWorkShareImage`（`src/lib/work-image-display.ts`。画面表示と同じ `resolveWorkVisual` を使うため、将来の許諾済み公式画像も同じ扱い）。
+- `src/app/work/[workId]/og/route.tsx`（新規）：next/og＋既存の Noto Sans CJK JP（`/oshi-vod/og` と同じ方式）。作品名・種類・公開年だけを描き、外部の作品画像は読み込まない。`Cache-Control: public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800`・`X-Robots-Tag: noindex`。作品なし 404・読み込み失敗 500（どちらも no-store）。/api/ ではないため robots.txt で拒否されない
+- `src/server/work-d1/og-image.tsx`（新規）：OG 画像のレイアウト（画面の D-1 と同じ色・構成。作品名の文字サイズは長さで7段階）
+- `next.config.ts`：`outputFileTracingIncludes` に `/work/[workId]/og` のフォントを追加（ビルドの追跡結果に含まれることを確認）
+- 管理画面の説明文を「OGP・構造化データも切り替わる」に変更
+- 楽天の商品画像・配信サービスのロゴ・人物画像は変更なし。他のページの JSON-LD に作品画像は無い（調査済み）
+
+**本番用スクリプト：** `scripts/site-settings/add-site-settings.mjs`（check／apply／verify）。apply は `CREATE TABLE IF NOT EXISTS site_settings` 1文だけ（lock_timeout 5秒・行は入れない）。check で既存テーブルの定義（列・インデックス）と works の指紋（行数・画像URL・更新日時の md5）を保存し、verify で site_settings の4列・主キー・0行と、既存の定義・作品データが check 時と同じかを確認。
+- pglite で確認：check → apply → verify OK、apply 2回目も OK、アプリの upsert が通る、保存済みの行は apply を再実行しても残る、作品データを変えると verify が NG
+- 本番DBで check のみ実行（読み取り。指紋は scratchpad に保存）：ep-ancient-field…（本番）、site_settings なし、37テーブル、works 33,430行
+
+**確認：** tsc 0件（既存の pglite 2件のみ）／vitest 3,115件成功・67件スキップ（新規 8件 `work-d1-og.test.tsx`）／`next build` 成功。ローカルで D-1 と従来を同じ条件で撮影（スマホ2列・中間3列・PC4列・長い作品名の一覧・作品詳細、従来との横並び比較）。D-1 では作品ポスターのリクエスト 0件、作品ページの og:image・twitter:image・JSON-LD がすべて `/work/tmdb-tv-295904/og`、HTML 内に作品ポスターのURLなし。従来に戻すと3つとも TMDb 画像に戻る。管理画面の保存・失敗・切り替え・元に戻すを再確認（保存APIはブラウザ側で応答を差し替え）。
+
+**競合の確認：** origin/main は 97497ed のまま。元の作業フォルダの未コミット変更と3方向マージ：`src/app/groups/[groupSlug]/page.tsx` は同じ箇所の隣り合う行（元フォルダ側の `loadLiveArchiveCampaigns`→`loadPublicCampaigns` の改名と、こちらの表示方式の読み込み追加）、`docs/development-log.md` は両方が末尾に追記、の2か所だけが文字上ぶつかる（両方残せば解決）。ほかの6ファイルは自動で統合でき、残りは元フォルダが origin/main と同じ。ほかの worktree の未コミット変更・origin/main より進んだブランチとの重なりは開発ログのみ。
+
+**本番反映手順（未実施・承認待ち）：** ① `git fetch` で origin/main=97497ed のままか確認 ② `node scripts/site-settings/add-site-settings.mjs check` → `apply` → `verify`（OK）③ worktree で今回のファイルだけ commit → push → Vercel Ready ④ 公開ページが従来のまま（og:image も従来）、`/work/<id>/og` が PNG、管理画面に読み込みエラーが出ないことを確認 ⑤ 管理画面で D-1 を保存 → 公開ページ・og:image を確認 → 必要なら従来に戻す。

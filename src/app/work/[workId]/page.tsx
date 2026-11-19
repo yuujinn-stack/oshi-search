@@ -16,6 +16,9 @@ import { deduplicateProviders, isConfirmedVodAvailability, normalizeProviderName
 import { getInactiveProviderSlugs } from '@/lib/provider-store';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
 import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
+import { getWorkImageDisplayMode } from '@/lib/site-settings';
+import { resolveWorkVisual, resolveWorkShareImage, toAbsoluteUrl, WORK_D1_OG_IMAGE_SIZE } from '@/lib/work-image-display';
+import WorkD1Visual from '@/components/work-visual/WorkD1Visual';
 import { shouldNoindexWork, safeTitleFallback } from '@/lib/seo-quality';
 import ProviderLogo from '@/components/ProviderLogo';
 import VodTrackLink from '@/components/site/VodTrackLink';
@@ -91,9 +94,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   // Priority D-3/D-6 (Section 32): タイトルが空文字等の場合に「undefined｜推しサーチ」の
   // ような不自然なtitleにならないよう安全なfallbackを使う（既存の簡潔なfallback方針）。
   const displayTitle = safeTitleFallback(work.title, 'この作品');
-  // 画像優先順位: 手動画像 > TMDb画像(posterUrl) > 自動取得OG画像(ogImageUrl)。
+  // 従来画像表示: 手動画像 > TMDb画像(posterUrl) > 自動取得OG画像(ogImageUrl)。
+  // D-1共通デザイン: D-1 の OG 画像（/work/[workId]/og）。従来の作品画像URLは出さない。
   // 相対URLの場合は layout.tsx の metadataBase により自動的に絶対URLへ解決される。
-  const displayImage = getRenderableWorkImageUrl(getWorkDisplayImage(work));
+  const shareImage = resolveWorkShareImage(work, await getWorkImageDisplayMode(), workId);
+  const ogImages = shareImage
+    ? [shareImage.kind === 'd1'
+        ? { url: shareImage.url, ...WORK_D1_OG_IMAGE_SIZE, alt: `${displayTitle}｜推しサーチ` }
+        : { url: shareImage.url }]
+    : [];
   // Priority D-3: タイトル未取得・placeholder状態（既存データ上明確に未完成）の場合のみnoindex。
   // status='auto_published'の作品のみここに到達するため、公開可否そのものは変更しない。
   const noindex = shouldNoindexWork({ title: work.title, workId });
@@ -106,12 +115,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     openGraph: {
       title: `${displayTitle} 配信情報・出演者一覧`,
       description: `${displayTitle}の配信サービス・出演者・関連商品情報`,
-      images: displayImage ? [{ url: displayImage }] : [],
+      images: ogImages,
       type: 'article',
     },
     twitter: {
       card: 'summary_large_image',
-      images: displayImage ? [displayImage] : [],
+      images: shareImage ? [shareImage.url] : [],
     },
     ...(noindex && { robots: { index: false, follow: true } }),
   };
@@ -150,14 +159,20 @@ export default async function WorkDetailPage({ params }: Props) {
   const primaryPersonName = workPersons[0]?.personName ?? work.personName;
 
   // 並列データ取得
-  const [tmdbDetails, allPersonsData, allWorks, relatedProducts, terminatedSlugs] = await Promise.all([
+  const [tmdbDetails, allPersonsData, allWorks, relatedProducts, terminatedSlugs, imageMode] = await Promise.all([
     work.tmdbId ? fetchTmdbDetails(work.tmdbId, work.type as 'movie' | 'tv') : Promise.resolve({ genres: [] }),
     // 公開人物の一覧はヘッダー（検索候補）と同じリクエスト内の読み込みを共有する（DBへの問い合わせは増えない）
     getAllPersonsMerged(),
     getPublishedWorks(primaryPersonName),
     getRelatedProducts(primaryPersonName, work.title),
     getInactiveProviderSlugs(),
+    // 作品画像の表示方式（失敗時は従来画像表示。例外は投げない）
+    getWorkImageDisplayMode(),
   ]);
+  // D-1 表示中は画面上の作品画像を読み込まない。OG画像・構造化データ（JSON-LD）の image は従来どおり
+  const heroIsD1 = resolveWorkVisual(work, imageMode).kind === 'd1';
+  // JSON-LD の image も OGP と同じ判定（D-1 のときは D-1 の OG 画像。従来の作品画像URLは出さない）
+  const jsonLdImage = resolveWorkShareImage(work, imageMode, workId);
 
   const allPersonsMap = new Map(allPersonsData.map((p) => [p.name, p]));
   const primaryPersonData = allPersonsMap.get(primaryPersonName);
@@ -203,7 +218,7 @@ export default async function WorkDetailPage({ params }: Props) {
     ...(work.originalTitle && work.originalTitle !== work.title && { alternateName: work.originalTitle }),
     ...(work.releaseYear && { datePublished: String(work.releaseYear) }),
     ...(work.overview && { description: work.overview }),
-    ...(displayImage && { image: displayImage }),
+    ...(jsonLdImage && { image: toAbsoluteUrl(jsonLdImage.url, siteOrigin) }),
     ...(tmdbDetails.genres.length > 0 && { genre: tmdbDetails.genres }),
     url: workUrl,
     actor: workPersons.map((wp) => ({
@@ -253,7 +268,10 @@ export default async function WorkDetailPage({ params }: Props) {
             <div className="flex gap-4 p-4">
               {/* ポスター（手動画像 > TMDb画像 > 自動取得OG画像） */}
               <div className="w-24 flex-shrink-0">
-                {displayImage ? (
+                {heroIsD1 ? (
+                  // D-1 表示中。作品名は右の見出し（h1）にあるため、作品名を描かない小さな D-1
+                  <WorkD1Visual title={work.title} typeLabel={displayWorkLabel} variant="compact" />
+                ) : displayImage ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={displayImage.replace('/w500', '/w300')}
@@ -545,6 +563,19 @@ export default async function WorkDetailPage({ params }: Props) {
               <div className="p-4 grid grid-cols-3 gap-2.5">
                 {relatedWorks.map((w) => {
                   const wImage = getRenderableWorkImageUrl(getWorkDisplayImage(w));
+                  const wIsD1 = resolveWorkVisual(w, imageMode).kind === 'd1';
+                  if (wIsD1) {
+                    // D-1 表示中。作品名・公開年は D-1 の中に描くため、下に重ねて出さない
+                    return (
+                      <Link
+                        key={w.id}
+                        href={getWorkPublicUrl({ workId: w.id, canonicalWorkId: w.canonicalWorkId }) ?? `/work/${encodeURIComponent(w.id)}`}
+                        className="group block hover:opacity-90 transition-opacity"
+                      >
+                        <WorkD1Visual title={w.title} typeLabel={DISPLAY_WORK_TYPE_LABEL[getDisplayWorkType(w)]} releaseYear={w.releaseYear} />
+                      </Link>
+                    );
+                  }
                   return (
                   <Link
                     key={w.id}

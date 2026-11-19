@@ -6,6 +6,7 @@ import OshiVodResultHero from '@/components/oshi-vod/OshiVodResultHero';
 import OshiVodRankings from '@/components/oshi-vod/OshiVodRankings';
 import OshiVodPairs from '@/components/oshi-vod/OshiVodPairs';
 import OshiVodWorkLists from '@/components/oshi-vod/OshiVodWorkLists';
+import { getWorkImageDisplayMode } from '@/lib/site-settings';
 import OshiVodPersonBreakdown from '@/components/oshi-vod/OshiVodPersonBreakdown';
 import OshiVodDetailCompare from '@/components/oshi-vod/OshiVodDetailCompare';
 import OshiVodShare from '@/components/oshi-vod/OshiVodShare';
@@ -124,9 +125,11 @@ export default async function OshiVodPage({ searchParams }: Props) {
 
   let result: DiagnosisResult | null = null;
   let loadError = false;
+  // 作品画像の表示方式（診断結果があるときだけ読む。失敗時は従来画像表示。例外は投げない）
+  let imageMode: Awaited<ReturnType<typeof getWorkImageDisplayMode>> = 'legacy';
   if (valid.length > 0) {
     try {
-      result = await loadOshiVodDiagnosis(valid);
+      [result, imageMode] = await Promise.all([loadOshiVodDiagnosis(valid), getWorkImageDisplayMode()]);
     } catch (err) {
       console.error('[oshi-vod] diagnosis failed:', String(err));
       loadError = true;
@@ -216,7 +219,7 @@ export default async function OshiVodPage({ searchParams }: Props) {
             <OshiVodResultHero result={result} />
             <OshiVodRankings result={result} />
             <OshiVodPairs result={result} />
-            <OshiVodWorkLists result={result} />
+            <OshiVodWorkLists result={result} imageMode={imageMode} />
             <OshiVodPersonBreakdown result={result} />
             <OshiVodDetailCompare result={result} />
 

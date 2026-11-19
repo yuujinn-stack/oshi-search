@@ -15,6 +15,9 @@ import { VOD_TYPE_CONFIG, getVodLink, getVodServiceStyle } from '@/lib/vod-cta';
 import AffiliateSlot from '@/components/site/AffiliateSlot';
 import VodTrackLink from '@/components/site/VodTrackLink';
 import ProviderLogo from '@/components/ProviderLogo';
+import { resolveWorkVisual, type WorkImageDisplayMode } from '@/lib/work-image-display';
+import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
+import WorkD1Visual from '@/components/work-visual/WorkD1Visual';
 
 const MAX_WORKS = 6;
 const MAX_PROVIDERS_PER_WORK = 3;
@@ -27,9 +30,11 @@ function formatCheckedDate(vodUpdatedAt?: number): string | null {
 interface Props {
   works: WorkRecord[];
   terminatedSlugs: Set<string>;
+  /** 作品画像の表示方式（省略時は従来画像表示） */
+  imageMode?: WorkImageDisplayMode;
 }
 
-export default function StreamingNowSection({ works, terminatedSlugs }: Props) {
+export default function StreamingNowSection({ works, terminatedSlugs, imageMode = 'legacy' }: Props) {
   // publishedWorksはreleaseYear降順のため、先頭N件は自然と「新しい作品優先」になる
   // （架空の人気順・おすすめ判定は行わない。既存の並び順をそのまま利用するだけ）
   const targets = works.slice(0, MAX_WORKS);
@@ -51,6 +56,8 @@ export default function StreamingNowSection({ works, terminatedSlugs }: Props) {
           const providers = getStreamingProviders(work, terminatedSlugs).slice(0, MAX_PROVIDERS_PER_WORK);
           if (providers.length === 0) return null;
           const posterUrl = getRenderableWorkImageUrl(getWorkDisplayImage(work));
+          // D-1 表示中は横に作品名があるため、小さなサムネイルには作品名を描かない（compact）
+          const isD1 = resolveWorkVisual(work, imageMode).kind === 'd1';
           const workDetailUrl = getWorkPublicUrl({ workId: work.id, canonicalWorkId: work.canonicalWorkId, personName: work.personName }) ?? '#';
           const checkedDate = formatCheckedDate(work.vodUpdatedAt);
 
@@ -58,7 +65,11 @@ export default function StreamingNowSection({ works, terminatedSlugs }: Props) {
             <div key={work.id} className="theme-card overflow-hidden p-3 flex gap-3">
               {/* ポスター */}
               <Link href={workDetailUrl} className="flex-shrink-0">
-                {posterUrl ? (
+                {isD1 ? (
+                  <span className="block w-16">
+                    <WorkD1Visual title={work.title} typeLabel={DISPLAY_WORK_TYPE_LABEL[getDisplayWorkType(work)]} variant="compact" />
+                  </span>
+                ) : posterUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={posterUrl}

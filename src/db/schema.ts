@@ -808,3 +808,14 @@ export const oshikatsuAffiliateCreatives = pgTable('oshikatsu_affiliate_creative
 }, (t) => [
   index('oac_service_id_idx').on(t.serviceId),
 ]);
+
+// ── サイト全体の表示設定（site_settings）────────────────────────────────────
+// 管理画面から切り替える「サイト全体に1つだけの設定値」を key ごとに1行で持つ（drizzle/0025_site_settings.sql）。
+// 現在の key: 'work_image_display'（作品画像の表示方式。value は 'd1' | 'legacy'。src/lib/site-settings.ts）。
+// 行が無い・テーブルが未作成のときは各設定の既定値（従来どおりの表示）で動く。
+export const siteSettings = pgTable('site_settings', {
+  key:       text('key').primaryKey(),
+  value:     text('value').notNull(),
+  updatedBy: text('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});

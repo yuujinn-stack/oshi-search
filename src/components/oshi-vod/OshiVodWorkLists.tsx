@@ -2,6 +2,7 @@
 // 作品カードは /vod/[provider] の既存 VodWorkCard を再利用する。
 import Link from 'next/link';
 import VodWorkCard from '@/components/VodWorkCard';
+import type { WorkImageDisplayMode } from '@/lib/work-image-display';
 import ProviderLogo from '@/components/ProviderLogo';
 import type { DiagnosisResult, DiagnosisWork, WorkServiceRef } from '@/lib/oshi-vod/types';
 import { toVodPageWork, workDetailUrl } from '@/lib/oshi-vod/format';
@@ -55,7 +56,7 @@ function WorkRow({ work, refs }: { work: DiagnosisWork; refs: WorkServiceRef[] }
   );
 }
 
-export default function OshiVodWorkLists({ result }: { result: DiagnosisResult }) {
+export default function OshiVodWorkLists({ result, imageMode = 'legacy' }: { result: DiagnosisResult; imageMode?: WorkImageDisplayMode }) {
   const byKey = new Map(result.works.map((w) => [w.key, w]));
   const top = result.byWorkCount[0]?.stat ?? null;
   const watchable = top ? top.paidKeys.map((k) => byKey.get(k)).filter((w): w is DiagnosisWork => !!w) : [];
@@ -84,13 +85,13 @@ export default function OshiVodWorkLists({ result }: { result: DiagnosisResult }
         <section aria-labelledby="ov-watchable-heading" style={secLabel('WORKS')}>
           <h2 id="ov-watchable-heading" className="ov-h2">{top.displayName}で見放題の作品（{watchable.length}作品）</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {watchable.slice(0, FIRST_CARDS).map((w) => <VodWorkCard key={w.key} work={toVodPageWork(w, 'flatrate')} />)}
+            {watchable.slice(0, FIRST_CARDS).map((w) => <VodWorkCard key={w.key} work={toVodPageWork(w, 'flatrate')} imageMode={imageMode} />)}
           </div>
           {watchable.length > FIRST_CARDS && (
             <details className="ov-more mt-3">
               <summary>残り{watchable.length - FIRST_CARDS}作品を見る</summary>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
-                {watchable.slice(FIRST_CARDS).map((w) => <VodWorkCard key={w.key} work={toVodPageWork(w, 'flatrate')} />)}
+                {watchable.slice(FIRST_CARDS).map((w) => <VodWorkCard key={w.key} work={toVodPageWork(w, 'flatrate')} imageMode={imageMode} />)}
               </div>
             </details>
           )}

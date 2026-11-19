@@ -25,6 +25,8 @@ const nextConfig: NextConfig = {
     '/api/oshi-card/image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf', './src/server/oshi-card/fonts/MPLUSRounded1c-ExtraBold.ttf', './src/server/oshi-card/fonts/ShipporiMinchoB1-ExtraBold.ttf', './src/server/oshi-card/assets/*.png'],
     '/oshi-card/og': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf', './src/server/oshi-card/fonts/MPLUSRounded1c-ExtraBold.ttf', './src/server/oshi-card/fonts/ShipporiMinchoB1-ExtraBold.ttf', './src/server/oshi-card/assets/*.png'],
     '/oshi-card/opengraph-image': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
+    // 作品ページの D-1共通デザインの OG 画像（作品画像表示設定が D-1 のときの og:image）
+    '/work/[workId]/og': ['./src/server/instagram-post/fonts/NotoSansCJKjp-Bold.otf'],
   },
   images: {
     remotePatterns: [

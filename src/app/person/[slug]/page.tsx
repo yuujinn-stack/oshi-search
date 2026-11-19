@@ -38,6 +38,9 @@ import OshiAdBanner from '@/components/affiliate/OshiAdBanner';
 import PersonHero from '@/components/site/PersonHero';
 import PersonQuickNav from '@/components/site/PersonQuickNav';
 import StreamingNowSection from '@/components/site/StreamingNowSection';
+import WorkD1Visual from '@/components/work-visual/WorkD1Visual';
+import { getWorkImageDisplayMode } from '@/lib/site-settings';
+import { resolveWorkVisualFromUrl } from '@/lib/work-image-display';
 import FeaturedProductsSection from '@/components/site/FeaturedProductsSection';
 import OshiVodEntryCta from '@/components/oshi-vod/OshiVodEntryCta';
 import { buildOshiVodWithPath } from '@/lib/oshi-vod/params';
@@ -281,7 +284,7 @@ export default async function PersonPage({ params }: Props) {
   const explicitMembership = hasExplicitMemberships(personRecords);
   const displayGroup = displayGroupOf(person, personRecords);
 
-  const [storedResult, verdictsResult, worksResult, personMetaResult, groupMetasResult, displayOrdersResult, terminatedSlugs] =
+  const [storedResult, verdictsResult, worksResult, personMetaResult, groupMetasResult, displayOrdersResult, terminatedSlugs, imageModeResult] =
     await Promise.allSettled([
       getAllStoredProductsOrThrow(person.name),
       getAllVerdictsOrThrow(person.name),
@@ -290,7 +293,10 @@ export default async function PersonPage({ params }: Props) {
       getAllGroupMetas(),
       getAllDisplayOrders(person.name),
       getInactiveProviderSlugs(),
+      // 作品画像の表示方式（D-1共通デザイン／従来画像表示）。失敗時は従来画像表示
+      getWorkImageDisplayMode(),
     ]);
+  const imageMode = imageModeResult.status === 'fulfilled' ? imageModeResult.value : 'legacy';
 
   const storedData: Partial<Record<ProductCategory, StoredCategoryData>> =
     storedResult.status === 'fulfilled' ? storedResult.value : {};
@@ -797,7 +803,7 @@ export default async function PersonPage({ params }: Props) {
         <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
 
           {/* ━━━ 今すぐ見られる作品 ━━━ */}
-          <StreamingNowSection works={streamingWorks} terminatedSlugs={inactiveSlugs} />
+          <StreamingNowSection works={streamingWorks} terminatedSlugs={inactiveSlugs} imageMode={imageMode} />
 
           {/* ━━━ #推しアド（AccessTrade） ━━━ */}
           <OshiAdBanner personName={person.name} />
@@ -848,7 +854,12 @@ export default async function PersonPage({ params }: Props) {
                             className="flex items-center gap-2 py-1 transition-colors group theme-text-link"
                             style={{ color: 'var(--ds-text)', textDecoration: 'none' }}
                           >
-                            {work.posterUrl ? (
+                            {resolveWorkVisualFromUrl(work.posterUrl, imageMode).kind === 'd1' ? (
+                              // D-1 表示中（横に作品名があるため、作品名を描かない小さな D-1）
+                              <span className="block w-8 flex-shrink-0">
+                                <WorkD1Visual title={work.title} variant="compact" />
+                              </span>
+                            ) : work.posterUrl ? (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img
                                 src={work.posterUrl}
@@ -974,7 +985,7 @@ export default async function PersonPage({ params }: Props) {
                   </a>
                 )}
               </div>
-              <WorksSection works={publishedWorksForClient} />
+              <WorksSection works={publishedWorksForClient} imageMode={imageMode} />
               {/* 推し布教カードへの導線（出演作品がある人物のみ＝このセクション内に置く）。この人物を選択済みで /oshi-card を開く */}
               <OshiCardEntryCta
                 href={buildOshiCardEditPath(person.name, { from: 'person' })}

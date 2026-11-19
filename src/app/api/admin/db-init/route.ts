@@ -297,6 +297,13 @@ const CREATE_STATEMENTS = [
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   sql`CREATE INDEX IF NOT EXISTS oac_service_id_idx ON oshikatsu_affiliate_creatives (service_id)`,
+  // ── サイト全体の表示設定（drizzle/0025_site_settings.sql）。作品画像の表示方式など ──
+  sql`CREATE TABLE IF NOT EXISTS site_settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_by  TEXT,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
   sql`CREATE TABLE IF NOT EXISTS instagram_posts (
     id             SERIAL PRIMARY KEY,
     person_name    TEXT NOT NULL,
@@ -524,6 +531,9 @@ TABLE_NAMES.push('person_group_memberships');
 
 // 推し活サービスのアフィリエイト（drizzle/0023_oshikatsu_affiliates.sql）
 TABLE_NAMES.push('oshikatsu_affiliate_services', 'oshikatsu_affiliate_creatives');
+
+// サイト全体の表示設定（drizzle/0025_site_settings.sql）
+TABLE_NAMES.push('site_settings');
 
 // drizzle/neon-http の db.execute() は fullResults: true で呼ばれるため
 // 戻り値は { rows: Row[], fields: FieldDef[], ... } のオブジェクト。

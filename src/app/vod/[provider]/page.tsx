@@ -15,6 +15,7 @@ import {
 import { getAllPersonsMerged } from '@/lib/persons';
 import { getVodPageEditorial } from '@/lib/vod-page-editorial';
 import VodWorkCard from '@/components/VodWorkCard';
+import { getWorkImageDisplayMode } from '@/lib/site-settings';
 import VodTopPersonCard from '@/components/VodTopPersonCard';
 import AffiliateSlot from '@/components/site/AffiliateSlot';
 
@@ -76,11 +77,13 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
   // page=0・負数・小数・数字以外の文字列など、形式として不正な値は404にする。
   if (page === null) notFound();
 
-  const [stats, result, topPersonsRaw, allPersons] = await Promise.all([
+  const [stats, result, topPersonsRaw, allPersons, imageMode] = await Promise.all([
     getVodProviderStats(config.normalizedSlug),
     getWorksForVodProvider(config.normalizedSlug, page),
     getTopPersonsForVodProvider(config.normalizedSlug, 12),
     getAllPersonsMerged(),
+    // 作品画像の表示方式（失敗時は従来画像表示。例外は投げない）
+    getWorkImageDisplayMode(),
   ]);
 
   // 確認済み作品が実際に存在するproviderで総ページ数を超えるpageが指定された
@@ -251,7 +254,7 @@ export default async function VodProviderPage({ params, searchParams }: Props) {
         {result.works.length > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {result.works.map((work) => (
-              <VodWorkCard key={work.workId} work={work} />
+              <VodWorkCard key={work.workId} work={work} imageMode={imageMode} />
             ))}
           </div>
         ) : (

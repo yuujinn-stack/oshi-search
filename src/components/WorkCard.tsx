@@ -9,6 +9,8 @@ import ProviderLogo from '@/components/ProviderLogo';
 import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL, DISPLAY_WORK_TYPE_ICON } from '@/lib/work-display-type';
 import { getWorkDisplayImage, getRenderableWorkImageUrl } from '@/lib/work-image';
 import { getWorkImageAspectGroup, type WorkImageAspectGroup } from '@/lib/work-filter';
+import { resolveWorkVisual, type WorkImageDisplayMode } from '@/lib/work-image-display';
+import WorkD1Visual from '@/components/work-visual/WorkD1Visual';
 
 function trackWorkClick(workId: string, title: string, personName: string, workType: string, posterUrl: string) {
   fetch('/api/track', {
@@ -54,13 +56,18 @@ const POSTER_LAYOUT: Record<PosterGroup, { container: string; img: string }> = {
   },
 };
 
-export default function WorkCard({ work }: { work: WorkRecord }) {
+// imageMode: 作品画像の表示方式（管理画面「作品画像表示設定」。src/lib/site-settings.ts）。
+// 省略時は従来画像表示（この引数を渡していない呼び出し側の見た目は変わらない）。
+export default function WorkCard({ work, imageMode = 'legacy' }: { work: WorkRecord; imageMode?: WorkImageDisplayMode }) {
   const displayType = getDisplayWorkType(work);
   const displayLabel = DISPLAY_WORK_TYPE_LABEL[displayType];
   const displayIcon  = DISPLAY_WORK_TYPE_ICON[displayType];
   const workDetailUrl = getWorkPublicUrl({ workId: work.id, canonicalWorkId: work.canonicalWorkId, personName: work.personName }) ?? `/person/${encodeURIComponent(work.personName)}/work/${encodeURIComponent(work.id)}`;
   // 画像優先順位: 手動画像 > TMDb/posterUrl > 自動取得OG画像 > プレースホルダー
+  // （クリック計測に送る値。D-1 表示中も従来どおり送るだけで、画像としては読み込まない）
   const displayPosterUrl = getRenderableWorkImageUrl(getWorkDisplayImage(work));
+  // D-1 表示中は作品名を画像内（HTMLテキスト）に描くため、カード下の作品名・公開年は重ねて出さない
+  const isD1 = resolveWorkVisual(work, imageMode).kind === 'd1';
   // 初期表示・SSR時のフォールバック分類（並べ替えで使っている getWorkImageAspectGroup と
   // 同一ロジック）。TMDb画像は常に縦長ポスターのため正確だが、TMDb以外のOG自動取得画像は
   // 実際には縦長キービジュアルであることも多く、URLだけでは正しく判定できない。
@@ -134,7 +141,12 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
     <div className="work-card-root">
       {/* ポスター（クリックで作品詳細へ） */}
       <Link href={workDetailUrl} className="block">
-        {displayPosterUrl && posterLayout ? (
+        {isD1 ? (
+          /* D-1共通デザイン（従来画像の <img> は描画しない＝読み込まない） */
+          <div className="p-2 pb-0">
+            <WorkD1Visual title={work.title} typeLabel={displayLabel} releaseYear={work.releaseYear} />
+          </div>
+        ) : displayPosterUrl && posterLayout ? (
           <div className={posterLayout.container}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -189,7 +201,25 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
 
       {/* テキスト情報 */}
       <div className="flex flex-col flex-1 p-3 gap-2">
-        {/* タイトル・年・役 */}
+        {/* タイトル・年・役（D-1 表示中は作品名・公開年が画像内にあるため、配信中の表示と役名だけ） */}
+        {isD1 ? (
+          (streamingProviders.length > 0 || work.roleName) && (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs" style={{ color: 'var(--ds-muted)' }}>
+              {streamingProviders.length > 0 && (
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                    hasAiOnly ? 'bg-purple-500 text-white' : 'bg-green-500 text-white'
+                  }`}
+                >
+                  配信中
+                </span>
+              )}
+              {work.roleName && (
+                <span className="line-clamp-1" style={{ color: 'var(--ds-primary)' }}>役: {work.roleName}</span>
+              )}
+            </div>
+          )
+        ) : (
         <div>
           <Link href={workDetailUrl} className="work-card-title">
             {work.title}
@@ -204,6 +234,7 @@ export default function WorkCard({ work }: { work: WorkRecord }) {
             )}
           </div>
         </div>
+        )}
 
         {/* 配信サービスバッジ */}
         {sortedProviders.length > 0 ? (

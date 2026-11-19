@@ -1,0 +1,141 @@
+/* D-1共通デザイン（作品画像の代わりに白地へ作品タイトルを描く）。
+   色はサイトのテーマ（trust/oshi/dark）に関係なく固定する（「画像」として常に同じ見た目にするため）。
+   文字の大きさはカード幅に対する相対単位（cqi）。対応していないブラウザ用に px の値を先に書いておく。 */
+.work-d1 {
+  --d1-bg: #ffffff;
+  --d1-title: #161616;
+  --d1-meta: #6b6b6b;
+  --d1-brand: #c4c4c4;
+  --d1-border: #e6e6e6;
+  --d1-accent: #f97316;
+  container-type: inline-size;
+  /* 中身（.work-d1__inner）が 2:3 に収まらない場合に箱ごと縦に伸ばすため flex にする
+     （子に height:100% を使うと 2:3 の高さに固定され、はみ出してしまう） */
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  width: 100%;
+  /* 2:3。タイトルが極端に長い場合は高さが伸びる（全文を切らずに表示するため、overflow は隠さない） */
+  aspect-ratio: 2 / 3;
+  background: var(--d1-bg);
+  border: 1px solid var(--d1-border);
+  border-radius: 6px;
+  color: var(--d1-title);
+  font-family: var(--font-d1, 'Noto Sans JP'), 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+  box-sizing: border-box;
+}
+
+.work-d1__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1 0 auto;
+  padding: 10px 8px 8px;
+  padding: 7cqi 6cqi 5.5cqi;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.work-d1__meta {
+  display: block;
+  min-height: 1.4em;
+  font-size: 10px;
+  font-size: max(9px, 6.4cqi);
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  color: var(--d1-meta);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+/* 「種類」「· 公開年」を塊として扱い、幅が足りないときはその間で改行する */
+.work-d1__meta-part {
+  display: inline-block;
+  max-width: 100%;
+}
+.work-d1__meta-part + .work-d1__meta-part {
+  margin-left: 0.35em;
+}
+
+.work-d1__body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 8px 0;
+  padding: 5cqi 0;
+}
+
+.work-d1__title {
+  display: block;
+  max-width: 100%;
+  font-weight: 700;
+  line-height: 1.38;
+  letter-spacing: 0.02em;
+  color: var(--d1-title);
+  /* 全文を表示する（省略しない）。日本語は禁則処理つきで折り返し、長い英単語も枠内で折り返す */
+  white-space: normal;
+  word-break: normal;
+  /* 対応ブラウザ（Chrome 系）では日本語を文節の切れ目で改行する。非対応のブラウザは上の normal のまま */
+  word-break: auto-phrase;
+  line-break: strict;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  hyphens: manual;
+}
+.work-d1[data-size='xl']  .work-d1__title { font-size: 22px; font-size: 14cqi; line-height: 1.3; }
+.work-d1[data-size='l']   .work-d1__title { font-size: 19px; font-size: 11.5cqi; line-height: 1.32; }
+.work-d1[data-size='m']   .work-d1__title { font-size: 17px; font-size: 10cqi; }
+.work-d1[data-size='s']   .work-d1__title { font-size: 15px; font-size: 8.6cqi; }
+.work-d1[data-size='xs']  .work-d1__title { font-size: 13px; font-size: max(10px, 7.3cqi); }
+.work-d1[data-size='xxs'] .work-d1__title { font-size: 12px; font-size: max(9.5px, 6.3cqi); }
+.work-d1[data-size='min'] .work-d1__title { font-size: 11px; font-size: max(9px, 5.5cqi); line-height: 1.42; }
+
+.work-d1__rule {
+  display: block;
+  flex-shrink: 0;
+  width: 29px;
+  height: 2px;
+  margin-top: 10px;
+  margin-top: max(7px, 6cqi);
+  background: var(--d1-accent);
+  border-radius: 1px;
+}
+
+.work-d1__brand {
+  display: block;
+  font-size: 8px;
+  font-size: max(7px, 4.6cqi);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  line-height: 1.2;
+  color: var(--d1-brand);
+  white-space: nowrap;
+}
+
+/* 小さなサムネイル用（横にタイトルがある一覧）。タイトルは描かず、種類とオレンジ線だけ */
+.work-d1--compact {
+  aspect-ratio: 2 / 3;
+}
+.work-d1--compact .work-d1__inner {
+  justify-content: center;
+  padding: 4px;
+}
+.work-d1--compact .work-d1__meta {
+  min-height: 0;
+  font-size: 10px;
+  font-size: max(7px, 15cqi);
+  font-weight: 700;
+  color: var(--d1-title);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+.work-d1--compact .work-d1__rule {
+  width: 45%;
+  max-width: 29px;
+  margin-top: 5px;
+  margin-top: max(3px, 8cqi);
+}

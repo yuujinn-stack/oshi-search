@@ -25,6 +25,10 @@ import PersonCard from '@/components/PersonCard';
 import MemberSection from '@/components/site/MemberSection';
 import type { GroupMemberCardData } from '@/components/site/GroupMemberCard';
 import WorkCard from '@/components/WorkCard';
+import WorkD1Visual from '@/components/work-visual/WorkD1Visual';
+import { getWorkImageDisplayMode } from '@/lib/site-settings';
+import { resolveWorkVisualFromUrl, type WorkImageDisplayMode } from '@/lib/work-image-display';
+import { getDisplayWorkType, DISPLAY_WORK_TYPE_LABEL } from '@/lib/work-display-type';
 import ProviderLogo from '@/components/ProviderLogo';
 import type { WorkRecord } from '@/types/work';
 import type { RakutenItem } from '@/types/rakuten';
@@ -120,11 +124,16 @@ function getPublicProviders(work: WorkRecord, terminatedSlugs: Set<string>): Vod
 }
 
 // ─── 作品コンパクトリンク ──────────────────────────────────────────────────────
-function CompactWorkLink({ work }: { work: WorkRecord }) {
+// imageMode: 作品画像の表示方式。D-1 表示中は横に作品名があるため、作品名を描かない小さな D-1（compact）
+function CompactWorkLink({ work, imageMode = 'legacy' }: { work: WorkRecord; imageMode?: WorkImageDisplayMode }) {
   const href = getWorkPublicUrl({ workId: work.id, canonicalWorkId: work.canonicalWorkId, personName: work.personName }) ?? '#';
   return (
     <Link href={href} className="flex items-center gap-2 p-2 rounded-lg hover:bg-indigo-50 transition-colors group">
-      {work.posterUrl ? (
+      {resolveWorkVisualFromUrl(work.posterUrl, imageMode).kind === 'd1' ? (
+        <span className="block w-10 flex-shrink-0">
+          <WorkD1Visual title={work.title} typeLabel={DISPLAY_WORK_TYPE_LABEL[getDisplayWorkType(work)]} variant="compact" />
+        </span>
+      ) : work.posterUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={work.posterUrl}
@@ -375,7 +384,7 @@ export default async function GroupsPage({ params }: Props) {
   // ── 全メンバーのデータ + PersonMeta + 終了済みVODスラグ を並列取得 ──
   // 過去のライブ映像特集の対象グループ（src/lib/live-archive/catalog.ts）だけ、楽天のキャンペーン枠のイベントも読む
   const liveArchiveGroup = liveArchiveGroupOf(groupName);
-  const [memberDataList, personMetaMap, terminatedSlugs, liveCampaigns] = await Promise.all([
+  const [memberDataList, personMetaMap, terminatedSlugs, liveCampaigns, imageMode] = await Promise.all([
     Promise.all(
       members.map(async (m) => {
         const [works, storedProducts, verdicts] = await Promise.all([
@@ -389,6 +398,8 @@ export default async function GroupsPage({ params }: Props) {
     getAllPersonMetas().catch(() => ({} as Record<string, PersonMeta>)),
     getInactiveProviderSlugs(),
     liveArchiveGroup ? loadLiveArchiveCampaigns(Date.now()) : Promise.resolve([] as PublicCampaign[]),
+    // 作品画像の表示方式（失敗時は従来画像表示。例外は投げない）
+    getWorkImageDisplayMode(),
   ]);
 
   // ── メンバー分類 ──────────────────────────────────────────────────────────────
@@ -847,7 +858,7 @@ export default async function GroupsPage({ params }: Props) {
               <>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                   {streamingWorksForClient.slice(0, 12).map((work) => (
-                    <WorkCard key={work.id} work={work} />
+                    <WorkCard key={work.id} work={work} imageMode={imageMode} />
                   ))}
                 </div>
                 {streamingWorks.length > 12 && (
@@ -881,7 +892,7 @@ export default async function GroupsPage({ params }: Props) {
                     <div className="p-4" style={{ borderTop: '1px solid var(--ds-border)' }}>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                         {works.slice(0, MAX_WORKS_PER_DECADE).map((work) => (
-                          <CompactWorkLink key={work.id} work={work} />
+                          <CompactWorkLink key={work.id} work={work} imageMode={imageMode} />
                         ))}
                       </div>
                       {works.length > MAX_WORKS_PER_DECADE && (
@@ -920,7 +931,7 @@ export default async function GroupsPage({ params }: Props) {
                         <>
                           <div className="grid grid-cols-1 gap-1">
                             {typeWorks.slice(0, 10).map((work) => (
-                              <CompactWorkLink key={work.id} work={work} />
+                              <CompactWorkLink key={work.id} work={work} imageMode={imageMode} />
                             ))}
                           </div>
                           {typeWorks.length > 10 && (
@@ -972,7 +983,7 @@ export default async function GroupsPage({ params }: Props) {
                     <div className="p-4" style={{ borderTop: '1px solid var(--ds-border)' }}>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
                         {pWorks.slice(0, MAX_WORKS_PER_PROVIDER).map((work) => (
-                          <CompactWorkLink key={work.id} work={work} />
+                          <CompactWorkLink key={work.id} work={work} imageMode={imageMode} />
                         ))}
                       </div>
                       {pWorks.length > MAX_WORKS_PER_PROVIDER && (

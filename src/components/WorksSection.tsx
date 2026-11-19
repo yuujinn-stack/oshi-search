@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import WorkCard from '@/components/WorkCard';
+import type { WorkImageDisplayMode } from '@/lib/work-image-display';
 import type { WorkRecord } from '@/types/work';
 import {
   getDisplayWorkType,
@@ -29,9 +30,11 @@ const SORT_LABEL: Record<WorkSortMode, string> = {
 
 interface Props {
   works: WorkRecord[];
+  /** 作品画像の表示方式（省略時は従来画像表示） */
+  imageMode?: WorkImageDisplayMode;
 }
 
-export default function WorksSection({ works }: Props) {
+export default function WorksSection({ works, imageMode = 'legacy' }: Props) {
   const [activeType, setActiveType] = useState<FilterType>('all');
   const [filterOptions, setFilterOptions] = useState<WorkFilterOptions>(DEFAULT_WORK_FILTER);
 
@@ -201,7 +204,7 @@ export default function WorksSection({ works }: Props) {
       {filteredWorks.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {filteredWorks.map((work) => (
-            <WorkCard key={work.id} work={work} />
+            <WorkCard key={work.id} work={work} imageMode={imageMode} />
           ))}
         </div>
       ) : (
