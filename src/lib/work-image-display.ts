@@ -29,6 +29,20 @@ export function isWorkImageDisplayMode(v: unknown): v is WorkImageDisplayMode {
   return typeof v === 'string' && (WORK_IMAGE_DISPLAY_MODES as readonly string[]).includes(v);
 }
 
+// ── プレビュー環境専用の表示方式 ──────────────────────────────────────────────
+// Vercel のプレビュー環境は本番と同じDBを読むため、本番の設定を変えずにプレビューで D-1 を確認できるよう、
+// 環境変数 WORK_IMAGE_DISPLAY_PREVIEW_MODE（'d1' | 'legacy'）で表示方式を上書きできる。
+// VERCEL_ENV === 'preview' のときだけ有効。本番（production）・ローカルでは値があっても無視する。
+export const WORK_IMAGE_DISPLAY_PREVIEW_ENV = 'WORK_IMAGE_DISPLAY_PREVIEW_MODE';
+
+export function getPreviewOverrideMode(
+  env: Record<string, string | undefined> = process.env,
+): WorkImageDisplayMode | null {
+  if (env.VERCEL_ENV !== 'preview') return null;
+  const v = env[WORK_IMAGE_DISPLAY_PREVIEW_ENV]?.trim();
+  return isWorkImageDisplayMode(v) ? v : null;
+}
+
 export interface WorkVisualInput extends WorkImageInput {
   /** 将来用：使用許諾済みの公式画像URL（D-1 表示中でも優先して表示する）。現在は未使用 */
   licensedImageUrl?: string;

@@ -6422,3 +6422,11 @@ OSHI_GROUP_09 の Instagram 投稿文を、冒頭フック（動画の冒頭と�
 **競合の確認：** origin/main は 97497ed のまま。元の作業フォルダの未コミット変更と3方向マージ：`src/app/groups/[groupSlug]/page.tsx` は同じ箇所の隣り合う行（元フォルダ側の `loadLiveArchiveCampaigns`→`loadPublicCampaigns` の改名と、こちらの表示方式の読み込み追加）、`docs/development-log.md` は両方が末尾に追記、の2か所だけが文字上ぶつかる（両方残せば解決）。ほかの6ファイルは自動で統合でき、残りは元フォルダが origin/main と同じ。ほかの worktree の未コミット変更・origin/main より進んだブランチとの重なりは開発ログのみ。
 
 **本番反映手順（未実施・承認待ち）：** ① `git fetch` で origin/main=97497ed のままか確認 ② `node scripts/site-settings/add-site-settings.mjs check` → `apply` → `verify`（OK）③ worktree で今回のファイルだけ commit → push → Vercel Ready ④ 公開ページが従来のまま（og:image も従来）、`/work/<id>/og` が PNG、管理画面に読み込みエラーが出ないことを確認 ⑤ 管理画面で D-1 を保存 → 公開ページ・og:image を確認 → 必要なら従来に戻す。
+
+### Task 203 追記2：ブランチ push とプレビュー確認（2026-11-19・main 未統合・本番デプロイなし・本番DB変更なし）
+- origin/main=97497ed のまま（競合なし）を再確認し、worktree で今回の30ファイルだけを commit `073968f` → `feat/work-image-d1` を push（追跡先が origin/main だったため push 先を明示。main は変更なし）
+- Vercel プレビュー `oshi-search-tjju-lmxu5auxl…`（エイリアス `oshi-search-tjju-git-feat-work-image-d1-…`）Ready。Deployment Protection あり（`vercel curl`・OIDC ヘッダーで確認）
+- プレビューで確認：公開ページは正常（本番DBに site_settings が無いため従来画像表示）、`/work/tmdb-tv-295904/og` が 1200×630 PNG（フォント同梱）、管理画面は未ログインでログイン画面・API 401
+- **プレビューの制約：** Preview と Production は同じ DATABASE_URL（本番DB）を使うため、本番DBを変えずにプレビューで D-1 を表示・保存することはできない。プレビューの ADMIN_SESSION_SECRET もローカルと異なり、管理画面へのログインは未実施
+- worktree に `.vercel/project.json`（git 管理外）を置いた
+- **プレビュー専用の切り替え（ユーザー承認済み）：** `WORK_IMAGE_DISPLAY_PREVIEW_MODE`（d1|legacy）。`VERCEL_ENV === 'preview'` のときだけ有効で、DB の設定より優先（`getPreviewOverrideMode`・`src/lib/work-image-display.ts`、`getWorkImageDisplayMode`・`src/lib/site-settings.ts`）。本番・ローカルでは無視。管理画面には「プレビュー用の設定で表示中」と、プレビューで保存すると本番の設定が変わる旨を表示。Vercel には **Preview（feat/work-image-d1 ブランチのみ）** に `d1` を設定（本番・他ブランチのプレビューには無い）。テスト3件追加（site-settings.test.ts）。vitest 3,118件成功・ビルド成功

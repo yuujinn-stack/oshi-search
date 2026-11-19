@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // site_settings の読み書き（作品画像の表示方式）と、PUT/GET /api/admin/work-image-display。
 // DB は呼び出しだけを記録する偽物に置き換える（本物の DB には接続しない）。
@@ -149,5 +149,36 @@ describe('PUT/GET /api/admin/work-image-display', () => {
   it('GET は現在の設定を返す', async () => {
     state.rows = [{ key: 'work_image_display', value: 'd1', updatedBy: 'admin', updatedAt: new Date() }];
     expect(await (await GET()).json()).toMatchObject({ mode: 'd1', saved: true });
+  });
+});
+
+describe('プレビュー環境専用の切り替え（WORK_IMAGE_DISPLAY_PREVIEW_MODE）', () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('プレビュー環境では DB の設定より優先する（DB 未作成でも D-1 で表示できる）', async () => {
+    vi.stubEnv('VERCEL_ENV', 'preview');
+    vi.stubEnv('WORK_IMAGE_DISPLAY_PREVIEW_MODE', 'd1');
+    state.selectError = missingTable;
+    expect(await getWorkImageDisplayMode()).toBe('d1');
+    const s = await getWorkImageDisplaySetting();
+    expect(s.previewOverride).toBe('d1');
+    expect(s.mode).toBe('legacy'); // 保存された設定は別に表示する
+  });
+  it('本番・ローカル（VERCEL_ENV が preview 以外）では値があっても無視する', async () => {
+    vi.stubEnv('WORK_IMAGE_DISPLAY_PREVIEW_MODE', 'd1');
+    for (const env of ['production', 'development', '']) {
+      vi.stubEnv('VERCEL_ENV', env);
+      expect(await getWorkImageDisplayMode()).toBe('legacy');
+      expect((await getWorkImageDisplaySetting()).previewOverride).toBeNull();
+    }
+  });
+  it('不正な値は無視して DB の設定を使う', async () => {
+    vi.stubEnv('VERCEL_ENV', 'preview');
+    vi.stubEnv('WORK_IMAGE_DISPLAY_PREVIEW_MODE', 'D1 ');
+    state.rows = [{ key: 'work_image_display', value: 'legacy', updatedBy: 'admin', updatedAt: new Date() }];
+    expect(await getWorkImageDisplayMode()).toBe('legacy');
+    vi.stubEnv('WORK_IMAGE_DISPLAY_PREVIEW_MODE', ' legacy ');
+    state.rows = [{ key: 'work_image_display', value: 'd1', updatedBy: 'admin', updatedAt: new Date() }];
+    expect(await getWorkImageDisplayMode()).toBe('legacy');
   });
 });

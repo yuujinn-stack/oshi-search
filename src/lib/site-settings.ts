@@ -13,6 +13,7 @@ import { siteSettings } from '@/db/schema';
 import { revalidatePublicListings } from '@/lib/public-listing-cache';
 import {
   DEFAULT_WORK_IMAGE_DISPLAY_MODE,
+  getPreviewOverrideMode,
   isWorkImageDisplayMode,
   type WorkImageDisplayMode,
 } from '@/lib/work-image-display';
@@ -30,6 +31,8 @@ export interface WorkImageDisplaySetting {
   updatedBy: string | null;
   /** 読み込みに失敗した場合の理由（テーブル未作成など）。成功時は null */
   loadError: string | null;
+  /** プレビュー環境専用の上書き（WORK_IMAGE_DISPLAY_PREVIEW_MODE）。本番・ローカルでは常に null */
+  previewOverride?: WorkImageDisplayMode | null;
 }
 
 export function isMissingSiteSettingsTable(err: unknown): boolean {
@@ -42,8 +45,13 @@ export function isMissingSiteSettingsTable(err: unknown): boolean {
   return false;
 }
 
-/** 管理画面用（キャッシュなし）。失敗しても例外にせず、loadError に理由を入れて既定値を返す */
+/** 管理画面用（キャッシュなし）。失敗しても例外にせず、loadError に理由を入れて既定値を返す。
+ *  mode は DB に保存された設定（プレビュー専用の上書きは previewOverride に別に入れる） */
 export async function getWorkImageDisplaySetting(): Promise<WorkImageDisplaySetting> {
+  return { ...(await readSavedWorkImageDisplaySetting()), previewOverride: getPreviewOverrideMode() };
+}
+
+async function readSavedWorkImageDisplaySetting(): Promise<WorkImageDisplaySetting> {
   try {
     const rows = await db
       .select()
@@ -72,7 +80,7 @@ export async function getWorkImageDisplaySetting(): Promise<WorkImageDisplaySett
 
 const getCachedWorkImageDisplayMode = unstable_cache(
   async (): Promise<WorkImageDisplayMode> => {
-    const s = await getWorkImageDisplaySetting();
+    const s = await readSavedWorkImageDisplaySetting();
     if (s.loadError) console.warn(`[site-settings] ${s.loadError}。従来画像表示で表示します`);
     return s.mode;
   },
@@ -80,8 +88,11 @@ const getCachedWorkImageDisplayMode = unstable_cache(
   { revalidate: SITE_SETTINGS_REVALIDATE_SECONDS, tags: [SITE_SETTINGS_CACHE_TAG] },
 );
 
-/** 公開ページ用。どんな失敗でも既定値（従来画像表示）を返し、ページの表示を止めない */
+/** 公開ページ用。どんな失敗でも既定値（従来画像表示）を返し、ページの表示を止めない。
+ *  プレビュー環境で WORK_IMAGE_DISPLAY_PREVIEW_MODE があれば、DB の設定より優先する（本番では無視） */
 export async function getWorkImageDisplayMode(): Promise<WorkImageDisplayMode> {
+  const previewOverride = getPreviewOverrideMode();
+  if (previewOverride) return previewOverride;
   try {
     return await getCachedWorkImageDisplayMode();
   } catch (err) {

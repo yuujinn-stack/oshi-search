@@ -106,6 +106,13 @@ export default function WorkImageDisplayClient({
           </p>
           <p className="text-xs text-gray-500">最終保存：{formatDate(saved.updatedAt)}</p>
         </div>
+        {initialSetting.previewOverride && (
+          <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+            このプレビュー環境では、環境変数 WORK_IMAGE_DISPLAY_PREVIEW_MODE により公開ページを
+            「{WORK_IMAGE_DISPLAY_MODE_LABEL[initialSetting.previewOverride]}」で表示しています（本番には影響しません）。
+            プレビュー環境は本番と同じDBを使うため、ここで保存すると本番の設定が変わります。
+          </p>
+        )}
         {saved.loadError && (
           <p className="mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">⚠ {saved.loadError}</p>
         )}
