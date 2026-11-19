@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, Fragment } from 'react';
 import PersonCombobox from '@/components/admin/PersonCombobox';
+import { validateApprovalFields, APPROVAL_REASON_MIN } from '@/lib/vod-channel-guard';
 
 interface PersonInfo {
   name: string;
@@ -21,7 +22,32 @@ interface ImportPreviewRow {
   note: string;
   action: 'add' | 'update' | 'delete' | 'ignore' | 'skip' | 'suspected_channel' | 'error';
   reason: string;
+  hold?: {
+    category: 'channel' | 'rental' | 'ambiguous';
+    detail: string;
+    approvable: boolean;
+    approvedAction: 'add' | 'update' | 'skip';
+    approvedReason: string;
+  };
 }
+
+/** 保留行の手動承認（画面上の状態。保存時にサーバーで再検証される） */
+interface RowApproval {
+  officialUrl: string;
+  reason: string;
+  approvedAt: string; // 画面で承認した日時（表示用。保存時の記録はサーバー時刻）
+}
+
+const HOLD_LABEL: Record<NonNullable<ImportPreviewRow['hold']>['category'], string> = {
+  channel: 'チャンネル疑い（保留）',
+  rental: 'レンタルのみ疑い（保留）',
+  ambiguous: '判定不能（保留）',
+};
+const APPROVED_ACTION_LABEL: Record<NonNullable<ImportPreviewRow['hold']>['approvedAction'], string> = {
+  add: '承認後: 追加',
+  update: '承認後: 上書',
+  skip: '承認後: スキップ（既存データあり）',
+};
 
 interface ImportPreviewResult {
   syncMode: boolean;
@@ -33,6 +59,7 @@ interface ImportPreviewResult {
   errorCount: number;
   suspectedChannelCount?: number;
   previewRows: ImportPreviewRow[];
+  fingerprint: string;
 }
 
 interface ImportCommitResult {
@@ -41,6 +68,10 @@ interface ImportCommitResult {
   savedProviderCount: number;
   deletedProviderCount: number;
   heldProviderCount?: number;
+  approvedProviderCount?: number;
+  approvedSkippedCount?: number;
+  suppressedDeleteCount?: number;
+  deleteBlockedReason?: string | null;
   errors: string[];
 }
 
@@ -82,13 +113,57 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
   const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null);
   const [importCommitResult, setImportCommitResult] = useState<ImportCommitResult | null>(null);
   const [importError, setImportError] = useState<ImportError | null>(null);
+  // 保留行の手動承認（rowNum → 承認内容）と、開いている承認フォーム
+  const [approvals, setApprovals] = useState<Record<number, RowApproval>>({});
+  const [approvalOpenRow, setApprovalOpenRow] = useState<number | null>(null);
+  const [approvalDraft, setApprovalDraft] = useState<{ officialUrl: string; reason: string }>({ officialUrl: '', reason: '' });
+  const [approvalError, setApprovalError] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const isSubmitting = useRef(false);
 
   const importPersonParam = importPerson || undefined;
-  const importTotal = (importPreview?.addCount ?? 0) + (importPreview?.updateCount ?? 0);
-  const importDeleteCount = importPreview?.deleteCount ?? 0;
+  const heldRows = importPreview?.previewRows.filter((r) => r.action === 'suspected_channel') ?? [];
+  const approvedHeldRows = heldRows.filter((r) => approvals[r.rowNum]);
+  const approvedSaveCount = approvedHeldRows.filter((r) => r.hold?.approvedAction !== 'skip').length;
+  const unresolvedHeldCount = heldRows.length - approvedHeldRows.length;
+  const importTotal = (importPreview?.addCount ?? 0) + (importPreview?.updateCount ?? 0) + approvedSaveCount;
+  // 同期モード: エラー・未承認の保留が残っている間は削除しない（サーバー側でも同じ条件で止める）
+  const deleteBlocked = !!importPreview?.syncMode && ((importPreview?.errorCount ?? 0) > 0 || unresolvedHeldCount > 0);
+  const previewDeleteCount = importPreview?.deleteCount ?? 0;
+  const importDeleteCount = deleteBlocked ? 0 : previewDeleteCount;
+
+  function resetApprovals() {
+    setApprovals({});
+    setApprovalOpenRow(null);
+    setApprovalDraft({ officialUrl: '', reason: '' });
+    setApprovalError(null);
+  }
+
+  function openApproval(row: ImportPreviewRow) {
+    setApprovalOpenRow(row.rowNum);
+    setApprovalDraft({ officialUrl: row.sourceUrl || '', reason: '' });
+    setApprovalError(null);
+  }
+
+  function confirmApproval(row: ImportPreviewRow) {
+    const err = validateApprovalFields(approvalDraft.officialUrl, approvalDraft.reason);
+    if (err) { setApprovalError(err); return; }
+    setApprovals((prev) => ({
+      ...prev,
+      [row.rowNum]: { officialUrl: approvalDraft.officialUrl.trim(), reason: approvalDraft.reason.trim(), approvedAt: new Date().toISOString() },
+    }));
+    setApprovalOpenRow(null);
+    setApprovalError(null);
+  }
+
+  function revokeApproval(rowNum: number) {
+    setApprovals((prev) => {
+      const next = { ...prev };
+      delete next[rowNum];
+      return next;
+    });
+  }
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -99,6 +174,7 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
     setImportPreview(null);
     setImportCommitResult(null);
     setImportError(null);
+    resetApprovals();
   }
 
   async function handleImportPreview() {
@@ -119,6 +195,7 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
       });
       const data = await res.json();
       if (res.ok) {
+        resetApprovals();
         setImportPreview(data as ImportPreviewResult);
       } else {
         setImportError(data as ImportError);
@@ -136,23 +213,32 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
     setImporting(true);
     setImportError(null);
     try {
-      const rowsForSave = importPreview.previewRows.filter(
-        (r) => r.action === 'add' || r.action === 'update' || r.action === 'delete',
-      );
+      // 保存時はサーバーが同じCSVからプレビューを再計算し、fingerprint と承認内容を検証する
+      const approvalList = approvedHeldRows.map((r) => ({
+        rowNum: r.rowNum,
+        workId: r.workId,
+        personName: r.personName,
+        vodService: r.vodService,
+        officialUrl: approvals[r.rowNum].officialUrl,
+        reason: approvals[r.rowNum].reason,
+      }));
       const res = await fetch('/api/admin/csv-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          csvContent,
           commit: true,
           personName: importPersonParam,
-          syncMode: importMode === 'sync',
-          normalizedRows: rowsForSave,
+          syncMode: importPreview.syncMode,
+          fingerprint: importPreview.fingerprint,
+          approvals: approvalList,
         }),
       });
       const data = await res.json();
       if (res.ok) {
         setImportCommitResult(data as ImportCommitResult);
         setImportPreview(null);
+        resetApprovals();
         setCsvContent(null);
         setFileName('');
         if (fileRef.current) fileRef.current.value = '';
@@ -168,6 +254,7 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
 
   function handleImportReset() {
     setImportPreview(null);
+    resetApprovals();
     setCsvContent(null);
     setFileName('');
     setImportError(null);
@@ -327,9 +414,24 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
               <span className="text-red-600 ml-2">削除: {importCommitResult.deletedProviderCount}件</span>
             )}
           </p>
+          {(importCommitResult.approvedProviderCount ?? 0) > 0 && (
+            <p>
+              うち Prime Video本体：確認済み（手動承認）: {importCommitResult.approvedProviderCount}件
+            </p>
+          )}
+          {(importCommitResult.approvedSkippedCount ?? 0) > 0 && (
+            <p className="text-sky-700">
+              承認済みだが既存のTMDb等の配信情報があるためスキップ: {importCommitResult.approvedSkippedCount}件
+            </p>
+          )}
           {(importCommitResult.heldProviderCount ?? 0) > 0 && (
             <p className="text-amber-700">
-              追加チャンネルの可能性があるため保留（未登録）: {importCommitResult.heldProviderCount}件
+              未承認のため保留（未登録）: {importCommitResult.heldProviderCount}件
+            </p>
+          )}
+          {(importCommitResult.suppressedDeleteCount ?? 0) > 0 && (
+            <p className="text-amber-700">
+              削除を見送り: {importCommitResult.suppressedDeleteCount}件（{importCommitResult.deleteBlockedReason}）
             </p>
           )}
           {importCommitResult.errors.length > 0 && (
@@ -356,7 +458,7 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
             </span>
             {importPreview.syncMode && (
               <span className="bg-red-100 text-red-700 px-2 py-1 rounded-lg font-medium">
-                削除 {importDeleteCount}件
+                削除 {importDeleteCount}件{deleteBlocked && previewDeleteCount > 0 ? `（${previewDeleteCount}件は見送り）` : ''}
               </span>
             )}
             {(importPreview.skipCount ?? 0) > 0 && (
@@ -365,8 +467,13 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
               </span>
             )}
             {(importPreview.suspectedChannelCount ?? 0) > 0 && (
-              <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded-lg font-medium" title="Prime Video 名義ですが note / sourceUrl に追加チャンネル・別契約の記述があります。正式なチャンネル名に直して再取り込みしてください。">
-                チャンネル疑い（保留） {importPreview.suspectedChannelCount}件
+              <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded-lg font-medium" title="Prime Video 名義ですが追加チャンネル・レンタルのみ等の可能性があります。公式情報で確認して承認するか、正式なチャンネル名に直して再取り込みしてください。">
+                チャンネル疑い（保留） {unresolvedHeldCount}件
+              </span>
+            )}
+            {approvedHeldRows.length > 0 && (
+              <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded-lg font-medium">
+                Prime Video本体：確認済み {approvedHeldRows.length}件
               </span>
             )}
             <span className="bg-gray-100 text-gray-500 px-2 py-1 rounded-lg font-medium">
@@ -394,23 +501,38 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
                   </tr>
                 </thead>
                 <tbody>
-                  {importPreview.previewRows.slice(0, 200).map((row, i) => (
+                  {/* 先頭200行＋それ以降の保留行（承認操作ができるよう必ず表示） */}
+                  {importPreview.previewRows
+                    .filter((row, i) => i < 200 || row.action === 'suspected_channel')
+                    .map((row, i) => {
+                    const approval = row.action === 'suspected_channel' ? approvals[row.rowNum] : undefined;
+                    const isOpen = row.action === 'suspected_channel' && approvalOpenRow === row.rowNum;
+                    return (
+                    <Fragment key={i}>
                     <tr
-                      key={i}
                       className={`border-b border-gray-100 last:border-0 ${
-                        row.action === 'delete' ? 'bg-red-50/60' :
+                        row.action === 'delete' ? (deleteBlocked ? 'bg-gray-50 opacity-60' : 'bg-red-50/60') :
                         row.action === 'error'  ? 'bg-orange-50' :
                         row.action === 'ignore' ? 'opacity-50' :
-                        row.action === 'suspected_channel' ? 'bg-amber-50' : ''
+                        row.action === 'suspected_channel' ? (approval ? 'bg-emerald-50' : 'bg-amber-50') : ''
                       }`}
                     >
                       <td className="p-1.5 text-gray-400">
                         {row.rowNum === 0 ? '—' : row.rowNum}
                       </td>
                       <td className="p-1.5">
-                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${ACTION_BADGE[row.action]}`}>
-                          {ACTION_LABEL[row.action]}
-                        </span>
+                        {approval ? (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-emerald-100 text-emerald-800">
+                            Prime Video本体：確認済み
+                          </span>
+                        ) : (
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${ACTION_BADGE[row.action]}`}>
+                            {row.action === 'suspected_channel' && row.hold ? HOLD_LABEL[row.hold.category] : ACTION_LABEL[row.action]}
+                          </span>
+                        )}
+                        {row.action === 'delete' && deleteBlocked && (
+                          <span className="block text-[9px] text-gray-500 mt-0.5">見送り</span>
+                        )}
                       </td>
                       <td className="p-1.5 text-gray-600">{row.personName || '—'}</td>
                       <td className="p-1.5 max-w-[100px] truncate text-slate-700" title={row.title}>
@@ -419,11 +541,108 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
                       <td className="p-1.5 font-medium text-slate-700">{row.vodService || '（空）'}</td>
                       <td className="p-1.5 text-gray-500">{row.availabilityType}</td>
                       <td className="p-1.5 text-gray-500">{row.confidence}</td>
-                      <td className="p-1.5 text-gray-400 max-w-[180px] truncate" title={row.reason}>
-                        {row.reason}
+                      <td className="p-1.5 text-gray-400 max-w-[180px]" title={row.reason}>
+                        {row.action === 'suspected_channel' && row.hold ? (
+                          approval ? (
+                            <div className="space-y-0.5">
+                              <p className="text-emerald-700 truncate">
+                                {APPROVED_ACTION_LABEL[row.hold.approvedAction]}・{new Date(approval.approvedAt).toLocaleString('ja-JP')}
+                              </p>
+                              <p className="truncate" title={approval.reason}>理由: {approval.reason}</p>
+                              <button
+                                type="button"
+                                onClick={() => revokeApproval(row.rowNum)}
+                                disabled={importing}
+                                className="text-[10px] text-red-600 hover:underline disabled:opacity-50"
+                              >
+                                承認取り消し
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-0.5">
+                              <p className="truncate text-amber-800">{row.hold.detail}</p>
+                              {row.hold.approvable ? (
+                                !isOpen && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openApproval(row)}
+                                    disabled={importing}
+                                    className="text-[10px] px-2 py-0.5 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                                  >
+                                    確認して承認
+                                  </button>
+                                )
+                              ) : (
+                                <p className="text-[9px] text-gray-500">種別が見放題ではないため承認できません（CSVを修正してください）</p>
+                              )}
+                            </div>
+                          )
+                        ) : (
+                          <span className="block truncate">{row.reason}</span>
+                        )}
                       </td>
                     </tr>
-                  ))}
+                    {isOpen && row.hold && (
+                      <tr className="bg-amber-50 border-b border-amber-200">
+                        <td colSpan={8} className="p-2">
+                          <div className="space-y-1.5 text-[11px] text-slate-700">
+                            <p className="font-semibold text-amber-900">
+                              {row.title || row.workId} / {row.vodService}（{row.personName}）を Prime Video本体の見放題として承認
+                            </p>
+                            <p className="text-[10px] text-amber-800">
+                              保留理由: {row.hold.detail}
+                              {row.note && <span className="block text-gray-600">note: {row.note}</span>}
+                              {row.sourceUrl && <span className="block text-gray-600 break-all">sourceUrl: {row.sourceUrl}</span>}
+                            </p>
+                            <p className="text-[10px] text-gray-600">
+                              Prime Video公式ページ等で「プライム会員は追加料金なしで視聴可能」であることを確認できた場合のみ承認してください。
+                              追加チャンネル（別料金）やレンタル・購入のみの場合は承認せず、CSVを正式なチャンネル名・種別に直してください。
+                            </p>
+                            <label className="block">
+                              <span className="text-[10px] text-gray-500">公式情報のURL（必須）</span>
+                              <input
+                                type="url"
+                                value={approvalDraft.officialUrl}
+                                onChange={(e) => setApprovalDraft((d) => ({ ...d, officialUrl: e.target.value }))}
+                                placeholder="https://www.primevideo.com/..."
+                                className="mt-0.5 w-full border border-gray-300 rounded px-2 py-1 text-[11px] bg-white"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="text-[10px] text-gray-500">確認理由（必須・{APPROVAL_REASON_MIN}文字以上）</span>
+                              <textarea
+                                value={approvalDraft.reason}
+                                onChange={(e) => setApprovalDraft((d) => ({ ...d, reason: e.target.value }))}
+                                rows={2}
+                                placeholder="例: Prime Video公式の作品ページでプライム会員向けの視聴案内を確認"
+                                className="mt-0.5 w-full border border-gray-300 rounded px-2 py-1 text-[11px] bg-white"
+                              />
+                            </label>
+                            {approvalError && <p className="text-[10px] text-red-600">{approvalError}</p>}
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => confirmApproval(row)}
+                                className="text-[11px] px-3 py-1 rounded bg-emerald-600 text-white font-medium hover:bg-emerald-700"
+                              >
+                                Prime Video本体の見放題として承認
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setApprovalOpenRow(null); setApprovalError(null); }}
+                                className="text-[11px] text-gray-500 hover:text-gray-700"
+                              >
+                                閉じる
+                              </button>
+                              <span className="text-[10px] text-gray-500">{APPROVED_ACTION_LABEL[row.hold.approvedAction]}</span>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
               {importPreview.previewRows.length > 200 && (
@@ -434,9 +653,18 @@ export default function VodImportSection({ persons }: { persons: PersonInfo[] })
             </div>
           )}
 
+          {deleteBlocked && previewDeleteCount > 0 && (
+            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              {(importPreview.errorCount ?? 0) > 0 ? `エラー${importPreview.errorCount}件` : ''}
+              {(importPreview.errorCount ?? 0) > 0 && unresolvedHeldCount > 0 ? '・' : ''}
+              {unresolvedHeldCount > 0 ? `未承認の保留${unresolvedHeldCount}件` : ''}
+              が残っているため、同期モードの削除（{previewDeleteCount}件）は実行しません。追加・更新・承認済みの行は保存されます。
+            </p>
+          )}
+
           {/* インポート実行ボタン */}
           <div className="flex items-center gap-3">
-            {importTotal > 0 || (importPreview.syncMode && importDeleteCount > 0) ? (
+            {importTotal > 0 || importDeleteCount > 0 ? (
               <button
                 onClick={handleImportCommit}
                 disabled={importing}

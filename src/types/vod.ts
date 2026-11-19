@@ -18,8 +18,21 @@ export interface VodProvider {
   note?: string;            // 補足メモ
   link?: string;            // JustWatch URL（TMDb が返す作品ページへのリンク）
   hidden?: boolean;         // 管理画面から手動で非表示にした場合 true（論理削除）
+  manualApproval?: VodManualApproval; // 自動判定で保留された行を管理者が確認して承認した記録（CSV取り込み）
   createdAt?: number;
   updatedAt?: number;
+}
+
+/**
+ * VOD CSV取り込みで「チャンネル疑い（保留）」になった Prime Video 行を、管理者が公式情報を確認して
+ * 「Prime Video 本体の見放題（プライム会員料金のみ）」として承認した記録。
+ */
+export interface VodManualApproval {
+  kind: 'prime_video_included';
+  officialUrl: string;      // 確認に使った公式情報のURL
+  reason: string;           // 確認理由
+  approvedAt: string;       // 確認日時（ISO8601・サーバー時刻）
+  heldCategory: 'channel' | 'rental' | 'ambiguous'; // 承認前の自動判定
 }
 
 // VodProviderType の日本語ラベル
