@@ -41,11 +41,22 @@ export interface SaleVideoConfig {
   entryNote: string;
   /** C で選ぶ予算（お買い物診断の予算の値。src/lib/oshi-shopping/params.ts の BUDGET_OPTIONS） */
   shoppingBudget: '1000' | '3000' | '5000' | '10000';
-  /** 締め（ナレーション1文・画面の大きな文字・その下の検索誘導）。A・B・C それぞれ */
+  /**
+   * 締め（ナレーション1文・画面の大きな文字・その下の誘導）。A・B・C それぞれ。
+   * これは Instagram 版の締め（プロフィールのリンクへ誘導）。TikTok 版は Worker が締めの区間を
+   * 確定済みの検索窓CTA「気になったら、推しサーチで検索！」（SNS別CTA設定）に差し替えるため、ここの文は出ない
+   */
   cta: Record<'goods' | 'live' | 'shopping', SaleVideoLine & { title: string; sub: string }>;
   /** 動画と投稿文に入れる PR 表記 */
   prLabel: string;
 }
+
+/**
+ * Instagram 版の締めの誘導（大きな文字の下の白い帯。スマホで読めるよう12文字・5文字の2行で改行を固定）。
+ * ナレーション・字幕の最後の文は改行なしの「プロフィールのリンクからチェック！」
+ */
+export const SALE_INSTAGRAM_CTA_SUB = 'プロフィールのリンクから\nチェック！';
+export const SALE_INSTAGRAM_CTA_LINE = { text: 'プロフィールのリンクからチェック！', kana: 'ぷろふぃーるのりんくからちぇっく！' } as const;
 
 export const SALE_VIDEO_CONFIGS: SaleVideoConfig[] = [
   {
@@ -73,9 +84,9 @@ export const SALE_VIDEO_CONFIGS: SaleVideoConfig[] = [
     entryNote: '※ポイントアップ特典は楽天公式ページでのエントリーと条件達成が必要です。価格・特典は楽天でご確認ください',
     shoppingBudget: '5000',
     cta: {
-      goods: { text: '推しの名前からまとめて探せる！推しサーチで検索！', kana: 'おしのなまえからまとめてさがせる！おしさーちでけんさく！', title: '推しの名前から\nまとめて探せる！', sub: '推しサーチで検索！' },
-      live: { text: '過去のライブ映像も探せる！推しサーチで検索！', kana: 'かこのらいぶえいぞうもさがせる！おしさーちでけんさく！', title: '過去のライブ映像も\n探せる！', sub: '推しサーチで検索！' },
-      shopping: { text: '無料で試せる！推しサーチで検索！', kana: 'むりょうでためせる！おしさーちでけんさく！', title: '無料で試せる！', sub: '推しサーチで検索！' },
+      goods: { text: '推しの名前からまとめて探せる！プロフィールのリンクからチェック！', kana: 'おしのなまえからまとめてさがせる！ぷろふぃーるのりんくからちぇっく！', title: '推しの名前から\nまとめて探せる！', sub: SALE_INSTAGRAM_CTA_SUB },
+      live: { text: '過去のライブ映像も探せる！プロフィールのリンクからチェック！', kana: 'かこのらいぶえいぞうもさがせる！ぷろふぃーるのりんくからちぇっく！', title: '過去のライブ映像も\n探せる！', sub: SALE_INSTAGRAM_CTA_SUB },
+      shopping: { text: '無料で試せる！プロフィールのリンクからチェック！', kana: 'むりょうでためせる！ぷろふぃーるのりんくからちぇっく！', title: '無料で試せる！', sub: SALE_INSTAGRAM_CTA_SUB },
     },
     prLabel: 'PR（楽天アフィリエイト広告を含みます）',
   },

@@ -16,7 +16,8 @@ import {
   type SaleSiteTemplateId,
   type SiteTarget,
 } from '@/lib/video-site-reel';
-import { SALE_VIDEO_CONFIGS, type SaleVideoConfig } from '@/lib/sale-video/config';
+import { SALE_INSTAGRAM_CTA_LINE, SALE_INSTAGRAM_CTA_SUB, SALE_VIDEO_CONFIGS, type SaleVideoConfig } from '@/lib/sale-video/config';
+import { DEFAULT_SNS_CTA } from '@/lib/video-sns-output';
 import { checkSaleVideoState, pickSaleVideo, type SaleVideoState } from '@/lib/sale-video/core';
 import { SALE_CORNERS, type SaleCornerConfig } from '@/lib/sale-corner/config';
 import { BUDGET_OPTIONS } from '@/lib/oshi-shopping/params';
@@ -102,7 +103,7 @@ describe('期間限定セールのリール A・B・C の台本', () => {
         if (!plan.ok) continue;
         expect(plan.segments.map((s) => s.id)).toEqual(['hook', ...SITE_TEMPLATE_STEPS[id], 'cta'].map((k, i) => `${String(i + 1).padStart(2, '0')}-${k}`));
         expect(plan.lines[plan.lines.length - 1].text).toBe(siteCtaOf(id, 'sale', sale)!.text);
-        expect(plan.segments.at(-1)!.sub).toBe('推しサーチで検索！');
+        expect(plan.segments.at(-1)!.sub).toBe('プロフィールのリンクから\nチェック！');
         expect(plan.totalSeconds, id).toBeGreaterThanOrEqual(expectSeconds[id][0]);
         expect(plan.totalSeconds, id).toBeLessThanOrEqual(expectSeconds[id][1]);
         expect(plan.totalSeconds).toBeLessThanOrEqual(SITE_MAX_SECONDS);
@@ -227,6 +228,39 @@ describe('期間限定セールのリールの文言の決まり', () => {
       expect(caption).not.toMatch(/https?:\/\//);
       expect(caption).not.toMatch(/まだ買ってない|半額|最安/);
     }
+  });
+});
+
+describe('期間限定セールのリールの締め（Instagram 版はプロフィールのリンク、TikTok 版は検索窓CTAのまま）', () => {
+  it('A・B・C の締め: 画面・字幕・読みを「プロフィールのリンクからチェック！」にそろえる（「推しサーチで検索」を残さない）', () => {
+    const sale = state(BEFORE);
+    const ts = targets(sale);
+    for (const id of SALE_SITE_TEMPLATE_IDS) {
+      const plan = buildSitePlan({ templateId: id, target: ts[id], cta: 'sale', readings });
+      expect(plan.ok, id).toBe(true);
+      if (!plan.ok) continue;
+      const seg = plan.segments.at(-1)!;
+      const line = plan.lines.at(-1)!;
+      expect(seg.kind).toBe('cta');
+      // 画面: 大きな文字の下の白い帯は12文字・5文字の2行（スマホで読める大きさ）
+      expect(seg.sub).toBe(SALE_INSTAGRAM_CTA_SUB);
+      expect(seg.sub!.split('\n')).toEqual(['プロフィールのリンクから', 'チェック！']);
+      // 字幕・ナレーションの最後の文、読み（ひらがな）
+      expect(line.text.endsWith(SALE_INSTAGRAM_CTA_LINE.text), id).toBe(true);
+      expect(line.kana.endsWith(SALE_INSTAGRAM_CTA_LINE.kana), id).toBe(true);
+      for (const s of [seg.title ?? '', seg.sub ?? '', line.text]) expect(s).not.toMatch(/推しサーチで検索/);
+      expect(line.kana).not.toMatch(/おしさーちでけんさく/);
+      // 締めは読み終わるまで画面に残す（区間に収まる）・合計は上限内
+      expect(plan.totalSeconds).toBeLessThanOrEqual(SITE_MAX_SECONDS);
+    }
+  });
+
+  it('TikTok 版の確定済みCTA・Instagram の既定（テンプレートのCTAのまま）・ほかのテンプレートの締めは変えない', () => {
+    expect(DEFAULT_SNS_CTA.tiktok).toMatchObject({ mode: 'search', narration: '気になったら、推しサーチで検索！', telop: '気になったら\n「推しサーチ」で検索！' });
+    expect(DEFAULT_SNS_CTA.instagram.mode).toBe('template');
+    expect(SITE_CTA_OPTIONS.profile.text).toBe('あなたの推しも、プロフィールのリンクから検索してみてね！');
+    expect(SITE_CTA_OPTIONS.try.text).toBe('自分の推しでも試してみてね。推しサーチはプロフィールから！');
+    expect(siteCtaOf('site_person_search', 'profile')?.sub).toBeUndefined();
   });
 });
 
