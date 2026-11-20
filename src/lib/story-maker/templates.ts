@@ -326,6 +326,22 @@ const BFSTORY: StoryTemplateDef = {
 
 export const STORY_TEMPLATES: StoryTemplateDef[] = [VOD, GOODS, REQUEST, CARD, GOODSMAKING, BF, BFSTORY];
 
+/** 固定のテンプレート（楽天BF）の③の説明。固定でないテンプレートは null（従来の選択欄を出す） */
+export function fixedTemplateDescription(id: StoryTemplateId): string | null {
+  if (id === 'bf') {
+    return 'このテンプレートはフィード投稿（1080×1350）です。商品数に応じて3〜4枚：①表紙（黒×ゴールド・名前と最大割引率）→ ②セール対象商品（1ページ3件。1〜3件で1ページ、4〜6件で2ページ）→ ③プロフィールのリンクへ誘導。背景色・リンク位置・A/Bテストは使いません。';
+  }
+  if (id === 'bfstory') {
+    return 'このテンプレートはストーリーズ投稿（1080×1920）の2枚構成です：①表紙（黒×ゴールド・名前・楽天ブラックフライデー・最大割引率）→ ②セール対象商品（先頭3件まで）とリンクスタンプの余白。背景色・リンク位置・A/Bテストは使いません。';
+  }
+  return null;
+}
+
+/** ⑥で「まとめて保存（ZIP）」を出すか。楽天BFのストーリーズ版は1枚ずつPNG保存だけ（他は従来どおり） */
+export function allowsZipDownload(id: StoryTemplateId): boolean {
+  return id !== 'bfstory';
+}
+
 /** 楽天BFのテンプレート（フィード・ストーリーズ。承認欄・セールの記録を共通で使う） */
 export function isBfTemplate(id: StoryTemplateId): boolean {
   return id === 'bf' || id === 'bfstory';

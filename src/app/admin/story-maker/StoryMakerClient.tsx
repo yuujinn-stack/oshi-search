@@ -20,6 +20,8 @@ import {
   bfStructureSlides,
   editSlotIndex,
   isBfTemplate,
+  fixedTemplateDescription,
+  allowsZipDownload,
   type ColorPresetId,
   type FontId,
   type ImageSlot,
@@ -754,7 +756,7 @@ export default function StoryMakerClient({ persons, groups, initial, serverNow }
           <Step n={3} title="投稿枚数とデザインを選ぶ">
             {tpl.fixed ? (
               <div className="space-y-3 text-sm">
-                <p className="text-xs text-gray-600">このテンプレートはフィード投稿（1080×1350）の3枚固定です：①表紙（黒×ゴールド・名前と最大割引率）→ ②セール対象商品（最大3件）→ ③プロフィールのリンクへ誘導。背景色・リンク位置・A/Bテストは使いません。</p>
+                <p data-testid="fixed-template-description" className="text-xs text-gray-600">{fixedTemplateDescription(templateId)}</p>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="w-24 text-gray-600">フォント</span>
                   {(Object.keys(FONT_STACKS) as FontId[]).map((f) => (
@@ -1022,20 +1024,24 @@ export default function StoryMakerClient({ persons, groups, initial, serverNow }
                 const cfg = cfgOf(v);
                 const rs = resolveSlides(templateId, cfg, edits, images, target, bfState.items.length);
                 const missingPages = rs.filter((r) => r.missingImage).map((r) => `${r.index + 1}枚目`);
+                // 楽天BFのストーリーズ版は1枚ずつPNG保存だけ（ZIPのまとめて保存は出さない）
+                const zip = allowsZipDownload(templateId) && rs.length > 1;
                 return (
                   <div key={v} className="rounded-lg bg-slate-50 p-2">
                     {ab && <div className="text-xs font-bold text-slate-700 mb-1">{v.toUpperCase()}パターン（{cfg.slides}枚）</div>}
                     <div className="flex flex-wrap gap-2">
+                      {(zip || rs.length <= 1) && (
                       <button type="button" disabled={busy !== null} onClick={() => download(v)} className="px-3 py-2 rounded-lg bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-40">
                         {busy === `dl-${v}-all` ? '保存中…' : rs.length > 1 ? `${rs.length}枚まとめて保存（ZIP）` : 'PNGで保存'}
                       </button>
+                      )}
                       {rs.length > 1 && rs.map((r) => (
                         <button key={r.index} type="button" disabled={busy !== null} onClick={() => download(v, r.index)} className="px-2 py-2 rounded-lg border border-gray-300 text-xs hover:bg-white disabled:opacity-40">
                           {busy === `dl-${v}-${r.index}` ? '保存中…' : `${r.index + 1}枚目`}
                         </button>
                       ))}
                     </div>
-                    <div className="text-[11px] text-gray-500 mt-1 font-mono break-all">{rs.length > 1 ? storyZipName(tpl, targetKey, abOf(v)) : storyFileName(tpl, targetKey, 0, abOf(v))}</div>
+                    <div className="text-[11px] text-gray-500 mt-1 font-mono break-all">{zip ? storyZipName(tpl, targetKey, abOf(v)) : rs.map((r) => storyFileName(tpl, targetKey, r.index, abOf(v))).join('、')}</div>
                     {isBf && bfState.blocked && <div className="text-xs text-red-600 mt-1">保存できません：{bfState.blocked}</div>}
                     {missingPages.length > 0 && <div className="text-xs text-red-600 mt-1">画像が必要なページ（{missingPages.join('・')}）が未設定のため、まとめて保存できません。必要な画像をアップロードしてください。画像が不要なページは個別にPNG保存できます。</div>}
                   </div>
