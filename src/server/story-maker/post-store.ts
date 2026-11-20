@@ -1,6 +1,8 @@
 import 'server-only';
 import { getRedis } from '@/lib/redis';
 import { parseStoryPostRecord, StoryRecordError, type StoryPostRecord } from '@/lib/story-maker/metrics';
+import { isBfTemplate } from '@/lib/story-maker/templates';
+import { verifyBfRecordApprovals } from './bf-approval';
 
 /**
  * Instagramストーリーズの効果測定の記録（/admin/story-maker）。
@@ -57,6 +59,12 @@ export async function saveStoryPost(raw: unknown): Promise<StoryPostRecord> {
   const key = storyPostsKey();
   const draft = parseStoryPostRecord(raw);
   const existing = decode(await redis.hget(key, draft.id));
+  // 楽天BF：掲載商品の承認がサーバーの署名つきで、投稿日時の時点で有効だったか。新しく記録する承認はサーバーの今の時刻でも有効なこと
+  // （保存済みの記録と同じ承認はそのまま編集できる）。他のテンプレートは従来どおり
+  if (isBfTemplate(draft.templateId)) {
+    const errors = await verifyBfRecordApprovals(draft, Date.now(), existing?.saleItems ?? null);
+    if (errors.length > 0) throw new StoryRecordError(errors.join(' '));
+  }
   if (!existing && (await redis.hlen(key)) >= MAX_RECORDS) {
     throw new StoryRecordError(`記録は${MAX_RECORDS}件までです。不要な記録を削除してください。`);
   }

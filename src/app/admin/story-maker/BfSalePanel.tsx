@@ -12,9 +12,15 @@
  * - 承認済みの商品から最大6件を「投稿に使う」で選ぶ（3件まで商品ページ1枚、4〜6件で2枚）。承認から24時間を過ぎた・セールが終わったものは自動で使えなくなる。
  * - 対象（人物・グループ）を変えたら、親が key を変えてこのパネルを作り直す（別の推しの承認を持ち越さない）。
  * 承認内容はこの画面の中だけで持ち、効果測定の記録（投稿データ）を保存するときに一緒に保存する。DB・商品データは変更しない。
+ *
+ * 時刻：承認・期間・有効期限はサーバーの時刻で判定する（管理者PCの時計は使わない）。
+ * - 承認は /api/admin/story-maker/bf-sale（action=approve）で行い、サーバーが署名した承認を受け取る
+ * - 画面の表示（開催中・期限切れ）は、ページを描いたときのサーバーの時刻（serverNow）から始め、表示後はサーバーの時刻を取り直して
+ *   performance.now()（PCの時計を変えても進み方が変わらない）で進める。サーバーと同じ時刻で描くため表示の不一致（React #418）が起きない
+ * - PNG保存の前に checkBfApprovalsOnServer でサーバーに確かめる（StoryMakerClient）
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BF_CONDITIONS_MAX,
   BF_DISCOUNT_KINDS,
@@ -28,7 +34,6 @@ import {
   isApprovalUsable,
   maxOffRate,
   parseYen,
-  verifyBfItem,
   type BfApprovedItem,
   type BfDiscountKind,
   type BfPriceLabel,
@@ -70,8 +75,52 @@ async function fetchJson<T>(url: string): Promise<T> {
   }
 }
 
-export default function BfSalePanel({ target, onChange }: { target: StoryTarget | null; onChange: (s: BfPanelState) => void }) {
-  const [now, setNow] = useState(() => Date.now());
+const BF_API = '/api/admin/story-maker/bf-sale';
+
+async function postBf<T>(body: Record<string, unknown>): Promise<{ status: number; json: T & { error?: string; now?: number } }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(BF_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal, cache: 'no-store' });
+    return { status: res.status, json: (await res.json().catch(() => ({}))) as T & { error?: string; now?: number } };
+  } catch (err) {
+    if (ctrl.signal.aborted) throw new Error(`${FETCH_TIMEOUT_MS / 1000}秒以内にサーバーから応答がありませんでした。`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * PNG保存の前に、サーバーの時刻で承認（署名・セール期間・有効期限）を確かめる。
+ * 通信できないときも保存させない（ok=false）。
+ */
+export async function checkBfApprovalsOnServer(target: StoryTarget, items: BfApprovedItem[]): Promise<{ ok: boolean; message: string | null }> {
+  try {
+    const { status, json } = await postBf<{ ok?: boolean; problems?: { productId: string; reason: string }[] }>({
+      action: 'check', type: target.type, name: target.name,
+      items: items.map((i) => { const { imageSrc: _img, ...rest } = i as BfApprovedItem & { imageSrc?: unknown }; return rest; }),
+    });
+    if (status !== 200) return { ok: false, message: json.error ?? `サーバーで承認を確認できませんでした（HTTP ${status}）。` };
+    if (json.ok) return { ok: true, message: null };
+    const reasons = Array.from(new Set((json.problems ?? []).map((p) => p.reason)));
+    return { ok: false, message: reasons.join(' ') || '承認を確認できませんでした。' };
+  } catch (err) {
+    return { ok: false, message: `サーバーで承認を確認できませんでした：${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+export default function BfSalePanel({ target, onChange, serverNow }: { target: StoryTarget | null; onChange: (s: BfPanelState) => void; serverNow: number }) {
+  // サーバーの時刻。初回の描画はページを描いたときのサーバーの時刻（SSR と同じ値）、表示後は performance.now() で進める
+  const clock = useRef<{ server: number; perf: number | null }>({ server: serverNow, perf: null });
+  const serverTime = () => (clock.current.perf === null ? clock.current.server : clock.current.server + (performance.now() - clock.current.perf));
+  const [now, setNow] = useState(serverNow);
+  const syncClock = (server: unknown) => {
+    if (typeof server !== 'number' || !Number.isFinite(server)) return;
+    clock.current = { server, perf: performance.now() };
+    setNow(server);
+  };
+  const [approving, setApproving] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<BfSaleCandidate[] | null>(null);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -86,10 +135,13 @@ export default function BfSalePanel({ target, onChange }: { target: StoryTarget 
   const [checker, setChecker] = useState('');
 
   useEffect(() => { setChecker(readChecker()); }, []);
-  // 開催状態・承認の期限を見直す（開いたままでも30秒ごと）
+  // 表示後：サーバーの時刻を取り直し、開催状態・承認の期限を30秒ごとに見直す（PCの時計は使わない）
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30_000);
+    clock.current = { server: clock.current.server, perf: performance.now() };
+    fetch(BF_API, { cache: 'no-store' }).then((r) => r.json()).then((j: { now?: unknown }) => syncClock(j.now)).catch(() => { /* 取れなければページを描いたときの時刻から進める */ });
+    const id = setInterval(() => setNow(serverTime()), 30_000);
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const phase = bfSalePhase(now);
@@ -151,19 +203,34 @@ export default function BfSalePanel({ target, onChange }: { target: StoryTarget 
   const inputOf = (c: BfSaleCandidate): BfVerificationInput => inputs[c.productId] ?? { ...EMPTY_VERIFICATION, sourceUrl: c.pageUrl ?? '', checkedBy: checker };
   const setInput = (c: BfSaleCandidate, patch: Partial<BfVerificationInput>) => setInputs((prev) => ({ ...prev, [c.productId]: { ...inputOf(c), ...patch } }));
 
-  function approve(c: BfSaleCandidate) {
-    const t = Date.now();
-    setNow(t);
-    const r = verifyBfItem(c, inputOf(c), t);
-    if (!r.ok) { setFormErrors((p) => ({ ...p, [c.productId]: r.errors })); return; }
-    setFormErrors((p) => { const n = { ...p }; delete n[c.productId]; return n; });
-    setApproved((p) => ({ ...p, [c.productId]: r.item }));
-    setChecker(r.item.checkedBy);
-    writeChecker(r.item.checkedBy);
-    setOpenId(null);
-    // 空きがあれば自動で「投稿に使う」に入れる（6件まで）
-    setSelected((p) => (p.includes(c.productId) || p.length >= BF_MAX_ITEMS ? p : [...p, c.productId]));
+  /** 承認はサーバーで（サーバーの時刻で検証し、署名した承認を受け取る） */
+  async function approve(c: BfSaleCandidate) {
+    if (!target || approving) return;
+    setApproving(c.productId);
+    try {
+      const { status, json } = await postBf<{ ok?: boolean; item?: BfApprovedItem; errors?: string[] }>({
+        action: 'approve', type: target.type, name: target.name, productId: c.productId, input: inputOf(c),
+      });
+      syncClock(json.now);
+      if (status !== 200 || !json.ok || !json.item) {
+        setFormErrors((p) => ({ ...p, [c.productId]: json.errors ?? [json.error ?? `承認できませんでした（HTTP ${status}）。`] }));
+        return;
+      }
+      const item = json.item;
+      setFormErrors((p) => { const n = { ...p }; delete n[c.productId]; return n; });
+      setApproved((p) => ({ ...p, [c.productId]: item }));
+      setChecker(item.checkedBy);
+      writeChecker(item.checkedBy);
+      setOpenId(null);
+      // 空きがあれば自動で「投稿に使う」に入れる（6件まで）
+      setSelected((p) => (p.includes(c.productId) || p.length >= BF_MAX_ITEMS ? p : [...p, c.productId]));
+    } catch (err) {
+      setFormErrors((p) => ({ ...p, [c.productId]: [`サーバーで承認できませんでした：${err instanceof Error ? err.message : String(err)}`] }));
+    } finally {
+      setApproving(null);
+    }
   }
+
 
   function revoke(id: string) {
     setApproved((p) => { const n = { ...p }; delete n[id]; return n; });
@@ -287,7 +354,7 @@ export default function BfSalePanel({ target, onChange }: { target: StoryTarget 
                       {formErrors[c.productId] && (
                         <ul className="list-disc pl-4 text-red-300">{formErrors[c.productId].map((e) => <li key={e}>{e}</li>)}</ul>
                       )}
-                      <button type="button" onClick={() => approve(c)} className="px-4 py-1.5 rounded-lg bg-amber-400 text-stone-900 font-black hover:bg-amber-300">承認する</button>
+                      <button type="button" onClick={() => void approve(c)} disabled={approving !== null} className="px-4 py-1.5 rounded-lg bg-amber-400 text-stone-900 font-black hover:bg-amber-300 disabled:opacity-50">{approving === c.productId ? 'サーバーで確認中…' : '承認する'}</button>
                     </div>
                   )}
                 </li>

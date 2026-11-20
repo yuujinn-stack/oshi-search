@@ -11,6 +11,9 @@
 // - 値引きの種類を承認欄で選ばせ、商品ページの表示価格そのものの値下げ（条件なし・条件付き）だけを掲載する。
 //   ポイント倍率・買いまわりの対象なだけの商品、クーポン利用時だけ安くなる商品は値引き商品として扱わない（承認できない）。
 // - 根拠URL（sourceUrl＝確認した楽天の商品ページ）・確認日時（checkedAt）・適用条件（conditions）を承認内容として保持する。
+// - 時刻はサーバーの時刻で判定する（管理者PCの時計を使わない）。承認はサーバー（/api/admin/story-maker/bf-sale）で行い、
+//   サーバーが承認内容と承認日時に署名する（src/server/story-maker/bf-approval.ts）。PNG保存の前と投稿記録の保存時に、
+//   サーバーで署名・セール期間・有効期限を確かめる。ここ（純粋関数）は署名の対象の文字列と、期間・期限の判定だけを持つ。
 
 import { SALE_CORNERS, type SaleCornerConfig } from '@/lib/sale-corner/config';
 import { salePeriodLabel, salePhaseAt, toSaleCorner, type SaleCorner, type SalePhase } from '@/lib/sale-corner/core';
@@ -120,6 +123,27 @@ export interface BfApprovedItem {
   /** 承認した日時（ISO） */
   checkedAt: string;
   saleId: string;
+  /** サーバーが付けた承認の署名（HMAC-SHA256・16進64文字）。ブラウザでは作れない */
+  signature: string;
+}
+
+/** 署名前の承認内容（サーバーの承認処理の途中だけで使う） */
+export type BfUnsignedItem = Omit<BfApprovedItem, 'signature'>;
+
+/** 署名の形式（16進64文字） */
+export const BF_SIGNATURE_RE = /^[0-9a-f]{64}$/;
+
+/** 承認がどの推し（人物・グループ）のものか。別の推しの承認を使い回させない */
+export function bfTargetKey(target: { type: 'person' | 'group'; name: string }): string {
+  return `${target.type}:${target.name.trim()}`;
+}
+
+/** 署名の対象（承認内容のすべてと推し。値は parseBfRecordItems の正規化後と同じになるようにしてある） */
+export function bfApprovalMessage(item: BfUnsignedItem, targetKey: string): string {
+  return JSON.stringify([
+    'oshi-search:bf-approval:v1', targetKey, item.productId, item.title, item.section, item.priceLabel,
+    item.regularPrice, item.salePrice, item.discountKind, item.conditions, item.sourceUrl, item.checkedBy, item.checkedAt, item.saleId,
+  ]);
 }
 
 export const EMPTY_VERIFICATION: BfVerificationInput = {
@@ -155,7 +179,7 @@ export function verifyBfItem(
   input: BfVerificationInput,
   nowMs: number,
   sale: SaleCorner | null = bfSaleCorner(),
-): { ok: true; item: BfApprovedItem } | { ok: false; errors: string[] } {
+): { ok: true; item: BfUnsignedItem } | { ok: false; errors: string[] } {
   const errors: string[] = [];
   if (!sale) errors.push('セールの設定（SALE_CORNERS）が見つかりません。');
   else if (bfSalePhase(nowMs, sale) !== 'active') errors.push('楽天ブラックフライデーの開催中だけ承認できます（開催前・終了後は対象・価格を確認できないため）。');
@@ -187,14 +211,15 @@ export function verifyBfItem(
   return {
     ok: true,
     item: {
-      productId: candidate.productId,
-      title: candidate.title,
-      section: candidate.section,
+      // 記録の検証（parseBfRecordItems）と同じ長さにそろえる（署名の対象が変わらないように）
+      productId: candidate.productId.trim().slice(0, 100),
+      title: candidate.title.trim().slice(0, 300),
+      section: candidate.section.trim().slice(0, 40),
       priceLabel: input.priceLabel,
       regularPrice: regular,
       salePrice,
       ...calcDiscount(regular, salePrice),
-      sourceUrl: src,
+      sourceUrl: src.slice(0, 1000),
       discountKind: kind.value,
       conditions: conditionsRaw || (kind.value === 'price-cut' ? BF_NO_CONDITION : ''),
       checkedBy,
@@ -211,6 +236,38 @@ export function isApprovalUsable(item: Pick<BfApprovedItem, 'checkedAt' | 'saleI
   if (!Number.isFinite(at) || at > nowMs + 60_000) return false;
   if (sale && at < sale.startsAt) return false;
   return nowMs - at < BF_APPROVAL_TTL_MS;
+}
+
+/** 投稿記録の投稿日時（日本時間の "YYYY-MM-DDTHH:mm"）を時刻（ms）に。形式が違えば null */
+export function bfPostedAtMs(postedAt: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(postedAt)) return null;
+  const ms = Date.parse(`${postedAt}:00+09:00`);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * 投稿記録に載せた商品の承認が、投稿日時の時点で有効だったか（サーバーで署名を確かめた後に使う）。
+ * - 承認日時がサーバーの今より後（未来）は不可
+ * - 投稿日時がセール期間中・承認から24時間以内・承認より後（同じ分は可）であること
+ * 投稿日時で判定するため、あとから記録を編集（リーチの入力など）しても、投稿日時を変えなければ通る。
+ */
+export function checkBfRecordTiming(
+  items: Pick<BfApprovedItem, 'productId' | 'checkedAt' | 'saleId'>[],
+  postedAt: string,
+  nowMs: number,
+  sale: SaleCorner | null = bfSaleCorner(),
+): string[] {
+  const errors: string[] = [];
+  const posted = bfPostedAtMs(postedAt);
+  if (posted === null) return ['投稿日時が正しくありません。'];
+  for (const it of items) {
+    const at = Date.parse(it.checkedAt);
+    if (!Number.isFinite(at) || at > nowMs + 60_000) { errors.push(`セール商品（${it.productId}）の承認日時が正しくありません。`); continue; }
+    if (!isApprovalUsable(it, posted, sale)) {
+      errors.push(`セール商品（${it.productId}）の承認は、投稿日時（${postedAt}）の時点で有効ではありません（セール期間外・承認から24時間を過ぎている・承認より前の投稿日時のいずれか）。`);
+    }
+  }
+  return errors;
 }
 
 /** 最大割引率（採用した承認済みの商品だけ）。商品が無ければ null */
@@ -300,6 +357,8 @@ export function parseBfRecordItems(raw: unknown): BfApprovedItem[] | null {
     if (discountKind === 'price-cut-conditional' && !conditions) throw new Error('セール商品の適用条件が記録されていません。');
     const checkedAt = s(o.checkedAt, 40);
     if (!Number.isFinite(Date.parse(checkedAt))) throw new Error('セール商品の確認日時が正しくありません。');
+    const signature = s(o.signature, 64);
+    if (!BF_SIGNATURE_RE.test(signature)) throw new Error('セール商品の承認の署名がありません（管理画面でサーバーが承認した商品だけ記録できます）。');
     return {
       productId: s(o.productId, 100),
       title: s(o.title, 300),
@@ -314,6 +373,7 @@ export function parseBfRecordItems(raw: unknown): BfApprovedItem[] | null {
       checkedBy: s(o.checkedBy, 50),
       checkedAt,
       saleId: s(o.saleId, 60),
+      signature,
     };
   });
 }

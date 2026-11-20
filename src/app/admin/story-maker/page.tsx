@@ -58,6 +58,8 @@ export default async function StoryMakerPage({ searchParams }: { searchParams: P
   }));
 
   // 他の管理画面からのリンク（?template=bf&person=…&from=instagram-post）。実在するものだけ採用し、無ければ従来の初期状態
+  // 楽天BFの開催状態・承認期限の表示は、このサーバーの時刻から始める（PCの時計に頼らない・表示の不一致を起こさない）
+  const serverNow = Date.now();
   const initial = parseStoryMakerInitial(await searchParams, personOptions.map((p) => p.name), groups.map((g) => g.name));
 
   return (
@@ -74,7 +76,7 @@ export default async function StoryMakerPage({ searchParams }: { searchParams: P
           <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
-      <StoryMakerClient persons={personOptions} groups={groups} initial={initial} />
+      <StoryMakerClient persons={personOptions} groups={groups} initial={initial} serverNow={serverNow} />
     </div>
   );
 }

@@ -48,7 +48,8 @@ const okInput: BfVerificationInput = {
 function approvedItem(over: Partial<BfApprovedItem> = {}): BfApprovedItem {
   const r = verifyBfItem(candidate, okInput, DURING);
   if (!r.ok) throw new Error(r.errors.join());
-  return { ...r.item, ...over };
+  // 署名はサーバーが付ける（ここは形だけ。署名の検証は story-maker-bf-approval.test.ts）
+  return { ...r.item, signature: '0'.repeat(64), ...over };
 }
 
 describe('楽天BF：承認欄の検証（推測で数字を作らない）', () => {

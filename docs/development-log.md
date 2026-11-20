@@ -6575,3 +6575,34 @@ OSHI_GROUP_09 の Instagram 投稿文を、冒頭フック（動画の冒頭と�
 - 既存5テンプレートの描画・既存の記録の処理：origin/main と完全一致
 - tsc 0件、vitest 208ファイル/3,258件成功、next build 成功
 - 実際の画面で架空のサンプル商品6件（実際の商品名に近い長さ）を承認 → 通常投稿4枚・ストーリーズ2枚を保存（承認はテンプレートを切り替えても引き継がれる）。商品名の省略なし、はみ出し警告なし、コンソールエラーなし
+
+## Task 204g: 楽天BF（通常投稿・ストーリーズ）の時刻判定をサーバーの時刻に
+
+### 目的
+- セール期間・承認の有効期限（24時間）を管理者PCの時計ではなくサーバーの時刻で判定する。承認日時を偽れないようにし、投稿記録の保存APIでも期間・期限を検証する。セールの境目での表示の不一致（React #418）を無くす
+
+### 変更前の時刻の使い方
+- 承認：ブラウザの Date.now()（BfSalePanel）で verifyBfItem・checkedAt を作成
+- 開催状態・期限の表示：ブラウザの時計（30秒ごと）。SSR はサーバーの時計 → 境目で #418
+- PNG保存：ブラウザ側の判定だけ
+- 投稿記録の保存：価格・根拠URL等は検証するが、期間・期限・承認日時の真正性は未検証
+
+### 変更したファイル
+- `src/server/story-maker/bf-approval.ts`（新規）：承認（サーバーで候補を読み直し、サーバーの時刻で verifyBfItem → HMAC-SHA256 で署名）、署名の検証（crypto.subtle.verify）、PNG保存前の確認（署名・期間・期限）、投稿記録の確認（署名と投稿日時の時点の有効性）。鍵は既存の ADMIN_SESSION_SECRET（署名対象は 'oshi-search:bf-approval:v1' で始まり、ログインのトークンと混ざらない）。DB・新しい保存先は使わない
+- `src/app/api/admin/story-maker/bf-sale/route.ts`（新規）：GET＝サーバーの時刻、POST action=approve／check。認証・CSRFは既存の src/proxy.ts
+- `src/lib/story-maker/bf-sale.ts`：BfApprovedItem に signature、BfUnsignedItem、bfTargetKey、bfApprovalMessage（署名対象）、bfPostedAtMs、checkBfRecordTiming。verifyBfItem は記録の検証と同じ長さに切りそろえる。parseBfRecordItems は署名（16進64文字）を必須に
+- `src/server/story-maker/post-store.ts`：楽天BFのテンプレートだけ、保存前に verifyBfRecordApprovals（他のテンプレートは従来どおり）
+- `src/app/admin/story-maker/BfSalePanel.tsx`：承認をサーバーAPIで。表示の時刻はページを描いたときのサーバーの時刻（serverNow）から始め、表示後はサーバーの時刻を取り直して performance.now() で進める（PCの時計を変えても影響しない）。checkBfApprovalsOnServer
+- `src/app/admin/story-maker/StoryMakerClient.tsx`：serverNow をパネルへ。PNG保存の直前にサーバーで確認（通信できないときも保存しない）
+- `src/app/admin/story-maker/page.tsx`：serverNow（Date.now()）を渡す
+- テスト：`story-maker-bf-approval.test.tsx`（新規・14件：境界・24時間・署名・API直接呼び出し・PCの時計の進み/遅れ・不正な承認日時・投稿記録の保存〔通常投稿・ストーリーズ〕・#418）、`story-maker-bf.test.tsx`（署名の形だけ付ける）
+
+### 設計上の判断・注意点
+- 投稿記録は「投稿日時の時点で承認が有効だったか」で判定（サーバーの今では判定しない）。リーチの入力などであとから編集しても、投稿日時を変えなければ保存できる。承認日時がサーバーの今より未来なら不可
+- 画像（PNG）はブラウザで作るため、保存の可否は保存直前のサーバー確認で決める（開発者ツールで画面の処理を書き換えた場合までは防げない）
+- ADMIN_SESSION_SECRET を変えると、発行済みの承認と、楽天BFの記録の再保存（編集）が通らなくなる
+
+### 確認
+- tsc 0件、vitest 209ファイル/3,272件成功、next build 成功。既存5テンプレートの描画・既存の記録の処理は origin/main と完全一致
+- next start ＋ Playwright（サンプル商品・本物のサーバーで保存前の確認）：PCの時計が本当の時刻・10日進み・10日遅れのどれでも、表示は「開催中」（サーバーの時刻）、承認日時はサーバーの時刻、PNG保存はサーバー確認を通って成功（通常投稿 1080×1350・ストーリーズ 1080×1920）、改ざんした承認はサーバーが拒否、#418 は0件。承認APIは未ログインで401、不完全な入力は400
+- 追記（新規の記録と編集の区別）：新規の記録（または保存済みの記録に無い承認）は、投稿日時の判定に加えて、サーバーの今の時刻でも承認が有効（24時間以内・セール中）であることを必須にした（投稿日時だけを過去に戻して期限切れの承認を記録させない）。保存済みの記録と同じ承認（同じ商品・同じ署名）は今の時刻で判定しないため、セール終了後もリーチ等を編集できる。承認の差し替え・投稿日時の期限外への変更・別IDへの複製は不可。`verifyBfRecordApprovals` に保存済みの承認を渡す（`post-store.ts` は既存の記録を読んでから検証）。テスト2件追加（16件）

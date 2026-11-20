@@ -46,7 +46,7 @@ import {
 import { buildServicesPanel, panelSignature, type ProductPanelItem, type StoryPanel } from '@/lib/story-maker/panels';
 import { StoryScaled, StorySlide, type ImageFit, type SlideImage } from './StorySlide';
 import { STORY_H, downloadBlob, downloadZip, renderStoryElementPng } from './png-export';
-import BfSalePanel, { type BfPanelState } from './BfSalePanel';
+import BfSalePanel, { checkBfApprovalsOnServer, type BfPanelState } from './BfSalePanel';
 import type { RecordSlideCount } from '@/lib/story-maker/metrics';
 import { STORY_MAKER_FROM, type StoryMakerInitial } from '@/lib/story-maker/open-link';
 import { BF_STORY_MAX_ITEMS, bfProductPageCount, bfSalePeriodLabel, bfStoryItems, checkedAtLabel, maxOffRate, type BfSlideData } from '@/lib/story-maker/bf-sale';
@@ -204,7 +204,7 @@ function useOverflowCheck(deps: unknown[]): [React.RefObject<HTMLDivElement | nu
   return [ref, over];
 }
 
-export default function StoryMakerClient({ persons, groups, initial }: { persons: PersonOption[]; groups: GroupChoice[]; initial?: StoryMakerInitial }) {
+export default function StoryMakerClient({ persons, groups, initial, serverNow }: { persons: PersonOption[]; groups: GroupChoice[]; initial?: StoryMakerInitial; serverNow: number }) {
   // 他の管理画面からのリンクで開いたときだけ、テンプレート・対象を選んだ状態で始める（無ければ従来どおり A・グループ未選択）
   const [templateId, setTemplateId] = useState<StoryTemplateId>(initial?.templateId ?? 'vod');
   const tpl = getStoryTemplate(templateId);
@@ -391,6 +391,14 @@ export default function StoryMakerClient({ persons, groups, initial }: { persons
     setBusy(`dl-${v}-${only ?? 'all'}`);
     setMessage(null);
     try {
+      // 楽天BF：保存の直前にサーバーの時刻で承認（署名・セール期間・有効期限）を確かめる。PCの時計では判定しない
+      if (isBf) {
+        const check = target ? await checkBfApprovalsOnServer(target, bfItems) : { ok: false, message: '人物またはグループを選んでください。' };
+        if (!check.ok) {
+          setMessage({ kind: 'error', text: `保存できません：${check.message}` });
+          return;
+        }
+      }
       const files: { name: string; blob: Blob }[] = [];
       for (const r of targets) {
         const blob = await renderStoryElementPng(slideElement(r, cfg, rs.length, false), frameH);
@@ -682,7 +690,7 @@ export default function StoryMakerClient({ persons, groups, initial }: { persons
 
           {isBf ? (
             <div className="space-y-2">
-              <BfSalePanel key={`${target?.type ?? ''}:${target?.name ?? ''}`} target={target} onChange={setBfState} />
+              <BfSalePanel key={`${target?.type ?? ''}:${target?.name ?? ''}`} target={target} onChange={setBfState} serverNow={serverNow} />
               {templateId === 'bfstory' && bfState.items.length > BF_STORY_MAX_ITEMS && (
                 <p data-testid="bf-story-limit" className="text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2">
                   ストーリーズには「投稿に使う」の先頭{BF_STORY_MAX_ITEMS}件だけを載せます（{bfState.items.length}件中）。最大割引率もこの{BF_STORY_MAX_ITEMS}件から計算します。残りの商品はフィード版で紹介してください。
