@@ -8,7 +8,7 @@
 
 import { OSHI_VOD_PATH, buildOshiVodGroupPath, buildOshiVodWithPath } from '@/lib/oshi-vod/params';
 
-export type StoryTemplateId = 'vod' | 'goods' | 'request' | 'card' | 'goodsmaking';
+export type StoryTemplateId = 'vod' | 'goods' | 'request' | 'card' | 'goodsmaking' | 'bf';
 export type SlideCount = 1 | 2 | 3;
 export const SLIDE_COUNTS: SlideCount[] = [1, 2, 3];
 /**
@@ -34,7 +34,9 @@ export function structureLabel(tpl: Pick<StoryTemplateDef, 'defaultSlides'>, s: 
 }
 
 /** スライドの組み方。テンプレートごとの装飾（decoration）と組み合わせて見た目を変える */
-export type SlideLayout = 'hook' | 'screen' | 'combined' | 'cta' | 'points' | 'question' | 'single';
+export type SlideLayout = 'hook' | 'screen' | 'combined' | 'cta' | 'points' | 'question' | 'single'
+  /** 楽天BF・推し別セール紹介（フィード 1080×1350。src/app/admin/story-maker/BfSaleSlide.tsx） */
+  | 'bf-cover' | 'bf-products' | 'bf-final';
 /** スタンプ用に空けておく場所の種類（本物のスタンプは Instagram アプリで置く。画像には描かない） */
 export type StickerKind = 'link' | 'question' | 'none';
 /** 画像の差し込み口。同じ口の画像は枚数を変えても引き継ぐ */
@@ -88,6 +90,13 @@ export interface StoryTemplateDef {
    * body＝画像の下の説明、stickerCaption＝CTAの1行目、cta＝「↓ ◯◯ ↓」、note＝最下部の補足。
    */
   single: SlideDef;
+  /**
+   * 構成・背景色・リンク位置・A/Bテストを選ばせない固定のテンプレート（楽天BF・推し別セール紹介）。
+   * 枚数は defaultSlides で固定し、structures のどの枚数を選んでも同じページ一覧を返す。
+   */
+  fixed?: boolean;
+  /** 画像の高さ（省略時は 1920＝ストーリーズ。フィード投稿は 1350） */
+  frameHeight?: number;
 }
 
 const T = (t: Partial<SlideText>): SlideText => ({
@@ -265,7 +274,50 @@ const GOODSMAKING: StoryTemplateDef = {
   },
 };
 
-export const STORY_TEMPLATES: StoryTemplateDef[] = [VOD, GOODS, REQUEST, CARD, GOODSMAKING];
+// ── 楽天BF・推し別セール紹介（フィード投稿・3〜4枚） ─────────────────────
+// 表紙（黒×ゴールド・名前と最大割引率）→ 商品ページ1〜2枚（承認済みの商品を1ページ3件・最大6件）→ 最終ページ（プロフィールのリンクへ）。
+// 枚数は採用した商品数で決まる（bfStructureSlides）。structures は既存の型に合わせた3枚（商品ページ1枚）の形。
+// 割引率・価格は管理画面の承認欄で確認した値だけを描く（src/lib/story-maker/bf-sale.ts）。テキストは名前の置き換えだけ編集できる。
+const BF_SLIDES: SlideDef[] = [
+  { layout: 'bf-cover', sticker: 'none', image: 'none',
+    text: T({ subheading: '楽天ブラックフライデー', heading: '{name}', body: '推し別セール紹介', note: '次のページへ →' }) },
+  { layout: 'bf-products', sticker: 'none', image: 'none',
+    text: T({ heading: '{name}のセール対象商品', note: '' }) },
+  { layout: 'bf-final', sticker: 'none', image: 'none',
+    text: T({ heading: '{name}の商品を\nもっと見るなら', body: 'プロフィールのリンクから\n推しサーチへ', cta: '推しサーチで「{name}」をチェック！' }) },
+];
+const BF: StoryTemplateDef = {
+  id: 'bf',
+  key: 'bf_sale',
+  title: '楽天BF・推し別セール紹介',
+  purpose: '楽天ブラックフライデーの対象と確認できた推しの商品（写真集・ライブDVD/Blu-ray・CD・グッズ）を、価格と割引率つきで紹介するフィード投稿（商品3件まで3枚・4〜6件で4枚）です。',
+  defaultSlides: 3,
+  decoration: 'sparkle',
+  usesTarget: true,
+  fixed: true,
+  frameHeight: 1350,
+  single: BF_SLIDES[0],
+  structures: { 1: BF_SLIDES, 2: BF_SLIDES, 3: BF_SLIDES },
+};
+
+export const STORY_TEMPLATES: StoryTemplateDef[] = [VOD, GOODS, REQUEST, CARD, GOODSMAKING, BF];
+
+/** 楽天BFのページ一覧（表紙＋商品ページ productPages 枚＋最終ページ） */
+export function bfStructureSlides(productPages: number): SlideDef[] {
+  const n = Math.max(1, Math.floor(productPages));
+  return [BF_SLIDES[0], ...Array.from({ length: n }, () => BF_SLIDES[1]), BF_SLIDES[2]];
+}
+
+/**
+ * 文言の編集を保存する位置。楽天BFは商品ページの枚数で最終ページの位置が変わるため、
+ * ページの種類（表紙0・商品1・最終2）で持つ（商品ページが2枚でも見出しは共通）。他のテンプレートはページ番号のまま。
+ */
+export function editSlotIndex(def: Pick<SlideDef, 'layout'>, index: number): number {
+  if (def.layout === 'bf-cover') return 0;
+  if (def.layout === 'bf-products') return 1;
+  if (def.layout === 'bf-final') return 2;
+  return index;
+}
 
 export function getStoryTemplate(id: StoryTemplateId): StoryTemplateDef {
   const t = STORY_TEMPLATES.find((x) => x.id === id);
@@ -343,6 +395,13 @@ export function linkTargetOptions(templateId: StoryTemplateId, target: StoryTarg
     }
     case 'goodsmaking':
       return [{ id: 'gm', label: 'グッズ制作サービス比較', path: GOODS_MAKING_PATH }];
+    case 'bf': {
+      // フィード投稿はリンクを貼れないため、プロフィールのリンクに設定するURL
+      const opts: LinkTargetOption[] = [];
+      if (target) opts.push({ id: 'page', label: `${target.type === 'person' ? '人物' : 'グループ'}ページ（${target.name}）`, path: target.pagePath });
+      opts.push({ id: 'top', label: '推しサーチ トップ', path: '/' });
+      return opts;
+    }
   }
 }
 

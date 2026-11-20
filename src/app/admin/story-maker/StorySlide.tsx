@@ -22,6 +22,8 @@ import {
 import type { StoryPanel } from '@/lib/story-maker/panels';
 import { STORY_H, STORY_W } from './png-export';
 import { StoryPanelView } from './StoryPanelView';
+import { BfSaleSlide } from './BfSaleSlide';
+import type { BfSlideData } from '@/lib/story-maker/bf-sale';
 
 export const SAFE_TOP = 250;
 export const SAFE_BOTTOM = 1650;
@@ -56,6 +58,8 @@ export interface StorySlideProps {
   questionText?: string;
   /** テンプレート（A=vod だけ見出しの1行化・実画面の拡大レイアウトを使う。他は従来どおり） */
   templateId?: StoryTemplateId;
+  /** 楽天BF・推し別セール紹介の商品・割引率（承認済みの値だけ。bf のときだけ使う） */
+  sale?: BfSlideData;
 }
 
 // ── 文字サイズの自動調整 ─────────────────────────────────────────
@@ -618,6 +622,7 @@ function SingleSlide({ decoration, def, text, design, image, showGuide, question
 }
 
 export function StorySlide(props: StorySlideProps) {
+  if (props.def.layout === 'bf-cover' || props.def.layout === 'bf-products' || props.def.layout === 'bf-final') return <BfSaleSlide {...props} />;
   if (props.def.layout === 'single') return <SingleSlide {...props} />;
   const vod = props.templateId === 'vod';
   if (vod && props.def.layout === 'screen') return <VodScreenSlide {...props} />;
@@ -765,11 +770,11 @@ function FlexImage({ children }: { children: ReactNode }) {
 }
 
 /** プレビュー用：1080×1920 を指定の幅に縮小して表示 */
-export function StoryScaled({ width, children }: { width: number; children: ReactNode }) {
+export function StoryScaled({ width, children, height = STORY_H }: { width: number; children: ReactNode; height?: number }) {
   const scale = width / STORY_W;
   return (
-    <div style={{ width, height: STORY_H * scale, overflow: 'hidden', position: 'relative', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.15)' }}>
-      <div style={{ width: STORY_W, height: STORY_H, transform: `scale(${scale})`, transformOrigin: 'top left' }}>{children}</div>
+    <div style={{ width, height: height * scale, overflow: 'hidden', position: 'relative', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.15)' }}>
+      <div style={{ width: STORY_W, height, transform: `scale(${scale})`, transformOrigin: 'top left' }}>{children}</div>
     </div>
   );
 }

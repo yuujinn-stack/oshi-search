@@ -9,6 +9,7 @@ import RedisErrorBanner from '@/components/admin/RedisErrorBanner';
 import { LogoutButton } from '@/components/admin/LogoutButton';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import StoryMakerClient, { type GroupChoice } from './StoryMakerClient';
+import { parseStoryMakerInitial } from '@/lib/story-maker/open-link';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +21,7 @@ export const metadata: Metadata = {
  * Instagramストーリーズ作成。人物・グループの読み取りだけを行い、DB・既存データは変更しない。
  * 認証は src/proxy.ts（/admin/:path*）。動画生成（/admin/video-maker）・ストーリーズテンプレート（/admin/instagram-stories）とは独立。
  */
-export default async function StoryMakerPage() {
+export default async function StoryMakerPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   let persons: Awaited<ReturnType<typeof getAllPersonsMerged>>;
   let metas: Awaited<ReturnType<typeof getAllPersonMetasOrThrow>>;
   try {
@@ -56,6 +57,9 @@ export default async function StoryMakerPage() {
     generation: metas[p.name]?.generation,
   }));
 
+  // 他の管理画面からのリンク（?template=bf&person=…&from=instagram-post）。実在するものだけ採用し、無ければ従来の初期状態
+  const initial = parseStoryMakerInitial(await searchParams, personOptions.map((p) => p.name), groups.map((g) => g.name));
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="flex items-start justify-between mb-6">
@@ -70,7 +74,7 @@ export default async function StoryMakerPage() {
           <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
-      <StoryMakerClient persons={personOptions} groups={groups} />
+      <StoryMakerClient persons={personOptions} groups={groups} initial={initial} />
     </div>
   );
 }

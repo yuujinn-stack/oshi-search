@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { STORY_TEMPLATES, type SlideCount, type StoryTemplateId } from '@/lib/story-maker/templates';
+import { STORY_TEMPLATES, type StoryTemplateId } from '@/lib/story-maker/templates';
 import { AB_TESTS } from '@/lib/story-maker/ab';
 import type { AbTestKey, AbVariant } from '@/lib/story-maker/utm';
 import {
@@ -9,16 +9,20 @@ import {
   formatPercent,
   storyRecordsToCsv,
   summarizeAbTests,
+  type RecordSlideCount,
   type StoryPostRecord,
 } from '@/lib/story-maker/metrics';
 import { downloadBlob } from './png-export';
+import type { BfApprovedItem } from '@/lib/story-maker/bf-sale';
 
 export interface MetricsDraftContext {
   templateId: StoryTemplateId;
   targetName: string | null;
   targetType: 'person' | 'group' | null;
   abTest: AbTestKey | null;
-  variants: { variant: AbVariant | null; slides: SlideCount; utmCampaign: string; utmContent: string; url: string; linkSlide: number }[];
+  variants: { variant: AbVariant | null; slides: RecordSlideCount; utmCampaign: string; utmContent: string; url: string; linkSlide: number }[];
+  /** 楽天BF・推し別セール紹介で掲載する承認済みの商品（記録に一緒に保存する） */
+  saleItems?: BfApprovedItem[] | null;
 }
 
 type NumField = '' | string;
@@ -28,18 +32,20 @@ interface Draft {
   templateId: StoryTemplateId;
   targetName: string;
   targetType: 'person' | 'group' | null;
-  slideCount: SlideCount;
+  slideCount: RecordSlideCount;
   abTest: AbTestKey | null;
   abVariant: AbVariant | null;
   utmCampaign: string;
   utmContent: string;
   url: string;
-  reach: [NumField, NumField, NumField];
+  /** 3つ（既存）。4枚の投稿（楽天BF）だけ4つ */
+  reach: NumField[];
   linkSlide: number;
   linkTaps: NumField;
   linkSlideReach: NumField;
   ga4Sessions: NumField;
   memo: string;
+  saleItems?: BfApprovedItem[] | null;
   createdAt?: string;
 }
 
@@ -69,12 +75,13 @@ function draftFromContext(ctx: MetricsDraftContext, variantIndex: number): Draft
     utmCampaign: v.utmCampaign,
     utmContent: v.utmContent,
     url: v.url,
-    reach: ['', '', ''],
+    reach: Array.from({ length: Math.max(3, v.slides) }, () => ''),
     linkSlide: v.linkSlide,
     linkTaps: '',
     linkSlideReach: '',
     ga4Sessions: '',
     memo: '',
+    ...(ctx.saleItems ? { saleItems: ctx.saleItems } : {}),
   };
 }
 
@@ -82,7 +89,7 @@ function draftFromRecord(r: StoryPostRecord): Draft {
   return {
     ...r,
     targetName: r.targetName ?? '',
-    reach: [n2s(r.reach[0]), n2s(r.reach[1]), n2s(r.reach[2])],
+    reach: Array.from({ length: Math.max(3, r.slideCount) }, (_, i) => n2s(r.reach[i] ?? null)),
     linkTaps: n2s(r.linkTaps),
     linkSlideReach: n2s(r.linkSlideReach),
     ga4Sessions: n2s(r.ga4Sessions),
@@ -198,9 +205,9 @@ export default function StoryMetricsPanel({ ctx }: { ctx: MetricsDraftContext })
           </div>
           <div className="text-[11px] text-gray-500 font-mono break-all">{draft.utmCampaign} / {draft.utmContent}</div>
           <div className="grid sm:grid-cols-4 gap-2">
-            {[0, 1, 2].map((i) => (
+            {draft.reach.map((_, i) => (
               <NumInput key={i} label={`${i + 1}枚目のリーチ`} value={draft.reach[i]} disabled={i >= draft.slideCount}
-                onChange={(v) => { const reach = [...draft.reach] as Draft['reach']; reach[i] = v; set({ reach }); }} />
+                onChange={(v) => { const reach = [...draft.reach]; reach[i] = v; set({ reach }); }} />
             ))}
             <label className="text-xs text-gray-600">リンクを置いたページ
               <select value={draft.linkSlide} onChange={(e) => set({ linkSlide: Number(e.target.value) })} className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm">
@@ -212,6 +219,14 @@ export default function StoryMetricsPanel({ ctx }: { ctx: MetricsDraftContext })
             <NumInput label="GA4のサイト流入数（任意）" value={draft.ga4Sessions} onChange={(v) => set({ ga4Sessions: v })} />
           </div>
           <label className="block text-xs text-gray-600">メモ<input value={draft.memo} onChange={(e) => set({ memo: e.target.value })} className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm" /></label>
+          {draft.saleItems && draft.saleItems.length > 0 && (
+            <div className="text-xs text-gray-600">
+              掲載したセール商品（承認欄の価格・根拠URL・適用条件・確認者・確認日時）も記録します：
+              <ul className="mt-1 list-disc pl-4">
+                {draft.saleItems.map((it) => <li key={it.productId}>{it.title.slice(0, 40)}　{it.priceLabel}{it.regularPrice.toLocaleString('ja-JP')}円 → {it.salePrice.toLocaleString('ja-JP')}円（{it.offRate}%OFF・適用条件：{it.conditions}・確認：{it.checkedBy} {new Date(it.checkedAt).toLocaleString('ja-JP')}・根拠：{it.sourceUrl}）</li>)}
+              </ul>
+            </div>
+          )}
           <div className="flex gap-2">
             <button type="button" disabled={saving} onClick={save} className="px-4 py-1.5 rounded-lg bg-slate-800 text-white text-sm font-bold disabled:opacity-40">{saving ? '保存中…' : '保存'}</button>
             <button type="button" onClick={() => setDraft(null)} className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm">キャンセル</button>
@@ -239,7 +254,7 @@ export default function StoryMetricsPanel({ ctx }: { ctx: MetricsDraftContext })
                   <td className="pr-2">{r.targetName ?? '—'}</td>
                   <td className="pr-2">{r.slideCount}枚</td>
                   <td className="pr-2">{r.abTest ? `${abLabel(r.abTest)} ${r.abVariant?.toUpperCase()}` : '—'}</td>
-                  <td className="pr-2 text-right whitespace-nowrap">{r.reach.slice(0, r.slideCount).map((v) => (v === null ? '—' : v.toLocaleString())).join(' / ')}</td>
+                  <td className="pr-2 text-right whitespace-nowrap">{r.reach.slice(0, r.slideCount).map((v) => (v === null || v === undefined ? '—' : v.toLocaleString())).join(' / ')}</td>
                   <td className="pr-2 text-right">{r.linkTaps?.toLocaleString() ?? '—'}</td>
                   <td className="pr-2 text-right">{r.ga4Sessions?.toLocaleString() ?? '—'}</td>
                   <td className="pr-2 text-right">{formatPercent(m.retention)}</td>

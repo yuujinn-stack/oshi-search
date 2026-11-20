@@ -17,6 +17,8 @@ import {
   structureLabel,
   structureSlideCount,
   structureSlides,
+  bfStructureSlides,
+  editSlotIndex,
   type ColorPresetId,
   type FontId,
   type ImageSlot,
@@ -42,7 +44,11 @@ import {
 } from '@/lib/story-maker/auto';
 import { buildServicesPanel, panelSignature, type ProductPanelItem, type StoryPanel } from '@/lib/story-maker/panels';
 import { StoryScaled, StorySlide, type ImageFit, type SlideImage } from './StorySlide';
-import { downloadBlob, downloadZip, renderStoryElementPng } from './png-export';
+import { STORY_H, downloadBlob, downloadZip, renderStoryElementPng } from './png-export';
+import BfSalePanel, { type BfPanelState } from './BfSalePanel';
+import type { RecordSlideCount } from '@/lib/story-maker/metrics';
+import { STORY_MAKER_FROM, type StoryMakerInitial } from '@/lib/story-maker/open-link';
+import { bfProductPageCount, bfSalePeriodLabel, checkedAtLabel, maxOffRate, type BfSlideData } from '@/lib/story-maker/bf-sale';
 import StoryMetricsPanel, { type MetricsDraftContext } from './StoryMetricsPanel';
 
 export interface GroupChoice {
@@ -113,11 +119,14 @@ function resolveSlides(
   edits: EditMap,
   images: ImageMap,
   target: StoryTarget | null,
+  /** 楽天BF：採用した商品の数（商品ページの枚数＝3件まで1枚・4〜6件で2枚）。他のテンプレートは使わない */
+  bfItemCount = 0,
 ): ResolvedSlide[] {
   const tpl = getStoryTemplate(templateId);
   const t = tpl.usesTarget ? target : null;
-  return structureSlides(tpl, cfg.slides).map((def, index) => {
-    const rawText: SlideText = { ...def.text, ...edits[editKey(templateId, cfg.slides, index)] };
+  const defs = templateId === 'bf' ? bfStructureSlides(bfProductPageCount(bfItemCount)) : structureSlides(tpl, cfg.slides);
+  return defs.map((def, index) => {
+    const rawText: SlideText = { ...def.text, ...edits[editKey(templateId, cfg.slides, editSlotIndex(def, index))] };
     const filled = Object.fromEntries(Object.entries(rawText).map(([k, v]) => [k, fillStoryText(v, t)])) as unknown as SlideText;
     if (cfg.ctaOverride && def.sticker === 'link') filled.cta = cfg.ctaOverride;
     const image = def.imageSlot ? images[imageKey(templateId, def.imageSlot)] ?? null : null;
@@ -194,14 +203,15 @@ function useOverflowCheck(deps: unknown[]): [React.RefObject<HTMLDivElement | nu
   return [ref, over];
 }
 
-export default function StoryMakerClient({ persons, groups }: { persons: PersonOption[]; groups: GroupChoice[] }) {
-  const [templateId, setTemplateId] = useState<StoryTemplateId>('vod');
+export default function StoryMakerClient({ persons, groups, initial }: { persons: PersonOption[]; groups: GroupChoice[]; initial?: StoryMakerInitial }) {
+  // 他の管理画面からのリンクで開いたときだけ、テンプレート・対象を選んだ状態で始める（無ければ従来どおり A・グループ未選択）
+  const [templateId, setTemplateId] = useState<StoryTemplateId>(initial?.templateId ?? 'vod');
   const tpl = getStoryTemplate(templateId);
 
   // ② 対象
-  const [targetType, setTargetType] = useState<'person' | 'group'>('group');
-  const [personName, setPersonName] = useState('');
-  const [groupName, setGroupName] = useState('');
+  const [targetType, setTargetType] = useState<'person' | 'group'>(initial?.targetType ?? 'group');
+  const [personName, setPersonName] = useState(initial?.targetType === 'person' ? initial.name : '');
+  const [groupName, setGroupName] = useState(initial?.targetType === 'group' ? initial.name : '');
   const target: StoryTarget | null = useMemo(() => {
     if (targetType === 'person' && personName) return { type: 'person', name: personName, pagePath: `/person/${encodeURIComponent(personName)}` };
     if (targetType === 'group' && groupName) {
@@ -245,6 +255,12 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
   const autoLock = useRef(false);
   /** B の商品データ（取得先URL → 取得結果）。同じ推しで何度押しても再取得しない */
   const goodsCache = useRef<Map<string, { at: number; panel: StoryPanel; note: string }>>(new Map());
+  // 楽天BF・推し別セール紹介：承認済みで「投稿に使う」商品（BfSalePanel から受け取る）
+  const [bfState, setBfState] = useState<BfPanelState>({ items: [], blocked: '商品を選んでください。' });
+  const frameH = tpl.frameHeight ?? STORY_H;
+  const bfData: BfSlideData | undefined = templateId === 'bf'
+    ? { items: bfState.items, maxRate: maxOffRate(bfState.items), periodLabel: bfSalePeriodLabel(), checkedLabel: checkedAtLabel(bfState.items) }
+    : undefined;
   const groupChoice = target?.type === 'group' ? groups.find((g) => g.name === target.name) ?? null : null;
   const pickMode = memberPickMode(templateId, target);
 
@@ -261,14 +277,16 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
     setSelected(0);
     setLinkTargetId('');
     setCustomUrl('');
-    if (ab && ab.test === 'cta') setAb({ ...ab, ctaB: '' });
+    // 固定のテンプレート（楽天BF）は A/B テストを使わない
+    if (getStoryTemplate(id).fixed) setAb(null);
+    else if (ab && ab.test === 'cta') setAb({ ...ab, ctaB: '' });
   }
 
   const baseCfg: StoryVariantConfig = { slides, design, ctaOverride: null };
   const variants: AbVariant[] = ab ? ['a', 'b'] : ['a'];
   const cfgOf = (v: AbVariant) => applyAbVariant(baseCfg, ab, v);
   const viewCfg = cfgOf(ab ? viewVariant : 'a');
-  const resolved = resolveSlides(templateId, viewCfg, edits, images, target);
+  const resolved = resolveSlides(templateId, viewCfg, edits, images, target, bfState.items.length);
   const sel = Math.min(selected, resolved.length - 1);
   const current = resolved[sel];
 
@@ -290,10 +308,10 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
   // テンプレート・対象が変わったら識別子の手入力をやめて自動に戻す
   useEffect(() => { setTargetKeyInput(null); }, [templateId, target?.name]);
 
-  const [previewRef, overflowSlides] = useOverflowCheck([resolved.map((r) => JSON.stringify(r.text)).join('|'), viewCfg.slides, JSON.stringify(viewCfg.design), Object.keys(images).join()]);
+  const [previewRef, overflowSlides] = useOverflowCheck([resolved.map((r) => JSON.stringify(r.text)).join('|'), viewCfg.slides, JSON.stringify(viewCfg.design), Object.keys(images).join(), bfData ? JSON.stringify(bfData.items.map((i) => i.productId)) : '']);
 
   function setText(field: keyof SlideText, value: string) {
-    const k = editKey(templateId, viewCfg.slides, sel);
+    const k = editKey(templateId, viewCfg.slides, editSlotIndex(current.def, sel));
     setEdits((prev) => ({ ...prev, [k]: { ...prev[k], [field]: value } }));
   }
   function resetTexts() {
@@ -348,14 +366,19 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
         showGuide={guide}
         questionText={questionText}
         templateId={templateId}
+        sale={bfData}
       />
     );
   }
 
   async function download(v: AbVariant, only?: number) {
     const cfg = cfgOf(v);
-    const rs = resolveSlides(templateId, cfg, edits, images, target);
+    const rs = resolveSlides(templateId, cfg, edits, images, target, bfState.items.length);
     const targets = only === undefined ? rs : rs.filter((r) => r.index === only);
+    if (templateId === 'bf' && bfState.blocked) {
+      setMessage({ kind: 'error', text: `保存できません：${bfState.blocked}` });
+      return;
+    }
     const missing = targets.filter((r) => r.missingImage);
     if (missing.length > 0) {
       setMessage({ kind: 'error', text: `${missing.map((r) => `${r.index + 1}枚目`).join('・')}の実際の画面が未設定です。スクリーンショットを取得するか、画像をアップロードしてください（架空の画面は出力しません）。` });
@@ -366,7 +389,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
     try {
       const files: { name: string; blob: Blob }[] = [];
       for (const r of targets) {
-        const blob = await renderStoryElementPng(slideElement(r, cfg, rs.length, false));
+        const blob = await renderStoryElementPng(slideElement(r, cfg, rs.length, false), frameH);
         files.push({ name: storyFileName(tpl, targetKey, r.index, abOf(v)), blob });
       }
       if (files.length === 1) downloadBlob(files[0].blob, files[0].name);
@@ -387,7 +410,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
     questionText,
     variants.map((v) => {
       const cfg = cfgOf(v);
-      return [cfg, resolveSlides(templateId, cfg, edits, imgs, target).map((r) => [r.text, r.image ? `${r.image.fit}:${r.image.caption ?? ''}:${r.image.panel ? panelSignature(r.image.panel) : ''}:${r.image.src.length}:${r.image.src.slice(-32)}` : null])];
+      return [cfg, resolveSlides(templateId, cfg, edits, imgs, target, bfState.items.length).map((r) => [r.text, r.image ? `${r.image.fit}:${r.image.caption ?? ''}:${r.image.panel ? panelSignature(r.image.panel) : ''}:${r.image.src.length}:${r.image.src.slice(-32)}` : null])];
     }),
   ]);
   const autoFilesFresh = autoFiles !== null && autoFiles.sig === autoSigOf(images);
@@ -472,7 +495,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
       const files: { name: string; blob: Blob }[] = [];
       for (const v of variants) {
         const cfg = cfgOf(v);
-        const rs = resolveSlides(templateId, cfg, edits, nextImages, target);
+        const rs = resolveSlides(templateId, cfg, edits, nextImages, target, bfState.items.length);
         const missing = rs.filter((r) => r.missingImage);
         if (missing.length > 0) throw new Error(`${missing.map((r) => `${r.index + 1}枚目`).join('・')}に必要な画像がありません。`);
         for (const r of rs) {
@@ -536,15 +559,28 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
     variants: variants.map((v) => {
       const cfg = cfgOf(v);
       const utm = buildStoryUtm(tpl, targetKey, cfg.slides, abOf(v));
-      const count = structureSlideCount(cfg.slides);
-      const linkSlide = structureSlides(tpl, cfg.slides).findIndex((d) => d.sticker === 'link');
+      // 楽天BFは商品数で3〜4枚（記録の枚数も実際に保存する枚数に合わせる）
+      const count = templateId === 'bf' ? (resolveSlides(templateId, cfg, edits, images, target, bfState.items.length).length as RecordSlideCount) : structureSlideCount(cfg.slides);
+      const linkSlide = templateId === 'bf' ? -1 : structureSlides(tpl, cfg.slides).findIndex((d) => d.sticker === 'link');
       return { variant: ab ? v : null, slides: count, utmCampaign: utm.campaign, utmContent: utm.content, url: urlOf(v), linkSlide: linkSlide >= 0 ? linkSlide + 1 : count };
     }),
     abTest: ab?.test ?? null,
+    saleItems: templateId === 'bf' ? bfState.items.map(({ imageSrc: _img, ...rest }) => rest) : null,
   };
+
+  const fromScreen = initial?.from ? STORY_MAKER_FROM[initial.from] : null;
 
   return (
     <div className="space-y-4">
+      {fromScreen && (
+        <a href={fromScreen.href} className="inline-block text-xs text-violet-600 hover:text-violet-700 font-semibold">← {fromScreen.label}へ戻る</a>
+      )}
+      {templateId === 'bf' && (
+        <div data-testid="bf-feed-notice" className="rounded-lg border-2 border-amber-500 bg-stone-900 text-stone-100 px-4 py-3 text-sm">
+          <b className="text-amber-300">📐 Instagram 通常投稿（フィード）用・1080×1350（4:5）</b>
+          <span className="ml-2">このテンプレートはストーリーズ用（1080×1920）ではありません。⑥で保存した画像（3〜4枚）を、Instagram アプリから通常投稿（カルーセル）として手動で投稿してください。自動投稿はしません。</span>
+        </div>
+      )}
       {message && (
         <div role="status" className={`rounded-lg px-4 py-2 text-sm ${message.kind === 'ok' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
           {message.text}
@@ -565,7 +601,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                 >
                   <div className="font-bold text-sm text-slate-800">{t.title}</div>
                   <div className="text-xs text-gray-500 mt-1 leading-relaxed">{t.purpose}</div>
-                  <div className="text-[11px] text-amber-700 mt-1 font-semibold">基本 {t.defaultSlides}枚</div>
+                  <div className="text-[11px] text-amber-700 mt-1 font-semibold">{t.id === 'bf' ? '3〜4枚・通常投稿 1080×1350' : `基本 ${t.defaultSlides}枚`}</div>
                 </button>
               ))}
             </div>
@@ -634,6 +670,9 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
             )}
           </Step>
 
+          {templateId === 'bf' ? (
+            <BfSalePanel key={`${target?.type ?? ''}:${target?.name ?? ''}`} target={target} onChange={setBfState} />
+          ) : (
           <section className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4">
             <div className="flex flex-wrap items-center gap-3">
               <button
@@ -685,8 +724,25 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
               )
             )}
           </section>
+          )}
 
           <Step n={3} title="投稿枚数とデザインを選ぶ">
+            {tpl.fixed ? (
+              <div className="space-y-3 text-sm">
+                <p className="text-xs text-gray-600">このテンプレートはフィード投稿（1080×1350）の3枚固定です：①表紙（黒×ゴールド・名前と最大割引率）→ ②セール対象商品（最大3件）→ ③プロフィールのリンクへ誘導。背景色・リンク位置・A/Bテストは使いません。</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="w-24 text-gray-600">フォント</span>
+                  {(Object.keys(FONT_STACKS) as FontId[]).map((f) => (
+                    <Pill key={f} active={design.font === f} onClick={() => setDesign({ ...design, font: f })}>{FONT_STACKS[f].label}</Pill>
+                  ))}
+                  <label className="flex items-center gap-2 ml-2 text-xs text-gray-600">
+                    文字サイズ
+                    <input type="range" min={0.8} max={1} step={0.05} value={Math.min(1, design.fontScale)} onChange={(e) => setDesign({ ...design, fontScale: Number(e.target.value) })} />
+                    {Math.round(Math.min(1, design.fontScale) * 100)}%
+                  </label>
+                </div>
+              </div>
+            ) : (
             <div className="space-y-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="w-24 text-gray-600">構成</span>
@@ -773,6 +829,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                 )}
               </div>
             </div>
+            )}
           </Step>
 
           <Step n={4} title="テキストと画像を調整する" aside={<button type="button" onClick={resetTexts} className="text-xs text-gray-500 underline">このテンプレートの文言を初期値に戻す</button>}>
@@ -915,15 +972,15 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                 ))}
               </div>
             )}
-            <p className="text-xs font-bold text-amber-700 mb-2 text-center">構成：{structureLabel(tpl, viewCfg.slides)}</p>
+            <p className="text-xs font-bold text-amber-700 mb-2 text-center">構成：{templateId === 'bf' ? `${resolved.length}枚（表紙・商品${resolved.length - 2}ページ・最終ページ）` : structureLabel(tpl, viewCfg.slides)}</p>
             <div ref={previewRef} className="flex flex-col items-center gap-3">
               <div data-slide-index={sel} className="cursor-default">
-                <StoryScaled width={340}>{slideElement(current, viewCfg, resolved.length, showGuide)}</StoryScaled>
+                <StoryScaled width={340} height={frameH}>{slideElement(current, viewCfg, resolved.length, showGuide)}</StoryScaled>
               </div>
               <div className="flex gap-2">
                 {resolved.map((r) => (
                   <button key={r.index} type="button" onClick={() => setSelected(r.index)} data-slide-index={r.index} className={`rounded-md ${r.index === sel ? 'ring-2 ring-amber-400' : 'opacity-70 hover:opacity-100'}`}>
-                    <StoryScaled width={90}>{slideElement(r, viewCfg, resolved.length, false)}</StoryScaled>
+                    <StoryScaled width={90} height={frameH}>{slideElement(r, viewCfg, resolved.length, false)}</StoryScaled>
                   </button>
                 ))}
               </div>
@@ -938,7 +995,7 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
             <div className="space-y-2">
               {variants.map((v) => {
                 const cfg = cfgOf(v);
-                const rs = resolveSlides(templateId, cfg, edits, images, target);
+                const rs = resolveSlides(templateId, cfg, edits, images, target, bfState.items.length);
                 const missingPages = rs.filter((r) => r.missingImage).map((r) => `${r.index + 1}枚目`);
                 return (
                   <div key={v} className="rounded-lg bg-slate-50 p-2">
@@ -954,11 +1011,12 @@ export default function StoryMakerClient({ persons, groups }: { persons: PersonO
                       ))}
                     </div>
                     <div className="text-[11px] text-gray-500 mt-1 font-mono break-all">{rs.length > 1 ? storyZipName(tpl, targetKey, abOf(v)) : storyFileName(tpl, targetKey, 0, abOf(v))}</div>
+                    {templateId === 'bf' && bfState.blocked && <div className="text-xs text-red-600 mt-1">保存できません：{bfState.blocked}</div>}
                     {missingPages.length > 0 && <div className="text-xs text-red-600 mt-1">画像が必要なページ（{missingPages.join('・')}）が未設定のため、まとめて保存できません。必要な画像をアップロードしてください。画像が不要なページは個別にPNG保存できます。</div>}
                   </div>
                 );
               })}
-              <p className="text-[11px] text-gray-400">1080×1920 の PNG。ガイド・スタンプの枠は入りません。リンクスタンプは Instagram アプリで、点線の位置に置いてください。</p>
+              <p className="text-[11px] text-gray-400">{templateId === 'bf' ? `1080×1350 の PNG（フィード投稿・カルーセル${resolved.length}枚。商品3件まで3枚・4〜6件で4枚）。プロフィールのリンクには⑦のURLを設定してください。` : '1080×1920 の PNG。ガイド・スタンプの枠は入りません。リンクスタンプは Instagram アプリで、点線の位置に置いてください。'}</p>
             </div>
           </Step>
         </div>
