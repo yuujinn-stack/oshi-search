@@ -6621,3 +6621,25 @@ OSHI_GROUP_09 の Instagram 投稿文を、冒頭フック（動画の冒頭と�
 - 承認・価格計算・時刻判定・署名・投稿記録は変更なし。既存5テンプレートの描画・記録の処理は origin/main と完全一致
 - tsc 0件、vitest 210ファイル/3,277件成功、next build 成功
 - 画面でテンプレートを A → 楽天BF通常投稿 → ストーリーズ → 通常投稿 → B → ストーリーズ → A と切り替え、③の説明と⑥のボタンがそれぞれ正しく切り替わることを確認（コンソールエラーなし）
+
+## Task 204i: Preview では楽天BFの投稿記録を保存しない
+
+### 目的
+- Vercel の Preview は本番と同じ Redis に接続している（UPSTASH_REDIS_REST_URL/TOKEN が Production・Preview 共通）ため、Preview で楽天BFの投稿記録を誤って保存し、本番の Redis に書き込まないようにする
+
+### 変更したファイル
+- `src/lib/story-maker/metrics.ts`：`bfRecordSaveBlocked(templateId, scope)`（楽天BF × preview のときだけ true）と表示文 `BF_PREVIEW_RECORD_MESSAGE`
+- `src/server/story-maker/post-store.ts`：`saveStoryPost` で、Preview の楽天BFの記録は Redis を読む・書く前に拒否（新規・編集とも。posts API を直接呼んでも同じ）
+- `src/app/admin/story-maker/page.tsx`・`StoryMakerClient.tsx`：保存先の環境（`storyPostsScope()`）を「投稿効果の記録」に渡す（最初の描画から判定できるように）
+- `src/app/admin/story-maker/StoryMetricsPanel.tsx`：楽天BFかつ Preview のとき「プレビュー環境では記録を保存できません」を表示し、記録の追加・保存のボタンを押せないように
+- `src/lib/__tests__/story-maker-bf-preview.test.tsx`（新規・7件）
+
+### 設計上の判断・注意点
+- 商品の承認・承認内容の確認・PNG保存は Preview でも従来どおり（これらは Redis・DB に書き込まない）
+- 既存5テンプレートの記録は Preview でも従来どおり Preview 用のキー（story-maker:posts:v1:preview）に保存する（今回の変更対象外）
+- 記録の削除（hdel）は変更していない（Preview 用のキーだけが対象）
+
+### 確認
+- tsc 0件、vitest 211ファイル/3,284件成功、next build 成功。既存5テンプレートの描画・記録の処理は origin/main と完全一致
+- テスト（Redis はメモリ上の代わり）：Preview では楽天BFの記録の保存を拒否し Redis の読み書き0回、API直接呼び出しも400、承認・確認APIは使える、既存テンプレートは Preview 用キーに保存。Production では楽天BFの記録を本番のキーに保存できる
+- VERCEL_ENV=preview でローカル起動した画面：楽天BF（通常投稿・ストーリーズ）で表示とボタンの無効化、承認欄・PNG保存ボタンは表示、B（既存）は従来どおり

@@ -206,7 +206,7 @@ function useOverflowCheck(deps: unknown[]): [React.RefObject<HTMLDivElement | nu
   return [ref, over];
 }
 
-export default function StoryMakerClient({ persons, groups, initial, serverNow }: { persons: PersonOption[]; groups: GroupChoice[]; initial?: StoryMakerInitial; serverNow: number }) {
+export default function StoryMakerClient({ persons, groups, initial, serverNow, recordScope = '' }: { persons: PersonOption[]; groups: GroupChoice[]; initial?: StoryMakerInitial; serverNow: number; recordScope?: string }) {
   // 他の管理画面からのリンクで開いたときだけ、テンプレート・対象を選んだ状態で始める（無ければ従来どおり A・グループ未選択）
   const [templateId, setTemplateId] = useState<StoryTemplateId>(initial?.templateId ?? 'vod');
   const tpl = getStoryTemplate(templateId);
@@ -1053,7 +1053,7 @@ export default function StoryMakerClient({ persons, groups, initial, serverNow }
         </div>
       </div>
 
-      <StoryMetricsPanel ctx={metricsCtx} />
+      <StoryMetricsPanel ctx={metricsCtx} envScope={recordScope} />
     </div>
   );
 }

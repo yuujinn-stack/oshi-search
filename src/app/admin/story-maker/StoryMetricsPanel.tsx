@@ -9,6 +9,8 @@ import {
   formatPercent,
   storyRecordsToCsv,
   summarizeAbTests,
+  BF_PREVIEW_RECORD_MESSAGE,
+  bfRecordSaveBlocked,
   type RecordSlideCount,
   type StoryPostRecord,
 } from '@/lib/story-maker/metrics';
@@ -108,7 +110,7 @@ function NumInput({ label, value, onChange, disabled, hint }: { label: string; v
   );
 }
 
-export default function StoryMetricsPanel({ ctx }: { ctx: MetricsDraftContext }) {
+export default function StoryMetricsPanel({ ctx, envScope = '' }: { ctx: MetricsDraftContext; envScope?: string }) {
   const [records, setRecords] = useState<StoryPostRecord[]>([]);
   const [storage, setStorage] = useState<boolean | null>(null);
   const [scope, setScope] = useState<string>('');
@@ -171,7 +173,7 @@ export default function StoryMetricsPanel({ ctx }: { ctx: MetricsDraftContext })
         <h2 className="font-bold text-slate-800">📊 投稿効果の記録</h2>
         <div className="flex flex-wrap gap-2 text-xs">
           {ctx.variants.map((v, i) => (
-            <button key={i} type="button" onClick={() => setDraft(draftFromContext(ctx, i))} className="px-3 py-1.5 rounded-lg bg-amber-500 text-white font-bold hover:bg-amber-600">
+            <button key={i} type="button" disabled={bfRecordSaveBlocked(ctx.templateId, envScope || scope)} onClick={() => setDraft(draftFromContext(ctx, i))} className="px-3 py-1.5 rounded-lg bg-amber-500 text-white font-bold hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed">
               ＋ いまの設定で記録を追加{v.variant ? `（${v.variant.toUpperCase()}）` : ''}
             </button>
           ))}
@@ -191,6 +193,9 @@ export default function StoryMetricsPanel({ ctx }: { ctx: MetricsDraftContext })
         </ul>
       </details>
 
+      {bfRecordSaveBlocked(ctx.templateId, envScope || scope) && (
+        <p data-testid="bf-preview-record-blocked" className="mb-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2" role="note">{BF_PREVIEW_RECORD_MESSAGE}</p>
+      )}
       {storage === false && <p className="mb-3 text-xs text-amber-700 bg-amber-50 rounded p-2">この環境では記録の保存先（Redis）が設定されていないため、記録を保存できません。本番の管理画面で記録してください。</p>}
       {scope && scope !== 'production' && storage && <p className="mb-3 text-xs text-gray-500">この環境（{scope}）の記録は本番とは別に保存されます。</p>}
       {error && <p className="mb-3 text-xs text-red-600 bg-red-50 rounded p-2" role="alert">{error}</p>}
@@ -228,7 +233,8 @@ export default function StoryMetricsPanel({ ctx }: { ctx: MetricsDraftContext })
             </div>
           )}
           <div className="flex gap-2">
-            <button type="button" disabled={saving} onClick={save} className="px-4 py-1.5 rounded-lg bg-slate-800 text-white text-sm font-bold disabled:opacity-40">{saving ? '保存中…' : '保存'}</button>
+            <button type="button" disabled={saving || bfRecordSaveBlocked(draft.templateId, envScope || scope)} onClick={save} className="px-4 py-1.5 rounded-lg bg-slate-800 text-white text-sm font-bold disabled:opacity-40">{saving ? '保存中…' : '保存'}</button>
+            {bfRecordSaveBlocked(draft.templateId, envScope || scope) && <span className="text-xs text-red-700 self-center">{BF_PREVIEW_RECORD_MESSAGE}</span>}
             <button type="button" onClick={() => setDraft(null)} className="px-4 py-1.5 rounded-lg border border-gray-300 text-sm">キャンセル</button>
           </div>
         </div>

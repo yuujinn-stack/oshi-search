@@ -10,6 +10,7 @@ import { LogoutButton } from '@/components/admin/LogoutButton';
 import type { PersonOption } from '@/components/admin/PersonCombobox';
 import StoryMakerClient, { type GroupChoice } from './StoryMakerClient';
 import { parseStoryMakerInitial } from '@/lib/story-maker/open-link';
+import { storyPostsScope } from '@/server/story-maker/post-store';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,7 +77,7 @@ export default async function StoryMakerPage({ searchParams }: { searchParams: P
           <LogoutButton className="text-gray-400 hover:text-red-500" />
         </div>
       </div>
-      <StoryMakerClient persons={personOptions} groups={groups} initial={initial} serverNow={serverNow} />
+      <StoryMakerClient persons={personOptions} groups={groups} initial={initial} serverNow={serverNow} recordScope={storyPostsScope()} />
     </div>
   );
 }

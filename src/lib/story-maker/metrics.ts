@@ -17,6 +17,17 @@ import { parseBfRecordItems, type BfApprovedItem } from './bf-sale';
 export type RecordSlideCount = SlideCount | 4;
 /** 1〜3枚目のリーチ（既存の記録の形）。4枚の記録だけ4つ目を持つ */
 export type ReachValues = [number | null, number | null, number | null, (number | null)?];
+/** プレビュー環境で楽天BFの投稿記録を保存させないときの表示（画面・API 共通） */
+export const BF_PREVIEW_RECORD_MESSAGE = 'プレビュー環境では記録を保存できません（楽天BFの投稿記録は本番の管理画面で保存してください）。';
+
+/**
+ * 楽天BFの投稿記録を保存させない環境か。Vercel の Preview は本番と同じ Redis に接続しているため、
+ * 楽天BFの記録は Preview（scope='preview'）では新規・編集とも保存しない。他のテンプレート・本番・ローカルは従来どおり
+ */
+export function bfRecordSaveBlocked(templateId: StoryTemplateId, scope: string): boolean {
+  return isBfTemplate(templateId) && scope === 'preview';
+}
+
 /** テンプレートごとの最大枚数（楽天BFだけ4） */
 export function maxRecordSlides(templateId: StoryTemplateId): number {
   return templateId === 'bf' ? 4 : 3;
