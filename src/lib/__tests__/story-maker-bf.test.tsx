@@ -5,6 +5,7 @@ import {
   BF_MAX_ITEMS,
   BF_NO_CONDITION,
   BF_SALE_ID,
+  bfCategoryLine,
   bfPageItems,
   bfSaleCorner,
   bfSlideCount,
@@ -264,6 +265,24 @@ describe('楽天BF：画像（黒×ゴールド・1080×1350）', () => {
     expect(r(1)).not.toContain('条件：'); // 条件なしの値下げには出さない
     expect(r(3)).toContain('プロフィールのリンクから');
     for (const i of [0, 1, 2, 3]) expect(findBannedPhrases(r(i))).toEqual([]);
+  });
+
+  it('デザイン：表紙は採用した商品の種類だけを出す。商品画像は縦横比を保ち文字を重ねない。最終ページに矢印を使わない', () => {
+    expect(bfCategoryLine(['Blu-ray・DVD', '写真集・書籍', 'グッズ', '写真集・書籍'])).toBe('写真集 / DVD・Blu-ray / グッズ');
+    expect(bfCategoryLine(['本・写真集', 'CD'])).toBe('写真集 / CD');
+    expect(bfCategoryLine([])).toBe('写真集 / DVD・Blu-ray / グッズ');
+    const cover = plain(render(0));
+    expect(cover).toContain('写真集 / DVD・Blu-ray'); // サンプルの2件（Blu-ray・写真集）
+    expect(cover).not.toContain('グッズ /');
+    expect(cover).toContain('Snow Man');
+    const products = render(1);
+    // 画像の枠の中は画像だけ（文字を重ねない）・contain で縦横比を保つ
+    const imgBox = products.match(/<div style="[^"]*background:#FFFFFF[^"]*">(.*?)<\/div>/)?.[1] ?? '';
+    expect(imgBox).toMatch(/^<img [^>]*object-fit:contain[^>]*\/>$/);
+    expect(products).toContain('background:#E0262E'); // 割引率の赤いバッジ
+    const final = plain(render(2));
+    expect(final).not.toMatch(/[↑⬆]/);
+    expect(final).toContain('oshi-search.jp');
   });
 
   it('楽天イベント管理の禁止表現（最安・今だけ・値下げ 等）を画像に入れない', () => {

@@ -280,7 +280,7 @@ const GOODSMAKING: StoryTemplateDef = {
 // 割引率・価格は管理画面の承認欄で確認した値だけを描く（src/lib/story-maker/bf-sale.ts）。テキストは名前の置き換えだけ編集できる。
 const BF_SLIDES: SlideDef[] = [
   { layout: 'bf-cover', sticker: 'none', image: 'none',
-    text: T({ subheading: '楽天ブラックフライデー', heading: '{name}', body: '推し別セール紹介', note: '次のページへ →' }) },
+    text: T({ subheading: '楽天ブラックフライデー', heading: '{name}', body: 'セール対象商品を推し別に紹介', note: 'スワイプして商品をチェック →' }) },
   { layout: 'bf-products', sticker: 'none', image: 'none',
     text: T({ heading: '{name}のセール対象商品', note: '' }) },
   { layout: 'bf-final', sticker: 'none', image: 'none',

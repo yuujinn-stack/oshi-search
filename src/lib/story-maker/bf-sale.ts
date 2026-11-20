@@ -250,6 +250,21 @@ export function bfConditionText(item: Pick<BfApprovedItem, 'discountKind' | 'con
   return item.discountKind === 'price-cut-conditional' ? item.conditions : '';
 }
 
+/**
+ * 表紙に出す「何の商品の紹介か」（採用した商品の種類だけを、決まった順で並べる。架空の種類を書かない）。
+ * 商品が無いとき（保存できない状態のプレビュー）は代表的な種類を出す。
+ */
+const BF_CATEGORY_ORDER: { label: string; match: (section: string) => boolean }[] = [
+  { label: '写真集', match: (s) => s.includes('写真集') || s.includes('本') },
+  { label: 'DVD・Blu-ray', match: (s) => s.includes('DVD') || s.includes('Blu-ray') },
+  { label: 'CD', match: (s) => s === 'CD' },
+  { label: 'グッズ', match: (s) => s.includes('グッズ') },
+];
+export function bfCategoryLine(sections: string[]): string {
+  const found = BF_CATEGORY_ORDER.filter((c) => sections.some((s) => c.match(s))).map((c) => c.label);
+  return (found.length > 0 ? found : ['写真集', 'DVD・Blu-ray', 'グッズ']).join(' / ');
+}
+
 /** スライドに渡すセールのデータ */
 export interface BfSlideData {
   items: BfSlideItem[];
