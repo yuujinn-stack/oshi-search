@@ -5,6 +5,8 @@ import {
   BF_MAX_ITEMS,
   BF_NO_CONDITION,
   BF_SALE_ID,
+  BF_STORY_MAX_ITEMS,
+  bfStoryItems,
   bfCategoryLine,
   bfPageItems,
   bfSaleCorner,
@@ -20,7 +22,7 @@ import {
   type BfSlideData,
   type BfVerificationInput,
 } from '@/lib/story-maker/bf-sale';
-import { DEFAULT_DESIGN, STORY_TEMPLATES, bfStructureSlides, editSlotIndex, fillStoryText, getStoryTemplate, linkTargetOptions, structureSlides, type StoryTarget } from '@/lib/story-maker/templates';
+import { DEFAULT_DESIGN, STORY_TEMPLATES, bfStructureSlides, editSlotIndex, isBfTemplate, fillStoryText, getStoryTemplate, linkTargetOptions, structureSlides, type StoryTarget } from '@/lib/story-maker/templates';
 import { computeStoryMetrics, parseStoryPostRecord, storyRecordsToCsv, StoryRecordError } from '@/lib/story-maker/metrics';
 import { isAutoSupported, memberPickMode } from '@/lib/story-maker/auto';
 import { findBannedPhrases } from '@/lib/rakuten-event/core';
@@ -134,13 +136,13 @@ describe('楽天BF：テンプレートと投稿データ', () => {
   });
 
   it('既存5テンプレートの後ろに、フィード（1350）の固定テンプレートとして追加する', () => {
-    expect(STORY_TEMPLATES.map((t) => t.id)).toEqual(['vod', 'goods', 'request', 'card', 'goodsmaking', 'bf']);
+    expect(STORY_TEMPLATES.map((t) => t.id)).toEqual(['vod', 'goods', 'request', 'card', 'goodsmaking', 'bf', 'bfstory']);
     const bf = getStoryTemplate('bf');
     expect(bf.title).toBe('楽天BF・推し別セール紹介');
     expect(bf.fixed).toBe(true);
     expect(bf.frameHeight).toBe(BF_FRAME_H);
     for (const n of [1, 2, 3] as const) expect(structureSlides(bf, n).map((d) => d.layout)).toEqual(['bf-cover', 'bf-products', 'bf-final']);
-    expect(STORY_TEMPLATES.filter((t) => t.id !== 'bf').every((t) => !t.fixed && t.frameHeight === undefined)).toBe(true);
+    expect(STORY_TEMPLATES.filter((t) => t.id !== 'bf' && t.id !== 'bfstory').every((t) => !t.fixed && t.frameHeight === undefined)).toBe(true);
     expect(isAutoSupported('bf')).toBe(false);
     expect(memberPickMode('bf', { type: 'group', name: 'Snow Man', pagePath: '/groups/snow-man' })).toBeNull();
   });
@@ -287,5 +289,81 @@ describe('楽天BF：画像（黒×ゴールド・1080×1350）', () => {
 
   it('楽天イベント管理の禁止表現（最安・今だけ・値下げ 等）を画像に入れない', () => {
     for (const i of [0, 1, 2]) expect(findBannedPhrases(plain(render(i)))).toEqual([]);
+  });
+});
+
+describe('楽天BF：ストーリーズ版（1080×1920・2枚）', () => {
+  const tpl = getStoryTemplate('bfstory');
+  const target: StoryTarget = { type: 'group', name: 'Snow Man', pagePath: '/groups/snow-man' };
+  const five = Array.from({ length: 5 }, (_, n) => ({ ...approvedItem({ productId: `q${n}`, title: `商品${n + 1}番`, offRate: 10 + n * 5 }), imageSrc: n === 0 ? 'data:image/png;base64,AAAA' : null }));
+  five[1] = { ...five[1], discountKind: 'price-cut-conditional', conditions: '先着500個限定' };
+  const shown = bfStoryItems(five);
+  const sale: BfSlideData = { items: shown, maxRate: maxOffRate(shown), periodLabel: '11/19 20:00〜11/25 1:59', checkedLabel: '11/20 12:00' };
+  const defs = structureSlides(tpl, tpl.defaultSlides);
+  const render = (i: number, guide = false, s: BfSlideData = sale) => {
+    const def = defs[i];
+    const text = Object.fromEntries(Object.entries(def.text).map(([k, v]) => [k, fillStoryText(v, target)])) as unknown as typeof def.text;
+    return renderToStaticMarkup(<StorySlide decoration={tpl.decoration} def={def} text={text} design={DEFAULT_DESIGN} index={i} total={defs.length} image={null} showGuide={guide} templateId="bfstory" sale={s} />);
+  };
+  const plain = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/\s+/g, ' ');
+
+  it('フィード版と承認欄・記録を共通で使う、2枚固定・1920 のテンプレート', () => {
+    expect(tpl.title).toBe('楽天BF・推し別セール紹介（ストーリーズ）');
+    expect(tpl.fixed).toBe(true);
+    expect(tpl.frameHeight).toBeUndefined(); // 1920（ストーリーズ）
+    expect(defs.map((d) => d.layout)).toEqual(['bfs-cover', 'bfs-products']);
+    expect(defs.map((d) => d.sticker)).toEqual(['none', 'link']);
+    expect(isBfTemplate('bfstory') && isBfTemplate('bf') && !isBfTemplate('goods')).toBe(true);
+    expect(isAutoSupported('bfstory')).toBe(false);
+    expect(linkTargetOptions('bfstory', target).map((o) => o.path)).toEqual(['/groups/snow-man', '/']);
+    // 投稿記録にも承認内容を保存し、不正な内容は保存しない（フィード版と同じ検証）
+    const base = { id: 'abcdef123', postedAt: '2026-11-20T20:00', templateId: 'bfstory', targetName: 'Snow Man', targetType: 'group', slideCount: 2, linkSlide: 2, reach: [100, 80] };
+    const item = approvedItem();
+    expect(parseStoryPostRecord({ ...base, saleItems: [item] }).saleItems?.[0].offRate).toBe(20);
+    expect(() => parseStoryPostRecord({ ...base, saleItems: [{ ...item, discountKind: 'points-only' }] })).toThrow(StoryRecordError);
+    expect(() => parseStoryPostRecord({ ...base, slideCount: 4, reach: [] })).toThrow('投稿枚数は1〜3枚です。');
+  });
+
+  it('商品は先頭3件まで。最大割引率も載せる3件だけから出す', () => {
+    expect(BF_STORY_MAX_ITEMS).toBe(3);
+    expect(shown.map((i) => i.productId)).toEqual(['q0', 'q1', 'q2']);
+    expect(sale.maxRate).toBe(20); // q3（25%）・q4（30%）は載せないので含めない
+    const products = plain(render(1));
+    expect(products).toContain('商品1番');
+    expect(products).toContain('商品3番');
+    expect(products).not.toContain('商品4番');
+    expect(products).toContain('条件：先着500個限定');
+  });
+
+  it('1枚目：名前・楽天ブラックフライデー・最大割引率・PR。承認済みの商品が無ければ数字を出さない', () => {
+    const html = render(0);
+    expect(html).toContain('height:1920px');
+    const t = plain(html);
+    expect(t).toContain('Snow Man');
+    expect(t).toContain('楽天ブラックフライデー');
+    expect(t).toMatch(/最大 20 %OFF/);
+    expect(t).toContain('PR（楽天アフィリエイト広告を含みます）');
+    expect(plain(render(0, false, { ...sale, items: [], maxRate: null }))).not.toMatch(/\d+ ?%OFF/);
+  });
+
+  it('1枚目は「次のストーリーで商品をチェック」。価格の注意書きは確認日時・確認元・変わる可能性・購入前の確認を含む。商品名は3行まで（条件ありは2行）', () => {
+    expect(plain(render(0))).toContain('次のストーリーで商品をチェック ▶');
+    const html = render(1);
+    const t = plain(html);
+    expect(t).toContain('※価格は11/20 12:00時点で楽天の商品ページで確認');
+    expect(t).toContain('価格・在庫・セール対象は変わる場合があります');
+    expect(t).toContain('購入前に商品ページをご確認ください');
+    expect(html).toContain('-webkit-line-clamp:3');
+    expect(html).toContain('-webkit-line-clamp:2');
+    expect(html).not.toContain('word-break:break-all');
+  });
+
+  it('2枚目：リンクスタンプへの誘導とPR。スタンプの枠・UIのガイドはガイド表示のときだけ（保存画像には入れない）', () => {
+    const t = plain(render(1));
+    expect(t).toContain('リンクスタンプから商品をチェック');
+    expect(t).toContain('PR（楽天アフィリエイト広告を含みます）');
+    expect(render(1)).not.toContain('data-guide');
+    expect(render(1, true)).toContain('ここにリンクスタンプ');
+    for (const i of [0, 1]) expect(findBannedPhrases(plain(render(i)))).toEqual([]);
   });
 });

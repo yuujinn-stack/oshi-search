@@ -8,7 +8,7 @@
 
 import { OSHI_VOD_PATH, buildOshiVodGroupPath, buildOshiVodWithPath } from '@/lib/oshi-vod/params';
 
-export type StoryTemplateId = 'vod' | 'goods' | 'request' | 'card' | 'goodsmaking' | 'bf';
+export type StoryTemplateId = 'vod' | 'goods' | 'request' | 'card' | 'goodsmaking' | 'bf' | 'bfstory';
 export type SlideCount = 1 | 2 | 3;
 export const SLIDE_COUNTS: SlideCount[] = [1, 2, 3];
 /**
@@ -36,7 +36,9 @@ export function structureLabel(tpl: Pick<StoryTemplateDef, 'defaultSlides'>, s: 
 /** スライドの組み方。テンプレートごとの装飾（decoration）と組み合わせて見た目を変える */
 export type SlideLayout = 'hook' | 'screen' | 'combined' | 'cta' | 'points' | 'question' | 'single'
   /** 楽天BF・推し別セール紹介（フィード 1080×1350。src/app/admin/story-maker/BfSaleSlide.tsx） */
-  | 'bf-cover' | 'bf-products' | 'bf-final';
+  | 'bf-cover' | 'bf-products' | 'bf-final'
+  /** 楽天BF・推し別セール紹介（ストーリーズ 1080×1920。同じ BfSaleSlide.tsx） */
+  | 'bfs-cover' | 'bfs-products';
 /** スタンプ用に空けておく場所の種類（本物のスタンプは Instagram アプリで置く。画像には描かない） */
 export type StickerKind = 'link' | 'question' | 'none';
 /** 画像の差し込み口。同じ口の画像は枚数を変えても引き継ぐ */
@@ -300,7 +302,34 @@ const BF: StoryTemplateDef = {
   structures: { 1: BF_SLIDES, 2: BF_SLIDES, 3: BF_SLIDES },
 };
 
-export const STORY_TEMPLATES: StoryTemplateDef[] = [VOD, GOODS, REQUEST, CARD, GOODSMAKING, BF];
+// ── 楽天BF・推し別セール紹介（ストーリーズ・2枚固定） ─────────────────────
+// フィード版（BF）と同じ承認済みの商品・同じデザイン（黒×ゴールド＋赤）を 1080×1920 で。
+// 1枚目：名前・楽天ブラックフライデー・最大割引率 → 2枚目：商品（見やすさのため先頭3件まで）＋リンクスタンプの余白。
+const BFS_SLIDES: SlideDef[] = [
+  { layout: 'bfs-cover', sticker: 'none', image: 'none',
+    text: T({ subheading: '楽天ブラックフライデー', heading: '{name}', body: 'セール対象商品を推し別に紹介', note: '次のストーリーで商品をチェック ▶' }) },
+  { layout: 'bfs-products', sticker: 'link', image: 'none',
+    text: T({ heading: '{name}のセール対象商品', cta: '↓ リンクスタンプから商品をチェック ↓', note: '' }) },
+];
+const BFSTORY: StoryTemplateDef = {
+  id: 'bfstory',
+  key: 'bf_sale_story',
+  title: '楽天BF・推し別セール紹介（ストーリーズ）',
+  purpose: '楽天ブラックフライデーの対象と確認できた推しの商品を、価格と割引率つきで紹介するストーリーズ（2枚）です。商品はフィード版と同じ承認欄で確認・承認し、ストーリーズには先頭3件まで載せます。',
+  defaultSlides: 2,
+  decoration: 'sparkle',
+  usesTarget: true,
+  fixed: true,
+  single: BFS_SLIDES[0],
+  structures: { 1: BFS_SLIDES, 2: BFS_SLIDES, 3: BFS_SLIDES },
+};
+
+export const STORY_TEMPLATES: StoryTemplateDef[] = [VOD, GOODS, REQUEST, CARD, GOODSMAKING, BF, BFSTORY];
+
+/** 楽天BFのテンプレート（フィード・ストーリーズ。承認欄・セールの記録を共通で使う） */
+export function isBfTemplate(id: StoryTemplateId): boolean {
+  return id === 'bf' || id === 'bfstory';
+}
 
 /** 楽天BFのページ一覧（表紙＋商品ページ productPages 枚＋最終ページ） */
 export function bfStructureSlides(productPages: number): SlideDef[] {
@@ -316,6 +345,8 @@ export function editSlotIndex(def: Pick<SlideDef, 'layout'>, index: number): num
   if (def.layout === 'bf-cover') return 0;
   if (def.layout === 'bf-products') return 1;
   if (def.layout === 'bf-final') return 2;
+  if (def.layout === 'bfs-cover') return 0;
+  if (def.layout === 'bfs-products') return 1;
   return index;
 }
 
@@ -395,8 +426,9 @@ export function linkTargetOptions(templateId: StoryTemplateId, target: StoryTarg
     }
     case 'goodsmaking':
       return [{ id: 'gm', label: 'グッズ制作サービス比較', path: GOODS_MAKING_PATH }];
-    case 'bf': {
-      // フィード投稿はリンクを貼れないため、プロフィールのリンクに設定するURL
+    case 'bf':
+    case 'bfstory': {
+      // フィード投稿はプロフィールのリンク、ストーリーズはリンクスタンプに設定するURL
       const opts: LinkTargetOption[] = [];
       if (target) opts.push({ id: 'page', label: `${target.type === 'person' ? '人物' : 'グループ'}ページ（${target.name}）`, path: target.pagePath });
       opts.push({ id: 'top', label: '推しサーチ トップ', path: '/' });

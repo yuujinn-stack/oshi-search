@@ -19,6 +19,12 @@ import { isRakutenProductPageUrl } from '@/lib/rakuten-event/core';
 export const BF_SALE_ID = 'rakuten-blackfriday-2026';
 /** 1ページに載せる商品数 */
 export const BF_ITEMS_PER_PAGE = 3;
+/** ストーリーズ版に載せる商品の上限（文字を詰め込まないよう3件まで。承認・選択はフィード版と共通） */
+export const BF_STORY_MAX_ITEMS = 3;
+/** ストーリーズ版に載せる商品（「投稿に使う」の先頭から3件。最大割引率もこの商品だけから出す） */
+export function bfStoryItems<T>(items: T[]): T[] {
+  return items.slice(0, BF_STORY_MAX_ITEMS);
+}
 /** 商品ページの最大数（表紙1＋商品1〜2＋最終1＝3〜4枚） */
 export const BF_MAX_PRODUCT_PAGES = 2;
 /** このテンプレートで採用できる商品の上限 */

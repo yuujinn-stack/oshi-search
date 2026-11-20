@@ -8,7 +8,7 @@
 // - 指標は入力された値だけから計算し、分母が無い・0 の場合は null（表示は「—」）。
 
 import type { AbTestKey, AbVariant } from './utm';
-import { STORY_TEMPLATES, type StoryTemplateId, type SlideCount } from './templates';
+import { STORY_TEMPLATES, isBfTemplate, type StoryTemplateId, type SlideCount } from './templates';
 import { parseBfRecordItems, type BfApprovedItem } from './bf-sale';
 
 /**
@@ -45,7 +45,7 @@ export interface StoryPostRecord {
   ga4Sessions: number | null;
   memo: string;
   /**
-   * 楽天BF・推し別セール紹介で掲載した商品と、承認欄で確認した価格・確認元・確認者・確認日時（bf のときだけ。
+   * 楽天BF・推し別セール紹介で掲載した商品と、承認欄で確認した価格・確認元・確認者・確認日時（bf・bfstory のときだけ。
    * 他のテンプレート・この項目ができる前の記録は無し）
    */
   saleItems?: BfApprovedItem[] | null;
@@ -98,7 +98,7 @@ export function parseStoryPostRecord(raw: unknown, now: Date = new Date()): Stor
   if (!Number.isInteger(linkSlide) || linkSlide < 1 || linkSlide > slideCount) throw new StoryRecordError('リンクを置いたページが正しくありません。');
   const nowIso = now.toISOString();
   let saleItems: BfApprovedItem[] | null = null;
-  if (templateId === 'bf') {
+  if (isBfTemplate(templateId)) {
     try {
       saleItems = parseBfRecordItems(r.saleItems);
     } catch (err) {

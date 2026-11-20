@@ -622,7 +622,7 @@ function SingleSlide({ decoration, def, text, design, image, showGuide, question
 }
 
 export function StorySlide(props: StorySlideProps) {
-  if (props.def.layout === 'bf-cover' || props.def.layout === 'bf-products' || props.def.layout === 'bf-final') return <BfSaleSlide {...props} />;
+  if (props.def.layout === 'bf-cover' || props.def.layout === 'bf-products' || props.def.layout === 'bf-final' || props.def.layout === 'bfs-cover' || props.def.layout === 'bfs-products') return <BfSaleSlide {...props} />;
   if (props.def.layout === 'single') return <SingleSlide {...props} />;
   const vod = props.templateId === 'vod';
   if (vod && props.def.layout === 'screen') return <VodScreenSlide {...props} />;

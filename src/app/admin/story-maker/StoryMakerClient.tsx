@@ -19,6 +19,7 @@ import {
   structureSlides,
   bfStructureSlides,
   editSlotIndex,
+  isBfTemplate,
   type ColorPresetId,
   type FontId,
   type ImageSlot,
@@ -48,7 +49,7 @@ import { STORY_H, downloadBlob, downloadZip, renderStoryElementPng } from './png
 import BfSalePanel, { type BfPanelState } from './BfSalePanel';
 import type { RecordSlideCount } from '@/lib/story-maker/metrics';
 import { STORY_MAKER_FROM, type StoryMakerInitial } from '@/lib/story-maker/open-link';
-import { bfProductPageCount, bfSalePeriodLabel, checkedAtLabel, maxOffRate, type BfSlideData } from '@/lib/story-maker/bf-sale';
+import { BF_STORY_MAX_ITEMS, bfProductPageCount, bfSalePeriodLabel, bfStoryItems, checkedAtLabel, maxOffRate, type BfSlideData } from '@/lib/story-maker/bf-sale';
 import StoryMetricsPanel, { type MetricsDraftContext } from './StoryMetricsPanel';
 
 export interface GroupChoice {
@@ -258,8 +259,11 @@ export default function StoryMakerClient({ persons, groups, initial }: { persons
   // 楽天BF・推し別セール紹介：承認済みで「投稿に使う」商品（BfSalePanel から受け取る）
   const [bfState, setBfState] = useState<BfPanelState>({ items: [], blocked: '商品を選んでください。' });
   const frameH = tpl.frameHeight ?? STORY_H;
-  const bfData: BfSlideData | undefined = templateId === 'bf'
-    ? { items: bfState.items, maxRate: maxOffRate(bfState.items), periodLabel: bfSalePeriodLabel(), checkedLabel: checkedAtLabel(bfState.items) }
+  const isBf = isBfTemplate(templateId);
+  // ストーリーズ版は先頭3件だけ（最大割引率・確認日時もその商品だけから出す。承認していない商品は含まれない）
+  const bfItems = templateId === 'bfstory' ? bfStoryItems(bfState.items) : bfState.items;
+  const bfData: BfSlideData | undefined = isBf
+    ? { items: bfItems, maxRate: maxOffRate(bfItems), periodLabel: bfSalePeriodLabel(), checkedLabel: checkedAtLabel(bfItems) }
     : undefined;
   const groupChoice = target?.type === 'group' ? groups.find((g) => g.name === target.name) ?? null : null;
   const pickMode = memberPickMode(templateId, target);
@@ -375,7 +379,7 @@ export default function StoryMakerClient({ persons, groups, initial }: { persons
     const cfg = cfgOf(v);
     const rs = resolveSlides(templateId, cfg, edits, images, target, bfState.items.length);
     const targets = only === undefined ? rs : rs.filter((r) => r.index === only);
-    if (templateId === 'bf' && bfState.blocked) {
+    if (isBf && bfState.blocked) {
       setMessage({ kind: 'error', text: `保存できません：${bfState.blocked}` });
       return;
     }
@@ -565,7 +569,7 @@ export default function StoryMakerClient({ persons, groups, initial }: { persons
       return { variant: ab ? v : null, slides: count, utmCampaign: utm.campaign, utmContent: utm.content, url: urlOf(v), linkSlide: linkSlide >= 0 ? linkSlide + 1 : count };
     }),
     abTest: ab?.test ?? null,
-    saleItems: templateId === 'bf' ? bfState.items.map(({ imageSrc: _img, ...rest }) => rest) : null,
+    saleItems: isBf ? bfItems.map(({ imageSrc: _img, ...rest }) => rest) : null,
   };
 
   const fromScreen = initial?.from ? STORY_MAKER_FROM[initial.from] : null;
@@ -579,6 +583,12 @@ export default function StoryMakerClient({ persons, groups, initial }: { persons
         <div data-testid="bf-feed-notice" className="rounded-lg border-2 border-amber-500 bg-stone-900 text-stone-100 px-4 py-3 text-sm">
           <b className="text-amber-300">📐 Instagram 通常投稿（フィード）用・1080×1350（4:5）</b>
           <span className="ml-2">このテンプレートはストーリーズ用（1080×1920）ではありません。⑥で保存した画像（3〜4枚）を、Instagram アプリから通常投稿（カルーセル）として手動で投稿してください。自動投稿はしません。</span>
+        </div>
+      )}
+      {templateId === 'bfstory' && (
+        <div data-testid="bf-story-notice" className="rounded-lg border-2 border-amber-500 bg-stone-900 text-stone-100 px-4 py-3 text-sm">
+          <b className="text-amber-300">📱 Instagram ストーリーズ用・1080×1920（9:16）・2枚</b>
+          <span className="ml-2">商品の確認・承認はフィード版と共通です（先頭{BF_STORY_MAX_ITEMS}件を載せます）。⑥で保存した画像を Instagram アプリからストーリーズに投稿し、2枚目の点線の位置にリンクスタンプ（⑦のURL）を手動で置いてください。自動投稿はしません。</span>
         </div>
       )}
       {message && (
@@ -601,7 +611,7 @@ export default function StoryMakerClient({ persons, groups, initial }: { persons
                 >
                   <div className="font-bold text-sm text-slate-800">{t.title}</div>
                   <div className="text-xs text-gray-500 mt-1 leading-relaxed">{t.purpose}</div>
-                  <div className="text-[11px] text-amber-700 mt-1 font-semibold">{t.id === 'bf' ? '3〜4枚・通常投稿 1080×1350' : `基本 ${t.defaultSlides}枚`}</div>
+                  <div className="text-[11px] text-amber-700 mt-1 font-semibold">{t.id === 'bf' ? '3〜4枚・通常投稿 1080×1350' : t.id === 'bfstory' ? '2枚・ストーリーズ 1080×1920' : `基本 ${t.defaultSlides}枚`}</div>
                 </button>
               ))}
             </div>
@@ -670,8 +680,15 @@ export default function StoryMakerClient({ persons, groups, initial }: { persons
             )}
           </Step>
 
-          {templateId === 'bf' ? (
-            <BfSalePanel key={`${target?.type ?? ''}:${target?.name ?? ''}`} target={target} onChange={setBfState} />
+          {isBf ? (
+            <div className="space-y-2">
+              <BfSalePanel key={`${target?.type ?? ''}:${target?.name ?? ''}`} target={target} onChange={setBfState} />
+              {templateId === 'bfstory' && bfState.items.length > BF_STORY_MAX_ITEMS && (
+                <p data-testid="bf-story-limit" className="text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2">
+                  ストーリーズには「投稿に使う」の先頭{BF_STORY_MAX_ITEMS}件だけを載せます（{bfState.items.length}件中）。最大割引率もこの{BF_STORY_MAX_ITEMS}件から計算します。残りの商品はフィード版で紹介してください。
+                </p>
+              )}
+            </div>
           ) : (
           <section className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4">
             <div className="flex flex-wrap items-center gap-3">
@@ -1011,7 +1028,7 @@ export default function StoryMakerClient({ persons, groups, initial }: { persons
                       ))}
                     </div>
                     <div className="text-[11px] text-gray-500 mt-1 font-mono break-all">{rs.length > 1 ? storyZipName(tpl, targetKey, abOf(v)) : storyFileName(tpl, targetKey, 0, abOf(v))}</div>
-                    {templateId === 'bf' && bfState.blocked && <div className="text-xs text-red-600 mt-1">保存できません：{bfState.blocked}</div>}
+                    {isBf && bfState.blocked && <div className="text-xs text-red-600 mt-1">保存できません：{bfState.blocked}</div>}
                     {missingPages.length > 0 && <div className="text-xs text-red-600 mt-1">画像が必要なページ（{missingPages.join('・')}）が未設定のため、まとめて保存できません。必要な画像をアップロードしてください。画像が不要なページは個別にPNG保存できます。</div>}
                   </div>
                 );
