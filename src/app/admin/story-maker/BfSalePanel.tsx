@@ -21,6 +21,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { currentPriceDraft, type BfAutoItem, type BfAutoResult } from '@/lib/story-maker/bf-auto';
 import {
   BF_CONDITIONS_MAX,
   BF_DISCOUNT_KINDS,
@@ -76,12 +77,13 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 const BF_API = '/api/admin/story-maker/bf-sale';
+const BF_AUTO_API = '/api/admin/story-maker/bf-auto';
 
-async function postBf<T>(body: Record<string, unknown>): Promise<{ status: number; json: T & { error?: string; now?: number } }> {
+async function postBf<T>(body: Record<string, unknown>, url = BF_API): Promise<{ status: number; json: T & { error?: string; now?: number } }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(BF_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal, cache: 'no-store' });
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal, cache: 'no-store' });
     return { status: res.status, json: (await res.json().catch(() => ({}))) as T & { error?: string; now?: number } };
   } catch (err) {
     if (ctrl.signal.aborted) throw new Error(`${FETCH_TIMEOUT_MS / 1000}秒以内にサーバーから応答がありませんでした。`);
@@ -133,6 +135,11 @@ export default function BfSalePanel({ target, onChange, serverNow }: { target: S
   const [images, setImages] = useState<Record<string, string | null>>({});
   const [imageError, setImageError] = useState<string | null>(null);
   const [checker, setChecker] = useState('');
+  const [autoLoading, setAutoLoading] = useState(false);
+  const [autoItems, setAutoItems] = useState<Record<string, BfAutoItem>>({});
+  const [autoRecommended, setAutoRecommended] = useState<string[]>([]);
+  const [autoCheckedCount, setAutoCheckedCount] = useState(0);
+  const [autoWarning, setAutoWarning] = useState<string | null>(null);
 
   useEffect(() => { setChecker(readChecker()); }, []);
   // 表示後：サーバーの時刻を取り直し、開催状態・承認の期限を30秒ごとに見直す（PCの時計は使わない）
@@ -193,10 +200,53 @@ export default function BfSalePanel({ target, onChange, serverNow }: { target: S
       );
       setCandidates(j.candidates);
       setTotal(j.totalOnSite);
+      void loadAutoSuggestions(j.candidates);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  /** 候補読込後に最大6件だけ公式楽天APIで照合。最新価格は下書きにのみ反映する。 */
+  async function loadAutoSuggestions(loaded: BfSaleCandidate[]) {
+    if (!target) return;
+    setAutoLoading(true);
+    setAutoItems({});
+    setAutoRecommended([]);
+    setAutoWarning(null);
+    try {
+      const { status, json } = await postBf<BfAutoResult>({ type: target.type, name: target.name }, BF_AUTO_API);
+      if (status !== 200 || !Array.isArray(json.items)) throw new Error(json.error ?? `HTTP ${status}`);
+      setAutoItems(Object.fromEntries(json.items.map((x) => [x.productId, x])));
+      setAutoRecommended(json.recommendedIds);
+      setAutoCheckedCount(json.checkedCount);
+      setAutoWarning(json.warning);
+      // 確認済みフラグ・通常価格・値引きの種類は自動設定しない。
+      // 通信中に管理者が入力・編集した価格は上書きしない。
+      const byId = new Map(loaded.map((x) => [x.productId, x]));
+      setInputs((prev) => {
+        const next = { ...prev };
+        for (const item of json.items) {
+          if (item.status !== 'available' || !byId.has(item.productId)) continue;
+          const draft = currentPriceDraft(item.currentPrice);
+          if (!draft || next[item.productId]?.salePrice) continue;
+          const c = byId.get(item.productId)!;
+          next[item.productId] = {
+            ...EMPTY_VERIFICATION, ...next[item.productId],
+            sourceUrl: next[item.productId]?.sourceUrl ?? c.pageUrl ?? '',
+            checkedBy: next[item.productId]?.checkedBy ?? checker,
+            salePrice: draft,
+          };
+        }
+        return next;
+      });
+      // 上位おすすめを開く。すでに別の商品を編集中ならそのままにする。
+      setOpenId((prev) => prev ?? json.recommendedIds[0] ?? null);
+    } catch (err) {
+      setAutoWarning(`自動照合できませんでした。手動で確認できます：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setAutoLoading(false);
     }
   }
 
@@ -243,6 +293,10 @@ export default function BfSalePanel({ target, onChange, serverNow }: { target: S
 
   const maxRate = maxOffRate(usable);
   const approvedCount = Object.keys(approved).length;
+  const candidateOrder = new Map(autoRecommended.map((id, i) => [id, i]));
+  const displayedCandidates = candidates ? [...candidates].sort((a, b) =>
+    (candidateOrder.get(a.productId) ?? Number.MAX_SAFE_INTEGER) - (candidateOrder.get(b.productId) ?? Number.MAX_SAFE_INTEGER),
+  ) : [];
 
   return (
     <section className="rounded-xl border-2 border-amber-500 bg-stone-900 text-stone-100 p-4 space-y-3">
@@ -253,8 +307,9 @@ export default function BfSalePanel({ target, onChange, serverNow }: { target: S
         </span>
       </div>
       <p className="text-xs text-stone-300 leading-relaxed">
-        推しサーチの商品データには、楽天ブラックフライデーの対象かどうか・通常価格・セール価格がありません。
-        候補の商品ページを開き、<b className="text-amber-200">BF の対象であること</b>と<b className="text-amber-200">2つの価格</b>を確認して入力・承認した商品だけが投稿に載ります（推測で価格・割引率を入れません）。
+        候補を読み込むと楽天公式APIで一部の商品を自動照合し、在庫があり価格を取得できたおすすめ商品を先に表示します。
+        APIの現在価格は「セール価格」の<b className="text-amber-200">未確認の下書き</b>として入力します。
+        <b className="text-amber-200">楽天BF対象か・通常価格・セール価格・適用条件</b>は商品ページで確認してから承認してください（API価格だけでBF対象と判断しません）。
         最大割引率は「投稿に使う」を選んだ承認済みの商品だけから計算します。
       </p>
 
@@ -271,14 +326,21 @@ export default function BfSalePanel({ target, onChange, serverNow }: { target: S
 
       {candidates && (
         <>
+          <div className="space-y-1 rounded-lg border border-amber-700 bg-stone-800/70 p-2 text-xs">
+            {autoLoading ? <p className="text-amber-200">楽天公式APIで商品と現在価格を照合中…（最大6件・最大数秒）。商品は自動承認されません。</p> :
+              <p className="text-amber-200">自動照合 {autoCheckedCount}件・おすすめ候補 {autoRecommended.length}件（上位に並べ替え済み・未承認）。{autoRecommended.length > 0 ? 'おすすめの確認欄を開きました。' : '価格を取得できない商品は従来どおり手動で確認できます。'}</p>}
+            {autoWarning && <p className="text-orange-300">{autoWarning}</p>}
+            <button type="button" onClick={() => void loadAutoSuggestions(candidates)} disabled={autoLoading || loading} className="underline text-amber-200 disabled:opacity-40">最新価格を再照合する</button>
+          </div>
           <p className="text-xs text-stone-400">
             {target?.name} のページに公開中の関連商品 {total}件から {candidates.length}件（写真集・CD・Blu-ray・DVD・グッズを順番に）。
             承認済み {approvedCount}件・投稿に使う {usable.length}/{BF_MAX_ITEMS}件（3件まで3枚・4件以上で4枚）
             {maxRate !== null && <>・最大割引率 <b className="text-amber-300">{maxRate}%OFF</b></>}
           </p>
           <ul className="max-h-[560px] overflow-y-auto divide-y divide-stone-700 rounded-lg border border-stone-700 bg-stone-950">
-            {candidates.map((c) => {
+            {displayedCandidates.map((c) => {
               const a = approved[c.productId];
+              const api = autoItems[c.productId];
               const ok = a ? isApprovalUsable(a, now) : false;
               const inUse = selected.includes(c.productId);
               const inp = inputOf(c);
@@ -291,11 +353,17 @@ export default function BfSalePanel({ target, onChange, serverNow }: { target: S
                     {c.thumbUrl ? <img src={c.thumbUrl} alt="" className="w-14 h-14 object-contain bg-white rounded shrink-0" /> : <div className="w-14 h-14 bg-stone-700 rounded shrink-0" />}
                     <div className="min-w-0 flex-1">
                       <div className="text-[11px] text-amber-300 font-bold">{c.section}</div>
+                      {autoRecommended.includes(c.productId) && <div className="text-[11px] font-bold text-emerald-300">★ 自動選定のおすすめ（楽天BF対象は未確認）</div>}
                       <div className="text-stone-100 line-clamp-2">{c.title}</div>
                       <div className="text-[11px] text-stone-400 mt-0.5">
                         {c.pageUrl ? <a href={c.pageUrl} target="_blank" rel="noopener noreferrer" className="underline text-amber-200">楽天の商品ページを開く</a> : '商品ページのURLが商品データにありません（確認元URLを入力）'}
                         {c.storedPrice !== null && <>　サイトに保存済みの価格 {formatYen(c.storedPrice)}（参考・取得日時不明のため使いません）</>}
                       </div>
+                      {api && <div className="mt-1 text-[11px] text-cyan-200">
+                        {api.status === 'available' && api.currentPrice !== null ? `楽天APIの現在価格 ${formatYen(api.currentPrice)}（未確認・BF価格とは限りません。商品ページで要確認）` :
+                          api.status === 'out_of_stock' ? '楽天API：在庫ありと確認できません（おすすめから除外）' :
+                          api.status === 'not_found' ? '楽天API：同一商品が見つかりません（手動確認）' : '楽天API：今回は取得できませんでした（手動確認）'}
+                      </div>}
                       {a && (
                         <div className={`mt-1 text-xs ${ok ? 'text-emerald-300' : 'text-red-300'}`}>
                           {ok ? '✅ 承認済み' : '⚠ 承認の期限切れ（24時間経過またはセール終了）'}：{a.priceLabel} {formatYen(a.regularPrice)} → セール価格 {formatYen(a.salePrice)}（{formatYen(a.offAmount)} OFF・{a.offRate}%OFF）　適用条件：{a.conditions}　確認：{a.checkedBy} {new Date(a.checkedAt).toLocaleString('ja-JP')}　根拠：<a href={a.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">商品ページ</a>
@@ -329,6 +397,7 @@ export default function BfSalePanel({ target, onChange, serverNow }: { target: S
                           <input inputMode="numeric" value={inp.salePrice} onChange={(e) => setInput(c, { salePrice: e.target.value })} placeholder="例 2640" className="mt-1 w-full rounded px-2 py-1 text-sm text-stone-900" />
                         </label>
                       </div>
+                      {api?.status === 'available' && api.currentPrice !== null && <p className="text-cyan-200">セール価格欄には楽天APIの現在価格 {formatYen(api.currentPrice)} を仮入力しています。通常価格・BF対象は取得できていません。楽天ページに記載の金額が異なる場合は必ず修正してください。</p>}
                       <div className="grid sm:grid-cols-2 gap-2">
                         <label>値引きの種類
                           <select value={inp.discountKind} onChange={(e) => setInput(c, { discountKind: e.target.value as BfDiscountKind | '' })} className="mt-1 w-full rounded px-2 py-1 text-sm text-stone-900">
