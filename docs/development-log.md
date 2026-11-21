@@ -6430,3 +6430,216 @@ OSHI_GROUP_09 の Instagram 投稿文を、冒頭フック（動画の冒頭と�
 - **プレビューの制約：** Preview と Production は同じ DATABASE_URL（本番DB）を使うため、本番DBを変えずにプレビューで D-1 を表示・保存することはできない。プレビューの ADMIN_SESSION_SECRET もローカルと異なり、管理画面へのログインは未実施
 - worktree に `.vercel/project.json`（git 管理外）を置いた
 - **プレビュー専用の切り替え（ユーザー承認済み）：** `WORK_IMAGE_DISPLAY_PREVIEW_MODE`（d1|legacy）。`VERCEL_ENV === 'preview'` のときだけ有効で、DB の設定より優先（`getPreviewOverrideMode`・`src/lib/work-image-display.ts`、`getWorkImageDisplayMode`・`src/lib/site-settings.ts`）。本番・ローカルでは無視。管理画面には「プレビュー用の設定で表示中」と、プレビューで保存すると本番の設定が変わる旨を表示。Vercel には **Preview（feat/work-image-d1 ブランチのみ）** に `d1` を設定（本番・他ブランチのプレビューには無い）。テスト3件追加（site-settings.test.ts）。vitest 3,118件成功・ビルド成功
+
+---
+
+## Task 204 — ストーリーズ作成（/admin/story-maker）にテンプレート「楽天BF・推し別セール紹介」を追加（2026-11-20・feat/bf-story-template にcommit・main未マージ・本番デプロイなし・Worker/動画は未変更）
+
+### 目的
+楽天ブラックフライデー期間に、推し（グループ・人物）ごとのセール対象商品を紹介するフィード投稿（3枚）を、新しい画面を作らず既存の投稿作成機能から作る。
+
+### 作業場所
+本番（origin/main = d89011f）から作った worktree `~/dev/oshi-search-bf-story`（ブランチ feat/bf-story-template）。ローカル main（origin より43コミット遅れ・story-maker なし）では作業していない。
+
+### 既存機能の調査と選定
+- `/admin/instagram-post`：人物のみ・サーバー生成・ダウンロード/ZIP なし・商品選択なし → 不採用
+- `/admin/story-maker`（Task 192/193）：テンプレート選択・人物/グループ選択（PersonCombobox・datalist）・ブラウザでの画像生成・プレビュー・PNG 個別保存・ZIP 一括保存・投稿データ（効果測定の記録・Redis）・関連商品の選び方（goods-select）がそろう → ここにテンプレートとして追加
+- 本番DB（読み取りのみ）：rakuten_events にブラックフライデーの登録なし、rakuten_event_products に確認済みの商品なし。商品データにも通常価格・BF対象の情報なし → 既存データでは判定できないため、画面内に確認・承認欄を追加
+
+### 変更ファイル
+- 新規 `src/lib/story-maker/bf-sale.ts`（純粋関数）：承認欄の検証 `verifyBfItem`（開催中のみ・整数の価格・セール価格＜通常価格・割引率1%以上・確認元は楽天の商品ページ〔isRakutenProductPageUrl。イベントページ・アフィリエイトURL不可〕で商品データの商品ページと一致・確認チェック・確認者）、`calcDiscount`（割引率は切り捨て）、`isApprovalUsable`（24時間・セール終了で失効）、`maxOffRate`（採用した承認済みの商品だけ）、価格の表記（通常価格／当店通常価格／メーカー希望小売価格／定価をそのまま表示）、記録用の `parseBfRecordItems`（保存時に割引率を再計算）。セール日時は Task 199 の `SALE_CORNERS`（id rakuten-blackfriday-2026）を参照
+- `src/lib/story-maker/templates.ts`：`StoryTemplateId` に 'bf'、レイアウト bf-cover/bf-products/bf-final、`fixed`（3枚固定・背景色/リンク位置/A/B なし）・`frameHeight`（1350）、リンク先（人物・グループページ／トップ＝プロフィールのリンク用）
+- 新規 `src/app/admin/story-maker/BfSaleSlide.tsx`：黒×ゴールド（B案）の3枚。表紙＝セール名・期間・名前・最大割引率（無ければ数字を出さない）、商品＝1ページ3商品（画像・価格の表記・セール価格・◯円 OFF・◯%OFF・確認日時の注記）、最終＝プロフィールのリンクから推しサーチへ。PR 表記を全ページに。楽天ロゴなし
+- 新規 `src/app/admin/story-maker/BfSalePanel.tsx`：bf のときだけ「自動作成」欄の位置に表示。候補の読み込み・商品ページを開く・承認欄・投稿に使う（最大3件）・期限切れ表示。確認者名は localStorage
+- `StorySlide.tsx`（bf レイアウトの振り分け・`sale` prop・`StoryScaled` の height。既定値は従来どおり）、`png-export.ts`（`renderStoryElementPng` に height。既定 1920）、`StoryMakerClient.tsx`（bf のとき③を固定表示・A/B 解除・保存の前に承認状態を確認・1350 で書き出し・記録に承認内容を渡す）
+- `src/server/story-maker/goods-data.ts`・`/api/admin/story-maker/goods`：`mode=sale`（B と同じ選び方の候補 最大40件。商品ページURL・サムネイル・保存済み価格〔参考・画像には使わない〕）、`mode=sale-images`（採用した最大3件の画像を data: URL で）
+- `metrics.ts`・`StoryMetricsPanel.tsx`：記録に任意の `saleItems`（bf のときだけ。価格・確認元・確認者・確認日時）。既存の記録・CSV は不変
+- テスト：新規 `story-maker-bf.test.tsx`（13件）。`story-maker.test.tsx` は既存5テンプレート（fixed でないもの）を対象に
+
+### 設計上の判断・注意点
+- 3枚固定（表紙・商品1ページ・最終）。記録の型（slideCount 1〜3・リーチ3枠）を変えないため、商品は最大3件。商品ページを増やす場合は metrics の枠の拡張が必要
+- フィード投稿（1080×1350）。最終ページが「プロフィールのリンクから」のため。ファイル名は既存規則の story_bf_sale_<対象>_01.png
+- 価格はショップのクーポン・ポイント・楽天カード等の購入者条件で変わる金額を入れない（承認欄に明記）
+- 表示語は「◯円 OFF」（楽天イベント管理の禁止表現「値下げ」を画像に入れない。テストで確認）
+- DB・本番データ・公開ページ・動画生成・Worker・ジョブ処理・確定済みCTAは変更なし
+
+### 確認
+- 既存5テンプレートの描画：変更前（origin/main）と 5テンプレート×4構成×対象3×リンク位置3×ガイド有無×画像有無×色2 の出力HTML・リンク先・UTM が完全一致（11.5MB・一時テスト、コミットなし）
+- tsc 0件、vitest 207ファイル/3,244件成功、next build 成功
+- next start ＋ Playwright（管理セッションをローカルで発行・外部通信遮断）：Snow Man で本番データの候補40件（公開中492件から）を表示、承認前は保存不可、不正入力（セール価格≥通常価格・チェックなし）は承認されない、承認3件で最大30%OFF、ZIP（3枚）・1枚目の個別保存とも 1080×1350、コンソールエラーなし。画像生成の確認は「実在しないサンプル商品」の仮の価格で行った（本物の商品に未確認の価格を付けた画像は作っていない）
+- 投稿データの保存（Redis への書き込み）は実行していない（検証はユニットテスト）
+
+## Task 204b: 楽天BF・推し別セール紹介の追加対応（3〜4枚・最大6商品・値引きの種類と適用条件）
+
+### 目的
+- 商品紹介ページを1〜2枚にし、表紙＋商品ページ＋最終ページの3〜4枚を作れるようにする（商品は最大6件、1ページ3件）
+- 承認時に根拠URL・確認日時・適用条件を保持し、ポイント倍率・買いまわりだけの商品を値引き商品として扱わない
+
+### 変更したファイル
+- `src/lib/story-maker/bf-sale.ts`：`BF_MAX_ITEMS`=6・`BF_MAX_PRODUCT_PAGES`=2、`bfProductPageCount`・`bfSlideCount`・`bfPageItems`。値引きの種類 `BfDiscountKind`（price-cut／price-cut-conditional のみ承認可。points-only・coupon-only は承認不可）と適用条件 `conditions`（条件付きは必須、条件なしは「条件なし（商品ページの表示価格）」を記録）を承認内容・記録に追加。記録の商品上限を6件に
+- `src/lib/story-maker/templates.ts`：`bfStructureSlides(productPages)`（表紙＋商品ページ1〜2枚＋最終）と `editSlotIndex`（BFの文言編集をページの種類で保存。商品ページが増えても最終ページの文言がずれない。他テンプレートはページ番号のまま）
+- `src/app/admin/story-maker/StoryMakerClient.tsx`：`resolveSlides` に採用商品数を渡し、BFだけ枚数を可変に。記録の枚数も実際の枚数（3〜4）
+- `src/app/admin/story-maker/BfSaleSlide.tsx`：商品ページは index から何ページ目かを決めて3件ずつ表示、2ページのときは「（1/2）」、条件付きの値下げは「条件：◯◯」を表示（デザインの大きな変更なし）
+- `src/app/admin/story-maker/BfSalePanel.tsx`：「投稿に使う」最大6件、値引きの種類・適用条件・根拠URLの入力、承認済みの表示に適用条件・根拠リンク
+- `src/lib/story-maker/metrics.ts`：`RecordSlideCount`（1〜3＋BFだけ4）、`ReachValues`（既存の記録はリーチ3つのまま、4枚の記録だけ4つ目）。CSVは4枚の記録があるときだけ末尾に「4枚目リーチ」列を追加
+- `src/app/admin/story-maker/StoryMetricsPanel.tsx`：リーチ欄を枚数に合わせて3〜4つ、記録するセール商品に適用条件・確認日時・根拠URLを表示
+- `src/lib/__tests__/story-maker-bf.test.tsx`：値引きの種類・適用条件・6件/4枚・ページ分け・4枚の記録・既存CSV列の不変 などのテストを追加
+
+### 設計上の判断・注意点
+- 4枚は楽天BFだけ。既存テンプレートで slideCount=4 を送ると従来どおり「投稿枚数は1〜3枚です。」
+- 既存の記録（Redis）の形は変えない（3枚以下はリーチ3つ、CSVの列も同じ）
+- /admin/instagram-post との統合は方針の報告のみで未実装（INSTAGRAM_TEMPLATES は自動投稿のローテーションにも使われるため、そこへ追加しない方針）
+
+### 確認
+- 既存5テンプレートの描画と、既存の記録の検証・指標・CSV・A/B集計：origin/main と出力が完全一致（11.6MB・一時テスト）
+- tsc 0件、vitest 207ファイル/3,248件成功、next build 成功
+- next start ＋ Playwright（サンプル商品・外部通信遮断）：ポイント倍率のみ・条件未入力は承認不可、3件で3枚／6件で4枚（ZIP 4枚と4枚目の個別保存が 1080×1350）、外すと3枚に戻る、記録フォームのリーチ欄4つ・送信内容をサーバーと同じ検証で受理（Redis には書いていない）、コンソールエラーなし
+
+## Task 204c: Instagram投稿画面から楽天BFテンプレートを開くカード（リンク方式）
+
+### 目的
+- `/admin/instagram-post` から「楽天BF・推し別セール紹介」を選べるようにする。画像の作成・承認・保存は既存の `/admin/story-maker` を使い、Instagram へは手動投稿
+
+### 変更したファイル
+- `src/lib/story-maker/open-link.ts`（新規）：`buildStoryMakerLink`（`/admin/story-maker?template=bf&person=…&from=instagram-post`）と `parseStoryMakerInitial`（知っているテンプレート・実在する人物/グループ・知っている戻り先だけ採用、それ以外は無視）
+- `src/app/admin/instagram-post/BfSaleTemplateCard.tsx`（新規）：手動投稿用テンプレートのカード（通常投稿 1080×1350・手動投稿の表示、選択中の人物を引き継ぐ）
+- `src/app/admin/instagram-post/InstagramPostClient.tsx`：カードを「1. 人物・テンプレートを選択」の下に表示（4行追加のみ）
+- `src/app/admin/story-maker/page.tsx`：searchParams を読み、初期状態を StoryMakerClient に渡す
+- `src/app/admin/story-maker/StoryMakerClient.tsx`：`initial` があればテンプレート・対象を選んだ状態で開始（無ければ従来どおり A・グループ未選択）。BF選択中は「通常投稿（フィード）用・1080×1350（4:5）・手動投稿」のお知らせ、Instagram投稿から来たときは戻るリンク。①のBFカードの枚数表示を「3〜4枚・通常投稿 1080×1350」に
+- `src/lib/__tests__/story-maker-open-link.test.tsx`（新規）：リンクの組み立て・不正なパラメータの無視・カードの表示・INSTAGRAM_TEMPLATES に入っていないこと
+
+### 設計上の判断・注意点
+- INSTAGRAM_TEMPLATES（自動投稿のローテーションにも使う）には追加しない。自動投稿・予約投稿・生成/投稿API・Worker・CTA は変更なし
+- Instagram投稿画面は人物のみ選べるため、引き継ぐのは人物だけ（グループは story-maker の `group=` で受け取れるが、この画面からは渡さない）
+
+### 確認
+- tsc 0件、vitest 208ファイル/3,252件成功、next build 成功
+- next start ＋ Playwright：カード（人物なし・あり）のリンク、カード選択で story-maker が楽天BF・目黒蓮・1080×1350 のお知らせ付きで開く、戻るリンク、パラメータ無し・不正なパラメータは従来どおり、生成/投稿APIの呼び出しなし、コンソールエラーなし
+
+## Task 204d: 楽天BF・推し別セール紹介のデザイン改善（Instagram向け）
+
+### 目的
+- 黒×ゴールドを保ったまま、表紙の「最大◯%OFF」・推しの名前・商品の種類を強調し、商品ページ・最終ページを見やすくする（機能・価格計算は変更なし）
+
+### 変更したファイル
+- `src/app/admin/story-maker/BfSaleSlide.tsx`：
+  - 表紙：「最大◯%OFF」を最大の要素に（数字は赤＋白縁、`text-shadow` の重ねで縁取り）、名前を大きく、採用した商品の種類の行（`bfCategoryLine`）、金の光・紙吹雪・キラキラを四隅と端に固定配置（乱数なし）、スワイプ誘導のボタン
+  - 商品ページ：商品画像を白地の正方形枠に `object-fit: contain`（縦横比を保持・画像に文字を重ねない）、割引率は赤いバッジ、通常価格の横に「◯円 OFF」、適用条件は独立した枠（2行まで）で表示し、条件があるときは商品名を1行に
+  - 最終ページ：矢印を削除、「プロフィールのリンクから／推しサーチへ」を金の枠で大きく、サイト名・oshi-search.jp を大きく
+- `src/lib/story-maker/bf-sale.ts`：`bfCategoryLine`（採用した商品の種類だけを 写真集 / DVD・Blu-ray / CD / グッズ の順で並べる）
+- `src/lib/story-maker/templates.ts`：BF表紙の初期文言（説明「セール対象商品を推し別に紹介」、注記「スワイプして商品をチェック →」）
+- `src/lib/__tests__/story-maker-bf.test.tsx`：種類の行・画像に文字を重ねない・赤いバッジ・矢印なし のテスト
+
+### 確認
+- 既存5テンプレートの描画・既存の記録の処理が origin/main と完全一致、tsc 0件、vitest 208ファイル/3,253件成功、next build 成功
+- 実際の画面で3枚構成・4枚構成のサンプル画像を生成（実在しないサンプル商品・縦長/正方形/横長の画像・長い商品名・条件付き）。はみ出し警告なし、コンソールエラーなし、すべて 1080×1350
+
+## Task 204e: 楽天BF・推し別セール紹介のストーリーズ版（1080×1920・2枚）
+
+### 目的
+- 楽天BFテンプレートをストーリーズでも使えるようにする（第1段階。リール版はデザイン確認後）
+
+### 変更したファイル
+- `src/lib/story-maker/templates.ts`：テンプレート `bfstory`（「楽天BF・推し別セール紹介（ストーリーズ）」、key `bf_sale_story`、2枚固定、1080×1920）と layout `bfs-cover`・`bfs-products`、`isBfTemplate`（bf・bfstory）。リンク先はフィード版と同じ（人物・グループページ／トップ）
+- `src/lib/story-maker/bf-sale.ts`：`BF_STORY_MAX_ITEMS`=3・`bfStoryItems`（「投稿に使う」の先頭3件）
+- `src/app/admin/story-maker/BfSaleSlide.tsx`：ストーリーズの2枚（1枚目：PR・楽天ブラックフライデー・期間・名前・商品の種類・最大◯%OFF・タップ誘導、2枚目：PR・商品3件まで・確認日時の注記・「↓ リンクスタンプから商品をチェック ↓」・スタンプの余白）。Instagram の上部UI（〜250）・返信欄（1650〜）に文字を置かない。UIの範囲とスタンプの枠はガイド表示のときだけ。`Frame`・`ProductCard` に高さの引数を追加（省略時は従来と同じ＝フィード版の出力は変更前と完全一致）
+- `src/app/admin/story-maker/StorySlide.tsx`：bfs-* を BfSaleSlide に渡す
+- `src/app/admin/story-maker/StoryMakerClient.tsx`：承認欄・保存の可否・記録の承認内容を bf・bfstory 共通に。ストーリーズは先頭3件だけを画像・最大割引率・記録に使う。ストーリーズ用のお知らせ、4件以上選んだときの「先頭3件だけ」の注意、①のカードに「2枚・ストーリーズ 1080×1920」
+- `src/lib/story-maker/metrics.ts`：承認内容（saleItems）の保存・検証を bfstory にも適用（枚数は既存どおり1〜3）
+- `src/lib/__tests__/story-maker-bf.test.tsx`：ストーリーズ版のテスト（2枚・1920・先頭3件と最大割引率・PR・リンクスタンプの誘導・ガイドは保存画像に入らない・記録の検証・禁止表現）
+
+### 設計上の判断・注意点
+- フィード版の中の切り替えではなく別テンプレートにした（フィード版の描画を変えない・記録とUTMでフィード／ストーリーズを区別できる）。承認欄は同じ部品で、テンプレートを切り替えても承認は引き継がれる
+- `/admin/instagram-post` のカードはフィード版のまま
+
+### 確認
+- フィード版の描画・記録：変更前と完全一致。既存5テンプレートの描画・既存の記録の処理：origin/main と完全一致
+- tsc 0件、vitest 208ファイル/3,257件成功、next build 成功
+- 実際の画面で架空のサンプル商品4件を承認→ストーリーズ2枚（各 1080×1920）を個別保存。先頭3件だけ表示・最大割引率もその3件から（4件目の40%は含まない）、はみ出し警告なし、コンソールエラーなし
+
+## Task 204f: 楽天BF（通常投稿・ストーリーズ）の文言・文字サイズ・商品名の表示の調整
+
+### 目的
+- デザイン確認で指摘された3点の修正（基本デザインは維持）
+
+### 変更したファイル
+- `src/lib/story-maker/templates.ts`：ストーリーズ1枚目の誘導を「次のストーリーで商品をチェック ▶」に
+- `src/app/admin/story-maker/BfSaleSlide.tsx`：
+  - PR表記・ページ番号を 22〜24px → 28px（明るめの色）、注意書きを 20〜21px → 23〜24px（表紙の注記は 26px）
+  - 価格の注意書きを意味を変えずに短く（`priceNote`：確認日時・楽天の商品ページで確認・価格/在庫/セール対象は変わる場合がある・購入前に商品ページで確認）。はみ出し検出の対象（data-fit-area="note"）に
+  - 商品名を3行まで（適用条件があるときは2行）、英単語の途中で改行しない（overflow-wrap: anywhere）。種類のラベル・行間を少し詰めて収める。ストーリーズは少し小さめ（dense）
+  - ストーリーズ2枚目の配置を調整（カード 304px・注意書き 1368〜・誘導 1442〜・リンクスタンプの余白 1500〜1640 を維持）
+- `src/lib/__tests__/story-maker-bf.test.tsx`：誘導の文言・注意書きの内容・商品名の行数のテスト
+
+### 確認
+- 既存5テンプレートの描画・既存の記録の処理：origin/main と完全一致
+- tsc 0件、vitest 208ファイル/3,258件成功、next build 成功
+- 実際の画面で架空のサンプル商品6件（実際の商品名に近い長さ）を承認 → 通常投稿4枚・ストーリーズ2枚を保存（承認はテンプレートを切り替えても引き継がれる）。商品名の省略なし、はみ出し警告なし、コンソールエラーなし
+
+## Task 204g: 楽天BF（通常投稿・ストーリーズ）の時刻判定をサーバーの時刻に
+
+### 目的
+- セール期間・承認の有効期限（24時間）を管理者PCの時計ではなくサーバーの時刻で判定する。承認日時を偽れないようにし、投稿記録の保存APIでも期間・期限を検証する。セールの境目での表示の不一致（React #418）を無くす
+
+### 変更前の時刻の使い方
+- 承認：ブラウザの Date.now()（BfSalePanel）で verifyBfItem・checkedAt を作成
+- 開催状態・期限の表示：ブラウザの時計（30秒ごと）。SSR はサーバーの時計 → 境目で #418
+- PNG保存：ブラウザ側の判定だけ
+- 投稿記録の保存：価格・根拠URL等は検証するが、期間・期限・承認日時の真正性は未検証
+
+### 変更したファイル
+- `src/server/story-maker/bf-approval.ts`（新規）：承認（サーバーで候補を読み直し、サーバーの時刻で verifyBfItem → HMAC-SHA256 で署名）、署名の検証（crypto.subtle.verify）、PNG保存前の確認（署名・期間・期限）、投稿記録の確認（署名と投稿日時の時点の有効性）。鍵は既存の ADMIN_SESSION_SECRET（署名対象は 'oshi-search:bf-approval:v1' で始まり、ログインのトークンと混ざらない）。DB・新しい保存先は使わない
+- `src/app/api/admin/story-maker/bf-sale/route.ts`（新規）：GET＝サーバーの時刻、POST action=approve／check。認証・CSRFは既存の src/proxy.ts
+- `src/lib/story-maker/bf-sale.ts`：BfApprovedItem に signature、BfUnsignedItem、bfTargetKey、bfApprovalMessage（署名対象）、bfPostedAtMs、checkBfRecordTiming。verifyBfItem は記録の検証と同じ長さに切りそろえる。parseBfRecordItems は署名（16進64文字）を必須に
+- `src/server/story-maker/post-store.ts`：楽天BFのテンプレートだけ、保存前に verifyBfRecordApprovals（他のテンプレートは従来どおり）
+- `src/app/admin/story-maker/BfSalePanel.tsx`：承認をサーバーAPIで。表示の時刻はページを描いたときのサーバーの時刻（serverNow）から始め、表示後はサーバーの時刻を取り直して performance.now() で進める（PCの時計を変えても影響しない）。checkBfApprovalsOnServer
+- `src/app/admin/story-maker/StoryMakerClient.tsx`：serverNow をパネルへ。PNG保存の直前にサーバーで確認（通信できないときも保存しない）
+- `src/app/admin/story-maker/page.tsx`：serverNow（Date.now()）を渡す
+- テスト：`story-maker-bf-approval.test.tsx`（新規・14件：境界・24時間・署名・API直接呼び出し・PCの時計の進み/遅れ・不正な承認日時・投稿記録の保存〔通常投稿・ストーリーズ〕・#418）、`story-maker-bf.test.tsx`（署名の形だけ付ける）
+
+### 設計上の判断・注意点
+- 投稿記録は「投稿日時の時点で承認が有効だったか」で判定（サーバーの今では判定しない）。リーチの入力などであとから編集しても、投稿日時を変えなければ保存できる。承認日時がサーバーの今より未来なら不可
+- 画像（PNG）はブラウザで作るため、保存の可否は保存直前のサーバー確認で決める（開発者ツールで画面の処理を書き換えた場合までは防げない）
+- ADMIN_SESSION_SECRET を変えると、発行済みの承認と、楽天BFの記録の再保存（編集）が通らなくなる
+
+### 確認
+- tsc 0件、vitest 209ファイル/3,272件成功、next build 成功。既存5テンプレートの描画・既存の記録の処理は origin/main と完全一致
+- next start ＋ Playwright（サンプル商品・本物のサーバーで保存前の確認）：PCの時計が本当の時刻・10日進み・10日遅れのどれでも、表示は「開催中」（サーバーの時刻）、承認日時はサーバーの時刻、PNG保存はサーバー確認を通って成功（通常投稿 1080×1350・ストーリーズ 1080×1920）、改ざんした承認はサーバーが拒否、#418 は0件。承認APIは未ログインで401、不完全な入力は400
+- 追記（新規の記録と編集の区別）：新規の記録（または保存済みの記録に無い承認）は、投稿日時の判定に加えて、サーバーの今の時刻でも承認が有効（24時間以内・セール中）であることを必須にした（投稿日時だけを過去に戻して期限切れの承認を記録させない）。保存済みの記録と同じ承認（同じ商品・同じ署名）は今の時刻で判定しないため、セール終了後もリーチ等を編集できる。承認の差し替え・投稿日時の期限外への変更・別IDへの複製は不可。`verifyBfRecordApprovals` に保存済みの承認を渡す（`post-store.ts` は既存の記録を読んでから検証）。テスト2件追加（16件）
+
+## Task 204h: 楽天BFの③の説明と⑥の保存ボタンをテンプレートに合わせる
+
+### 目的
+- ストーリーズ版を選んでも③に「フィード投稿（1080×1350）の3枚固定」と出ていた不整合の修正。ストーリーズ版に出ていた「2枚まとめて保存（ZIP）」を仕様（1枚ずつPNG保存・ZIPは通常投稿版のみ）に合わせる
+
+### 変更したファイル
+- `src/lib/story-maker/templates.ts`：`fixedTemplateDescription`（通常投稿版＝フィード 1080×1350・商品数に応じて3〜4枚、ストーリーズ版＝ストーリーズ 1080×1920 の2枚構成、他は null）、`allowsZipDownload`（ストーリーズ版だけ false）
+- `src/app/admin/story-maker/StoryMakerClient.tsx`：③の説明を `fixedTemplateDescription` に。⑥でストーリーズ版は ZIP のボタンを出さず1枚ずつ保存のボタンとファイル名だけ（他のテンプレートは従来どおり）
+- `src/lib/__tests__/story-maker-bf-ui-text.test.tsx`（新規・3件）
+
+### 確認
+- 承認・価格計算・時刻判定・署名・投稿記録は変更なし。既存5テンプレートの描画・記録の処理は origin/main と完全一致
+- tsc 0件、vitest 210ファイル/3,277件成功、next build 成功
+- 画面でテンプレートを A → 楽天BF通常投稿 → ストーリーズ → 通常投稿 → B → ストーリーズ → A と切り替え、③の説明と⑥のボタンがそれぞれ正しく切り替わることを確認（コンソールエラーなし）
+
+## Task 204i: Preview では楽天BFの投稿記録を保存しない
+
+### 目的
+- Vercel の Preview は本番と同じ Redis に接続している（UPSTASH_REDIS_REST_URL/TOKEN が Production・Preview 共通）ため、Preview で楽天BFの投稿記録を誤って保存し、本番の Redis に書き込まないようにする
+
+### 変更したファイル
+- `src/lib/story-maker/metrics.ts`：`bfRecordSaveBlocked(templateId, scope)`（楽天BF × preview のときだけ true）と表示文 `BF_PREVIEW_RECORD_MESSAGE`
+- `src/server/story-maker/post-store.ts`：`saveStoryPost` で、Preview の楽天BFの記録は Redis を読む・書く前に拒否（新規・編集とも。posts API を直接呼んでも同じ）
+- `src/app/admin/story-maker/page.tsx`・`StoryMakerClient.tsx`：保存先の環境（`storyPostsScope()`）を「投稿効果の記録」に渡す（最初の描画から判定できるように）
+- `src/app/admin/story-maker/StoryMetricsPanel.tsx`：楽天BFかつ Preview のとき「プレビュー環境では記録を保存できません」を表示し、記録の追加・保存のボタンを押せないように
+- `src/lib/__tests__/story-maker-bf-preview.test.tsx`（新規・7件）
+
+### 設計上の判断・注意点
+- 商品の承認・承認内容の確認・PNG保存は Preview でも従来どおり（これらは Redis・DB に書き込まない）
+- 既存5テンプレートの記録は Preview でも従来どおり Preview 用のキー（story-maker:posts:v1:preview）に保存する（今回の変更対象外）
+- 記録の削除（hdel）は変更していない（Preview 用のキーだけが対象）
+
+### 確認
+- tsc 0件、vitest 211ファイル/3,284件成功、next build 成功。既存5テンプレートの描画・記録の処理は origin/main と完全一致
+- テスト（Redis はメモリ上の代わり）：Preview では楽天BFの記録の保存を拒否し Redis の読み書き0回、API直接呼び出しも400、承認・確認APIは使える、既存テンプレートは Preview 用キーに保存。Production では楽天BFの記録を本番のキーに保存できる
+- VERCEL_ENV=preview でローカル起動した画面：楽天BF（通常投稿・ストーリーズ）で表示とボタンの無効化、承認欄・PNG保存ボタンは表示、B（既存）は従来どおり

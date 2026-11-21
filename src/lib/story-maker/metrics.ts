@@ -8,7 +8,30 @@
 // - 指標は入力された値だけから計算し、分母が無い・0 の場合は null（表示は「—」）。
 
 import type { AbTestKey, AbVariant } from './utm';
-import { STORY_TEMPLATES, type StoryTemplateId, type SlideCount } from './templates';
+import { STORY_TEMPLATES, isBfTemplate, type StoryTemplateId, type SlideCount } from './templates';
+import { parseBfRecordItems, type BfApprovedItem } from './bf-sale';
+
+/**
+ * 記録の枚数。既存のテンプレートは1〜3枚のまま。4枚は楽天BF（商品ページ2枚）のときだけ受け付ける。
+ */
+export type RecordSlideCount = SlideCount | 4;
+/** 1〜3枚目のリーチ（既存の記録の形）。4枚の記録だけ4つ目を持つ */
+export type ReachValues = [number | null, number | null, number | null, (number | null)?];
+/** プレビュー環境で楽天BFの投稿記録を保存させないときの表示（画面・API 共通） */
+export const BF_PREVIEW_RECORD_MESSAGE = 'プレビュー環境では記録を保存できません（楽天BFの投稿記録は本番の管理画面で保存してください）。';
+
+/**
+ * 楽天BFの投稿記録を保存させない環境か。Vercel の Preview は本番と同じ Redis に接続しているため、
+ * 楽天BFの記録は Preview（scope='preview'）では新規・編集とも保存しない。他のテンプレート・本番・ローカルは従来どおり
+ */
+export function bfRecordSaveBlocked(templateId: StoryTemplateId, scope: string): boolean {
+  return isBfTemplate(templateId) && scope === 'preview';
+}
+
+/** テンプレートごとの最大枚数（楽天BFだけ4） */
+export function maxRecordSlides(templateId: StoryTemplateId): number {
+  return templateId === 'bf' ? 4 : 3;
+}
 
 export interface StoryPostRecord {
   id: string;
@@ -17,14 +40,14 @@ export interface StoryPostRecord {
   templateId: StoryTemplateId;
   targetName: string | null;
   targetType: 'person' | 'group' | null;
-  slideCount: SlideCount;
+  slideCount: RecordSlideCount;
   abTest: AbTestKey | null;
   abVariant: AbVariant | null;
   utmCampaign: string;
   utmContent: string;
   url: string;
-  /** 1〜3枚目のリーチ（その枚数が無い・未入力は null） */
-  reach: [number | null, number | null, number | null];
+  /** 1〜3枚目のリーチ（その枚数が無い・未入力は null）。4枚の記録（楽天BF）だけ4枚目も持つ */
+  reach: ReachValues;
   /** リンクスタンプを置いたページ（1始まり） */
   linkSlide: number;
   linkTaps: number | null;
@@ -32,6 +55,11 @@ export interface StoryPostRecord {
   linkSlideReach: number | null;
   ga4Sessions: number | null;
   memo: string;
+  /**
+   * 楽天BF・推し別セール紹介で掲載した商品と、承認欄で確認した価格・確認元・確認者・確認日時（bf・bfstory のときだけ。
+   * 他のテンプレート・この項目ができる前の記録は無し）
+   */
+  saleItems?: BfApprovedItem[] | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -65,26 +93,36 @@ export function parseStoryPostRecord(raw: unknown, now: Date = new Date()): Stor
   const templateId = str(r.templateId, 32) as StoryTemplateId;
   if (!STORY_TEMPLATES.some((t) => t.id === templateId)) throw new StoryRecordError('テンプレートが正しくありません。');
   const slideCount = Number(r.slideCount);
-  if (slideCount !== 1 && slideCount !== 2 && slideCount !== 3) throw new StoryRecordError('投稿枚数は1〜3枚です。');
+  if (slideCount === 4 && maxRecordSlides(templateId) < 4) throw new StoryRecordError('投稿枚数は1〜3枚です。');
+  if (slideCount !== 1 && slideCount !== 2 && slideCount !== 3 && slideCount !== 4) throw new StoryRecordError(`投稿枚数は1〜${maxRecordSlides(templateId)}枚です。`);
   const abTest = r.abTest ? (str(r.abTest, 16) as AbTestKey) : null;
   if (abTest && !AB_KEYS.includes(abTest)) throw new StoryRecordError('A/Bテストの種類が正しくありません。');
   const abVariant = abTest ? (r.abVariant === 'a' || r.abVariant === 'b' ? r.abVariant : null) : null;
   if (abTest && !abVariant) throw new StoryRecordError('A/Bテストのパターン（A・B）を選んでください。');
   const targetType = r.targetType === 'person' || r.targetType === 'group' ? r.targetType : null;
   const reachRaw = Array.isArray(r.reach) ? r.reach : [];
-  const reach: [number | null, number | null, number | null] = [0, 1, 2].map((i) =>
+  // 既存の記録と同じく3つ。4枚のときだけ4つ目を足す（3枚以下の記録の形は変えない）
+  const reach = Array.from({ length: Math.max(3, slideCount) }, (_, i) =>
     i < slideCount ? count(reachRaw[i], `${i + 1}枚目のリーチ`) : null,
-  ) as [number | null, number | null, number | null];
+  ) as ReachValues;
   const linkSlide = Number(r.linkSlide);
   if (!Number.isInteger(linkSlide) || linkSlide < 1 || linkSlide > slideCount) throw new StoryRecordError('リンクを置いたページが正しくありません。');
   const nowIso = now.toISOString();
+  let saleItems: BfApprovedItem[] | null = null;
+  if (isBfTemplate(templateId)) {
+    try {
+      saleItems = parseBfRecordItems(r.saleItems);
+    } catch (err) {
+      throw new StoryRecordError(err instanceof Error ? err.message : String(err));
+    }
+  }
   return {
     id,
     postedAt,
     templateId,
     targetName: str(r.targetName, 100) || null,
     targetType: str(r.targetName, 100) ? targetType : null,
-    slideCount,
+    slideCount: slideCount as RecordSlideCount,
     abTest,
     abVariant,
     utmCampaign: str(r.utmCampaign, 80),
@@ -96,6 +134,7 @@ export function parseStoryPostRecord(raw: unknown, now: Date = new Date()): Stor
     linkSlideReach: count(r.linkSlideReach, 'リンク設置ページのリーチ'),
     ga4Sessions: count(r.ga4Sessions, 'GA4のサイト流入数'),
     memo: str(r.memo, 500),
+    ...(saleItems ? { saleItems } : {}),
     createdAt: str(r.createdAt, 40) || nowIso,
     updatedAt: nowIso,
   };
@@ -125,7 +164,7 @@ export function linkReachOf(r: Pick<StoryPostRecord, 'linkSlideReach' | 'reach' 
 }
 
 export function computeStoryMetrics(r: StoryPostRecord): StoryPostMetrics {
-  const last = r.reach[r.slideCount - 1];
+  const last = r.reach[r.slideCount - 1] ?? null;
   const linkReach = linkReachOf(r);
   return {
     retention: r.slideCount >= 2 ? ratio(last, r.reach[0]) : null,
@@ -168,7 +207,7 @@ function summarize(records: StoryPostRecord[]): AbVariantSummary {
   for (const r of records) {
     const lr = linkReachOf(r);
     if (r.linkTaps !== null && lr !== null && lr > 0) { taps += r.linkTaps; linkReach += lr; tapPosts++; }
-    const first = r.reach[0], last = r.reach[r.slideCount - 1];
+    const first = r.reach[0], last = r.reach[r.slideCount - 1] ?? null;
     if (r.slideCount >= 2 && first !== null && last !== null && first > 0) { firstSum += first; lastSum += last; retentionPosts++; }
     if (r.ga4Sessions !== null) ga4 += r.ga4Sessions;
   }
@@ -208,10 +247,15 @@ export function storyRecordsToCsv(records: StoryPostRecord[]): string {
     const s = v === null ? '' : String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
+  // 4枚の記録（楽天BF）があるときだけ、最後の列に「4枚目リーチ」を足す（無ければ従来と同じ列）
+  const has4 = records.some((r) => r.slideCount === 4);
+  if (has4) head.push('4枚目リーチ');
   const rows = records.map((r) => {
     const m = computeStoryMetrics(r);
     const tpl = STORY_TEMPLATES.find((t) => t.id === r.templateId)?.title ?? r.templateId;
-    return [r.postedAt, tpl, r.targetName, r.slideCount, r.abTest, r.abVariant?.toUpperCase() ?? null, r.utmCampaign, r.utmContent, r.reach[0], r.reach[1], r.reach[2], r.linkSlide, m.linkReach, r.linkTaps, r.ga4Sessions, formatPercent(m.retention), formatPercent(m.tapRate), r.url, r.memo].map(esc).join(',');
+    const cols = [r.postedAt, tpl, r.targetName, r.slideCount, r.abTest, r.abVariant?.toUpperCase() ?? null, r.utmCampaign, r.utmContent, r.reach[0], r.reach[1], r.reach[2], r.linkSlide, m.linkReach, r.linkTaps, r.ga4Sessions, formatPercent(m.retention), formatPercent(m.tapRate), r.url, r.memo];
+    if (has4) cols.push(r.reach[3] ?? null);
+    return cols.map(esc).join(',');
   });
   return `﻿${[head.join(','), ...rows].join('\n')}\n`;
 }

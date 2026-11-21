@@ -72,8 +72,12 @@ function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-/** [data-story-frame] を持つ要素（幅 1080px で描かれるスライド）を PNG にする */
-export async function renderStoryElementPng(element: ReactElement): Promise<Blob> {
+/**
+ * [data-story-frame] を持つ要素（幅 1080px で描かれるスライド）を PNG にする。
+ * height は省略時 1920（ストーリーズ）。フィード投稿のテンプレート（楽天BF）は 1350 を渡す。
+ */
+export async function renderStoryElementPng(element: ReactElement, height: number = STORY_H): Promise<Blob> {
+  const H = height;
   const host = document.createElement('div');
   host.setAttribute('aria-hidden', 'true');
   host.style.cssText = `position:fixed;left:-${STORY_W * 3}px;top:0;width:${STORY_W}px;pointer-events:none;`;
@@ -92,22 +96,22 @@ export async function renderStoryElementPng(element: ReactElement): Promise<Blob
     const inherited = inheritedTextStyle(host);
     const xhtml = new XMLSerializer().serializeToString(clone);
     const svg =
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${STORY_W}" height="${STORY_H}" viewBox="0 0 ${STORY_W} ${STORY_H}">` +
-      `<foreignObject x="0" y="0" width="${STORY_W}" height="${STORY_H}">` +
-      `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${STORY_W}px;height:${STORY_H}px;${inherited.replace(/"/g, "'")}">` +
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${STORY_W}" height="${H}" viewBox="0 0 ${STORY_W} ${H}">` +
+      `<foreignObject x="0" y="0" width="${STORY_W}" height="${H}">` +
+      `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${STORY_W}px;height:${H}px;${inherited.replace(/"/g, "'")}">` +
       `<style>${BASE_CSS}</style>${xhtml}</div></foreignObject></svg>`;
 
     const img = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
     const canvas = document.createElement('canvas');
     canvas.width = STORY_W;
-    canvas.height = STORY_H;
+    canvas.height = H;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('canvas を利用できません');
     // Safari は foreignObject 内のフォント・画像を初回描画で取りこぼすことがあるため2回描く
-    ctx.drawImage(img, 0, 0, STORY_W, STORY_H);
+    ctx.drawImage(img, 0, 0, STORY_W, H);
     await new Promise((r) => setTimeout(r, 80));
-    ctx.clearRect(0, 0, STORY_W, STORY_H);
-    ctx.drawImage(img, 0, 0, STORY_W, STORY_H);
+    ctx.clearRect(0, 0, STORY_W, H);
+    ctx.drawImage(img, 0, 0, STORY_W, H);
     return await canvasToPng(canvas);
   } finally {
     root.unmount();
