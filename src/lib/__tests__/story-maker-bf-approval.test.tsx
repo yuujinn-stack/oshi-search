@@ -30,8 +30,8 @@ import {
   type BfApprovedItem,
   type BfVerificationInput,
 } from '@/lib/story-maker/bf-sale';
-import { approveBfItem, checkBfApprovals, signBfApproval, verifyBfRecordApprovals, verifyBfSignature } from '@/server/story-maker/bf-approval';
-import { saveStoryPost } from '@/server/story-maker/post-store';
+import { approveBfItem, BF_RECORD_NO_ITEMS_MESSAGE, checkBfApprovals, signBfApproval, verifyBfRecordApprovals, verifyBfSignature } from '@/server/story-maker/bf-approval';
+import { saveStoryPost, storyPostsKey } from '@/server/story-maker/post-store';
 import { GET as bfGet, POST as bfPost } from '@/app/api/admin/story-maker/bf-sale/route';
 import { POST as postsPost } from '@/app/api/admin/story-maker/posts/route';
 import BfSalePanel from '@/app/admin/story-maker/BfSalePanel';
@@ -258,11 +258,75 @@ describe('投稿記録の保存（サーバーの時刻と投稿日時で検証�
 
   it('承認日時がサーバーの今より未来なら不可（checkBfRecordTiming）。他のテンプレートの記録は従来どおり', async () => {
     expect(checkBfRecordTiming([{ productId: 'p1', checkedAt: new Date(DURING + 3600_000).toISOString(), saleId: 'rakuten-blackfriday-2026' }], jst(DURING + 3600_000), DURING)[0]).toContain('承認日時が正しくありません');
-    expect(await verifyBfRecordApprovals({ targetName: 'Snow Man', targetType: 'group', postedAt: jst(DURING), saleItems: [] })).toEqual([]);
+    expect(await verifyBfRecordApprovals({ targetName: 'Snow Man', targetType: 'group', postedAt: jst(DURING), saleItems: [] })).toEqual([BF_RECORD_NO_ITEMS_MESSAGE]);
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(Date.parse('2027-03-01T00:00:00+09:00'));
     const goods = { id: 'recgoods01', postedAt: '2027-03-01T09:00', templateId: 'goods', targetName: 'Snow Man', targetType: 'group', slideCount: 2, linkSlide: 2, reach: [10, 5] };
     await expect(saveStoryPost(goods)).resolves.toMatchObject({ templateId: 'goods' });
+  });
+});
+
+describe('承認済みの商品が0件・同じ商品の重複は保存しない', () => {
+  const rec = (templateId: string, extra: Record<string, unknown>) => ({
+    id: `rec${templateId}${Math.random().toString(36).slice(2, 8)}`, postedAt: jst(DURING + 600_000), templateId, targetName: 'Snow Man', targetType: 'group',
+    slideCount: templateId === 'bf' ? 3 : 2, linkSlide: templateId === 'bf' ? 3 : 2, reach: [], utmCampaign: 'c', utmContent: 'x', url: 'https://oshi-search.jp/', ...extra,
+  });
+  const call = async (r: unknown) => postsPost(new NextRequest('http://localhost/api/admin/story-maker/posts', { method: 'POST', body: JSON.stringify({ record: r }) }));
+  const dupMessage = '同じ商品（p1）が2回以上含まれています';
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(DURING + 3600_000);
+  });
+
+  it('通常投稿・ストーリーズとも、承認済みの商品が0件（saleItems が空・無い・null）なら API から保存できない', async () => {
+    for (const t of ['bf', 'bfstory'] as const) {
+      for (const extra of [{ saleItems: [] }, {}, { saleItems: null }]) {
+        const res = await call(rec(t, extra));
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe(BF_RECORD_NO_ITEMS_MESSAGE);
+        await expect(saveStoryPost(rec(t, extra))).rejects.toThrow(BF_RECORD_NO_ITEMS_MESSAGE);
+      }
+    }
+    expect(store.size).toBe(0);
+  });
+
+  it('通常投稿・ストーリーズとも、同じ商品を2回指定すると保存できない（承認が同じでも、別々に承認したものでも）', async () => {
+    const item = await signedAt(DURING);
+    const again = await signedAt(DURING + 60_000); // 同じ商品を別の時刻にもう一度承認したもの
+    for (const t of ['bf', 'bfstory'] as const) {
+      for (const items of [[item, item], [item, again]]) {
+        const res = await call(rec(t, { saleItems: items }));
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toContain(dupMessage);
+      }
+      expect(await verifyBfRecordApprovals({ targetName: 'Snow Man', targetType: 'group', postedAt: jst(DURING + 600_000), saleItems: [item, again] })).toEqual([expect.stringContaining(dupMessage)]);
+      // 1回ずつなら保存できる
+      expect((await call(rec(t, { saleItems: [item] }))).status).toBe(200);
+    }
+  });
+
+  it('PNG保存前の承認確認でも、同じ商品の重複を拒否する（API・関数とも）', async () => {
+    const item = await signedAt(DURING);
+    const again = await signedAt(DURING + 60_000);
+    for (const items of [[item, item], [item, again]]) {
+      const r = await checkBfApprovals(GROUP, items, DURING + 3600_000);
+      expect(r.ok).toBe(false);
+      expect(r.problems).toEqual([{ productId: 'p1', reason: expect.stringContaining(dupMessage) }]);
+      const j = await (await bfPost(req({ action: 'check', ...GROUP, items }))).json();
+      expect(j.ok).toBe(false);
+      expect(j.problems[0].reason).toContain(dupMessage);
+    }
+    expect((await checkBfApprovals(GROUP, [item], DURING + 3600_000)).ok).toBe(true);
+  });
+
+  it('既存の5テンプレートの記録は、商品なしでも従来どおり保存できる', async () => {
+    for (const t of ['vod', 'goods', 'request', 'card', 'goodsmaking']) {
+      const res = await call({ ...rec(t, {}), slideCount: 2, linkSlide: 2, reach: [10, 5] });
+      expect(res.status).toBe(200);
+      expect((await res.json()).record.templateId).toBe(t);
+    }
+    expect(store.get(storyPostsKey())?.size).toBe(5);
   });
 });
 

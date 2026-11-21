@@ -110,6 +110,23 @@ export async function approveBfItem(
   return { ok: true, item: await signBfApproval(r.item, target) };
 }
 
+export const BF_RECORD_NO_ITEMS_MESSAGE = '楽天BFの投稿記録には、承認済みの商品を1件以上選んでください。';
+
+/** 同じ商品（productId）が2回以上含まれていれば、その productId の一覧（Set で検出） */
+function duplicateProductIds(items: readonly { productId: string }[]): string[] {
+  const seen = new Set<string>();
+  const dup = new Set<string>();
+  for (const it of items) {
+    if (seen.has(it.productId)) dup.add(it.productId);
+    else seen.add(it.productId);
+  }
+  return [...dup];
+}
+
+function duplicateMessage(productId: string): string {
+  return `同じ商品（${productId}）が2回以上含まれています。商品は1回ずつ選んでください。`;
+}
+
 export interface BfApprovalProblem {
   productId: string;
   reason: string;
@@ -125,6 +142,8 @@ export async function checkBfApprovals(target: BfTarget, rawItems: unknown, nowM
   } catch (err) {
     return { ok: false, problems: [{ productId: '', reason: err instanceof Error ? err.message : String(err) }] };
   }
+  const dups = duplicateProductIds(items);
+  if (dups.length > 0) return { ok: false, problems: dups.map((productId) => ({ productId, reason: duplicateMessage(productId) })) };
   const phase = bfSalePhase(nowMs);
   const problems: BfApprovalProblem[] = [];
   for (const it of items) {
@@ -136,7 +155,9 @@ export async function checkBfApprovals(target: BfTarget, rawItems: unknown, nowM
 }
 
 /**
- * 投稿記録の保存時の確認。問題があればメッセージの一覧。
+ * 投稿記録の保存時の確認（楽天BFの記録だけで呼ばれる）。問題があればメッセージの一覧。
+ * - 承認済みの商品が0件（saleItems が無い・空）なら保存しない
+ * - 同じ商品（productId）が2回以上含まれていれば保存しない
  * - すべての商品：署名が正しく、投稿日時の時点で承認が有効だったこと
  * - 新しく記録する商品（新規の記録、または保存済みの記録に無かった承認）：さらにサーバーの今の時刻でも承認が有効なこと
  *   （投稿日時だけを過去に戻して期限切れの承認を記録させない）
@@ -148,7 +169,9 @@ export async function verifyBfRecordApprovals(
   savedSaleItems: BfApprovedItem[] | null = null,
 ): Promise<string[]> {
   const items = record.saleItems ?? [];
-  if (items.length === 0) return [];
+  if (items.length === 0) return [BF_RECORD_NO_ITEMS_MESSAGE];
+  const dups = duplicateProductIds(items);
+  if (dups.length > 0) return dups.map(duplicateMessage);
   if (!record.targetName || !record.targetType) return ['セール商品を記録するには、対象（人物・グループ）が必要です。'];
   const target: BfTarget = { type: record.targetType, name: record.targetName };
   const errors: string[] = [];
