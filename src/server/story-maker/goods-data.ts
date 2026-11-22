@@ -15,6 +15,8 @@ import { groupMembershipRecords, personsInGroup } from '@/lib/group-membership';
 import { getBestProductImageUrl } from '@/lib/product-image';
 import { pickStoryGoods, selectGroupGoods, selectPersonGoods, storyGoodsTitle, type GoodsSection } from '@/lib/story-maker/goods-select';
 import type { ProductPanelItem } from '@/lib/story-maker/panels';
+import { productPageUrlOf } from '@/lib/rakuten-event/core';
+import { BF_ITEMS_PER_PAGE, type BfSaleCandidate } from '@/lib/story-maker/bf-sale';
 
 export const STORY_GOODS_MAX = 3;
 const IMAGE_TIMEOUT_MS = 6_000;
@@ -140,4 +142,54 @@ export async function loadStoryGoods(
     url: product.itemUrl,
   }));
   return { targetName: name, items, totalOnSite, imageFailures: items.filter((x) => !x.imageSrc).length };
+}
+
+// ── 楽天BF・推し別セール紹介：候補の一覧と、採用した商品の画像 ─────────────────────
+// 候補は B と同じ選び方（公開中の人物ページ・グループページの関連商品）。BF の対象かどうかは分からないため、
+// ここでは候補として返すだけ（掲載は管理画面の承認欄で確認した商品だけ。src/lib/story-maker/bf-sale.ts）。
+
+export const STORY_SALE_CANDIDATES_MAX = 40;
+
+async function sectionsOf(target: { type: 'person' | 'group'; name: string }): Promise<{ name: string; sections: GoodsSection[] }> {
+  const name = target.name.trim();
+  if (!name || name.length > 100) throw new StoryGoodsError('人物またはグループを選んでください。', 400);
+  return { name, sections: target.type === 'person' ? await personSections(name) : await groupSections(name) };
+}
+
+/** セクションを順番に1件ずつ（写真集 → CD → DVD → グッズ → 2周目…）。B の pickStoryGoods と同じ並べ方 */
+function interleave(sections: GoodsSection[], max: number) {
+  return pickStoryGoods(sections, max);
+}
+
+export async function loadStorySaleCandidates(target: { type: 'person' | 'group'; name: string }): Promise<{ targetName: string; candidates: BfSaleCandidate[]; totalOnSite: number }> {
+  const { name, sections } = await sectionsOf(target);
+  const totalOnSite = sections.reduce((n, s) => n + s.products.length, 0);
+  const candidates: BfSaleCandidate[] = interleave(sections, STORY_SALE_CANDIDATES_MAX).map(({ product, section }) => {
+    const thumb = product.imageUrl ? getBestProductImageUrl(product.imageUrl) : '';
+    return {
+      productId: product.id,
+      title: storyGoodsTitle(product.title),
+      section,
+      pageUrl: productPageUrlOf(product.itemUrl) ?? productPageUrlOf(product.affiliateUrl),
+      thumbUrl: /^https:\/\//.test(thumb) ? thumb : null,
+      storedPrice: Number.isInteger(product.price) && product.price > 0 ? product.price : null,
+    };
+  });
+  return { targetName: name, candidates, totalOnSite };
+}
+
+/** 採用した商品（最大3件）の商品画像を data: URL で（候補に無いIDは無視する） */
+export async function loadStorySaleImages(
+  target: { type: 'person' | 'group'; name: string },
+  productIds: string[],
+  opts: { fetchImpl?: typeof fetch } = {},
+): Promise<{ productId: string; imageSrc: string | null }[]> {
+  const ids = Array.from(new Set(productIds)).slice(0, BF_ITEMS_PER_PAGE);
+  const { sections } = await sectionsOf(target);
+  const byId = new Map(sections.flatMap((s) => s.products).map((p) => [p.id, p]));
+  return Promise.all(ids.map(async (id) => {
+    const p = byId.get(id);
+    const imageSrc = p?.imageUrl ? await fetchImageAsDataUrl(getBestProductImageUrl(p.imageUrl), opts) : null;
+    return { productId: id, imageSrc };
+  }));
 }

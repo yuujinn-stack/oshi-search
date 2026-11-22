@@ -4,7 +4,7 @@ import {
   COLOR_PRESETS,
   DEFAULT_DESIGN,
   SLIDE_COUNTS,
-  STORY_TEMPLATES,
+  STORY_TEMPLATES as ALL_STORY_TEMPLATES,
   fillStoryText,
   getStoryTemplate,
   linkTargetOptions,
@@ -33,6 +33,9 @@ import { SAFE_BOTTOM, SAFE_TOP, StorySlide, fitFontSize, fitStoryHeading, headin
 
 const milk: StoryTarget = { type: 'group', name: 'M!LK', pagePath: '/groups/M!LK' };
 const person: StoryTarget = { type: 'person', name: '山田花子', pagePath: `/person/${encodeURIComponent('山田花子')}` };
+
+// このファイルはストーリーズの5テンプレート（A〜E）が対象。固定構成のフィード投稿（楽天BF・推し別セール紹介）は story-maker-bf.test.tsx
+const STORY_TEMPLATES = ALL_STORY_TEMPLATES.filter((t) => !t.fixed);
 
 describe('story-maker templates', () => {
   it('has the 5 templates with the requested default slide counts', () => {

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import PersonCombobox, { type PersonOption } from '@/components/admin/PersonCombobox';
 import PublishConfirmModal from './PublishConfirmModal';
 import { safeFetchJson } from './safe-fetch-json';
+import BfSaleTemplateCard from './BfSaleTemplateCard';
 import { INSTAGRAM_TEMPLATES, DEFAULT_INSTAGRAM_TEMPLATE_ID, getInstagramTemplateMeta } from '@/lib/instagram-templates';
 
 interface PostImage {
@@ -204,6 +205,9 @@ export default function InstagramPostClient({ persons }: Props) {
           </p>
         )}
       </section>
+
+      {/* 手動投稿用：楽天BF・推し別セール紹介（ストーリーズ作成で画像を作る。自動投稿には使わない） */}
+      <BfSaleTemplateCard personName={personName} />
 
       {/* 投稿を作成 */}
       <section className="bg-white border border-gray-200 rounded-xl p-5">
