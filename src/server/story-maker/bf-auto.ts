@@ -6,6 +6,8 @@ import {
   type ItemCheckResult,
 } from '@/lib/rakuten-event/item-check';
 import {
+  BF_AUTO_PREVIEW_RESULT,
+  bfAutoLookupBlocked,
   currentPriceDraft,
   pickBfLookupTargets,
   rankBfAutoCandidates,
@@ -13,9 +15,12 @@ import {
   type BfAutoResult,
 } from '@/lib/story-maker/bf-auto';
 import { loadStorySaleCandidates } from './goods-data';
+import { storyPostsScope } from './post-store';
 
 /** 商品候補を楽天の公式APIで照合。候補・承認・商品データをDB/Redisへ保存しない。 */
 export async function suggestBfProducts(target: { type: 'person' | 'group'; name: string }): Promise<BfAutoResult> {
+  // Vercel の Preview：候補の読み込み・楽天API・API制御用のRedisロックのどれにも触れる前に止める
+  if (bfAutoLookupBlocked(storyPostsScope())) return { ...BF_AUTO_PREVIEW_RESULT };
   const { candidates } = await loadStorySaleCandidates(target);
   const lookup = pickBfLookupTargets(candidates);
   if (lookup.length === 0) return { items: [], recommendedIds: [], checkedCount: 0, warning: '楽天の商品ページを特定できる候補がありません。手動で商品ページを確認してください。' };

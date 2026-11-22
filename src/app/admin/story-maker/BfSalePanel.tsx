@@ -21,7 +21,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { currentPriceDraft, type BfAutoItem, type BfAutoResult } from '@/lib/story-maker/bf-auto';
+import { BF_AUTO_PREVIEW_MESSAGE, bfAutoLookupBlocked, currentPriceDraft, type BfAutoItem, type BfAutoResult } from '@/lib/story-maker/bf-auto';
 import {
   BF_CONDITIONS_MAX,
   BF_DISCOUNT_KINDS,
@@ -112,7 +112,9 @@ export async function checkBfApprovalsOnServer(target: StoryTarget, items: BfApp
   }
 }
 
-export default function BfSalePanel({ target, onChange, serverNow }: { target: StoryTarget | null; onChange: (s: BfPanelState) => void; serverNow: number }) {
+export default function BfSalePanel({ target, onChange, serverNow, envScope = '' }: { target: StoryTarget | null; onChange: (s: BfPanelState) => void; serverNow: number; envScope?: string }) {
+  // Vercel の Preview では楽天APIの自動照合を呼ばない（サーバー側でも止める）。候補の読み込み・手動入力・承認は使える
+  const autoBlocked = bfAutoLookupBlocked(envScope);
   // サーバーの時刻。初回の描画はページを描いたときのサーバーの時刻（SSR と同じ値）、表示後は performance.now() で進める
   const clock = useRef<{ server: number; perf: number | null }>({ server: serverNow, perf: null });
   const serverTime = () => (clock.current.perf === null ? clock.current.server : clock.current.server + (performance.now() - clock.current.perf));
@@ -210,7 +212,7 @@ export default function BfSalePanel({ target, onChange, serverNow }: { target: S
 
   /** 候補読込後に最大6件だけ公式楽天APIで照合。最新価格は下書きにのみ反映する。 */
   async function loadAutoSuggestions(loaded: BfSaleCandidate[]) {
-    if (!target) return;
+    if (!target || autoBlocked) return;
     setAutoLoading(true);
     setAutoItems({});
     setAutoRecommended([]);
@@ -312,6 +314,11 @@ export default function BfSalePanel({ target, onChange, serverNow }: { target: S
         <b className="text-amber-200">楽天BF対象か・通常価格・セール価格・適用条件</b>は商品ページで確認してから承認してください（API価格だけでBF対象と判断しません）。
         最大割引率は「投稿に使う」を選んだ承認済みの商品だけから計算します。
       </p>
+      {autoBlocked && (
+        <p data-testid="bf-auto-preview-disabled" className="rounded-lg border border-orange-400 bg-stone-800/70 p-2 text-xs font-bold text-orange-200">
+          {BF_AUTO_PREVIEW_MESSAGE}商品候補の読み込み・手動での入力・承認はこれまでどおり使えます。
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={() => void loadCandidates()} disabled={!target || loading} className="px-4 py-2 rounded-lg bg-amber-400 text-stone-900 font-black hover:bg-amber-300 disabled:opacity-40">
@@ -326,12 +333,14 @@ export default function BfSalePanel({ target, onChange, serverNow }: { target: S
 
       {candidates && (
         <>
+          {!autoBlocked && (
           <div className="space-y-1 rounded-lg border border-amber-700 bg-stone-800/70 p-2 text-xs">
             {autoLoading ? <p className="text-amber-200">楽天公式APIで商品と現在価格を照合中…（最大6件・最大数秒）。商品は自動承認されません。</p> :
               <p className="text-amber-200">自動照合 {autoCheckedCount}件・おすすめ候補 {autoRecommended.length}件（上位に並べ替え済み・未承認）。{autoRecommended.length > 0 ? 'おすすめの確認欄を開きました。' : '価格を取得できない商品は従来どおり手動で確認できます。'}</p>}
             {autoWarning && <p className="text-orange-300">{autoWarning}</p>}
             <button type="button" onClick={() => void loadAutoSuggestions(candidates)} disabled={autoLoading || loading} className="underline text-amber-200 disabled:opacity-40">最新価格を再照合する</button>
           </div>
+          )}
           <p className="text-xs text-stone-400">
             {target?.name} のページに公開中の関連商品 {total}件から {candidates.length}件（写真集・CD・Blu-ray・DVD・グッズを順番に）。
             承認済み {approvedCount}件・投稿に使う {usable.length}/{BF_MAX_ITEMS}件（3件まで3枚・4件以上で4枚）

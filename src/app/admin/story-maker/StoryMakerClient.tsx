@@ -692,7 +692,7 @@ export default function StoryMakerClient({ persons, groups, initial, serverNow, 
 
           {isBf ? (
             <div className="space-y-2">
-              <BfSalePanel key={`${target?.type ?? ''}:${target?.name ?? ''}`} target={target} onChange={setBfState} serverNow={serverNow} />
+              <BfSalePanel key={`${target?.type ?? ''}:${target?.name ?? ''}`} target={target} onChange={setBfState} serverNow={serverNow} envScope={recordScope} />
               {templateId === 'bfstory' && bfState.items.length > BF_STORY_MAX_ITEMS && (
                 <p data-testid="bf-story-limit" className="text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2">
                   ストーリーズには「投稿に使う」の先頭{BF_STORY_MAX_ITEMS}件だけを載せます（{bfState.items.length}件中）。最大割引率もこの{BF_STORY_MAX_ITEMS}件から計算します。残りの商品はフィード版で紹介してください。

@@ -33,7 +33,22 @@ export interface BfAutoResult {
   recommendedIds: string[];
   checkedCount: number;
   warning: string | null;
+  /** 'preview'：Vercel の Preview のため自動照合を止めた（楽天API・API制御用のRedisロックに触れていない） */
+  disabled?: 'preview';
 }
+
+/**
+ * Vercel の Preview は本番と同じ Redis（楽天APIの呼び出し制御のロック）・同じ楽天APIの利用枠を使うため、
+ * Preview では自動照合を止める。商品候補の読み込み・手動入力・承認は Preview でも使える。
+ */
+export const BF_AUTO_PREVIEW_MESSAGE = 'プレビュー環境では商品の自動照合を停止しています。本番環境で利用できます。';
+
+/** 自動照合を止める環境か（scope は storyPostsScope() の値：'production' | 'preview' | 'local'） */
+export function bfAutoLookupBlocked(scope: string | undefined): boolean {
+  return scope === 'preview';
+}
+
+export const BF_AUTO_PREVIEW_RESULT: BfAutoResult = { items: [], recommendedIds: [], checkedCount: 0, warning: BF_AUTO_PREVIEW_MESSAGE, disabled: 'preview' };
 
 /** 商品URLから楽天APIの照合キーを生成。URLが特定できない商品は取得対象から除外。 */
 export function pickBfLookupTargets(candidates: readonly BfSaleCandidate[], limit = BF_AUTO_LOOKUP_LIMIT): BfLookupTarget[] {
