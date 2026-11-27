@@ -97,3 +97,7 @@ jobs:
           PRICE_REFRESH_REQUIRE_PERSONS: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'manual-test' && '1' || '' }}
           PRICE_REFRESH_BUDGET_MIN: ${{ github.event_name == 'workflow_dispatch' && inputs.budget_min || '20' }}
           PRICE_REFRESH_LOOKUP_PER_PERSON: ${{ github.event_name == 'workflow_dispatch' && inputs.lookup_per_person || '60' }}
+          # 販売状況の記録（リポジトリ変数。保護トリガーの更新〔scripts/price-refresh/stock-guard.ts apply〕の後に 1 にする。1 以外は従来どおり価格だけ）
+          PRICE_REFRESH_STOCK_FIELDS: ${{ vars.PRICE_REFRESH_STOCK_FIELDS }}
+          # 先に処理する人物（リポジトリ変数。カンマ区切り。SNS 動画でよく使う人物。最短更新間隔・上限は同じ＝楽天APIの回数は増えない）
+          PRICE_REFRESH_PRIORITY_PERSONS: ${{ vars.PRICE_REFRESH_PRIORITY_PERSONS }}

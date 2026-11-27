@@ -7,7 +7,7 @@ import { products as productsTable, batchMeta as batchMetaTable } from '@/db/sch
 import { and, eq, sql } from 'drizzle-orm';
 import { upsertProduct, updateProductItemsOnly } from '@/db/write';
 import { retryOnProductWriteConflict } from '@/lib/product-write-guard';
-import type { RakutenItem } from '@/types/rakuten';
+import type { RakutenItem, StockStatus } from '@/types/rakuten';
 import { countDbRead } from '@/lib/price-refresh-io';
 import type { ProductCategory } from '@/types/person';
 import { isLegacyIchibaId, isNewIchibaId } from '@/lib/rakuten-item-id';
@@ -295,6 +295,31 @@ export interface PriceFields {
  */
 export const PRICE_FIELD_KEYS = ['price', 'priceFetchedAt'] as const;
 
+/**
+ * 販売状況の項目（価格の取得日時とは別に、楽天APIで購入できるかを確認した結果と日時）。価格更新専用モードが PRICE_REFRESH_STOCK_FIELDS=1 のときだけ書く
+ * （DB の保護トリガー products_price_refresher_guard がこの2項目も許可するよう更新してから有効にする。scripts/price-refresh/stock-guard.ts）
+ */
+export const STOCK_FIELD_KEYS = ['stockStatus', 'stockCheckedAt'] as const;
+/** 価格更新専用モードが変更する項目（価格＋販売状況）。価格以外の変更の検知（指紋・比較）はこれらを除いて比べる */
+export const PRICE_REFRESH_FIELD_KEYS = [...PRICE_FIELD_KEYS, ...STOCK_FIELD_KEYS] as const;
+
+/** 価格更新で販売状況の項目を書くか（初期は書かない。保護トリガーの更新後に PRICE_REFRESH_STOCK_FIELDS=1） */
+export function stockFieldsEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.PRICE_REFRESH_STOCK_FIELDS ?? '').trim() === '1';
+}
+
+/** 販売状況の確認結果（保存する形） */
+export interface StockFields {
+  stockStatus: StockStatus;
+  stockCheckedAt: number;
+}
+
+function applyStockFields(item: RakutenItem, f: StockFields | undefined): RakutenItem {
+  if (!f) return item;
+  if (item.stockStatus === f.stockStatus && item.stockCheckedAt === f.stockCheckedAt) return item;
+  return { ...item, stockStatus: f.stockStatus, stockCheckedAt: f.stockCheckedAt };
+}
+
 function applyPriceFields(item: RakutenItem, f: PriceFields): RakutenItem {
   return { ...item, price: f.price, priceFetchedAt: f.priceFetchedAt };
 }
@@ -341,6 +366,8 @@ export interface PriceOnlyMergeResult {
   notEligible: number;
   /** 前回の価格から30%以上の変動などで、反映せず確認対象にした商品（変更しない） */
   reviews: PriceReview[];
+  /** 販売状況の項目を更新した既存商品（stockOf を渡したときだけ） */
+  stockUpdated: number;
 }
 
 /**
@@ -352,8 +379,11 @@ export function mergePriceFieldsOnly(
   existing: readonly RakutenItem[],
   fetched: readonly RakutenItem[],
   fetchedAt: number,
-  /** eligibleIds：更新してよい商品ID（判定が related の商品）。省略時はすべて */
-  opts: { eligibleIds?: ReadonlySet<string> } = {},
+  /**
+   * eligibleIds：更新してよい商品ID（判定が related の商品）。省略時はすべて。
+   * stockOf：検索結果の商品の販売状況（渡したときだけ販売状況の項目も更新する。価格の確認待ち・価格なしでも販売状況は記録する）
+   */
+  opts: { eligibleIds?: ReadonlySet<string>; stockOf?: (fetched: RakutenItem) => StockStatus | undefined } = {},
 ): PriceOnlyMergeResult {
   const fetchedByKey = new Map<string, RakutenItem>();
   const fetchedById = new Map<string, RakutenItem>();
@@ -364,7 +394,7 @@ export function mergePriceFieldsOnly(
   }
   const existingKeys = new Set<string>();
   const existingIds = new Set<string>();
-  let updated = 0, notReturned = 0, identityMismatches = 0, unidentifiable = 0, notEligible = 0;
+  let updated = 0, notReturned = 0, identityMismatches = 0, unidentifiable = 0, notEligible = 0, stockUpdated = 0;
   const reviews: PriceReview[] = [];
   const items = existing.map((item) => {
     existingIds.add(item.id);
@@ -383,19 +413,23 @@ export function mergePriceFieldsOnly(
       else notReturned++;
       return item;
     }
-    if (!(Number(f.price) > 0)) { notReturned++; return item; }
+    // 販売状況（その検索で確認できたときだけ。価格の扱いとは別に記録する）
+    const stock = opts.stockOf?.(f);
+    const withStock = stock ? applyStockFields(item, { stockStatus: stock, stockCheckedAt: fetchedAt }) : item;
+    if (withStock !== item) stockUpdated++;
+    if (!(Number(f.price) > 0)) { notReturned++; return withStock; }
     // 前回の価格から30%以上の変動は反映せず確認対象にする（価格・取得日時とも変えない）
     const review = priceChangeReview(item.id, item.price, Number(f.price));
-    if (review) { reviews.push(review); return item; }
+    if (review) { reviews.push(review); return withStock; }
     updated++;
-    return applyPriceFields(item, { price: Number(f.price), priceFetchedAt: fetchedAt });
+    return applyPriceFields(withStock, { price: Number(f.price), priceFetchedAt: fetchedAt });
   });
   let newCandidates = 0;
   for (const f of fetched) {
     const k = productIdentityKey(f);
     if (k ? !existingKeys.has(k) : !existingIds.has(f.id)) newCandidates++;
   }
-  return { items, updated, notReturned, newCandidates, identityMismatches, unidentifiable, notEligible, reviews };
+  return { items, updated, notReturned, newCandidates, identityMismatches, unidentifiable, notEligible, reviews, stockUpdated };
 }
 
 /** 1カテゴリの行を読む（対象カテゴリだけ）。無ければ null */
@@ -414,9 +448,11 @@ export async function savePriceOnlyItems(personName: string, category: ProductCa
   return updateProductItemsOnly(personName, category, items, fetchedAt, { expectedItems });
 }
 
-export interface PriceUpdate extends PriceFields {
+export interface PriceUpdate extends Partial<PriceFields> {
   /** 取得時に確認した楽天の同一性キー（保存直前にも一致を確認する） */
   identityKey: string;
+  /** 販売状況（確認できたときだけ。価格を取得できなかった商品＝品切れ・見つからない等は販売状況だけを更新する） */
+  stock?: StockFields;
 }
 
 /**
@@ -427,7 +463,7 @@ export async function applyPriceUpdates(
   personName: string,
   category: ProductCategory,
   updates: ReadonlyMap<string, PriceUpdate>,
-): Promise<{ applied: number; skipped: number; reviews: PriceReview[] }> {
+): Promise<{ applied: number; skipped: number; reviews: PriceReview[]; stockApplied?: number }> {
   if (updates.size === 0) return { applied: 0, skipped: 0, reviews: [] };
   return retryOnProductWriteConflict(() => applyPriceUpdatesOnce(personName, category, updates));
 }
@@ -436,16 +472,17 @@ async function applyPriceUpdatesOnce(
   personName: string,
   category: ProductCategory,
   updates: ReadonlyMap<string, PriceUpdate>,
-): Promise<{ applied: number; skipped: number; reviews: PriceReview[] }> {
+): Promise<{ applied: number; skipped: number; reviews: PriceReview[]; stockApplied?: number }> {
   const rows = await db.select().from(productsTable)
     .where(and(eq(productsTable.personName, personName), eq(productsTable.category, category)));
   const row = rows.find((r) => r.category === category);
   countDbRead(row ? 1 : 0, row?.items); // 価格更新の読み込み量の記録（表示用）
   if (!row) return { applied: 0, skipped: updates.size, reviews: [] };
-  const { items, applied, reviews } = applyPriceUpdatesToItems(row.items as RakutenItem[], updates);
+  const { items, applied, reviews, stockApplied } = applyPriceUpdatesToItems(row.items as RakutenItem[], updates);
+  const changed = stockApplied > 0;
   // 既存行の items だけを UPDATE（INSERT しない）。カテゴリの再検索日時（fetched_at）は元の値のまま
-  if (applied > 0) await updateProductItemsOnly(personName, category, items, row.fetchedAt.getTime(), { expectedItems: row.items as RakutenItem[] });
-  return { applied, skipped: updates.size - applied, reviews: reviews.map((r) => ({ ...r, category })) };
+  if (applied > 0 || changed) await updateProductItemsOnly(personName, category, items, row.fetchedAt.getTime(), { expectedItems: row.items as RakutenItem[] });
+  return { applied, skipped: updates.size - applied, reviews: reviews.map((r) => ({ ...r, category })), stockApplied };
 }
 
 /**
@@ -455,18 +492,22 @@ async function applyPriceUpdatesOnce(
 export function applyPriceUpdatesToItems(
   items: readonly RakutenItem[],
   updates: ReadonlyMap<string, PriceUpdate>,
-): { items: RakutenItem[]; applied: number; reviews: PriceReview[] } {
+): { items: RakutenItem[]; applied: number; reviews: PriceReview[]; stockApplied: number } {
   let applied = 0;
+  let stockApplied = 0;
   const reviews: PriceReview[] = [];
   const next = items.map((item) => {
     const u = updates.get(item.id);
     if (!u || productIdentityKey(item) !== u.identityKey) return item;
+    const withStock = applyStockFields(item, u.stock);
+    if (withStock !== item) stockApplied++;
+    if (u.price === undefined || u.priceFetchedAt === undefined) return withStock;
     const review = priceChangeReview(item.id, item.price, u.price);
-    if (review) { reviews.push(review); return item; }
+    if (review) { reviews.push(review); return withStock; }
     applied++;
-    return applyPriceFields(item, u);
+    return applyPriceFields(withStock, { price: u.price, priceFetchedAt: u.priceFetchedAt });
   });
-  return { items: next, applied, reviews };
+  return { items: next, applied, reviews, stockApplied };
 }
 
 /** 商品が保存されている人物名（読み取りのみ） */

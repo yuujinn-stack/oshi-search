@@ -6,7 +6,7 @@
  *  - 楽天の商品コードが違う場合は別商品として更新しない、アフィリエイトURLを保護
  *  - 楽天APIのエラー・429・タイムアウト・0件、途中停止、OpenAI キーなし
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
 
@@ -65,6 +65,7 @@ vi.mock('@/db/client', () => ({
 
 import { refreshPersonPrices } from '../price-refresh';
 import { productIdentityKey } from '../product-store';
+import { booksStockOf, ichibaStockOf, markStock } from '../rakuten-search-stock';
 
 const PERSON = { name: '梅澤美波', group: '乃木坂46', config: {} };
 const OLD = Date.UTC(2026, 6, 1);
@@ -537,5 +538,75 @@ describe('カテゴリの要約を渡されたら人物の全商品は読まな�
     expect(rakuten.getProductsByCategory.mock.calls.map((c) => c[2])).toEqual(['グッズ']);
     expect(r.categories.find((c) => c.category === 'CD')).toMatchObject({ status: 'no_eligible', notEligible: 1 });
     expect(rowItems('グッズ')[0]).toMatchObject({ price: 1100 });
+  });
+});
+
+describe('カテゴリ検索 (A) の販売状況（PRICE_REFRESH_STOCK_FIELDS=1 のときだけ。追加の楽天APIなし）', () => {
+  afterEach(() => { delete process.env.PRICE_REFRESH_STOCK_FIELDS; });
+  const marked = (item: RakutenItem, stock: Parameters<typeof markStock>[1]) => markStock(item, stock);
+
+  it('楽天ブックス: 検索結果の在庫状況で区別（予約受付中・メーカー取り寄せは在庫ありと別・空は不明）。価格は従来どおり更新し、販売状況は別に記録', async () => {
+    process.env.PRICE_REFRESH_STOCK_FIELDS = '1';
+    const nums = ['1', '2', '3', '4', '5'];
+    seed('写真集', nums.map((n) => book(n)));
+    const avail = ['1', '4', '5', '6', ''];
+    rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === '写真集'
+      ? ok(nums.map((n, i) => marked(book(n, { price: 1600 }), booksStockOf(avail[i], 1600))))
+      : { status: 'empty' }));
+    const r = await refreshPersonPrices(PERSON);
+    const items = rowItems('写真集');
+    expect(r.updated).toBe(5);
+    expect(items.map((x) => x.stockStatus)).toEqual(['available', 'backorder', 'preorder', 'unavailable', 'unknown']);
+    expect(items.every((x) => x.stockCheckedAt === x.priceFetchedAt)).toBe(true);
+    expect(r.categories.find((c) => c.category === '写真集')?.stockUpdated).toBe(5);
+  });
+
+  it('価格の確認待ち（30%以上の変動）でも販売状況は記録する。検索結果に無い商品・販売状況の分からない結果は変えない', async () => {
+    process.env.PRICE_REFRESH_STOCK_FIELDS = '1';
+    seed('グッズ', [ichiba('ich-s:a', 's', 'a'), ichiba('ich-s:b', 's', 'b'), ichiba('ich-s:c', 's', 'c', { stockStatus: 'available', stockCheckedAt: 7 })]);
+    rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === 'グッズ'
+      ? ok([marked(ichiba('ich-s:a', 's', 'a', { price: 5000 }), ichibaStockOf(1, 5000)), marked(ichiba('ich-s:b', 's', 'b', { price: 1000 }), ichibaStockOf(undefined, 1000))])
+      : { status: 'empty' }));
+    const r = await refreshPersonPrices(PERSON);
+    const [a, b, c] = rowItems('グッズ');
+    expect(r.reviews.map((x) => x.id)).toEqual(['ich-s:a']);
+    expect(a.price).toBe(1000);
+    expect(a.priceFetchedAt).toBeUndefined();
+    expect(a.stockStatus).toBe('available');
+    expect(b.stockStatus).toBeUndefined();
+    expect(c).toMatchObject({ stockStatus: 'available', stockCheckedAt: 7 });
+  });
+
+  it('PRICE_REFRESH_STOCK_FIELDS が無ければ販売状況の項目は書かない（従来どおり）', async () => {
+    seed('写真集', [book('9')]);
+    rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === '写真集' ? ok([marked(book('9', { price: 1600 }), 'available')]) : { status: 'empty' }));
+    await refreshPersonPrices(PERSON);
+    expect(rowItems('写真集')[0].stockStatus).toBeUndefined();
+    expect(rowItems('写真集')[0].price).toBe(1600);
+  });
+
+  it('判定（楽天ブックスの仕様 1〜6）: 1〜3かつ価格あり＝在庫あり、4＝メーカー取り寄せ、5＝予約受付中、6＝購入できない、空・価格なし＝不明（品切れと断定しない）・項目なし＝記録しない', () => {
+    for (const a of ['1', '2', '3', 1, ' 2 ']) expect(booksStockOf(a, 100)).toBe('available');
+    expect(booksStockOf('4', 100)).toBe('backorder');
+    expect(booksStockOf('5', 100)).toBe('preorder');
+    expect(booksStockOf('6', 100)).toBe('unavailable');
+    for (const a of ['', '0', '9', 'x']) expect(booksStockOf(a, 100)).toBe('unknown');
+    expect(booksStockOf('1', 0)).toBe('unknown');
+    expect(booksStockOf(undefined, 100)).toBeUndefined();
+    expect(booksStockOf(null, 100)).toBeUndefined();
+    expect(ichibaStockOf(1, 100)).toBe('available');
+    expect(ichibaStockOf(0, 100)).toBe('unavailable');
+    expect(ichibaStockOf(1, 0)).toBe('unknown');
+    expect(ichibaStockOf(undefined, 100)).toBeUndefined();
+  });
+
+  it('楽天のエラー（503）・取得失敗のカテゴリは販売状況を変えない（在庫切れと誤判定しない）', async () => {
+    process.env.PRICE_REFRESH_STOCK_FIELDS = '1';
+    seed('写真集', [book('7', { stockStatus: 'available', stockCheckedAt: 5 })]);
+    for (const res of [{ status: 'upstream_error', httpStatus: 503 }, { status: 'upstream_error', httpStatus: 429 }, { status: 'error' }, { status: 'empty' }]) {
+      rakuten.getProductsByCategory.mockImplementation(async (_n: string, _g: string, cat: string) => (cat === '写真集' ? res : { status: 'empty' }));
+      await refreshPersonPrices(PERSON);
+      expect(rowItems('写真集')[0]).toMatchObject({ stockStatus: 'available', stockCheckedAt: 5 });
+    }
   });
 });

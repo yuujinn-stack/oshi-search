@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { RakutenItem } from '@/types/rakuten';
 import type { ProductCategory } from '@/types/person';
 
@@ -279,4 +279,86 @@ describe('価格更新中でも他の処理が楽天APIを使えるよう、使�
     expect(fetchMock).toHaveBeenCalledTimes(12);
     expect(r).toMatchObject({ stoppedBy: 'upstream_errors', failed: 3 });
   }, 60000);
+});
+
+describe('販売状況の記録（PRICE_REFRESH_STOCK_FIELDS=1 のときだけ。価格の取得日時とは別）', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    db.rows.length = 0; db.upserts = 0;
+    __resetRakutenApiGateForTests();
+    process.env.RAKUTEN_APP_ID = 'test-app'; process.env.RAKUTEN_ACCESS_KEY = 'test-key';
+    process.env.PRICE_REFRESH_STOCK_FIELDS = '1';
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => { delete process.env.PRICE_REFRESH_STOCK_FIELDS; });
+
+  it('購入できる（在庫あり）: 価格と販売状況 available を同じ日時で記録。予約受付中・メーカー取り寄せは価格は従来どおり反映し、販売状況は区別する', async () => {
+    seed('写真集', [book('100'), book('101'), book('102')]);
+    fetchMock.mockResolvedValueOnce(okRes([booksItem('100', 2100, '1')])).mockResolvedValueOnce(okRes([booksItem('101', 2100, '5')])).mockResolvedValueOnce(okRes([booksItem('102', 2100, '4')]));
+    const r = await lookupPricesByCode(PERSON, cands([book('100'), book('101'), book('102')]));
+    const [a, b, c] = rowItems('写真集');
+    expect(r.applied).toBe(3);
+    expect(a.stockStatus).toBe('available');
+    expect(a.stockCheckedAt).toBe(a.priceFetchedAt);
+    expect(b.stockStatus).toBe('preorder');
+    expect(c.stockStatus).toBe('backorder');
+  });
+
+  it('メーカーに在庫確認（unavailable）・在庫状況が空（unknown＝品切れと断定しない）・見つからない（not_found）・別の商品番号だけ（mismatched）: 価格は変えず販売状況だけ記録', async () => {
+    seed('写真集', [book('200'), book('201'), book('202'), book('203')]);
+    fetchMock
+      .mockResolvedValueOnce(okRes([booksItem('200', 2000, '6')]))
+      .mockResolvedValueOnce(okRes([booksItem('201', 2000, '')]))
+      .mockResolvedValueOnce(okRes([]))
+      .mockResolvedValueOnce(okRes([booksItem('999', 2000, '1')]));
+    const r = await lookupPricesByCode(PERSON, cands([book('200'), book('201'), book('202'), book('203')]));
+    const items = rowItems('写真集');
+    expect(r.applied).toBe(0);
+    expect(r.stockApplied).toBe(4);
+    expect(items.map((x) => x.stockStatus)).toEqual(['unavailable', 'unknown', 'not_found', 'mismatched']);
+    for (const x of items) { expect(x.price).toBe(2000); expect(x.priceFetchedAt).toBeUndefined(); expect(x.stockCheckedAt).toBeGreaterThan(0); }
+  });
+
+  it('楽天市場: 返らなければ unavailable、別の商品コードなら mismatched（価格は変えない）', async () => {
+    const page = (n: string) => `https://item.rakuten.co.jp/shop/${n}/`;
+    const g = (n: string) => ({ ...book(n), id: `ich-shop:${n}`, itemUrl: aff(page(n)), affiliateUrl: aff(page(n)), itemCode: `shop:${n}`, category: 'グッズ' }) as RakutenItem;
+    seed('グッズ', [g('1'), g('2')]);
+    fetchMock.mockResolvedValueOnce(okRes([])).mockResolvedValueOnce(okRes([{ Item: { itemCode: 'shop:3', itemPrice: 100 } }]));
+    await lookupPricesByCode(PERSON, cands([g('1'), g('2')], 'グッズ'));
+    expect(rowItems('グッズ').map((x) => x.stockStatus)).toEqual(['unavailable', 'mismatched']);
+  });
+
+  it('共有キャッシュの「購入できない」結果（期限内）は楽天APIを呼ばずに販売状況として記録する', async () => {
+    seed('写真集', [book('300'), book('301')]);
+    const at = Date.now() - 1000;
+    const cache = { getMany: async () => new Map<string, CachedLookup>([
+      ['book:300', { itemCode: 'book:300', price: 0, fetchedAt: at, status: 'unavailable', stock: 'unavailable' }],
+      // 販売状況の記録が無い古いキャッシュ（内訳が分からない）は販売状況を記録しない
+      ['book:301', { itemCode: 'book:301', price: 0, fetchedAt: at, status: 'unavailable' }],
+    ]), setMany: async () => {} };
+    const r = await lookupPricesByCode(PERSON, cands([book('300'), book('301')]), { cache });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(r.fromCache).toBe(2);
+    expect(rowItems('写真集')[0]).toMatchObject({ stockStatus: 'unavailable', stockCheckedAt: at });
+    expect(rowItems('写真集')[1].stockStatus).toBeUndefined();
+  });
+
+  it('429・503・通信エラーのときは販売状況を変えない（在庫切れと誤判定しない。古い結果は動画側で期限切れになる）', async () => {
+    seed('写真集', [book('400', { stockStatus: 'available', stockCheckedAt: 5 }), book('401', { stockStatus: 'available', stockCheckedAt: 5 }), book('402', { stockStatus: 'available', stockCheckedAt: 5 })]);
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, headers: new Headers(), text: async () => '' })
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce({ ok: false, status: 429, headers: new Headers(), text: async () => '' });
+    await lookupPricesByCode(PERSON, cands([book('400'), book('401'), book('402')]));
+    for (const x of rowItems('写真集')) expect(x).toMatchObject({ stockStatus: 'available', stockCheckedAt: 5 });
+  });
+
+  it('PRICE_REFRESH_STOCK_FIELDS が無ければ販売状況の項目は書かない（従来どおり。保護トリガーの更新前でも動く）', async () => {
+    delete process.env.PRICE_REFRESH_STOCK_FIELDS;
+    seed('写真集', [book('500'), book('501')]);
+    fetchMock.mockResolvedValueOnce(okRes([booksItem('500', 2100, '1')])).mockResolvedValueOnce(okRes([booksItem('501', 2000, '')]));
+    await lookupPricesByCode(PERSON, cands([book('500'), book('501')]));
+    for (const x of rowItems('写真集')) { expect(x.stockStatus).toBeUndefined(); expect(x.stockCheckedAt).toBeUndefined(); }
+    expect(rowItems('写真集')[0].price).toBe(2100);
+  });
 });

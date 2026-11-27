@@ -6,6 +6,7 @@ import type {
   RakutenDvdResponse,
   ApiResult,
 } from '@/types/rakuten';
+import { booksStockOf, ichibaStockOf, markStock } from '@/lib/rakuten-search-stock';
 import { ichibaItemIdFromApi, type IchibaIdStatus } from '@/lib/rakuten-item-id';
 import type { PersonConfig } from '@/types/person';
 import { calcScore } from './scoring';
@@ -240,7 +241,8 @@ function ichibaItemsWithId<T>(
     const r = ichibaItemIdFromApi({ itemCode: Item.itemCode, itemUrl: Item.itemUrl });
     if (!r.id) { skipped[r.status] = (skipped[r.status] ?? 0) + 1; continue; }
     if (r.status === 'ok_url_differs') urlDiffers++;
-    out.push(build(Item, r.id));
+    const raw = Item as { availability?: unknown; itemPrice?: unknown };
+    out.push(markStock(build(Item, r.id), ichibaStockOf(raw.availability, raw.itemPrice)));
   }
   if (Object.keys(skipped).length || urlDiffers) {
     console.warn(`[rakuten] ${label}: 商品IDを確認できず保存しない ${JSON.stringify(skipped)} / itemCode と商品URLの商品コードが異なる ${urlDiffers}件（itemCode を使用）`);
@@ -299,7 +301,7 @@ async function fetchBooksPages(
       const title = Item.title ?? '';
       const itemUrl = Item.itemUrl ?? '';
       logTrackedItem(`${paramKey}:${paramValue}`, id, title, itemUrl);
-      results.push({
+      results.push(markStock({
         id,
         title,
         author: Item.author ?? '',
@@ -314,7 +316,7 @@ async function fetchBooksPages(
           { title, author: Item.author ?? '' },
           { name, group, excludeKeywords }
         ),
-      });
+      }, booksStockOf((Item as { availability?: unknown }).availability, Item.itemPrice)));
     }
 
     if (returned < 30) break;
@@ -472,7 +474,7 @@ async function fetchDvd(
       const total = data.count ?? 0;
       console.log(`[rakuten] DVD取得: ${returned}件 (総数=${total}) artistName="${artistName}" page=${page}`);
 
-      items.push(...data.Items.map(({ Item }) => ({
+      items.push(...data.Items.map(({ Item }) => markStock({
         id: stableId('dv', Item.itemUrl ?? ''),
         title: Item.title ?? '',
         artistName: Item.artistName ?? '',
@@ -487,7 +489,7 @@ async function fetchDvd(
           { title: Item.title ?? '', artistName: Item.artistName ?? '' },
           { name, group, excludeKeywords }
         ),
-      })));
+      }, booksStockOf((Item as { availability?: unknown }).availability, Item.itemPrice))));
 
       if (returned < 30) break;
     }
@@ -563,7 +565,7 @@ async function fetchCd(
       const total = data.count ?? 0;
       console.log(`[rakuten] CD取得: ${returned}件 (総数=${total}) artistName="${artistName}" page=${page}`);
 
-      items.push(...data.Items.map(({ Item }) => ({
+      items.push(...data.Items.map(({ Item }) => markStock({
         id: stableId('cd', Item.itemUrl ?? ''),
         title: Item.title ?? '',
         artistName: Item.artistName ?? '',
@@ -578,7 +580,7 @@ async function fetchCd(
           { title: Item.title ?? '', artistName: Item.artistName ?? '' },
           { name, group, excludeKeywords }
         ),
-      })));
+      }, booksStockOf((Item as { availability?: unknown }).availability, Item.itemPrice))));
 
       if (returned < 30) break;
     }

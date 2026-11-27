@@ -20,6 +20,7 @@
 // どちらも、楽天の店舗コード・商品コード（楽天ブックスは商品番号）が既存と異なる場合は更新しない。
 // 楽天APIのエラー・429・タイムアウト・0件・在庫切れで取得できない商品は変更しない（価格・取得日時とも）。
 import { getProductsByCategory } from '@/lib/rakuten';
+import { booksStockOf, ichibaStockOf, searchStockOf } from '@/lib/rakuten-search-stock';
 import {
   CATEGORIES,
   applyPriceUpdates,
@@ -28,8 +29,10 @@ import {
   mergePriceFieldsOnly,
   productIdentityKey,
   savePriceOnlyItems,
+  stockFieldsEnabled,
   type PriceReview,
   type PriceUpdate,
+  type StockFields,
 } from '@/lib/product-store';
 import {
   RakutenApiBusyError,
@@ -42,7 +45,7 @@ import {
 } from '@/lib/rakuten-api-gate';
 import { countDbRead } from '@/lib/price-refresh-io';
 import { retryOnProductWriteConflict } from '@/lib/product-write-guard';
-import type { RakutenItem } from '@/types/rakuten';
+import type { RakutenItem, StockStatus } from '@/types/rakuten';
 import type { PersonWithConfig, ProductCategory } from '@/types/person';
 
 export type PriceRefreshStatus =
@@ -70,6 +73,8 @@ export interface PriceRefreshCategoryResult {
   notEligible: number;
   /** 前回の価格から30%以上の変動などで反映せず確認対象にした商品（変更しない） */
   reviews: PriceReview[];
+  /** 販売状況の項目を更新した既存商品の数（PRICE_REFRESH_STOCK_FIELDS=1 のときだけ） */
+  stockUpdated?: number;
 }
 
 export interface PriceRefreshResult {
@@ -167,8 +172,9 @@ export async function refreshPersonPrices(
         const row = await getStoredCategoryRow(person.name, category);
         countDbRead(row ? 1 : 0, row?.items);
         if (!row || row.items.length === 0) return null;
-        const m = mergePriceFieldsOnly(row.items, res.products, fetchedAt, { eligibleIds: opts.eligibleIds });
-        if (m.updated > 0) await savePriceOnlyItems(person.name, category, m.items, fetchedAt, row.items);
+        // 販売状況（PRICE_REFRESH_STOCK_FIELDS=1 のときだけ）：検索結果の在庫状況から、同じ検索で追加の楽天APIを使わずに記録する
+        const m = mergePriceFieldsOnly(row.items, res.products, fetchedAt, { eligibleIds: opts.eligibleIds, ...(stockFieldsEnabled() ? { stockOf: searchStockOf } : {}) });
+        if (m.updated > 0 || m.stockUpdated > 0) await savePriceOnlyItems(person.name, category, m.items, fetchedAt, row.items);
         return m;
       });
       if (!merged) { results.push(empty(category, 'no_existing')); continue; }
@@ -181,6 +187,7 @@ export async function refreshPersonPrices(
         identityMismatches: merged.identityMismatches,
         notEligible: merged.notEligible,
         reviews: merged.reviews.map((r) => ({ ...r, category })),
+        ...(merged.stockUpdated > 0 ? { stockUpdated: merged.stockUpdated } : {}),
       });
     } catch (err) {
       console.error(`[price-refresh] 保存失敗 ${person.name}/${category}: ${err instanceof Error ? err.message : String(err)}`);
@@ -267,6 +274,18 @@ export function matchBooksResult(items: readonly BooksApiItem[], stored: Pick<Ra
   return { kind: 'found', price };
 }
 
+/**
+ * 楽天ブックス総合検索APIの結果から、保存中の商品の販売状況を決める（純粋関数。価格の判定 matchBooksResult とは別）。
+ * 0件 → not_found、同じ商品番号が無い → mismatched、一致した商品 → 在庫状況で区別（src/lib/rakuten-search-stock.ts。項目が無ければ unknown）
+ */
+export function booksStockFromResult(items: readonly BooksApiItem[], stored: Pick<RakutenItem, 'itemUrl' | 'affiliateUrl' | 'itemCode'>): StockStatus {
+  const key = productIdentityKey(stored);
+  if (items.length === 0) return 'not_found';
+  const hit = items.find((x) => productIdentityKey({ itemUrl: String(x.itemUrl ?? ''), affiliateUrl: '' }) === key);
+  if (!hit) return 'mismatched';
+  return booksStockOf(hit.availability, hit.itemPrice) ?? 'unknown';
+}
+
 export interface LookupCandidate {
   category: ProductCategory;
   item: RakutenItem;
@@ -311,6 +330,8 @@ export interface CachedLookup {
   fetchedAt: number;
   /** 楽天ブックスで取得できなかった結果（見つからない・同じ商品番号が無い・購入できない）。price は 0。期限内は同じ商品の API を呼ばない */
   status?: 'not_found' | 'mismatched' | 'unavailable';
+  /** 取得時に決めた販売状況（記録の無い古いキャッシュは販売状況を記録しない＝推測しない） */
+  stock?: StockStatus;
 }
 export interface LookupCache {
   getMany(codes: readonly string[]): Promise<Map<string, CachedLookup>>;
@@ -328,6 +349,8 @@ export interface LookupResult {
   failed: number;
   /** 楽天ブックスで同じ商品は見つかったが、品切れ・販売終了等で購入できると確認できず反映しなかった件数 */
   unavailable?: number;
+  /** 販売状況の項目を更新した商品の数（PRICE_REFRESH_STOCK_FIELDS=1 のときだけ） */
+  stockApplied?: number;
   stoppedBy: 'done' | 'deadline' | 'rate_limited' | 'gate' | 'config_missing' | 'upstream_errors';
   /** 前回の価格から30%以上の変動などで反映せず確認対象にした商品（変更しない） */
   reviews: PriceReview[];
@@ -363,15 +386,19 @@ export async function lookupPricesByCode(
   if (candidates.length === 0) return result;
 
   const updatesByCategory = new Map<ProductCategory, Map<string, PriceUpdate>>();
-  const addUpdate = (c: LookupCandidate, v: CachedLookup) => {
+  // 販売状況も記録するか（保護トリガーの更新後に PRICE_REFRESH_STOCK_FIELDS=1）
+  const withStock = stockFieldsEnabled();
+  const setUpdate = (c: LookupCandidate, u: Omit<PriceUpdate, 'identityKey'>) => {
+    if (u.price === undefined && !u.stock) return;
     const map = updatesByCategory.get(c.category) ?? new Map<string, PriceUpdate>();
-    map.set(c.item.id, {
-      identityKey: productIdentityKey(c.item),
-      price: v.price,
-      priceFetchedAt: v.fetchedAt,
-    });
+    map.set(c.item.id, { identityKey: productIdentityKey(c.item), ...u });
     updatesByCategory.set(c.category, map);
   };
+  /** 価格を取得できた（購入できると確認できた）結果 */
+  const addUpdate = (c: LookupCandidate, v: CachedLookup) =>
+    setUpdate(c, { price: v.price, priceFetchedAt: v.fetchedAt, ...(withStock && v.stock ? { stock: { stockStatus: v.stock, stockCheckedAt: v.fetchedAt } } : {}) });
+  /** 購入できると確認できなかった結果（価格は変えず、販売状況だけ記録する） */
+  const addStockOnly = (c: LookupCandidate, stock: StockFields) => { if (withStock) setUpdate(c, { stock }); };
 
   // 共有キャッシュ（期限内・同じ itemCode・その商品の既存の取得日時より新しいものだけ使う）
   let pending: LookupCandidate[] = [...candidates];
@@ -382,10 +409,20 @@ export async function lookupPricesByCode(
       pending = pending.filter((c) => {
         const v = cached.get(c.code);
         if (!v || v.itemCode !== c.code || now() - v.fetchedAt > maxAge) return true;
-        // 楽天ブックスで取得できなかった結果（期限内）：API を呼ばず、価格も変えない
-        if (v.status && c.code.startsWith('book:')) { result.fromCache++; return false; }
+        // 楽天ブックスで取得できなかった結果（期限内）：API を呼ばず、価格も変えない（販売状況はその結果を記録する）
+        if (v.status && c.code.startsWith('book:')) {
+          // 販売状況は取得時に決めたもの（古いキャッシュで「購入できない」の内訳が分からなければ記録しない）
+          const st = v.stock ?? (v.status === 'unavailable' ? undefined : v.status);
+          if (st && !(c.item.stockCheckedAt && c.item.stockCheckedAt >= v.fetchedAt)) addStockOnly(c, { stockStatus: st, stockCheckedAt: v.fetchedAt });
+          result.fromCache++;
+          return false;
+        }
         if (!(v.price > 0)) return true;
-        if (c.item.priceFetchedAt && c.item.priceFetchedAt >= v.fetchedAt) { result.fromCache++; return false; }
+        if (c.item.priceFetchedAt && c.item.priceFetchedAt >= v.fetchedAt) {
+          if (v.stock && !(c.item.stockCheckedAt && c.item.stockCheckedAt >= v.fetchedAt)) addStockOnly(c, { stockStatus: v.stock, stockCheckedAt: v.fetchedAt });
+          result.fromCache++;
+          return false;
+        }
         addUpdate(c, v);
         result.fromCache++;
         return false;
@@ -396,6 +433,8 @@ export async function lookupPricesByCode(
   }
   const fetchedNow: CachedLookup[] = [];
   const doneByCode = new Map<string, CachedLookup | null>();
+  // 同じ実行内で購入できると確認できなかった結果（同じコードの他のカテゴリの商品にも同じ販売状況を記録する）
+  const stockByCode = new Map<string, StockFields>();
   const appId = (process.env.RAKUTEN_APP_ID ?? '').trim();
   const accessKey = (process.env.RAKUTEN_ACCESS_KEY ?? '').trim();
   if (!appId || !accessKey) return { ...result, stoppedBy: 'config_missing' };
@@ -423,7 +462,13 @@ export async function lookupPricesByCode(
     await withRakutenApiSession({ label: 'price-lookup', maxWaitMs: 60_000, onUnavailable: 'local' }, async () => {
     for (const c of pending.slice(start, start + LOOKUP_CHUNK)) {
       // 同じ実行内で同じコードを取得済みなら API を呼ばない（同じ人物の複数カテゴリなど）
-      if (doneByCode.has(c.code)) { const v = doneByCode.get(c.code); if (v) addUpdate(c, v); result.fromCache++; continue; }
+      if (doneByCode.has(c.code)) {
+        const v = doneByCode.get(c.code);
+        if (v) addUpdate(c, v);
+        else { const st = stockByCode.get(c.code); if (st) addStockOnly(c, st); }
+        result.fromCache++;
+        continue;
+      }
       if (opts.deadline && now() >= opts.deadline) { result.stoppedBy = 'deadline'; break; }
       const isBooks = c.code.startsWith('book:');
       let reqUrl: string;
@@ -455,17 +500,24 @@ export async function lookupPricesByCode(
       streak = 0;
       if (isBooks) {
         const data = (await res.json()) as { Items?: ({ Item?: BooksApiItem } & BooksApiItem)[] };
-        const m = matchBooksResult((data.Items ?? []).map((x) => x.Item ?? x), c.item);
+        const items = (data.Items ?? []).map((x) => x.Item ?? x);
+        const m = matchBooksResult(items, c.item);
+        // 販売状況（予約受付中・メーカー取り寄せは在庫ありと区別。価格の反映の判定とは別）
+        const bookStock = booksStockFromResult(items, c.item);
         if (m.kind !== 'found') {
           if (m.kind === 'not_found') result.notFound++;
           else if (m.kind === 'mismatched') result.mismatched++;
           else result.unavailable = (result.unavailable ?? 0) + 1;
           doneByCode.set(c.code, null);
           // 取得できなかった結果も共有キャッシュに残す（期限内は他の人物の同じ商品で API を呼ばない。価格は変えない）
-          fetchedNow.push({ itemCode: c.code, price: 0, fetchedAt: Date.now(), status: m.kind });
+          const at = Date.now();
+          fetchedNow.push({ itemCode: c.code, price: 0, fetchedAt: at, status: m.kind, stock: bookStock });
+          const st: StockFields = { stockStatus: bookStock, stockCheckedAt: at };
+          stockByCode.set(c.code, st);
+          addStockOnly(c, st);
           continue;
         }
-        const v: CachedLookup = { itemCode: c.code, price: m.price, fetchedAt: Date.now() };
+        const v: CachedLookup = { itemCode: c.code, price: m.price, fetchedAt: Date.now(), stock: bookStock };
         doneByCode.set(c.code, v);
         fetchedNow.push(v);
         addUpdate(c, v);
@@ -473,12 +525,23 @@ export async function lookupPricesByCode(
       }
       const data = (await res.json()) as { Items?: { Item: IchibaApiItem }[] };
       const it = data.Items?.[0]?.Item;
-      if (!it) { result.notFound++; doneByCode.set(c.code, null); continue; } // 販売終了・在庫切れ等：変更しない
-      if ((it.itemCode ?? '').toLowerCase() !== c.code || !(Number(it.itemPrice) > 0)) { result.mismatched++; doneByCode.set(c.code, null); continue; }
+      // 楽天市場の商品コード指定の検索は販売可能な商品だけを返す（availability の既定 1）。返らなければ販売終了・在庫切れ・掲載終了
+      const ichibaMiss = (kind: 'unavailable' | 'unknown' | 'mismatched') => {
+        const st: StockFields = { stockStatus: kind, stockCheckedAt: Date.now() };
+        doneByCode.set(c.code, null);
+        stockByCode.set(c.code, st);
+        addStockOnly(c, st);
+      };
+      if (!it) { result.notFound++; ichibaMiss('unavailable'); continue; } // 販売終了・在庫切れ等：価格は変更しない
+      if ((it.itemCode ?? '').toLowerCase() !== c.code) { result.mismatched++; ichibaMiss('mismatched'); continue; }
+      const ichibaStock = ichibaStockOf((it as { availability?: unknown }).availability, it.itemPrice);
+      if (!(Number(it.itemPrice) > 0)) { result.mismatched++; ichibaMiss('unknown'); continue; } // 価格なし：販売状況を確認できない（品切れとは断定しない）
+      if (ichibaStock === 'unavailable') { result.mismatched++; ichibaMiss('unavailable'); continue; }
       const v: CachedLookup = {
         itemCode: c.code,
         price: Number(it.itemPrice),
         fetchedAt: Date.now(),
+        ...(ichibaStock ? { stock: ichibaStock } : {}),
       };
       doneByCode.set(c.code, v);
       fetchedNow.push(v);
@@ -494,6 +557,7 @@ export async function lookupPricesByCode(
     try {
       const r = await applyPriceUpdates(personName, category, updates);
       result.applied += r.applied;
+      if (r.stockApplied) result.stockApplied = (result.stockApplied ?? 0) + r.stockApplied;
       result.reviews.push(...r.reviews);
     } catch (err) {
       console.error(`[price-refresh] コード指定の保存失敗 ${personName}/${category}: ${err instanceof Error ? err.message : String(err)}`);

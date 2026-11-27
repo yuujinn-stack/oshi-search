@@ -6643,3 +6643,23 @@ OSHI_GROUP_09 の Instagram 投稿文を、冒頭フック（動画の冒頭と�
 - tsc 0件、vitest 211ファイル/3,284件成功、next build 成功。既存5テンプレートの描画・記録の処理は origin/main と完全一致
 - テスト（Redis はメモリ上の代わり）：Preview では楽天BFの記録の保存を拒否し Redis の読み書き0回、API直接呼び出しも400、承認・確認APIは使える、既存テンプレートは Preview 用キーに保存。Production では楽天BFの記録を本番のキーに保存できる
 - VERCEL_ENV=preview でローカル起動した画面：楽天BF（通常投稿・ストーリーズ）で表示とボタンの無効化、承認欄・PNG保存ボタンは表示、B（既存）は従来どおり
+
+## Task 208（本番反映分）：価格・在庫の定期更新で販売状況を記録する（2026-11-27）
+
+### 目的
+動画の紹介商品（D案・A案・B案。動画側は作業ブランチ feat/live-history-video で未反映）を、動画専用の楽天APIの問い合わせではなく、
+推しサーチ全体の価格・在庫の定期更新（Task 134・136）の結果で選べるようにする。今回 main に入れるのは価格・在庫の更新側だけ。
+手順・ロールバックは `docs/price-refresh-stock-runbook.md`（動画側の節は作業ブランチの反映後に有効）。
+
+### 変更したファイル
+- `src/types/rakuten.ts`：商品の項目 `stockStatus`・`stockCheckedAt`（価格の取得日時とは別）。
+- `src/lib/rakuten-search-stock.ts`（新規）・`src/lib/rakuten.ts`：検索結果の販売状況（WeakMap。商品データには入れない）。楽天ブックス availability は 1〜3＝available・4＝backorder（メーカー取り寄せ）・5＝preorder（予約受付中）・6＝unavailable・空/想定外/価格なし＝unknown（品切れと断定しない）。楽天市場は販売可能フラグ。
+- `src/lib/product-store.ts`・`src/lib/price-refresh.ts`：(A) カテゴリ検索・(B) コード指定で販売状況を記録（追加の楽天APIなし。エラー・429・通信失敗では記録しない）。`PRICE_REFRESH_STOCK_FIELDS=1` のときだけ。
+- `src/lib/price-refresh-runner.ts`：指紋から販売状況の2項目を除く。優先する人物（`PRICE_REFRESH_PRIORITY_PERSONS`。間隔・上限は同じ）。
+- `scripts/price-refresh/run.ts`・`.github/workflows/price-refresh.yml`：2つのリポジトリ変数を渡す。`scripts/price-refresh/snapshot.ts`：比較で販売状況も価格の項目として扱う。
+- `src/lib/price-refresh-stock-guard-sql.ts`・`scripts/price-refresh/stock-guard.ts`（新規）：保護トリガーの関数の更新（check・show・apply・undo）。
+- テスト：`price-refresh-stock-guard.test.ts`（新規・PGlite）、`price-refresh.test.ts`・`price-refresh-books-lookup.test.ts`・`price-refresh-limits.test.ts`。
+
+### 注意点
+- 保護トリガーの関数を更新する前に `PRICE_REFRESH_STOCK_FIELDS=1` にしない（保存がすべて拒否される）。
+- 価格の表示・検索・楽天への誘導・お買い物診断は販売状況を読まない（表示は変わらない）。

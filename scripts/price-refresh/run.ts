@@ -16,6 +16,8 @@
 //   PRICE_REFRESH_MIN_INTERVAL_DAYS  … 人物ごとの最短更新間隔（日。既定 3）
 //   PRICE_REFRESH_LIMITED=1          … 少人数の通常実行（limited-full。人物の指定なしで、定期実行と同じ順番の先頭から上限まで）
 //   （上限の決め方は scripts/price-refresh/limits.ts。dry-run で人物を指定しなければ、次の実行で処理する人物・順番・見込みを表示）
+//   PRICE_REFRESH_PRIORITY_PERSONS="名前,名前" … 更新の対象になった人物の中で先に処理する（SNS 動画でよく使う人物。間隔・上限は同じ）
+//   PRICE_REFRESH_STOCK_FIELDS=1     … 販売状況（stockStatus・stockCheckedAt）も記録する（保護トリガーの更新後だけ。scripts/price-refresh/stock-guard.ts）
 //   PRICE_REFRESH_VERBOSE=1          … 詳細ログも表示（ローカル専用。公開リポジトリの Actions では使わない）
 //
 // ログ：公開リポジトリの Actions ログは誰でも見られるため、既定ではこのスクリプトの件数の要約だけを出し、
@@ -70,7 +72,7 @@ async function main() {
   if (missing.length) { out({ error: 'missing_env', missing }); process.exit(1); }
   if (process.env.OPENAI_API_KEY) out({ warning: 'OPENAI_API_KEY は不要です（この処理は OpenAI を使いません）' });
 
-  const { planPriceRefresh, runPriceRefreshBatch, selectRunOrder, HALT_KEY, LOCK_KEY, STATE_KEY, CATEGORIES_ORDER } = await import('@/lib/price-refresh-runner');
+  const { planPriceRefresh, runPriceRefreshBatch, selectRunOrder, parsePriorityPersons, HALT_KEY, LOCK_KEY, STATE_KEY, CATEGORIES_ORDER } = await import('@/lib/price-refresh-runner');
   const { getRedis } = await import('@/lib/redis');
   const { snapshotIo } = await import('@/lib/price-refresh-io');
   const { rakutenApiCallCount } = await import('@/lib/rakuten-api-gate');
@@ -114,7 +116,7 @@ async function main() {
       const { listPersonsWithProducts } = await import('@/lib/product-store');
       const [persons, withProducts] = await Promise.all([getAllPersonsMerged(), listPersonsWithProducts()]);
       const names = persons.map((p) => p.name).filter((n) => new Set(withProducts).has(n));
-      const order = selectRunOrder(names, states as never, Date.now(), runLimits.minIntervalMs);
+      const order = selectRunOrder(names, states as never, Date.now(), runLimits.minIntervalMs, null, parsePriorityPersons(process.env.PRICE_REFRESH_PRIORITY_PERSONS));
       targets = order.slice(0, limits.maxPersons);
       out({ schedulePreview: {
         mode: runLimits.limited ? 'limited-full' : 'scheduled',
@@ -172,7 +174,7 @@ async function main() {
   if (!(await checkRedis())) process.exit(1);
 
   const t0 = Date.now();
-  const s = await runPriceRefreshBatch({ budgetMs: budgetMin * 60_000, lookupPerPerson, onlyPersons, ...limits, minIntervalMs: runLimits.minIntervalMs });
+  const s = await runPriceRefreshBatch({ budgetMs: budgetMin * 60_000, lookupPerPerson, onlyPersons, ...limits, minIntervalMs: runLimits.minIntervalMs, priorityPersons: parsePriorityPersons(process.env.PRICE_REFRESH_PRIORITY_PERSONS) });
   // 楽天から取得できなかったカテゴリ（保存済みの商品は変更していない）を、HTTP ステータスごとに数える（503 等の確認用）
   const failedByStatus: Record<string, number> = {};
   for (const p of s.persons) for (const f of p.failedCategories) {

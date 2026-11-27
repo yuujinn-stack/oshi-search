@@ -10,7 +10,7 @@ vi.mock('@/db/write', () => ({}));
 vi.mock('@/lib/persons', () => ({ getAllPersonsMerged: vi.fn() }));
 vi.mock('@/lib/rakuten-api-gate', () => ({ rakutenApiCallCount: () => 0 }));
 
-import { selectRunOrder } from '../price-refresh-runner';
+import { parsePriorityPersons, selectRunOrder } from '../price-refresh-runner';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -53,5 +53,11 @@ describe('処理する人物と順番（実行と dry-run で同じ）', () => {
   });
   it('人物を指定したら（manual-test）間隔に関係なく対象', () => {
     expect(selectRunOrder(names, states, NOW, 3 * DAY, new Set(['完了2日前']))).toEqual(['完了2日前']);
+  });
+  it('優先する人物（SNS 動画でよく使う人物）は更新の対象の中で先に。途中で止まった人物の続きが最初・間隔内の人物は優先でも除く（API は増えない）', () => {
+    expect(selectRunOrder(names, states, NOW, 3 * DAY, null, ['完了4日前', '完了2日前', '登録なし']))
+      .toEqual(['途中', '完了4日前', '未実行A', '未実行B', '完了10日前']);
+    expect(parsePriorityPersons(' 目黒蓮, M!LK ,目黒蓮,, ')).toEqual(['目黒蓮', 'M!LK']);
+    expect(parsePriorityPersons(undefined)).toEqual([]);
   });
 });

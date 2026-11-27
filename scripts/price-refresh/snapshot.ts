@@ -15,7 +15,7 @@ const DIR = 'tmp/price-refresh-snapshots';
 const h = (v: unknown) => crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex').slice(0, 16);
 
 // 価格更新で変わってよい項目（これ以外が1つでも変わったら異常。商品名・画像・URL・アフィリエイトURL・ID・並びも不変）
-const PRICE_FIELDS = new Set(['price', 'priceFetchedAt']);
+const PRICE_FIELDS = new Set(['price', 'priceFetchedAt', 'stockStatus', 'stockCheckedAt']); // 価格更新が変える項目（価格・販売状況）
 
 interface Snap {
   takenAt: string;

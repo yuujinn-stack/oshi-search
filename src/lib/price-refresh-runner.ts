@@ -265,9 +265,23 @@ export function selectRunOrder(
   nowMs: number,
   minIntervalMs: number,
   only?: ReadonlySet<string> | null,
+  /**
+   * 優先する人物（SNS 動画でよく使う人物など。リポジトリ変数 PRICE_REFRESH_PRIORITY_PERSONS）。更新の対象になった人物の中で先に処理するだけ
+   * （最短更新間隔は同じ＝楽天APIの回数は増えない）。途中で止まった人物の続きはこれより先
+   */
+  priority?: readonly string[] | null,
 ): string[] {
-  return orderPersons(names.filter((n) => !only || only.has(n)), states)
+  const due = orderPersons(names.filter((n) => !only || only.has(n)), states)
     .filter((n) => only || !(states[n]?.completedAt && (!states[n].startedAt || states[n].completedAt! >= states[n].startedAt!) && nowMs - states[n].completedAt! < minIntervalMs));
+  if (!priority?.length) return due;
+  const pri = new Set(priority);
+  const resumed = (n: string) => { const st = states[n]; return !!(st?.startedAt && (!st.completedAt || st.startedAt > st.completedAt)); };
+  return [...due.filter(resumed), ...due.filter((n) => !resumed(n) && pri.has(n)), ...due.filter((n) => !resumed(n) && !pri.has(n))];
+}
+
+/** 優先する人物の指定（カンマ区切り・完全一致。空白は除く。最大100人） */
+export function parsePriorityPersons(raw: string | undefined): string[] {
+  return [...new Set((raw ?? '').split(',').map((s) => s.trim()).filter(Boolean))].slice(0, 100);
 }
 
 /** 処理する順番：途中で止まった人物 → 未完了 → 完了が古い順 */
@@ -295,6 +309,8 @@ export interface RunOptions {
   lookupFreshMs?: number;
   /** 同じ人物を再処理するまでの最短間隔（完了してからこの時間はスキップ） */
   minIntervalMs?: number;
+  /** 先に処理する人物（selectRunOrder の priority） */
+  priorityPersons?: readonly string[];
   /** 楽天のエラーがこの回数続いたらその回を終える（既定 MAX_CONSECUTIVE_FAILURES） */
   maxConsecutiveFailures?: number;
   /** 1回の実行で使う楽天APIの回数の上限（次のカテゴリで上限を超えうるなら始めない。続きは次回） */
@@ -374,7 +390,7 @@ export async function lookupItemsFromDb(personName: string, cutoffMs: number, li
 }
 
 /**
- * 人物の「価格以外」の指紋。商品はカテゴリごとに件数と、価格の項目（price・priceFetchedAt）を
+ * 人物の「価格以外」の指紋。商品はカテゴリごとに件数と、価格・販売状況の項目（price・priceFetchedAt・stockStatus・stockCheckedAt）を
  * 除いた各商品の内容を並び順どおりにつないだハッシュ。判定（verdicts）は全項目のハッシュ。DB 側で計算し、転送量はごくわずか。
  */
 export interface PersonFingerprint {
@@ -385,7 +401,7 @@ export interface PersonFingerprint {
 export async function fingerprintFromDb(personName: string): Promise<PersonFingerprint> {
   const prows = (await neonSql`
     SELECT p.category, count(t.e)::int AS n,
-      md5(coalesce(string_agg((t.e - ARRAY['price','priceFetchedAt'])::text, '|' ORDER BY t.i), '')) AS h
+      md5(coalesce(string_agg((t.e - ARRAY['price','priceFetchedAt','stockStatus','stockCheckedAt'])::text, '|' ORDER BY t.i), '')) AS h
     FROM products p LEFT JOIN LATERAL jsonb_array_elements(p.items) WITH ORDINALITY AS t(e, i) ON true
     WHERE p.person_name = ${personName}
     GROUP BY p.category`) as { category: string; n: number; h: string }[];
@@ -497,7 +513,7 @@ async function runBatchInner(opts: RunOptions, storeOrNull: RefreshStateStore | 
     const states = await store.getAll();
     const minInterval = opts.minIntervalMs ?? DAY_MS;
     const only = opts.onlyPersons?.length ? new Set(opts.onlyPersons) : null;
-    const order = selectRunOrder([...byName.keys()], states, now(), minInterval, only);
+    const order = selectRunOrder([...byName.keys()], states, now(), minInterval, only, opts.priorityPersons);
     const lookupFreshMs = opts.lookupFreshMs ?? 3 * DAY_MS;
     const lookupCache = opts.lookupCache === undefined ? createRedisLookupCache(lookupFreshMs) : opts.lookupCache;
     const relatedIdsOf = opts.relatedIdsOf ?? relatedIdsFromDb;
